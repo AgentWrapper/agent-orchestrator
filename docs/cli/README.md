@@ -5,6 +5,18 @@ It starts, discovers, inspects, and stops the daemon through the loopback HTTP
 surface and the `running.json` handshake. It must not open SQLite directly or
 call runtime, workspace, tracker, or agent adapters in-process.
 
+When using the CLI directly from a shell, make sure the daemon is running first
+with `ao start` or by opening the desktop app. Product commands such as
+`ao agent ls` and `ao spawn` call the loopback daemon and will fail with a
+"daemon is not running" error if no `running.json` points at a live process. From
+a source checkout, build and run the local binary explicitly, for example:
+
+```bash
+cd backend
+go build -o ./bin/ao ./cmd/ao
+./bin/ao agent ls
+```
+
 ## Current commands
 
 Every product command resolves to a daemon HTTP route. Run `ao <command>

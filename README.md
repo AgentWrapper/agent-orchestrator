@@ -108,19 +108,8 @@ The result is a local control layer for agentic coding: agents still do the codi
 
 Works with 23+ CLI-based coding agents including Claude Code, OpenAI Codex, Cursor, OpenCode, Aider, Amp, Goose, GitHub Copilot, Grok, Qwen Code, Kimi Code, Crush, Cline, Droid, Devin, Auggie, Continue, Kiro, and Kilo Code.
 
-Use the CLI to inspect local install/auth readiness before spawning sessions:
-
-```bash
-ao agent ls
-ao agent ls --refresh
-```
-
-`ao spawn` can use the current registered project and its configured worker agent, so the common CLI path is:
-
-```bash
-ao spawn --prompt "Fix failing tests"
-ao spawn --agent codex --prompt "Fix failing tests"
-```
+For direct CLI usage, including agent readiness checks and context-aware session
+spawns, see the [CLI Guide](docs/cli/README.md).
 
 **If it runs in a terminal, it runs on Agent Orchestrator.**
 
