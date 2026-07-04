@@ -83,11 +83,11 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	for _, spec := range clineManagedHooks {
 		scriptPath := filepath.Join(hooksDir, spec.Event)
 		// Never clobber a user-authored hook with the same event name.
-		if fileExists(scriptPath) && !isManagedClineHook(scriptPath) {
+		if hookutil.FileExists(scriptPath) && !isManagedClineHook(scriptPath) {
 			continue
 		}
 		script := renderClineHookScript(spec.Subcommand)
-		if err := atomicWriteFile(scriptPath, []byte(script), 0o700); err != nil {
+		if err := hookutil.AtomicWriteFile(scriptPath, []byte(script), 0o700); err != nil {
 			return fmt.Errorf("cline.GetAgentHooks: write %s: %w", spec.Event, err)
 		}
 		written = append(written, spec.Event)
@@ -116,7 +116,7 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 
 	for _, spec := range clineManagedHooks {
 		scriptPath := filepath.Join(hooksDir, spec.Event)
-		if !fileExists(scriptPath) || !isManagedClineHook(scriptPath) {
+		if !hookutil.FileExists(scriptPath) || !isManagedClineHook(scriptPath) {
 			continue
 		}
 		if err := os.Remove(scriptPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -143,7 +143,7 @@ func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (b
 
 	for _, spec := range clineManagedHooks {
 		scriptPath := filepath.Join(hooksDir, spec.Event)
-		if fileExists(scriptPath) && isManagedClineHook(scriptPath) {
+		if hookutil.FileExists(scriptPath) && isManagedClineHook(scriptPath) {
 			return true, nil
 		}
 	}
@@ -176,27 +176,4 @@ func isManagedClineHook(scriptPath string) bool {
 		return false
 	}
 	return strings.Contains(string(data), clineHookMarker)
-}
-
-// atomicWriteFile writes data to path via a temp file + rename, so a crash mid-
-// write can't leave a truncated script that Cline then fails to execute.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ao-tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }

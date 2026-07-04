@@ -69,4 +69,27 @@ describe("buildYml", () => {
 		expect(lines[5]).toBe("  - url: Agent.Orchestrator-darwin-x64-0.10.4.zip");
 		expect(yml).toContain("path: Agent.Orchestrator-darwin-arm64-0.10.4.zip");
 	});
+
+	it("omits important key when flag is false (byte-identical to old output)", () => {
+		const yml = buildYml(
+			"0.10.4",
+			[{ url: "Agent.Orchestrator.Setup.0.10.4.exe", sha512: "AA/BB+cc==", size: 123 }],
+			"2026-06-27T12:00:00.000Z",
+			false,
+		);
+		expect(yml).not.toContain("important");
+	});
+
+	it("emits important: true as top-level key when flag is true", () => {
+		const yml = buildYml(
+			"0.10.4",
+			[{ url: "Agent.Orchestrator.Setup.0.10.4.exe", sha512: "AA/BB+cc==", size: 123 }],
+			"2026-06-27T12:00:00.000Z",
+			true,
+		);
+		expect(yml).toContain("important: true\n");
+		// must still have all existing fields
+		expect(yml).toContain("version: 0.10.4");
+		expect(yml).toContain("releaseDate:");
+	});
 });

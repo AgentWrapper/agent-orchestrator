@@ -113,7 +113,7 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -125,7 +125,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -200,8 +200,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "chat-123",
-			cursorTitleMetadataKey:          "Fix login redirect",
-			cursorSummaryMetadataKey:        "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})

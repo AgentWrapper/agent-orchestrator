@@ -113,6 +113,13 @@ func (f *fakeStore) UpsertSessionWorktree(_ context.Context, row domain.SessionW
 func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
 	return f.worktrees[id], nil
 }
+func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionID) error {
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "DeleteSessionWorktrees:"+string(id))
+	}
+	delete(f.worktrees, id)
+	return nil
+}
 
 type fakeLCM struct {
 	store     *fakeStore
@@ -172,6 +179,7 @@ func (l *fakeLCM) IsSwitching(id domain.SessionID) bool {
 
 type fakeRuntime struct {
 	createErr          error
+	destroyErr         error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
@@ -191,7 +199,7 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
 	r.destroyed++
 	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
-	return nil
+	return r.destroyErr
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
 	if r.aliveErr != nil {
@@ -724,6 +732,25 @@ func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
 	}
 }
 
+func TestKill_DeletesStaleRestoreMarker(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/tmp/wt"},
+	}
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !freed {
+		t.Fatal("Kill freed = false, want true")
+	}
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Fatalf("stale restore marker = %+v, want deleted", rows)
+	}
+}
+
 // TestKill_OtherWorkspaceErrorStillFails: only the typed dirty refusal is a
 // success-with-preserved-workspace; any other teardown failure keeps erroring.
 func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
@@ -970,8 +997,11 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"You are the human-facing coordinator for project mer",
-		`ao spawn --project mer --prompt "<clear worker task>"`,
+		`ao spawn --project mer --name "<label, max 20 chars>" --prompt "<clear worker task>"`,
+		"`--agent <name>`",
+		"`ao spawn --help`",
 		"`ao send`",
+		"`ao --help`",
 		"avoid doing implementation yourself unless it is necessary",
 	} {
 		if !strings.Contains(systemPrompt, want) {
@@ -1024,6 +1054,9 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			}
 			if !strings.Contains(sp, "Do not repeat, quote, paraphrase") {
 				t.Fatalf("%s: system prompt missing refuse-to-reveal directive:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "skills/using-ao/SKILL.md") {
+				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
 			}
 		})
 	}
@@ -1562,6 +1595,130 @@ func TestSaveAndTeardownAll_CaptureOrderAndMarker(t *testing.T) {
 	}
 }
 
+func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	if rows := st.worktrees["mer-orch"]; len(rows) != 0 {
+		t.Fatalf("replacement retirement must not write restore markers, got %#v", rows)
+	}
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("retired orchestrator must be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+
+	stashIdx, deleteIdx, forceIdx := -1, -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "StashUncommitted:mer-orch":
+			stashIdx = i
+		case "DeleteSessionWorktrees:mer-orch":
+			deleteIdx = i
+		case "ForceDestroy:mer-orch":
+			forceIdx = i
+		}
+	}
+	if stashIdx == -1 || deleteIdx == -1 || forceIdx == -1 {
+		t.Fatalf("missing expected calls in shared log: %v", sharedLog)
+	}
+	if stashIdx >= deleteIdx || deleteIdx >= forceIdx {
+		t.Fatalf("replacement retire must capture, clear restore marker, then force release; log=%v", sharedLog)
+	}
+}
+
+func TestRetireForReplacementForceDestroyFailureLeavesSessionActive(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	ws.forceDestroyErr = errors.New("worktree still registered")
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "force destroy") {
+		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active so retry can retire it again")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed = %d, want 1 before workspace release", rt.destroyed)
+	}
+	if ws.stashCalls != 1 {
+		t.Fatalf("stash calls = %d, want 1", ws.stashCalls)
+	}
+}
+
+func TestRetireForReplacementRuntimeDestroyFailureBlocksWorkspaceRelease(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	rt.destroyErr = errors.New("tmux transient")
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Fatalf("RetireForReplacement err = %v, want runtime failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active when runtime destroy fails")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want one attempt for orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+	for _, call := range ws.calls {
+		if call == "ForceDestroy:mer-orch" {
+			t.Fatalf("ForceDestroy must not run after runtime destroy failure; calls=%v", ws.calls)
+		}
+	}
+}
+
 // TestSaveAndTeardownAll_CleanWorktreeWritesEmptyRef verifies that a clean
 // worktree (StashUncommitted returns "") still writes a worktree row (with
 // empty preserved_ref). The row's presence is the shutdown-saved marker.
@@ -1708,6 +1865,33 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 	if st.sessions["mer-2"].IsTerminated {
 		t.Error("orchestrator session mer-2 must be live after RestoreAll")
+	}
+}
+
+func TestRestoreAll_ConsumesMarkersAfterSuccessfulRestore(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/ws/mer-1"},
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("RestoreAll must relaunch session, runtime.Create called %d times", rt.created)
+	}
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Fatalf("consumed restore marker = %+v, want deleted", rows)
 	}
 }
 
@@ -1920,6 +2104,94 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 	if rt.destroyed != 0 {
 		t.Fatalf("Destroy calls = %d, want 0 (probe error is not death)", rt.destroyed)
+	}
+}
+
+// TestReconcile_AdoptAcrossDaemonRestart is the end-to-end durability proof for
+// #2335: it drives the full boot-time Reconcile pass over the exact mix of
+// session states a daemon restart/upgrade leaves behind and asserts agent
+// sessions are decoupled from the daemon's lifetime:
+//
+//   - an alive orchestrator is ADOPTED in place: same id, still live, its runtime
+//     never torn down, and NO new session minted (the id-increment regression
+//     guard: adoption failure used to mint a fresh orchestrator id 14->15->16).
+//   - an alive worker is adopted as a no-op.
+//   - a worker whose runtime died with the daemon has its work captured (stashed
+//     into a preserve ref, restore marker written) and is relaunched on this same
+//     boot under its ORIGINAL id.
+//   - a truly-dead session with no restore marker is NOT resurrected.
+func TestReconcile_AdoptAcrossDaemonRestart(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{
+		"orch":    true, // orchestrator runtime survived the daemon exit
+		"w-alive": true, // worker runtime survived the daemon exit
+		// "w-dead" is absent -> that worker's runtime died with the daemon.
+	}}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/mer-3"}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	// Alive orchestrator: the promptless session whose adoption failure used to
+	// mint a fresh orchestrator id. It must be adopted in place.
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1", RuntimeHandleID: "orch"},
+	}
+	// Alive worker: adopted as a no-op.
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-2/root", WorkspacePath: "/ws/mer-2", RuntimeHandleID: "w-alive", AgentSessionID: "agent-2"},
+	}
+	// Dead worker: its runtime died with the daemon; capture + relaunch under same id.
+	st.sessions["mer-3"] = domain.SessionRecord{
+		ID: "mer-3", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-3/root", WorkspacePath: "/ws/mer-3", RuntimeHandleID: "w-dead", AgentSessionID: "agent-3"},
+	}
+	// Truly-dead session the user killed before restart (terminated, no marker).
+	st.sessions["mer-4"] = domain.SessionRecord{
+		ID: "mer-4", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-4/root", WorkspacePath: "/ws/mer-4"},
+	}
+
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Alive orchestrator + worker adopted in place: same id, still live.
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("alive orchestrator must be adopted in place, not terminated")
+	}
+	if st.sessions["mer-2"].IsTerminated {
+		t.Fatal("alive worker must be adopted in place, not terminated")
+	}
+	// No id increment: Reconcile must never mint a new session row.
+	if st.num != 0 {
+		t.Fatalf("Reconcile minted %d new session(s); adoption must reuse existing ids", st.num)
+	}
+	// Adopted runtimes were never torn down.
+	if rt.destroyed != 0 {
+		t.Fatalf("adopted sessions must not be destroyed; Destroy called %d times", rt.destroyed)
+	}
+	// Dead worker captured, then relaunched under its original id on this same boot.
+	if lcm.terminated["mer-3"] != 1 {
+		t.Fatalf("dead worker must be marked terminated once before relaunch; got %d", lcm.terminated["mer-3"])
+	}
+	if st.sessions["mer-3"].IsTerminated {
+		t.Fatal("dead worker must be relaunched (not terminated) after Reconcile")
+	}
+	if rt.created != 1 {
+		t.Fatalf("exactly one runtime relaunch expected (the dead worker); got %d", rt.created)
+	}
+	// One-shot restore marker consumed so it never outlives one restart (#2319).
+	if rows := st.worktrees["mer-3"]; len(rows) != 0 {
+		t.Fatalf("restore marker for mer-3 must be deleted after relaunch; got %+v", rows)
+	}
+	// Truly-dead, unmarked session is NOT resurrected.
+	if !st.sessions["mer-4"].IsTerminated {
+		t.Fatal("terminated session with no restore marker must stay terminated")
 	}
 }
 

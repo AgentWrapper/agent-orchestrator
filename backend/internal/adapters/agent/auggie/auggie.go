@@ -4,7 +4,7 @@
 //
 // Auggie is Augment Code's terminal coding agent (binary "auggie", installed via
 // `npm install -g @augmentcode/auggie`). It exposes a headless one-shot mode via
-// `--print` (alias `-p`) which runs a single instruction and exits — the mode AO
+// `--print` (alias `-p`) which runs a single instruction and exits -- the mode AO
 // uses to drive it unattended.
 //
 // Launch shape:
@@ -38,15 +38,12 @@ package auggie
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -55,6 +52,7 @@ const adapterID = "auggie"
 // Plugin is the Auggie agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -78,14 +76,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new headless Auggie session:
@@ -116,22 +106,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Auggie receives its prompt in the launch
-// command itself (the print-mode positional).
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
-}
-
-// GetAgentHooks is intentionally a no-op: Auggie has no hook or lifecycle event
-// system, so there is nothing to install. Activity reporting will require an
-// Auggie-specific integration once one exists.
-func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
-	return ctx.Err()
-}
-
 // GetRestoreCommand rebuilds the argv that continues an existing Auggie session
 // when a native session id is available in metadata:
 //
@@ -156,81 +130,28 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
-// SessionInfo is intentionally a no-op until Auggie session metadata can be
-// captured (Auggie exposes no hook surface to derive it from).
-func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.SessionInfo{}, false, err
-	}
-	return ports.SessionInfo{}, false, nil
-}
-
 // Auggie has no single blanket auto-approve/bypass flag; unattended tool/file
 // approval is governed by granular `--permission <tool>:<allow|deny>` rules, so
 // AO emits no approval flag and defers every mode to the user's Auggie config.
 // There is therefore no appendApprovalFlags helper for this adapter.
 
+var auggieBinarySpec = binaryutil.BinarySpec{
+	Label:         "auggie",
+	Names:         []string{"auggie"},
+	WinNames:      []string{"auggie.cmd", "auggie.exe", "auggie"},
+	UnixPaths:     []string{"/usr/local/bin/auggie", "/opt/homebrew/bin/auggie"},
+	UnixHomePaths: [][]string{{".local", "bin", "auggie"}, {".npm", "bin", "auggie"}, {".npm-global", "bin", "auggie"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "auggie.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "auggie.exe"}},
+	},
+}
+
 // ResolveAuggieBinary finds the `auggie` binary, searching PATH then common
 // install locations. It returns "auggie" as a last resort so callers get the
 // shell's normal command-not-found behavior if Auggie is absent.
 func ResolveAuggieBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"auggie.cmd", "auggie.exe", "auggie"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "auggie.cmd"),
-				filepath.Join(appData, "npm", "auggie.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("auggie: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("auggie"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/auggie",
-		"/opt/homebrew/bin/auggie",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "auggie"),
-			filepath.Join(home, ".npm", "bin", "auggie"),
-			filepath.Join(home, ".npm-global", "bin", "auggie"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("auggie: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, auggieBinarySpec)
 }
 
 func (p *Plugin) auggieBinary(ctx context.Context) (string, error) {
@@ -247,9 +168,4 @@ func (p *Plugin) auggieBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

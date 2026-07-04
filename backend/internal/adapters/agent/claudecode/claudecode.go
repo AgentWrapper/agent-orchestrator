@@ -17,19 +17,22 @@
 package claudecode
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -49,6 +52,7 @@ var claudeSessionNamespace = uuid.MustParse("a1f0c3d2-7b54-4e96-8a2b-0d9e1f2a3b4
 // Plugin is the Claude Code agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -60,6 +64,7 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -174,15 +179,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Claude Code receives its prompt in the
-// launch command itself.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
-}
-
 // PreLaunch is an optional capability the spawn engine invokes (via type
 // assertion) immediately before creating the session. Claude Code shows a
 // blocking "do you trust this folder?" dialog the first time it runs in any
@@ -258,15 +254,112 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[ports.MetadataKeyTitle],
-		Summary:        session.Metadata[ports.MetadataKeySummary],
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
+}
+
+// AuthStatus checks Claude Code's local authentication state without starting a
+// session.
+func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	binary, err := p.claudeBinary(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
 	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
+	if status, ok, err := claudeLocalAuthStatus(ctx); err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	} else if ok {
+		return status, nil
 	}
-	return info, true, nil
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(probeCtx, binary, "auth", "status").CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.AgentAuthStatusUnknown, probeCtx.Err()
+	}
+	if status, ok := claudeAuthStatusFromOutput(out); ok {
+		return status, nil
+	}
+	if err != nil {
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	return ports.AgentAuthStatusUnknown, nil
+}
+
+func claudeAuthStatusFromOutput(out []byte) (ports.AgentAuthStatus, bool) {
+	start := bytes.IndexByte(out, '{')
+	end := bytes.LastIndexByte(out, '}')
+	if start < 0 || end < start {
+		return ports.AgentAuthStatusUnknown, false
+	}
+	var status struct {
+		LoggedIn bool `json:"loggedIn"`
+	}
+	if json.Unmarshal(out[start:end+1], &status) != nil {
+		return ports.AgentAuthStatusUnknown, false
+	}
+	if status.LoggedIn {
+		return ports.AgentAuthStatusAuthorized, true
+	}
+	return ports.AgentAuthStatusUnauthorized, true
+}
+
+func claudeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
+		return ports.AgentAuthStatusAuthorized, true, nil
+	}
+	cfgPath, err := claudeConfigPath()
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	return claudeConfigAuthStatus(cfgPath)
+}
+
+func claudeConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return ports.AgentAuthStatusUnknown, false, nil
+	}
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return ports.AgentAuthStatusUnknown, false, nil
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	var hasSubscription bool
+	if raw := root["hasAvailableSubscription"]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &hasSubscription)
+	}
+	var userID string
+	if raw := root["userID"]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &userID)
+	}
+	if strings.TrimSpace(userID) != "" {
+		return ports.AgentAuthStatusAuthorized, true, nil
+	}
+	var oauthAccount map[string]any
+	if raw := root["oauthAccount"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &oauthAccount); err != nil {
+			return ports.AgentAuthStatusUnknown, false, err
+		}
+	}
+	if len(oauthAccount) == 0 {
+		return ports.AgentAuthStatusUnknown, false, nil
+	}
+	if hasSubscription {
+		return ports.AgentAuthStatusAuthorized, true, nil
+	}
+	if accountUUID, ok := oauthAccount["accountUuid"].(string); ok && strings.TrimSpace(accountUUID) != "" {
+		return ports.AgentAuthStatusAuthorized, true, nil
+	}
+	return ports.AgentAuthStatusUnknown, false, nil
 }
 
 // claudeSessionUUID maps an AO session id onto a stable Claude Code
@@ -302,7 +395,7 @@ func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {
 //
 // Empty/unrecognized normalizes to default, so no flag is emitted.
 func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to the user's settings.json defaultMode.
 	case ports.PermissionModeAcceptEdits:
@@ -328,74 +421,24 @@ func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
 	}
 }
 
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		// Empty or unrecognized: defer to settings.json (no flag).
-		return ports.PermissionModeDefault
-	}
+// claudeBinarySpec locates the claude binary: PATH first, then the native
+// installer's locations, npm global, Homebrew, and the claude-managed dir.
+var claudeBinarySpec = binaryutil.BinarySpec{
+	Label:         "claude",
+	Names:         []string{"claude"},
+	WinNames:      []string{"claude.cmd", "claude.exe", "claude"},
+	UnixPaths:     []string{"/usr/local/bin/claude", "/opt/homebrew/bin/claude"},
+	UnixHomePaths: [][]string{{".local", "bin", "claude"}, {".npm", "bin", "claude"}, {".claude", "local", "claude"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.exe"}},
+	},
 }
 
-// ResolveClaudeBinary finds the `claude` binary, searching PATH then a few
-// well-known install locations (the native installer's ~/.local/bin, npm
-// global, Homebrew). Returns "claude" as a last resort so callers get a
-// clear "command not found" rather than an empty argv.
+// ResolveClaudeBinary returns the path to the claude binary, or a wrapped
+// ports.ErrAgentBinaryNotFound when it is absent.
 func ResolveClaudeBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"claude.cmd", "claude.exe", "claude"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "claude.cmd"),
-				filepath.Join(appData, "npm", "claude.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-		}
-		return "", fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("claude"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/claude",
-		"/opt/homebrew/bin/claude",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "claude"),
-			filepath.Join(home, ".npm", "bin", "claude"),
-			filepath.Join(home, ".claude", "local", "claude"),
-		)
-	}
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, claudeBinarySpec)
 }
 
 func (p *Plugin) claudeBinary(ctx context.Context) (string, error) {
@@ -501,9 +544,4 @@ func ensureWorkspaceTrusted(configPath, workspacePath string) error {
 		return fmt.Errorf("claude-code: replace config: %w", err)
 	}
 	return nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

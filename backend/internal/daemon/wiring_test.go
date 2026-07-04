@@ -167,6 +167,58 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 }
 
+// TestStartTrackerIntake_RunsEvenWithoutEnabledProjects is a regression test:
+// startTrackerIntake used to scan projects once at call time and skip starting
+// the observer loop entirely when none had intake enabled yet. Poll() itself
+// already re-reads project config on every tick, so a project enabling
+// intake after daemon boot was silently never picked up until a restart. The
+// loop must always start; Poll is what decides whether there's work to do.
+func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lcm := lifecycle.New(store, nil)
+	cfg := config.Config{DataDir: t.TempDir()}
+	rt := runtimeselect.New(nil)
+	messenger := newSessionMessenger(store, rt, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	if err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startTrackerIntake(ctx, store, svc, log)
+
+	select {
+	case <-done:
+		t.Fatal("startTrackerIntake returned an already-closed channel; observer loop did not start")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("observer did not stop after context cancellation")
+	}
+}
+
+func TestTrackerTokenSourcePrefersAOGitHubToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "ao-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	token, err := (&trackerTokenSource{}).Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "ao-token" {
+		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
+	}
+}
+
 type captureRuntimeSender struct {
 	handle  ports.RuntimeHandle
 	message string

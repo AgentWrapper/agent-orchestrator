@@ -24,26 +24,30 @@ package devin
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const (
-	devinTitleMetadataKey   = "title"
-	devinSummaryMetadataKey = "summary"
-)
+var devinBinarySpec = binaryutil.BinarySpec{
+	Label:         "devin",
+	Names:         []string{"devin"},
+	WinNames:      []string{"devin.cmd", "devin.exe", "devin"},
+	UnixPaths:     []string{"/usr/local/bin/devin", "/opt/homebrew/bin/devin"},
+	UnixHomePaths: [][]string{{".devin", "bin", "devin"}, {".local", "bin", "devin"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinHome, Parts: []string{".devin", "bin", "devin.exe"}},
+	},
+}
 
 // Plugin is the Devin for Terminal agent adapter.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -69,14 +73,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
 // GetLaunchCommand builds `devin [--permission-mode <mode>] -p <prompt>`.
 // Prompt is delivered via -p (in command, non-interactive print mode).
 //
@@ -97,14 +93,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that the prompt is delivered in the launch command.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetAgentHooks reuses the Claude Code hook installer because Devin for Terminal
@@ -161,74 +149,13 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[devinTitleMetadataKey],
-		Summary:        session.Metadata[devinSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // ResolveDevinBinary finds the `devin` binary (Cognition Devin for Terminal CLI).
 func ResolveDevinBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"devin.cmd", "devin.exe", "devin"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates,
-				filepath.Join(home, ".devin", "bin", "devin.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("devin: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("devin"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/devin",
-		"/opt/homebrew/bin/devin",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".devin", "bin", "devin"),
-			filepath.Join(home, ".local", "bin", "devin"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("devin: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, devinBinarySpec)
 }
 
 func (p *Plugin) devinBinary(ctx context.Context) (string, error) {
@@ -251,7 +178,7 @@ func (p *Plugin) devinBinary(ctx context.Context) (string, error) {
 // permission values (`auto`/normal and `dangerous`/bypass), per
 // `devin --permission-mode -h`.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to ~/.config/devin/config.json (default mode is auto).
 	case ports.PermissionModeAcceptEdits:
@@ -263,21 +190,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--permission-mode", "dangerous")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

@@ -236,7 +236,7 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 	if err != nil {
 		return nil, err
 	}
-	return ptyexec.Spawn(ctx, argv, nil, rows, cols)
+	return ptyexec.Spawn(ctx, argv, attachEnv(os.Environ()), rows, cols)
 }
 
 // attachCommand returns the argv to attach a terminal to the session.
@@ -247,6 +247,17 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 		return nil, err
 	}
 	return []string{r.binary, "attach-session", "-t", id}, nil
+}
+
+func attachEnv(base []string) []string {
+	env := append([]string(nil), base...)
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "TERM=") {
+			env[i] = "TERM=xterm-256color"
+			return env
+		}
+	}
+	return append(env, "TERM=xterm-256color")
 }
 
 // run wraps runner.Run with a per-call timeout context.

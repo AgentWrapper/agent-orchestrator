@@ -85,18 +85,27 @@ type roleOverride struct {
 	AgentConfig agentConfig `json:"agentConfig,omitempty"`
 }
 
+// trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
+type trackerIntakeConfig struct {
+	Enabled  bool   `json:"enabled,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Repo     string `json:"repo,omitempty"`
+	Assignee string `json:"assignee,omitempty"`
+}
+
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch string            `json:"defaultBranch,omitempty"`
-	SessionPrefix string            `json:"sessionPrefix,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	Symlinks      []string          `json:"symlinks,omitempty"`
-	PostCreate    []string          `json:"postCreate,omitempty"`
-	AgentConfig   agentConfig       `json:"agentConfig,omitempty"`
-	Worker        roleOverride      `json:"worker,omitempty"`
-	Orchestrator  roleOverride      `json:"orchestrator,omitempty"`
+	DefaultBranch string              `json:"defaultBranch,omitempty"`
+	SessionPrefix string              `json:"sessionPrefix,omitempty"`
+	Env           map[string]string   `json:"env,omitempty"`
+	Symlinks      []string            `json:"symlinks,omitempty"`
+	PostCreate    []string            `json:"postCreate,omitempty"`
+	AgentConfig   agentConfig         `json:"agentConfig,omitempty"`
+	Worker        roleOverride        `json:"worker,omitempty"`
+	Orchestrator  roleOverride        `json:"orchestrator,omitempty"`
+	TrackerIntake trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -115,6 +124,9 @@ type projectSetConfigOptions struct {
 	env               []string
 	symlink           []string
 	postCreate        []string
+	trackerIntake     bool
+	trackerRepo       string
+	trackerAssignee   string
 	configJSON        string
 	clear             bool
 	json              bool
@@ -259,7 +271,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
 		Long: "Replace a project's per-project config (branch, session prefix, env, " +
-			"symlinks, post-create, agent model/permissions, role overrides). The config " +
+			"symlinks, post-create, agent model/permissions, role overrides, tracker intake). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags, pass the whole object with --config-json, or --clear " +
 			"to remove all config.",
@@ -300,6 +312,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
+	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
+	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
+	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -335,11 +350,24 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		AgentConfig:   agentConfig{Model: opts.model, Permissions: opts.permission},
 		Worker:        roleOverride{Agent: opts.workerAgent},
 		Orchestrator:  roleOverride{Agent: opts.orchestratorAgent},
+		TrackerIntake: trackerIntakeConfig{
+			Enabled:  opts.trackerIntake,
+			Provider: trackerProviderForFlags(opts),
+			Repo:     opts.trackerRepo,
+			Assignee: opts.trackerAssignee,
+		},
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}
 	}
 	return cfg, nil
+}
+
+func trackerProviderForFlags(opts projectSetConfigOptions) string {
+	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
+		return "github"
+	}
+	return ""
 }
 
 // parseEnvPairs turns repeated KEY=VALUE flags into a map.

@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
@@ -6,16 +6,17 @@ import {
 	LayoutDashboard,
 	Moon,
 	MoreVertical,
+	Pencil,
 	Plus,
 	Search,
 	Settings,
 	Sun,
 	Trash2,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
 	attentionZone,
-	isOrchestratorSession,
+	newestActiveOrchestrator,
 	sessionIsActive,
 	type WorkspaceSession,
 	type WorkspaceSummary,
@@ -24,6 +25,7 @@ import {
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
 import {
@@ -70,12 +72,16 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const HOVER_ACTION_CLASS =
 	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-[15px]";
 
+// Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
+// `--name` flag, so inline edits never round-trip a value the API would reject.
+const MAX_DISPLAY_NAME_LEN = 20;
+
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCreateProject: (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+	onCreateProject: (input: { path: string } & CreateProjectAgentSelection) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -145,7 +151,17 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-	// agent-orchestrator's sidebar resize: drag the right edge (200–420px,
+	// Fetch the running app version to derive the build channel. Channel is
+	// identity: derived from the version string, not the update-channel setting
+	// (the setting can be changed mid-session; the binary cannot).
+	const { data: appVersion } = useQuery({
+		queryKey: ["app-version"],
+		queryFn: () => aoBridge.app.getVersion(),
+		staleTime: Infinity,
+	});
+	const isNightly = typeof appVersion === "string" && appVersion.includes("-nightly.");
+
+	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
 	// which the provider forwards into shadcn's --sidebar-width.
 	const { onPointerDown: onResizePointerDown, onDoubleClick: onResizeDoubleClick } = useResizable({
@@ -193,6 +209,17 @@ export function Sidebar({
 					<span className="min-w-0 flex-1 truncate text-[14px] font-bold tracking-[-0.015em] text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
+					{isNightly && (
+						<span
+							className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none group-data-[collapsible=icon]:hidden"
+							style={{
+								color: "var(--purple)",
+								background: "color-mix(in srgb, var(--purple) 12%, transparent)",
+							}}
+						>
+							nightly
+						</span>
+					)}
 					{/* On macOS the toggle lives in the titlebar cluster instead. */}
 					{!isMac && (
 						<Tooltip>
@@ -399,16 +426,19 @@ function ProjectItem({
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
-	const orchestrator = workspace.sessions.find((s) => isOrchestratorSession(s) && sessionIsActive(s));
+	const orchestrator = newestActiveOrchestrator(workspace.sessions);
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
 	const openOrchestrator = async () => {
+		if (isProjectRestarting) return;
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
@@ -519,7 +549,7 @@ function ProjectItem({
 						<button
 							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
 							className={HOVER_ACTION_CLASS}
-							disabled={isSpawning}
+							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
@@ -527,7 +557,7 @@ function ProjectItem({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>
-						{isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
+						{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
 					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>
@@ -562,37 +592,119 @@ function ProjectItem({
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
 				<SidebarMenuSub className="mx-0 ml-[18px] translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
-					{sessions.map((session) => {
-						const active = selection.activeSessionId === session.id;
-						return (
-							<SidebarMenuSubItem key={session.id}>
-								<button
-									aria-current={active ? "page" : undefined}
-									aria-label={`Open ${session.title}`}
-									className={cn(
-										"relative flex h-auto w-full items-center gap-[9px] rounded-[4px] py-[5px] pl-2.5 pr-1.5 text-left outline-hidden transition-[color]",
-										"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
-										"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-										active && "text-foreground before:bg-accent",
-									)}
-									onClick={() => selection.goSession(workspace.id, session.id)}
-									type="button"
-								>
-									<SessionDot session={session} />
-									<span className="min-w-0 flex-1">
-										<span
-											className={cn("block truncate text-[12px]", active ? "text-foreground" : "text-muted-foreground")}
-										>
-											{session.title}
-										</span>
-									</span>
-								</button>
-							</SidebarMenuSubItem>
-						);
-					})}
+					{sessions.map((session) => (
+						<SessionRow
+							key={session.id}
+							session={session}
+							active={selection.activeSessionId === session.id}
+							onOpen={() => selection.goSession(workspace.id, session.id)}
+						/>
+					))}
 				</SidebarMenuSub>
 			)}
 		</SidebarMenuItem>
+	);
+}
+
+// One worker-session row. Reads as a link by default; a hover-revealed pencil
+// flips the label into an inline input (Enter/blur saves, Escape cancels) that
+// persists through the daemon rename endpoint, so the new name survives reload.
+function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+	const queryClient = useQueryClient();
+	const [isEditing, setIsEditing] = useState(false);
+	const [draft, setDraft] = useState(session.title);
+	// Escape must not be swallowed by the blur-to-save path: the keydown handler
+	// blurs the input, so it flags a cancel here for onBlur to honour.
+	const cancelledRef = useRef(false);
+
+	const startEditing = () => {
+		setDraft(session.title);
+		setIsEditing(true);
+	};
+
+	const commit = async () => {
+		if (cancelledRef.current) {
+			cancelledRef.current = false;
+			setIsEditing(false);
+			return;
+		}
+		setIsEditing(false);
+		const name = draft.trim();
+		if (!name || name === session.title) return;
+		try {
+			await renameSession(session.id, name);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		} catch (err) {
+			console.error("Failed to rename session:", err);
+		}
+	};
+
+	if (isEditing) {
+		return (
+			<SidebarMenuSubItem>
+				<div className="relative flex h-auto w-full items-center gap-[9px] rounded-[4px] py-[5px] pl-2.5 pr-1.5">
+					<SessionDot session={session} />
+					<input
+						aria-label={`Rename ${session.title}`}
+						autoFocus
+						className="min-w-0 flex-1 rounded-[3px] border border-accent bg-transparent px-1 py-px text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
+						maxLength={MAX_DISPLAY_NAME_LEN}
+						onBlur={() => void commit()}
+						onChange={(e) => setDraft(e.target.value)}
+						onFocus={(e) => e.currentTarget.select()}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								e.preventDefault();
+								e.currentTarget.blur();
+							} else if (e.key === "Escape") {
+								e.preventDefault();
+								cancelledRef.current = true;
+								e.currentTarget.blur();
+							}
+						}}
+						value={draft}
+					/>
+				</div>
+			</SidebarMenuSubItem>
+		);
+	}
+
+	return (
+		<SidebarMenuSubItem>
+			<button
+				aria-current={active ? "page" : undefined}
+				aria-label={`Open ${session.title}`}
+				className={cn(
+					"relative flex h-auto w-full items-center gap-[9px] rounded-[4px] py-[5px] pl-2.5 pr-7 text-left outline-hidden transition-[color]",
+					"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
+					"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					active && "text-foreground before:bg-accent",
+				)}
+				onClick={onOpen}
+				type="button"
+			>
+				<SessionDot session={session} />
+				<span className="min-w-0 flex-1">
+					<span className={cn("block truncate text-[12px]", active ? "text-foreground" : "text-muted-foreground")}>
+						{session.title}
+					</span>
+				</span>
+			</button>
+			{/* Pencil reveals on row hover/focus (named group on SidebarMenuSubItem);
+			it sits beside the row button rather than nested inside it. */}
+			<button
+				aria-label={`Rename ${session.title}`}
+				className={cn(
+					HOVER_ACTION_CLASS,
+					"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
+					"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
+				)}
+				onClick={startEditing}
+				type="button"
+			>
+				<Pencil aria-hidden="true" />
+			</button>
+		</SidebarMenuSubItem>
 	);
 }
 

@@ -1,90 +1,35 @@
 # Telemetry
 
-Agent Orchestrator includes telemetry for understanding product usage, reliability, and failure modes. Telemetry is implemented as **best-effort structured events** and is controlled by environment variables.
+The Electron renderer sends anonymous usage events to PostHog automatically. The daemon is not involved.
 
-## What We Collect
+## What is collected
 
-Telemetry events are structured records that capture:
+- App activation and renderer load events
+- Route views (home, project board, session detail, etc.)
+- Project add / remove actions (project path is SHA-256 hashed before transmission)
+- Unhandled renderer exceptions (error name and surface only)
 
-- **Event Name** — The type of event (e.g., session lifecycle events, daemon operations, errors)
-- **Source** — The component that emitted the event
-- **Timestamp** — When the event occurred
-- **Level** — Severity level (Debug, Info, Warn, Error)
-- **Context** — Project ID, Session ID, and Request ID when applicable
-- **Payload** — Event-specific metadata
+PostHog session recording is also enabled. Network request names are masked before recording.
 
-**We do not collect:**
+## Privacy
 
-- Code from your repositories
-- File contents or workspace data
-- Authentication credentials or API keys
-- Personal information beyond what is necessary for operational analytics
+Before any event or recording is transmitted:
 
-## Storage and Transmission
+- Absolute file paths (`/home/…`, `/Users/…`, `C:\…`) are replaced with `[redacted-local-path]`
+- Local URLs (`file://`, `app://renderer`, `localhost`, `127.0.0.1`, `[::1]`) are replaced with `[redacted-local-url]`
+- Project IDs are one-way hashed (SHA-256) and never sent in plain text
 
-### Local Storage (Default)
+## Install ID
 
-By default, all telemetry events are stored locally in a SQLite database at:
+On first run, a random install identifier is generated and stored at `~/.ao/data/telemetry_install_id` (or `$AO_DATA_DIR/telemetry_install_id`). This ID is used to deduplicate events across sessions. It is not linked to any personal account.
+
+## Overriding the PostHog endpoint or key
+
+The key and host are baked in at build time. To point at your own PostHog instance, set these environment variables before building:
 
 ```
-~/.ao/data/telemetry.db
+VITE_AO_POSTHOG_KEY=phc_yourkey
+VITE_AO_POSTHOG_HOST=https://your-posthog-host.com
 ```
 
-No data leaves your machine unless you explicitly configure remote telemetry.
-
-### Remote Telemetry (Opt-In)
-
-You may optionally configure remote telemetry via PostHog by setting the `POSTHOG_API_KEY` environment variable. When configured:
-
-- Events are transmitted to PostHog for aggregate analytics
-- Transmission is best-effort — failures do not affect daemon operation
-- Events are batched to minimize network overhead
-
-## Configuration
-
-Telemetry behavior is controlled by these environment variables:
-
-| Variable             | Default                   | Purpose                                                |
-| -------------------- | ------------------------- | ------------------------------------------------------ |
-| `AO_TELEMETRY_LEVEL` | `info`                    | Minimum event level to emit (debug, info, warn, error) |
-| `POSTHOG_API_KEY`    | unset                     | PostHog API key for remote telemetry                   |
-| `POSTHOG_HOST`       | `https://app.posthog.com` | PostHog host endpoint                                  |
-| `AO_DATA_DIR`        | `~/.ao/data`              | Directory for local telemetry database                 |
-
-## Disabling Telemetry
-
-To completely disable telemetry:
-
-```bash
-export AO_TELEMETRY_LEVEL=none
-```
-
-This prevents both local storage and any remote transmission of telemetry events.
-
-## Event Examples
-
-Typical telemetry events include:
-
-- Session spawned, terminated, or restored
-- Daemon started or stopped
-- Agent harness lifecycle events
-- HTTP request errors
-- Runtime failures
-- SCM observation errors
-
-These events help us understand:
-
-- How agents are being used
-- Where failures occur
-- How to improve reliability
-- Which features need attention
-
-## Privacy Commitment
-
-- Local telemetry is stored on your machine only
-- Remote telemetry is opt-in via explicit environment variable configuration
-- We do not collect code, file contents, or credentials
-- Events are designed for aggregate product analytics, not individual surveillance
-- PostHog configuration respects your privacy settings and data retention policies
-
-For questions or concerns about telemetry, please open an issue on GitHub or join our Discord community.
+Setting `VITE_AO_POSTHOG_KEY` to an empty string disables transmission entirely.
