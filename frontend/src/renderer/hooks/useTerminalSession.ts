@@ -32,6 +32,7 @@ export type AttachableTerminal = {
 	 * with wheel scroll dead (see XtermTerminal's CLEAR_SEQUENCE).
 	 */
 	clear: () => void;
+	focus: () => void;
 	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
