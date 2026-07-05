@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -34,6 +34,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 
 import { SessionsBoard } from "../../components/SessionsBoard";
 import { ShellProvider, type ShellContextValue } from "../../lib/shell-context";
+import { useUiStore } from "../../stores/ui-store";
 
 type Project = { id: string; name: string; path: string };
 type Session = Record<string, unknown>;
@@ -54,6 +55,18 @@ const workerSession: Session = {
 	displayName: "fix the bug",
 	harness: "claude-code",
 	kind: "worker",
+	status: "working",
+	isTerminated: false,
+	updatedAt: "2026-07-04T10:00:00Z",
+	prs: [],
+};
+
+const orchestratorSession: Session = {
+	id: "proj-1-orchestrator",
+	projectId: "proj-1",
+	displayName: "orchestrator",
+	harness: "claude-code",
+	kind: "orchestrator",
 	status: "working",
 	isTerminated: false,
 	updatedAt: "2026-07-04T10:00:00Z",
@@ -86,6 +99,11 @@ const columnCount = () => document.querySelectorAll("section").length;
 beforeEach(() => {
 	vi.clearAllMocks();
 	createProjectMock.mockResolvedValue(undefined);
+	useUiStore.setState({
+		orchestratorReplacementErrors: {},
+		orchestratorStartupErrors: {},
+		restartingProjectIds: new Set(),
+	});
 });
 
 describe("global board first launch", () => {
@@ -154,6 +172,81 @@ describe("project board with no sessions", () => {
 		await userEvent.click(spawnButton);
 
 		expect(await screen.findByText(/branch is already checked out/)).toBeInTheDocument();
+	});
+
+	it("shows the project creation startup error after navigating to the project board", async () => {
+		respondWith([project], []);
+		useUiStore
+			.getState()
+			.setOrchestratorStartupError(
+				"proj-1",
+				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
+			);
+		renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		expect(await screen.findByText(/Project added, but orchestrator did not start/)).toBeInTheDocument();
+		expect(screen.getByText(/branch is already checked out/)).toBeInTheDocument();
+	});
+
+	it("clears the project creation startup error when retrying orchestrator spawn", async () => {
+		respondWith([project], []);
+		useUiStore
+			.getState()
+			.setOrchestratorStartupError(
+				"proj-1",
+				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
+			);
+		spawnOrchestratorMock.mockResolvedValue("proj-1-orchestrator");
+		renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		await screen.findByText(/Project added, but orchestrator did not start/);
+		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
+		await userEvent.click(spawnButton);
+
+		await waitFor(() =>
+			expect(screen.queryByText(/Project added, but orchestrator did not start/)).not.toBeInTheDocument(),
+		);
+		expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toBeUndefined();
+	});
+
+	it("clears a project creation startup error when switching projects", async () => {
+		const otherProject: Project = { id: "proj-2", name: "other-app", path: "/repo/other-app" };
+		respondWith([project, otherProject], []);
+		useUiStore
+			.getState()
+			.setOrchestratorStartupError(
+				"proj-1",
+				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
+			);
+		const { rerender } = renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		await screen.findByText(/Project added, but orchestrator did not start/);
+		rerender(
+			<QueryClientProvider client={lastQueryClient!}>
+				<ShellProvider value={lastShell!}>
+					<SessionsBoard projectId="proj-2" />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText("No sessions yet");
+		await waitFor(() => expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toBeUndefined());
+		expect(screen.queryByText(/Project added, but orchestrator did not start/)).not.toBeInTheDocument();
+	});
+
+	it("clears a project creation startup error once an orchestrator exists", async () => {
+		respondWith([project], [orchestratorSession]);
+		useUiStore
+			.getState()
+			.setOrchestratorStartupError(
+				"proj-1",
+				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
+			);
+		renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		await screen.findByText("No sessions yet");
+		await waitFor(() => expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toBeUndefined());
+		expect(screen.queryByText(/Project added, but orchestrator did not start/)).not.toBeInTheDocument();
 	});
 
 	it("clears a stale spawn error when switching projects", async () => {

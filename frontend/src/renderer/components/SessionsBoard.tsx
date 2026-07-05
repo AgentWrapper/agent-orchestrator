@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
@@ -88,13 +88,31 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const orchestratorStartupError = useUiStore((state) =>
+		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
+	);
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
+	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
 	useEffect(() => setSpawnError(null), [projectId]);
+	const previousProjectIdRef = useRef(projectId);
+	useEffect(() => {
+		const previousProjectId = previousProjectIdRef.current;
+		if (previousProjectId && previousProjectId !== projectId) {
+			setOrchestratorStartupError(previousProjectId, null);
+		}
+		previousProjectIdRef.current = projectId;
+	}, [projectId, setOrchestratorStartupError]);
+	useEffect(() => {
+		if (projectId && orchestrator && orchestratorStartupError) {
+			setOrchestratorStartupError(projectId, null);
+		}
+	}, [orchestrator, orchestratorStartupError, projectId, setOrchestratorStartupError]);
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -129,10 +147,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			return;
 		}
 		setSpawnError(null);
+		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
 			const sessionId = await spawnOrchestrator(projectId);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			setOrchestratorStartupError(projectId, null);
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
@@ -169,9 +189,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{spawnError && !showProjectEmpty && (
-				<span className="dashboard-app-header__kill-error max-w-[320px] truncate" title={spawnError}>
-					{spawnError}
+			{visibleSpawnError && !showProjectEmpty && (
+				<span className="dashboard-app-header__kill-error max-w-[320px] truncate" title={visibleSpawnError}>
+					{visibleSpawnError}
 				</span>
 			)}
 			<button
@@ -240,7 +260,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						isProjectRestarting={isProjectRestarting}
 						onNewTask={() => setIsNewTaskOpen(true)}
 						onOpenOrchestrator={() => void openOrchestrator()}
-						spawnError={spawnError}
+						spawnError={visibleSpawnError}
 					/>
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">

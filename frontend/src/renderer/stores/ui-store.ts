@@ -15,6 +15,7 @@ type UiState = {
 	theme: Theme;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, string>;
+	orchestratorStartupErrors: Record<string, string>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setTheme: (theme: Theme) => void;
 	toggleTheme: () => void;
@@ -22,6 +23,7 @@ type UiState = {
 	toggleInspector: () => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
+	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -64,6 +66,7 @@ export const useUiStore = create<UiState>((set) => ({
 	theme: initialTheme(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
+	orchestratorStartupErrors: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setTheme: (theme) => {
 		getLocalStorage()?.setItem(themeStorageKey, theme);
@@ -106,5 +109,15 @@ export const useUiStore = create<UiState>((set) => ({
 				delete orchestratorReplacementErrors[projectId];
 			}
 			return { orchestratorReplacementErrors };
+		}),
+	setOrchestratorStartupError: (projectId, message) =>
+		set((state) => {
+			const orchestratorStartupErrors = { ...state.orchestratorStartupErrors };
+			if (message) {
+				orchestratorStartupErrors[projectId] = message;
+			} else {
+				delete orchestratorStartupErrors[projectId];
+			}
+			return { orchestratorStartupErrors };
 		}),
 }));
