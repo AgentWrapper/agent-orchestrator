@@ -543,11 +543,8 @@ body::-webkit-scrollbar,
 @media (prefers-reduced-motion: reduce) {
 	.agents-marquee-track {
 		animation: none;
-		flex-wrap: wrap;
-		width: auto;
-		justify-content: center;
-		padding-left: 1.25rem;
-		padding-right: 1.25rem;
+		flex-wrap: nowrap;
+		width: max-content;
 	}
 }
 
