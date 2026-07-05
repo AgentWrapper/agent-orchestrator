@@ -180,6 +180,22 @@ func (f *fakeLauncher) Stop(_ context.Context, handleID string) error {
 	return nil
 }
 
+type blockingSpawnLauncher struct {
+	fakeLauncher
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *blockingSpawnLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
+	f.gotSpec = spec
+	f.specs = append(f.specs, spec)
+	close(f.entered)
+	<-f.release
+	f.spawned = true
+	f.spawnCount++
+	return f.handle, nil
+}
+
 func liveWorker() domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:        "mer-1",
@@ -265,6 +281,61 @@ func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
 	}
 	if len(store.runs) != 1 {
 		t.Errorf("recorded review runs = %d, want 1", len(store.runs))
+	}
+}
+
+func TestListWaitsForTriggerBeforeFailingDeadReviewer(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-old"},
+	}
+	launcher := &blockingSpawnLauncher{
+		fakeLauncher: fakeLauncher{handle: "review-mer-1", alive: false},
+		entered:      make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	triggerDone := make(chan error, 1)
+	go func() {
+		_, err := eng.Trigger(context.Background(), "mer-1")
+		triggerDone <- err
+	}()
+	<-launcher.entered
+
+	listDone := make(chan struct {
+		reviews SessionReviews
+		err     error
+	}, 1)
+	go func() {
+		got, err := eng.List(context.Background(), "mer-1")
+		listDone <- struct {
+			reviews SessionReviews
+			err     error
+		}{reviews: got, err: err}
+	}()
+
+	select {
+	case got := <-listDone:
+		t.Fatalf("List returned while Trigger was still spawning: got=%+v err=%v", got.reviews, got.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(launcher.release)
+	if err := <-triggerDone; err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	got := <-listDone
+	if got.err != nil {
+		t.Fatalf("List: %v", got.err)
+	}
+	if got.reviews.ReviewerHandleID != "review-mer-1" {
+		t.Fatalf("reviewer handle = %q, want fresh handle", got.reviews.ReviewerHandleID)
+	}
+	if len(got.reviews.Runs) != 1 || got.reviews.Runs[0].Status != domain.ReviewRunRunning {
+		t.Fatalf("runs = %+v, want still-running fresh run", got.reviews.Runs)
+	}
+	if store.runs[0].Status != domain.ReviewRunRunning {
+		t.Fatalf("stored run was failed during trigger/list race: %+v", store.runs[0])
 	}
 }
 
