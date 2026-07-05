@@ -128,12 +128,12 @@ You can also download the latest desktop build for your platform:
 <table>
   <tr>
     <td width="33%" align="center">
-      <a href="https://x.com/agent_wrapper/status/2025986105485733945">
+      <a href="https://x.com/agent_wrapper/status/2026329204405723180">
         <img src="screenshots/tweet2.png" height="330" alt="Agent Orchestrator journey screenshot one" />
       </a>
     </td>
     <td width="37.5%" align="center">
-      <a href="https://x.com/agent_wrapper/status/2026329204405723180">
+      <a href="https://x.com/agent_wrapper/status/2025986105485733945">
         <img src="screenshots/tweet1.png" height="330" alt="Agent Orchestrator journey screenshot two" />
       </a>
     </td>
