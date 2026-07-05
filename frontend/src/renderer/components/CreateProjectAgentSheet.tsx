@@ -58,6 +58,11 @@ export function CreateProjectAgentSheet({
 			? agentsQuery.error.message
 			: "Could not load agent catalog."
 		: null;
+	const displayError = refreshAgentsMutation.isError
+		? refreshAgentsMutation.error instanceof Error
+			? refreshAgentsMutation.error.message
+			: "Could not refresh agent catalog."
+		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
@@ -143,24 +148,17 @@ export function CreateProjectAgentSheet({
 							</button>
 						</div>
 
-						{agentsError && (
+						{displayError && (
 							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
-								<span>{agentsError}</span>
+								<span>{displayError}</span>
 								<button
 									type="button"
-									className="shrink-0 rounded text-foreground underline-offset-2 hover:underline"
+									className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+									disabled={refreshAgentsMutation.isPending}
 									onClick={() => refreshAgentsMutation.mutate()}
 								>
 									Retry
 								</button>
-							</div>
-						)}
-
-						{refreshAgentsMutation.isError && (
-							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
-								{refreshAgentsMutation.error instanceof Error
-									? refreshAgentsMutation.error.message
-									: "Could not refresh agent catalog."}
 							</div>
 						)}
 
