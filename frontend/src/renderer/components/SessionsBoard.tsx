@@ -117,7 +117,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId);
+			const sessionId = await spawnOrchestrator(projectId, "board");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
