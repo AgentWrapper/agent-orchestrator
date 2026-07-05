@@ -18,9 +18,8 @@ import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
-import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
-import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 import { useUiStore } from "../stores/ui-store";
 
 type SessionsBoardProps = {
@@ -352,15 +351,14 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 							</div>
 						)}
 
-						<div className="mt-3.5 border-t border-border/10 pt-3 font-mono text-[10.5px] text-passive transition-colors group-hover:border-border/55 group-hover:text-foreground">
+						<div
+							className="mt-3.5 border-t border-border/10 pt-3 font-mono text-[12px] text-passive transition-colors group-hover:border-border/55 group-hover:text-foreground"
+							onClick={(event) => event.stopPropagation()}
+						>
 							{prSummaries.length > 0 ? (
 								<div className="flex flex-col gap-2.5">
-									{prSummaries.map((prSummary, index) => (
-										<BoardPRSummary
-											className={cn(index > 0 && "border-t border-border/5 pt-2.5")}
-											key={prSummary.number}
-											pr={prSummary}
-										/>
+									{groupPRsByLifecycle(prSummaries).map((group) => (
+										<BoardPRGroup group={group} key={group.status.label} />
 									))}
 								</div>
 							) : (
@@ -376,24 +374,54 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	);
 }
 
-function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
-	const diffSummary = prDiffSummary(pr);
+type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
+type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
+
+function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 	return (
-		<div className={cn("flex min-w-0 flex-col gap-1", className)}>
-			<span className="text-[10px] text-muted-foreground/75 transition-colors group-hover:text-foreground">
-				PR #{pr.number} · {pr.state}
-			</span>
-			{diffSummary ? <span className="truncate text-passive/85 transition-colors group-hover:text-foreground">{diffSummary}</span> : null}
-			<PRStatusStrip pr={pr} />
-			<PRAttentionPanel
-				className="mt-1 border-t border-border/10 pt-1 transition-colors group-hover:border-border/55"
-				maxItems={2}
-				pr={pr}
-			/>
-		</div>
+		<span
+			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
+			className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5"
+		>
+			<span className="text-passive/75 transition-colors group-hover:text-foreground">PR</span>
+			{group.prs.map((pr, index) => (
+				<span key={pr.number}>
+					<a
+						className="font-semibold text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+						href={prBrowserUrl(pr)}
+						rel="noreferrer"
+						target="_blank"
+					>
+						#{pr.number}
+					</a>
+					{index < group.prs.length - 1 ? "," : null}
+				</span>
+			))}
+			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
+		</span>
 	);
 }
 
+function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
+	const groups = new Map<BoardPRLifecycleStatus["label"], BoardPRGroup>();
+	for (const pr of prs) {
+		const status = prLifecycleStatus(pr);
+		const group = groups.get(status.label);
+		if (group) {
+			group.prs.push(pr);
+		} else {
+			groups.set(status.label, { status, prs: [pr] });
+		}
+	}
+	return Array.from(groups.values());
+}
+
+function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
+	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
+	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
+	if (pr.state === "closed") return { label: "closed", className: "text-error" };
+	return { label: "open", className: "text-success" };
+}
 function sessionBadgeTextClass(status: WorkspaceSession["status"]): string {
 	switch (status) {
 		case "working":
