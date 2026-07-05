@@ -697,7 +697,7 @@ function BrowserView({
 		return (
 			<div role="tabpanel">
 				<div className="inspector-empty inspector-empty--browser">
-					<p>Browser preview is in the center pane.</p>
+					<p>Browser preview is maximized.</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
 						Return to panel
 					</Button>
