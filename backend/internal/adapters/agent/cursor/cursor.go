@@ -61,11 +61,12 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // would silence the interactive UI AO's terminal pane is meant to show).
 // `--trust` is deliberately NOT appended here: cursor-agent rejects it outside
 // print/headless mode ("--trust can only be used with --print/headless
-// mode"). Cursor has no interactive-mode equivalent to auto-skip the
-// workspace-trust prompt (open cursor-agent feature request), so a new
-// workspace's first interactive launch will show that prompt in the terminal
-// pane for the user to accept manually. The prompt is positional and must
-// come last, so a leading "-" is not read as a flag.
+// mode"). Cursor has no interactive-mode flag to auto-skip the workspace-trust
+// prompt, so instead ensureWorkspaceTrusted pre-seeds cursor-agent's trust
+// marker for this AO-spawned worker workspace (see trust.go) — best-effort, so
+// a seed failure degrades to the one-time prompt rather than blocking launch.
+// The prompt is positional and must come last, so a leading "-" is not read as
+// a flag.
 //
 // Cursor has no inline/file system-prompt flag: it reads workspace rule files
 // (AGENTS.md, .cursor/rules, CLAUDE.md). SystemPrompt/SystemPromptFile are
@@ -75,6 +76,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if err != nil {
 		return nil, err
 	}
+
+	// Best-effort: suppress the interactive workspace-trust prompt for this
+	// AO-spawned worker workspace. A failure leaves the one-time prompt intact.
+	_ = ensureWorkspaceTrusted(cfg.WorkspacePath)
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
@@ -94,9 +99,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 //	cursor-agent [perm flags] --resume <id>
 //
 // Like GetLaunchCommand, this runs interactively (no -p/--output-format,
-// no --trust — see GetLaunchCommand for why) so resumed sessions render the
-// normal Cursor Agent TUI. ok is false when the hook-derived native session id
-// has not landed yet, so callers can fall back to fresh launch behavior.
+// no --trust — see GetLaunchCommand for why, including the pre-seeded trust
+// marker) so resumed sessions render the normal Cursor Agent TUI. ok is false
+// when the hook-derived native session id has not landed yet, so callers can
+// fall back to fresh launch behavior.
 // ports.RestoreConfig carries no prompt, so none is appended.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
@@ -111,6 +117,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
+
+	// Best-effort: keep the resumed session's workspace trusted (idempotent when
+	// already seeded at launch) so resume never re-triggers the trust prompt.
+	_ = ensureWorkspaceTrusted(cfg.Session.WorkspacePath)
 
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
