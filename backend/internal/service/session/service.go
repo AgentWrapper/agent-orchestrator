@@ -391,7 +391,27 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 
 // SwitchHarness swaps a live session's agent in place and returns the updated
 // read model. model, when non-empty, overrides the agent model for the new launch.
+//
+// A merged session is locked: it must never switch. "merged" is a DERIVED
+// read-model status (from PR facts), so the internal manager — which sees only
+// durable session/workspace facts — cannot enforce it. Reject it here so direct
+// API/CLI callers are held to the same rule as the inspector UI.
 func (s *Service) SwitchHarness(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, model string) (domain.Session, error) {
+	if s.store != nil {
+		cur, ok, err := s.store.GetSession(ctx, id)
+		if err != nil {
+			return domain.Session{}, fmt.Errorf("switch %s: %w", id, err)
+		}
+		if ok {
+			sess, err := s.toSession(ctx, cur)
+			if err != nil {
+				return domain.Session{}, err
+			}
+			if sess.Status == domain.StatusMerged {
+				return domain.Session{}, apierr.Conflict("SESSION_MERGED", "A merged session cannot switch agents", nil)
+			}
+		}
+	}
 	rec, err := s.manager.SwitchHarness(ctx, id, harness, model)
 	if err != nil {
 		return domain.Session{}, toAPIError(err)
