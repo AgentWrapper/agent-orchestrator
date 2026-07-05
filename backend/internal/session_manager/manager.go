@@ -261,7 +261,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config, cfg.Model)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
@@ -297,7 +297,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, Model: strings.TrimSpace(cfg.Model)}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -344,8 +344,9 @@ func roleConfigName(kind domain.SessionKind) string {
 }
 
 // effectiveAgentConfig merges the role override's agent config over the
-// project's base agent config; set override fields win.
-func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
+// project's base agent config, then applies the per-spawn model override; set
+// override fields win.
+func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spawnModel string) ports.AgentConfig {
 	merged := cfg.AgentConfig
 	override := roleOverride(kind, cfg).AgentConfig
 	if override.Model != "" {
@@ -353,6 +354,9 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
+	}
+	if spawnModel := strings.TrimSpace(spawnModel); spawnModel != "" {
+		merged.Model = spawnModel
 	}
 	return merged
 }
@@ -585,8 +589,9 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: system prompt: %w", id, err)
 	}
 	// Restore re-applies the project's resolved agent config so a configured
-	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
+	// model/permissions carry across a restore, matching fresh spawn. A
+	// session-scoped model override stays pinned to this session when present.
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config, meta.Model), rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -599,7 +604,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)

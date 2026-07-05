@@ -28,6 +28,7 @@ type spawnOptions struct {
 	harness        string
 	branch         string
 	prompt         string
+	model          string
 	issue          string
 	name           string
 	claimPR        string
@@ -43,6 +44,7 @@ type spawnRequest struct {
 	Harness     string `json:"harness,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
+	Model       string `json:"model,omitempty"`
 	DisplayName string `json:"displayName,omitempty"`
 }
 
@@ -107,6 +109,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				Harness:     opts.harness,
 				Branch:      opts.branch,
 				Prompt:      opts.prompt,
+				Model:       opts.model,
 				DisplayName: name,
 			}
 			var res spawnResult
@@ -160,6 +163,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
+	f.StringVar(&opts.model, "model", "", "Model override for this session (default: project/role agentConfig.model or agent default)")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (default: derived from --prompt, max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")

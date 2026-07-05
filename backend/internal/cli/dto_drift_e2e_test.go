@@ -212,6 +212,7 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 			"--harness", "codex",
 			"--branch", "feat/x",
 			"--prompt", "hi",
+			"--model", "cheap-model",
 			"--issue", "ISS-1",
 			"--name", "my worker",
 		})
@@ -231,6 +232,9 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 		}
 		if got.Prompt != "hi" {
 			t.Errorf("Prompt = %q, want %q", got.Prompt, "hi")
+		}
+		if got.Model != "cheap-model" {
+			t.Errorf("Model = %q, want %q", got.Model, "cheap-model")
 		}
 		if got.IssueID != "ISS-1" {
 			t.Errorf("IssueID = %q, want %q", got.IssueID, "ISS-1")

@@ -157,7 +157,7 @@ func (s *Store) GetSession(ctx context.Context, id domain.SessionID) (domain.Ses
 	if err != nil {
 		return domain.SessionRecord{}, false, fmt.Errorf("get session %s: %w", id, err)
 	}
-	return rowToRecord(row), true, nil
+	return rowToRecord(getSessionRow(row)), true, nil
 }
 
 // ListSessions returns every session in a project, ordered by num.
@@ -166,7 +166,11 @@ func (s *Store) ListSessions(ctx context.Context, project domain.ProjectID) ([]d
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for %s: %w", project, err)
 	}
-	return mapSessionRows(rows), nil
+	out := make([]domain.SessionRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, rowToRecord(listSessionsByProjectRow(row)))
+	}
+	return out, nil
 }
 
 // ListAllSessions returns every session across all projects.
@@ -175,18 +179,112 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 	if err != nil {
 		return nil, fmt.Errorf("list all sessions: %w", err)
 	}
-	return mapSessionRows(rows), nil
-}
-
-func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, rowToRecord(r))
+	for _, row := range rows {
+		out = append(out, rowToRecord(listAllSessionsRow(row)))
 	}
-	return out
+	return out, nil
 }
 
-func rowToRecord(row gen.Session) domain.SessionRecord {
+type sessionRow struct {
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
+	IssueID         domain.IssueID
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	DisplayName     string
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	FirstSignalAt   sql.NullTime
+	IsTerminated    bool
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	Model           string
+	PreviewURL      string
+	PreviewRevision int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+func getSessionRow(row gen.GetSessionRow) sessionRow {
+	return sessionRow{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		DisplayName:     row.DisplayName,
+		ActivityState:   row.ActivityState,
+		ActivityLastAt:  row.ActivityLastAt,
+		FirstSignalAt:   row.FirstSignalAt,
+		IsTerminated:    row.IsTerminated,
+		Branch:          row.Branch,
+		WorkspacePath:   row.WorkspacePath,
+		RuntimeHandleID: row.RuntimeHandleID,
+		AgentSessionID:  row.AgentSessionID,
+		Prompt:          row.Prompt,
+		Model:           row.Model,
+		PreviewURL:      row.PreviewURL,
+		PreviewRevision: row.PreviewRevision,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+}
+
+func listSessionsByProjectRow(row gen.ListSessionsByProjectRow) sessionRow {
+	return sessionRow{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		DisplayName:     row.DisplayName,
+		ActivityState:   row.ActivityState,
+		ActivityLastAt:  row.ActivityLastAt,
+		FirstSignalAt:   row.FirstSignalAt,
+		IsTerminated:    row.IsTerminated,
+		Branch:          row.Branch,
+		WorkspacePath:   row.WorkspacePath,
+		RuntimeHandleID: row.RuntimeHandleID,
+		AgentSessionID:  row.AgentSessionID,
+		Prompt:          row.Prompt,
+		Model:           row.Model,
+		PreviewURL:      row.PreviewURL,
+		PreviewRevision: row.PreviewRevision,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+}
+
+func listAllSessionsRow(row gen.ListAllSessionsRow) sessionRow {
+	return sessionRow{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		DisplayName:     row.DisplayName,
+		ActivityState:   row.ActivityState,
+		ActivityLastAt:  row.ActivityLastAt,
+		FirstSignalAt:   row.FirstSignalAt,
+		IsTerminated:    row.IsTerminated,
+		Branch:          row.Branch,
+		WorkspacePath:   row.WorkspacePath,
+		RuntimeHandleID: row.RuntimeHandleID,
+		AgentSessionID:  row.AgentSessionID,
+		Prompt:          row.Prompt,
+		Model:           row.Model,
+		PreviewURL:      row.PreviewURL,
+		PreviewRevision: row.PreviewRevision,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+}
+
+func rowToRecord(row sessionRow) domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:          row.ID,
 		ProjectID:   row.ProjectID,
@@ -206,6 +304,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			RuntimeHandleID: row.RuntimeHandleID,
 			AgentSessionID:  row.AgentSessionID,
 			Prompt:          row.Prompt,
+			Model:           row.Model,
 			PreviewURL:      row.PreviewURL,
 			PreviewRevision: row.PreviewRevision,
 		},
@@ -233,6 +332,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
 		AgentSessionID:  rec.Metadata.AgentSessionID,
 		Prompt:          rec.Metadata.Prompt,
+		Model:           rec.Metadata.Model,
 		PreviewURL:      rec.Metadata.PreviewURL,
 		PreviewRevision: rec.Metadata.PreviewRevision,
 		CreatedAt:       rec.CreatedAt,
@@ -257,6 +357,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
 		AgentSessionID:  rec.Metadata.AgentSessionID,
 		Prompt:          rec.Metadata.Prompt,
+		Model:           rec.Metadata.Model,
 		PreviewURL:      rec.Metadata.PreviewURL,
 		PreviewRevision: rec.Metadata.PreviewRevision,
 		UpdatedAt:       rec.UpdatedAt,

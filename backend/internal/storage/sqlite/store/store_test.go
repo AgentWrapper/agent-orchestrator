@@ -39,7 +39,7 @@ func sampleRecord(project string) domain.SessionRecord {
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessClaudeCode,
 		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
-		Metadata:  domain.SessionMetadata{Branch: "feat/x", WorkspacePath: "/ws"},
+		Metadata:  domain.SessionMetadata{Branch: "feat/x", WorkspacePath: "/ws", Model: "spawn-model"},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -138,7 +138,8 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
 	if got.Activity.State != domain.ActivityActive || got.IsTerminated ||
-		got.Harness != domain.HarnessClaudeCode || got.Metadata.Branch != "feat/x" {
+		got.Harness != domain.HarnessClaudeCode || got.Metadata.Branch != "feat/x" ||
+		got.Metadata.Model != "spawn-model" {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 	if list, _ := s.ListSessions(ctx, "mer"); len(list) != 2 {

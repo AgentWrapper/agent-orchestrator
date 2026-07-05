@@ -16,13 +16,37 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
 FROM sessions WHERE id = ?
 `
 
-func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session, error) {
+type GetSessionRow struct {
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
+	Num             int64
+	IssueID         domain.IssueID
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	IsTerminated    bool
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	Model           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DisplayName     string
+	FirstSignalAt   sql.NullTime
+	PreviewURL      string
+	PreviewRevision int64
+}
+
+func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessionRow, error) {
 	row := q.db.QueryRowContext(ctx, getSession, id)
-	var i Session
+	var i GetSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -38,6 +62,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeHandleID,
 		&i.AgentSessionID,
 		&i.Prompt,
+		&i.Model,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisplayName,
@@ -52,9 +77,9 @@ const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
-    branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
+    branch, workspace_path, runtime_handle_id, agent_session_id, prompt, model,
     preview_url, preview_revision, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -74,6 +99,7 @@ type InsertSessionParams struct {
 	RuntimeHandleID string
 	AgentSessionID  string
 	Prompt          string
+	Model           string
 	PreviewURL      string
 	PreviewRevision int64
 	CreatedAt       time.Time
@@ -98,6 +124,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.RuntimeHandleID,
 		arg.AgentSessionID,
 		arg.Prompt,
+		arg.Model,
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.CreatedAt,
@@ -109,19 +136,43 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
 FROM sessions ORDER BY project_id, num
 `
 
-func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
+type ListAllSessionsRow struct {
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
+	Num             int64
+	IssueID         domain.IssueID
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	IsTerminated    bool
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	Model           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DisplayName     string
+	FirstSignalAt   sql.NullTime
+	PreviewURL      string
+	PreviewRevision int64
+}
+
+func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAllSessions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Session{}
+	items := []ListAllSessionsRow{}
 	for rows.Next() {
-		var i Session
+		var i ListAllSessionsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -137,6 +188,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeHandleID,
 			&i.AgentSessionID,
 			&i.Prompt,
+			&i.Model,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DisplayName,
@@ -160,19 +212,43 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
-func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error) {
+type ListSessionsByProjectRow struct {
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
+	Num             int64
+	IssueID         domain.IssueID
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	IsTerminated    bool
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	Model           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DisplayName     string
+	FirstSignalAt   sql.NullTime
+	PreviewURL      string
+	PreviewRevision int64
+}
+
+func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]ListSessionsByProjectRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSessionsByProject, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Session{}
+	items := []ListSessionsByProjectRow{}
 	for rows.Next() {
-		var i Session
+		var i ListSessionsByProjectRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -188,6 +264,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeHandleID,
 			&i.AgentSessionID,
 			&i.Prompt,
+			&i.Model,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DisplayName,
@@ -286,7 +363,7 @@ const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
-    branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
+    branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?, model = ?,
     preview_url = ?, preview_revision = ?, updated_at = ?
 WHERE id = ?
 `
@@ -305,6 +382,7 @@ type UpdateSessionParams struct {
 	RuntimeHandleID string
 	AgentSessionID  string
 	Prompt          string
+	Model           string
 	PreviewURL      string
 	PreviewRevision int64
 	UpdatedAt       time.Time
@@ -326,6 +404,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.RuntimeHandleID,
 		arg.AgentSessionID,
 		arg.Prompt,
+		arg.Model,
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.UpdatedAt,

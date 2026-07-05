@@ -379,6 +379,17 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 		t.Fatal("runtime env missing AO_SESSION_ID")
 	}
 
+	agent.lastConfig = ports.AgentConfig{}
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "spawn-model"}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "spawn-model" {
+		t.Fatalf("launch model = %q, want per-spawn override spawn-model", agent.lastConfig.Model)
+	}
+	if got := st.sessions["mer-2"].Metadata.Model; got != "spawn-model" {
+		t.Fatalf("persisted session model = %q, want spawn-model", got)
+	}
+
 	// A project with no stored config yields a zero AgentConfig (adapter defaults)
 	// when the spawn explicitly names its agent.
 	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
@@ -624,6 +635,32 @@ func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	}
 	if agent.lastConfig.Model != "restore-model" {
 		t.Fatalf("restore config model = %q, want restore-model (config must carry across restore)", agent.lastConfig.Model)
+	}
+}
+
+func TestRestore_AppliesPerSessionModelOverride(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "project-model"},
+		Worker:      domain.RoleOverride{AgentConfig: domain.AgentConfig{Model: "worker-model"}},
+	}}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{
+		WorkspacePath:  "/ws/mer-1",
+		Branch:         "b",
+		AgentSessionID: "agent-x",
+		Model:          "spawn-model",
+	})
+	agent := &recordingAgent{}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "spawn-model" {
+		t.Fatalf("restore config model = %q, want per-session spawn-model", agent.lastConfig.Model)
+	}
+	if st.sessions["mer-1"].Metadata.Model != "spawn-model" {
+		t.Fatalf("restored metadata model = %q, want spawn-model", st.sessions["mer-1"].Metadata.Model)
 	}
 }
 

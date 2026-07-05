@@ -2649,6 +2649,9 @@ components:
           - worker
           - orchestrator
           type: string
+        model:
+          description: Model override for this session only.
+          type: string
         projectId:
           type: string
         prompt:

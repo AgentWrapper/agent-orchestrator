@@ -90,6 +90,34 @@ func TestGetLaunchCommandWithoutWorkspaceOmitsTrustFlag(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandAppliesAgentConfigModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "gpt-5-codex-cheap"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "gpt-5-codex-cheap"}) {
+		t.Fatalf("command %#v missing --model flag", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankAgentConfigModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "   "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v contains blank --model flag", cmd)
+	}
+}
+
 func TestResolveCodexBinaryFindsNVMInstallWhenPathIsSparse(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("NVM install discovery is Unix-specific")
@@ -431,6 +459,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeAuto,
+		Config:      ports.AgentConfig{Model: "gpt-5-codex-cheap"},
 		Session: ports.SessionRef{
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
 			WorkspacePath: workspace,
@@ -457,6 +486,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
+		"--model", "gpt-5-codex-cheap",
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {

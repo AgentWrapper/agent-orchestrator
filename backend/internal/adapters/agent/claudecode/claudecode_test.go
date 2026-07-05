@@ -372,6 +372,7 @@ func matcherForCommand(groups []hooksjson.MatcherGroup, command string) *string 
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
+		Config:      ports.AgentConfig{Model: "claude-haiku-4-5"},
 		Session: ports.SessionRef{
 			ID:       "sess-r",
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
@@ -381,9 +382,24 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
 	// The hook-captured native id wins over the derived fallback.
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1"}
+	want := []string{"claude", "--permission-mode", "bypassPermissions", "--model", "claude-haiku-4-5", "--resume", "claude-native-1"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandOmitsBlankModel(t *testing.T) {
+	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "   "},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	if containsSubsequence(cmd, []string{"--model"}) {
+		t.Fatalf("restore cmd contains blank model flag: %#v", cmd)
 	}
 }
 

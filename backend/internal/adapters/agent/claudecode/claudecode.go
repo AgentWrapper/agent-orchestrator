@@ -240,6 +240,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		// re-appended or a restored orchestrator loses its role.
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
+	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
+		cmd = append(cmd, "--model", model)
+	}
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
 }

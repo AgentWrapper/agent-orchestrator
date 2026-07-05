@@ -961,6 +961,8 @@ export interface components {
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
+            /** @description Model override for this session only. */
+            model?: string;
             projectId: string;
             prompt?: string;
         };
