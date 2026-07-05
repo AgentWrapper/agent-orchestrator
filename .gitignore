@@ -69,3 +69,6 @@ frontend/test-results/
 
 # built daemon binary copied into the frontend bundle dir
 frontend/daemon/
+
+#dumb old ao code from my attempts
+oldao/
