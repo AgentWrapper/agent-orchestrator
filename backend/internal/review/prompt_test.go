@@ -27,6 +27,8 @@ func TestReviewTextsIncludesMultiPRQueue(t *testing.T) {
 		"* 1. https://github.com/o/r/pull/1 (head commit sha1, run run-1)",
 		"* 2. https://github.com/o/r/pull/2 (head commit sha2, run run-2)",
 		"After every PR has its own GitHub review from step 1",
+		"printf '%s'",
+		"do not use a heredoc",
 		"ao review submit --session mer-1 --reviews -",
 		`"reviews": [`,
 	} {

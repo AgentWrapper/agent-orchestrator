@@ -6,15 +6,15 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prBrowserUrl, prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
-import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { sortedPRs, workerDisplayStatus } from "../types/workspace";
+import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
+import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { BrowserPanelView } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
+import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -125,7 +125,15 @@ export function SessionInspector({
 				))}
 			</div>
 
-			<div className="session-inspector__body">
+			<div
+				className={cn(
+					"session-inspector__body",
+					// The Browser tab renders its own bordered panel edge-to-edge, so
+					// drop the body padding for it (except when popped out, where the
+					// body only holds the "return to panel" empty state).
+					view === "browser" && !browserPoppedOut && "session-inspector__body--browser",
+				)}
+			>
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 				{view === "browser" ? (
@@ -169,6 +177,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
+	const issueId = canonicalTrackerIssueId(session.issueId);
 
 	return (
 		<div role="tabpanel">
@@ -191,6 +200,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
 					<Row k="Agent" v={session.provider} mono />
+					{issueId && <Row k="Issue" v={issueId} mono />}
 					<Row k="Branch" v={branchLabel} mono />
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />
@@ -221,62 +231,38 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 			</div>
 			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRStatusStack className="mt-2" pr={pr} />
-			<PRAttentionPanel pr={pr} />
+			<PRSummaryParts className="mt-2" pr={pr} variant="stacked" />
 		</div>
 	);
-}
-
-function PRStatusStack({ className, pr }: { className?: string; pr: SessionPRSummary }) {
-	return (
-		<div className={cn("flex flex-col gap-0.5 font-mono text-[10.5px] leading-4", className)}>
-			{prStatusRows(pr).map((row) => (
-				<div key={row.key} className="min-w-0 truncate">
-					<span className="text-passive">{row.label}</span>{" "}
-					<span className={cn("font-medium", inspectorStatusToneClass(row.tone))}>{row.value}</span>
-				</div>
-			))}
-		</div>
-	);
-}
-
-function inspectorStatusToneClass(tone: PRDisplayTone): string {
-	switch (tone) {
-		case "success":
-			return "text-success";
-		case "warning":
-			return "text-warning";
-		case "error":
-			return "text-error";
-		case "neutral":
-			return "text-muted-foreground";
-		case "passive":
-			return "text-passive";
-	}
 }
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";
 
 function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
-	const detail = activityDetail(session.status);
 
 	events.push({
-		tone: "now",
-		node: (
-			<>
-				<span className="inspector-timeline__badge">
-					<InspectorStatusPill session={session} />
-				</span>
-				{detail ? <span className="inspector-timeline__detail"> — {detail}</span> : null}
-			</>
-		),
-		ts: formatTimeCompact(session.updatedAt),
+		tone: "neutral",
+		node: <>Created worktree &amp; branch</>,
+		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
-	for (const pr of sortedPRs(session)) {
+	const prs = sortedPRs(session);
+	for (const pr of prs.filter((pr) => pr.state === "draft")) {
 		events.push({
-			tone: "good",
+			tone: "neutral",
+			node: (
+				<>
+					Draft <b>PR #{pr.number}</b>
+				</>
+			),
+			ts: null,
+		});
+	}
+
+	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
+		events.push({
+			tone: "neutral",
 			node: (
 				<>
 					Opened <b>PR #{pr.number}</b>
@@ -287,10 +273,46 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	}
 
 	events.push({
-		tone: "neutral",
-		node: <>Created worktree &amp; branch</>,
-		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
+		tone: "now",
+		node: (
+			<span className="inline-flex flex-wrap items-center gap-1.5">
+				<span className="inspector-timeline__badge">
+					<InspectorActivityPill state={session.activity?.state ?? "unknown"} />
+				</span>
+				{session.status === "no_signal" ? (
+					<span className="inspector-timeline__badge">
+						<TimelinePill {...ACTIVITY_WARNING_PILL.no_signal} />
+					</span>
+				) : null}
+				{scmTimelineStates(session).map((state) => (
+					<span key={state} className="inspector-timeline__badge">
+						<InspectorScmPill state={state} />
+					</span>
+				))}
+			</span>
+		),
+		ts: session.activity?.lastActivityAt ? formatTimeCompact(session.activity.lastActivityAt) : null,
 	});
+
+	for (const pr of prs.filter((pr) => pr.state === "merged")) {
+		events.push({
+			tone: "good",
+			node: (
+				<>
+					Merged <b>PR #{pr.number}</b>
+				</>
+			),
+			ts: null,
+		});
+	}
+
+	if (session.status === "merged") {
+		events.push({
+			tone: "good",
+			node: <>Done</>,
+			ts: formatTimeCompact(session.updatedAt),
+		});
+	}
 
 	return (
 		<div className="inspector-timeline">
@@ -313,38 +335,35 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function activityDetail(status: SessionStatus): string | null {
-	switch (status) {
-		case "idle":
-			return "Session idle";
-		case "needs_input":
-			return "Waiting for your input";
-		case "no_signal":
-			return "No recent agent signal";
-		case "working":
-			return null;
-		default:
-			return null;
-	}
-}
-
-const STATUS_PILL: Record<
-	ReturnType<typeof workerDisplayStatus> | "idle",
-	{ label: string; tone: string; breathe: boolean }
-> = {
-	working: { label: "Working", tone: "var(--orange)", breathe: true },
-	needs_you: { label: "Input needed", tone: "var(--amber)", breathe: false },
-	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
-	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
-	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
-	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
-	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
+const ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string; breathe: boolean }> = {
+	active: { label: "Working", tone: "var(--orange)", breathe: true },
 	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
+	waiting_input: { label: "Input Needed", tone: "var(--amber)", breathe: false },
+	exited: { label: "Exited", tone: "var(--fg-muted)", breathe: false },
+	unknown: { label: "Activity Unavailable", tone: "var(--fg-muted)", breathe: false },
 };
 
-function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
-	const key = session.status === "idle" ? "idle" : workerDisplayStatus(session);
-	const { label, tone, breathe } = STATUS_PILL[key];
+const ACTIVITY_WARNING_PILL: Record<"no_signal", { label: string; tone: string; breathe: boolean }> = {
+	no_signal: { label: "No Signal", tone: "var(--fg-muted)", breathe: false },
+};
+
+type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
+
+const SCM_PILL: Record<ScmTimelineState, { label: string; tone: string; breathe: boolean }> = {
+	ci_failed: { label: "CI Failed", tone: "var(--red)", breathe: false },
+	changes_requested: { label: "Changes Requested", tone: "var(--amber)", breathe: false },
+	conflict: { label: "Conflict", tone: "var(--red)", breathe: false },
+};
+
+function InspectorActivityPill({ state }: { state: SessionActivityState }) {
+	return <TimelinePill {...ACTIVITY_PILL[state]} />;
+}
+
+function InspectorScmPill({ state }: { state: ScmTimelineState }) {
+	return <TimelinePill {...SCM_PILL[state]} />;
+}
+
+function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {
 	return (
 		<span
 			className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold"
@@ -361,6 +380,26 @@ function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
 			{label}
 		</span>
 	);
+}
+
+function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
+	const states: ScmTimelineState[] = [];
+	const seen = new Set<ScmTimelineState>();
+	const add = (state: ScmTimelineState) => {
+		if (seen.has(state)) return;
+		seen.add(state);
+		states.push(state);
+	};
+
+	if (session.status === "ci_failed") add("ci_failed");
+	if (session.status === "changes_requested") add("changes_requested");
+	for (const pr of session.prs) {
+		if (pr.ci === "failing") add("ci_failed");
+		if (pr.review === "changes_requested") add("changes_requested");
+		if (pr.mergeability === "conflicting") add("conflict");
+	}
+
+	return states;
 }
 
 function ReviewsView({

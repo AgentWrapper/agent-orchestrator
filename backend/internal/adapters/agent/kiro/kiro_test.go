@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -113,7 +113,7 @@ func TestGetLaunchCommandCtxCancelled(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -125,7 +125,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -133,6 +133,44 @@ func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
 	}
 	if len(spec.Fields) != 0 {
 		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	}
+}
+
+func TestAuthStatusUsesKiroWhoami(t *testing.T) {
+	restore := stubKiroAuthRunner(t, func(_ context.Context, name string, arg ...string) ([]byte, error) {
+		if name != "kiro-cli" {
+			t.Fatalf("binary = %q, want kiro-cli", name)
+		}
+		if !reflect.DeepEqual(arg, []string{"whoami"}) {
+			t.Fatalf("args = %#v, want [whoami]", arg)
+		}
+		return []byte("Logged in with Google\nEmail: nicachale456@gmail.com\n"), nil
+	})
+	defer restore()
+
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	status, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestAuthStatusUnauthorizedFromKiroWhoami(t *testing.T) {
+	restore := stubKiroAuthRunner(t, func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return []byte("Not logged in\n"), nil
+	})
+	defer restore()
+
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	status, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusUnauthorized)
 	}
 }
 
@@ -318,8 +356,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "uuid-123",
-			kiroTitleMetadataKey:            "Fix login redirect",
-			kiroSummaryMetadataKey:          "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -358,29 +396,6 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
 		t.Fatalf("info = %#v, want zero value", info)
-	}
-}
-
-func TestDeriveActivityState(t *testing.T) {
-	tests := []struct {
-		event     string
-		wantState domain.ActivityState
-		wantOK    bool
-	}{
-		{"session-start", domain.ActivityActive, true},
-		{"user-prompt-submit", domain.ActivityActive, true},
-		{"stop", domain.ActivityIdle, true},
-		{"permission-request", domain.ActivityWaitingInput, true},
-		{"unknown", "", false},
-		{"", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.event, func(t *testing.T) {
-			state, ok := DeriveActivityState(tt.event, nil)
-			if state != tt.wantState || ok != tt.wantOK {
-				t.Fatalf("DeriveActivityState(%q) = (%q, %v), want (%q, %v)", tt.event, state, ok, tt.wantState, tt.wantOK)
-			}
-		})
 	}
 }
 
@@ -439,6 +454,13 @@ func containsSubsequence(values []string, needle []string) bool {
 	}
 
 	return false
+}
+
+func stubKiroAuthRunner(t *testing.T, runner func(context.Context, string, ...string) ([]byte, error)) func() {
+	t.Helper()
+	previous := authprobe.CmdRunner
+	authprobe.CmdRunner = runner
+	return func() { authprobe.CmdRunner = previous }
 }
 
 func countKiroHookCommand(entries []kiroHookEntry, command string) int {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,10 +202,15 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 // clean-orchestrator ordering without wiring a real session engine.
 type fakeCommander struct {
 	killed          []domain.SessionID
+	retired         []domain.SessionID
+	sent            []domain.SessionID
 	cleanupProjects []domain.ProjectID
 	killErr         error
+	retireErr       error
+	sendErr         error
 	cleanupErr      error
 	spawnErr        error
+	spawnRecord     domain.SessionRecord
 	spawned         bool
 	killsAtSpawn    int
 }
@@ -214,7 +220,10 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 		return domain.SessionRecord{}, f.spawnErr
 	}
 	f.spawned = true
-	f.killsAtSpawn = len(f.killed)
+	f.killsAtSpawn = len(f.retired)
+	if f.spawnRecord.ID != "" {
+		return f.spawnRecord, nil
+	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
@@ -227,7 +236,20 @@ func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, erro
 	f.killed = append(f.killed, id)
 	return true, nil
 }
-func (f *fakeCommander) Send(context.Context, domain.SessionID, string) error { return nil }
+func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.SessionID) error {
+	if f.retireErr != nil {
+		return f.retireErr
+	}
+	f.retired = append(f.retired, id)
+	return nil
+}
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, _ string) error {
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sent = append(f.sent, id)
+	return nil
+}
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)
 	if f.cleanupErr != nil {
@@ -293,7 +315,7 @@ func TestTeardownProjectStopsOnKillError(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T) {
+func TestSpawnOrchestratorCleanRetiresActiveOrchestratorsBeforeSpawn(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	// Two active orchestrators plus an unrelated worker and a terminated
@@ -310,11 +332,35 @@ func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T)
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 
-	if len(fc.killed) != 2 {
-		t.Fatalf("killed = %v, want the two active orchestrators", fc.killed)
+	if len(fc.retired) != 2 {
+		t.Fatalf("retired = %v, want the two active orchestrators", fc.retired)
+	}
+	if len(fc.sent) != 2 {
+		t.Fatalf("retire notices = %v, want the two active orchestrators", fc.sent)
 	}
 	if !fc.spawned || fc.killsAtSpawn != 2 {
-		t.Fatalf("spawn must run after both kills: spawned=%v killsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+		t.Fatalf("spawn must run after both retirements: spawned=%v retirementsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+	}
+	if len(fc.killed) != 0 {
+		t.Fatalf("interactive Kill must not be used for replacement: killed=%v", fc.killed)
+	}
+}
+
+func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{sendErr: errors.New("pane closed")}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if len(fc.retired) != 1 || fc.retired[0] != "mer-1" {
+		t.Fatalf("retired = %v, want mer-1 despite retire notice failure", fc.retired)
+	}
+	if !fc.spawned {
+		t.Fatal("replacement should still spawn when retire notice delivery fails")
 	}
 }
 
@@ -617,6 +663,29 @@ func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {
 	}
 	if got.ID == "" {
 		t.Fatal("returned session must have an id")
+	}
+}
+
+func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	fc := &fakeCommander{
+		spawnRecord: domain.SessionRecord{
+			ID:        "mer-9",
+			ProjectID: "mer",
+			Kind:      domain.KindOrchestrator,
+			Harness:   domain.HarnessClaudeCode,
+			Metadata:  domain.SessionMetadata{Branch: "ao/mer-orchestrator"},
+		},
+	}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err == nil || !strings.Contains(err.Error(), `uses harness "claude-code", want "codex"`) {
+		t.Fatalf("SpawnOrchestrator err = %v, want harness verification failure", err)
 	}
 }
 

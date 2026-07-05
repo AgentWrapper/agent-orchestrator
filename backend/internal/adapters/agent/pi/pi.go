@@ -12,7 +12,7 @@
 // variant), so a system-prompt file is read from disk and its contents are
 // inlined into the flag; a read failure aborts the launch.
 //
-// Permissions: Pi has no permission/approval CLI flags ("No permission popups" —
+// Permissions: Pi has no permission/approval CLI flags ("No permission popups" --
 // confirmation flows are built via TypeScript extensions), so AO emits no
 // permission flag and defers to Pi's own behavior.
 //
@@ -33,15 +33,13 @@ package pi
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -50,6 +48,7 @@ const adapterID = "pi"
 // Plugin is the Pi agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -73,14 +72,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new headless Pi session:
@@ -112,22 +103,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Pi receives its prompt in the launch
-// command itself.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
-}
-
-// GetAgentHooks is intentionally a no-op: Pi's lifecycle hooks are only
-// reachable through in-process TypeScript extensions, not a config file AO can
-// install, and Pi has no Claude Code hook compatibility.
-func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
-	return ctx.Err()
-}
-
 // GetRestoreCommand rebuilds the argv that continues an existing Pi session when
 // a native session id is available in metadata. Pi resumes by id with
 // `--session <id>` (partial UUIDs accepted). Until that id exists, ok is false
@@ -149,77 +124,23 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
-// SessionInfo is intentionally a no-op until a Pi-specific extension persists
-// session metadata (title/summary). The native session id, when known, is read
-// directly from metadata by GetRestoreCommand.
-func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.SessionInfo{}, false, err
-	}
-	return ports.SessionInfo{}, false, nil
+var piBinarySpec = binaryutil.BinarySpec{
+	Label:         "pi",
+	Names:         []string{"pi"},
+	WinNames:      []string{"pi.cmd", "pi.exe", "pi"},
+	UnixPaths:     []string{"/usr/local/bin/pi", "/opt/homebrew/bin/pi"},
+	UnixHomePaths: [][]string{{".npm-global", "bin", "pi"}, {".local", "bin", "pi"}, {".pi", "bin", "pi"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "pi.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "pi.exe"}},
+	},
 }
 
 // ResolvePiBinary finds the `pi` binary, searching PATH then common install
 // locations. It returns "pi" as a last resort so callers get the shell's normal
 // command-not-found behavior if Pi is absent.
 func ResolvePiBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"pi.cmd", "pi.exe", "pi"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "pi.cmd"),
-				filepath.Join(appData, "npm", "pi.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("pi: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("pi"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/pi",
-		"/opt/homebrew/bin/pi",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".npm-global", "bin", "pi"),
-			filepath.Join(home, ".local", "bin", "pi"),
-			filepath.Join(home, ".pi", "bin", "pi"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("pi: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, piBinarySpec)
 }
 
 func (p *Plugin) piBinary(ctx context.Context) (string, error) {
@@ -236,9 +157,4 @@ func (p *Plugin) piBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

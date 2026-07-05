@@ -8,6 +8,95 @@ servers:
 - description: Local daemon (loopback only)
   url: http://127.0.0.1:3001
 paths:
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return cached supported and locally installed agent adapters
+      tags:
+      - agents
+  /api/v1/agents/{agent}/probe:
+    post:
+      operationId: probeAgent
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeAgentResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Run a fresh local readiness probe for one agent adapter
+      tags:
+      - agents
+  /api/v1/agents/refresh:
+    post:
+      operationId: refreshAgents
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh the cached local agent adapter catalog
+      tags:
+      - agents
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -1486,6 +1575,24 @@ components:
         permissions:
           type: string
       type: object
+    AgentInfo:
+      properties:
+        authStatus:
+          description: Advisory local auth probe result. authorized means a recent
+            local probe passed; spawn remains the authoritative validation point.
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+      required:
+      - id
+      - label
+      type: object
     ClaimPRRequest:
       properties:
         allowTakeover:
@@ -1695,6 +1802,31 @@ components:
       - ok
       - sessionId
       type: object
+    ListAgentsResponse:
+      properties:
+        authorized:
+          description: Compatibility list of installed agents whose local auth probe
+            recently returned authorized. Advisory and stale-prone; spawn may still
+            fail.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+        installed:
+          description: Agents whose binary resolved during the latest best-effort
+            local catalog probe.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+        supported:
+          description: Agents supported by this daemon build.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+      required:
+      - supported
+      - installed
+      - authorized
+      type: object
     ListNotificationsResponse:
       properties:
         notifications:
@@ -1882,6 +2014,19 @@ components:
       - targetSha
       - status
       type: object
+    ProbeAgentResponse:
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentInfo'
+        installed:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - agent
+      - supported
+      - installed
+      type: object
     Project:
       properties:
         agent:
@@ -1938,6 +2083,8 @@ components:
           items:
             type: string
           type: array
+        trackerIntake:
+          $ref: '#/components/schemas/TrackerIntakeConfig'
         worker:
           $ref: '#/components/schemas/RoleOverride'
       type: object
@@ -1973,6 +2120,8 @@ components:
         kind:
           type: string
         name:
+          type: string
+        orchestratorAgent:
           type: string
         path:
           type: string
@@ -2546,6 +2695,19 @@ components:
       - runId
       - verdict
       type: object
+    TrackerIntakeConfig:
+      properties:
+        assignee:
+          type: string
+        enabled:
+          type: boolean
+        provider:
+          enum:
+          - github
+          type: string
+        repo:
+          type: string
+      type: object
     TriggerReviewResponse:
       properties:
         reviewerHandleId:
@@ -2572,6 +2734,8 @@ components:
       - repo
       type: object
 tags:
+- description: Supported and locally runnable agent adapters
+  name: agents
 - description: Project registry, configuration, and lifecycle administration
   name: projects
 - description: Agent session lifecycle and messaging

@@ -55,6 +55,8 @@ func Build() ([]byte, error) {
 		*(&openapi31.Server{URL: "http://127.0.0.1:3001"}).WithDescription("Local daemon (loopback only)"),
 	}
 	r.Spec.Tags = []openapi31.Tag{
+		*(&openapi31.Tag{Name: "agents"}).WithDescription(
+			"Supported and locally runnable agent adapters"),
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
@@ -124,16 +126,18 @@ var schemaNames = map[string]string{
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
-	"DomainProjectID":     "ProjectID",
-	"DomainSessionID":     "SessionID",
-	"DomainIssueID":       "IssueID",
-	"DomainSession":       "Session",
-	"DomainProjectConfig": "ProjectConfig",
-	"DomainAgentConfig":   "AgentConfig",
-	"DomainRoleOverride":  "RoleOverride",
+	"DomainProjectID":           "ProjectID",
+	"DomainSessionID":           "SessionID",
+	"DomainIssueID":             "IssueID",
+	"DomainSession":             "Session",
+	"DomainProjectConfig":       "ProjectConfig",
+	"DomainTrackerIntakeConfig": "TrackerIntakeConfig",
+	"DomainAgentConfig":         "AgentConfig",
+	"DomainRoleOverride":        "RoleOverride",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
+	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
@@ -169,6 +173,9 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":         "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":        "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":             "OrchestratorResponse",
+	"AgentInventory":                              "ListAgentsResponse",
+	"AgentInfo":                                   "AgentInfo",
+	"AgentProbeResult":                            "ProbeAgentResponse",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
 	"ControllersNotificationStreamQuery":          "NotificationStreamQuery",
 	"ControllersNotificationIDParam":              "NotificationIDParam",
@@ -278,6 +285,7 @@ type operation struct {
 
 func operations() []operation {
 	ops := append([]operation{}, eventOperations()...)
+	ops = append(ops, agentOperations()...)
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
@@ -285,6 +293,40 @@ func operations() []operation {
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, importOperations()...)
 	return ops
+}
+
+func agentOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/agents", id: "listAgents", tag: "agents",
+			summary: "Return cached supported and locally installed agent adapters",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListAgentsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/refresh", id: "refreshAgents", tag: "agents",
+			summary: "Refresh the cached local agent adapter catalog",
+			resps: []respUnit{
+				{http.StatusOK, controllers.RefreshAgentsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/probe", id: "probeAgent", tag: "agents",
+			summary:    "Run a fresh local readiness probe for one agent adapter",
+			pathParams: []any{controllers.AgentIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProbeAgentResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 // importOperations declares the 2 /import operations. Must stay 1:1 with

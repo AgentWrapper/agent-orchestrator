@@ -195,8 +195,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	info, ok, err := plugin.SessionInfo(context.Background(), ports.SessionRef{
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "devin-ses-1",
-			devinTitleMetadataKey:           "Fix login redirect",
-			devinSummaryMetadataKey:         "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 		},
 	})
 	if err != nil {

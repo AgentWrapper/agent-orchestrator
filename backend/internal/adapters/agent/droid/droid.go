@@ -23,28 +23,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-)
-
-const (
-	// Normalized session-metadata keys the hooks persist into the AO session
-	// store and SessionInfo reads back. Shared vocabulary with the Codex, Grok,
-	// and opencode adapters so the dashboard treats every agent uniformly.
-	droidTitleMetadataKey   = "title"
-	droidSummaryMetadataKey = "summary"
 )
 
 // Plugin is the Droid agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -68,14 +61,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new interactive Droid session:
@@ -115,15 +100,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Droid receives its prompt in the launch
-// command itself (the positional prompt argument).
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
-}
-
 // GetRestoreCommand rebuilds the argv that continues an existing Droid session:
 // `droid [--settings <path>] -r <agentSessionId>`. It re-applies the permission
 // autonomy (resume otherwise reverts to the configured default) but not the
@@ -161,15 +137,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[droidTitleMetadataKey],
-		Summary:        session.Metadata[droidSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // droidAutonomyLevel maps an AO permission mode onto Droid's
@@ -182,7 +151,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 //	bypass-permissions → high   (max interactive autonomy; Droid's interactive
 //	                             TUI has no exec-style --skip-permissions-unsafe)
 func droidAutonomyLevel(mode ports.PermissionMode) string {
-	switch normalizePermissionMode(mode) {
+	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAcceptEdits:
 		return "low"
 	case ports.PermissionModeAuto:
@@ -249,73 +218,24 @@ func sanitizeSessionID(id string) string {
 	return b.String()
 }
 
-// ResolveDroidBinary finds the `droid` binary (Factory Droid CLI), searching
-// PATH then a handful of well-known install locations. Returns "droid" as a
-// last-ditch fallback so callers see a clear "command not found" rather than an
-// empty argv.
+var droidBinarySpec = binaryutil.BinarySpec{
+	Label:         "droid",
+	Names:         []string{"droid"},
+	WinNames:      []string{"droid.cmd", "droid.exe", "droid"},
+	UnixPaths:     []string{"/usr/local/bin/droid", "/opt/homebrew/bin/droid"},
+	UnixHomePaths: [][]string{{".local", "bin", "droid"}, {".factory", "bin", "droid"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "droid.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "droid.exe"}},
+		{Base: binaryutil.WinHome, Parts: []string{".local", "bin", "droid.exe"}},
+		{Base: binaryutil.WinHome, Parts: []string{".factory", "bin", "droid.exe"}},
+	},
+}
+
+// ResolveDroidBinary returns the path to the droid binary, or a wrapped
+// ports.ErrAgentBinaryNotFound when it is absent.
 func ResolveDroidBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"droid.cmd", "droid.exe", "droid"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "droid.cmd"),
-				filepath.Join(appData, "npm", "droid.exe"),
-			)
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates,
-				filepath.Join(home, ".local", "bin", "droid.exe"),
-				filepath.Join(home, ".factory", "bin", "droid.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("droid: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("droid"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/droid",
-		"/opt/homebrew/bin/droid",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "droid"),
-			filepath.Join(home, ".factory", "bin", "droid"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("droid: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, droidBinarySpec)
 }
 
 func (p *Plugin) droidBinary(ctx context.Context) (string, error) {
@@ -332,22 +252,4 @@ func (p *Plugin) droidBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		// Empty or unrecognized: defer to Droid's own settings (no flag).
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

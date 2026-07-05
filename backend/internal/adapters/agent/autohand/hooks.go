@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -294,33 +295,10 @@ func writeAutohandHooks(configPath string, topLevel, hooksSection map[string]jso
 		return fmt.Errorf("encode %s: %w", configPath, err)
 	}
 	data = append(data, '\n')
-	if err := atomicWriteFile(configPath, data, 0o600); err != nil {
+	if err := hookutil.AtomicWriteFile(configPath, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	return nil
-}
-
-// atomicWriteFile writes data to path via a temp file + rename, so a crash mid-
-// write can't leave a truncated/empty config that Autohand then fails to parse.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ao-tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }
 
 func isAutohandManagedHook(command string) bool {

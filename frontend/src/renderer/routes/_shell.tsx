@@ -1,10 +1,12 @@
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
+import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -12,8 +14,11 @@ import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
+import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
+import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -44,7 +49,12 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
+	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
+	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
+	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -54,19 +64,29 @@ function ShellLayout() {
 	);
 
 	const createProject = useCallback(
-		async (input: { path: string; workerAgent: string; orchestratorAgent: string }) => {
+		async (input: {
+			path: string;
+			workerAgent: string;
+			orchestratorAgent: string;
+			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
 				operation: "project_add",
 				surface: "project_board",
 			});
 			void captureRendererEvent("ao.renderer.project_add_requested");
+			const status = await refreshDaemonStatus();
+			if (status.state !== "ready" || !status.port) {
+				throw new Error(status.message || "AO daemon is not ready.");
+			}
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,
 					config: {
 						worker: { agent: input.workerAgent },
 						orchestrator: { agent: input.orchestratorAgent },
+						trackerIntake: input.trackerIntake,
 					},
 				},
 			});
@@ -86,12 +106,13 @@ function ShellLayout() {
 				name: data.project.name,
 				path: data.project.path,
 				type: "main",
+				orchestratorAgent: input.orchestratorAgent as WorkspaceSummary["orchestratorAgent"],
 				sessions: [],
 			};
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			try {
-				const sessionId = await spawnOrchestrator(workspace.id);
+				const sessionId = await spawnOrchestrator(workspace.id, "project_add");
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 				void navigate({
 					to: "/projects/$projectId/sessions/$sessionId",
@@ -133,10 +154,36 @@ function ShellLayout() {
 		[updateWorkspaces],
 	);
 
+	const restartOrchestrator = useCallback(
+		async (projectId: string) => {
+			await restartProjectOrchestrator({
+				projectId,
+				queryClient,
+				navigate,
+				setProjectRestarting,
+				setOrchestratorReplacementError,
+				onError: (error) => {
+					captureOrchestratorReplacementFailure(error, projectId);
+				},
+			});
+		},
+		[navigate, queryClient, setOrchestratorReplacementError, setProjectRestarting],
+	);
+
 	useEffect(() => {
 		document.documentElement.dataset.theme = theme;
 		document.documentElement.style.colorScheme = theme;
 	}, [theme]);
+
+	useEffect(() => {
+		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
+		if (agentCatalogPortRef.current === daemonStatus.port) return;
+
+		agentCatalogPortRef.current = daemonStatus.port;
+		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance only until the user picks a theme explicitly.
 	useEffect(() => {
@@ -206,6 +253,15 @@ function ShellLayout() {
               by window-drag even though DOM hit-testing looks correct. */}
 					<TitlebarNav />
 				</SidebarProvider>
+				<OrchestratorReplacementDialog
+					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}
+					onOpenChange={(open) => {
+						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
+					}}
+					onRetry={(projectId) => void restartOrchestrator(projectId)}
+					projectId={replacementErrorProjectId}
+					workspaces={workspaces}
+				/>
 			</div>
 		</ShellProvider>
 	);

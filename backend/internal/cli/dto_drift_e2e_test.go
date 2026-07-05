@@ -37,6 +37,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
@@ -106,6 +107,32 @@ func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, 
 	return sessionsvc.ClaimPRResult{}, nil
 }
 
+type fakeAgentCatalog struct{}
+
+var _ controllers.AgentCatalog = (*fakeAgentCatalog)(nil)
+
+func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
+	return authorizedCodexInventory(), nil
+}
+
+func (f *fakeAgentCatalog) Refresh(context.Context) (agentsvc.Inventory, error) {
+	return authorizedCodexInventory(), nil
+}
+
+func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.ProbeResult, error) {
+	info := agentsvc.Info{ID: agentID, Label: agentID, AuthStatus: "authorized"}
+	return agentsvc.ProbeResult{Agent: info, Supported: true, Installed: true}, nil
+}
+
+func authorizedCodexInventory() agentsvc.Inventory {
+	info := agentsvc.Info{ID: "codex", Label: "Codex", AuthStatus: "authorized"}
+	return agentsvc.Inventory{
+		Supported:  []agentsvc.Info{info},
+		Installed:  []agentsvc.Info{info},
+		Authorized: []agentsvc.Info{info},
+	}
+}
+
 // fakeProjectManager captures the project.AddInput the controller decodes from
 // the CLI's request body. Every other method is a no-op so it satisfies the
 // projectsvc.Manager interface.
@@ -119,8 +146,9 @@ func (f *fakeProjectManager) List(context.Context) ([]projectsvc.Summary, error)
 	return nil, nil
 }
 
-func (f *fakeProjectManager) Get(context.Context, domain.ProjectID) (projectsvc.GetResult, error) {
-	return projectsvc.GetResult{}, nil
+func (f *fakeProjectManager) Get(_ context.Context, id domain.ProjectID) (projectsvc.GetResult, error) {
+	project := projectsvc.Project{ID: id, Path: "/repo/" + string(id)}
+	return projectsvc.GetResult{Status: "ok", Project: &project}, nil
 }
 
 func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (projectsvc.Project, error) {
@@ -150,6 +178,7 @@ func startDriftTestDaemon(t *testing.T, sessions controllers.SessionService, pro
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	router := httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Agents:   &fakeAgentCatalog{},
 		Sessions: sessions,
 		Projects: projects,
 	}, httpd.ControlDeps{})

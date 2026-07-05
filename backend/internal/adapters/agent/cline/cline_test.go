@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -33,6 +33,30 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsJSONForPromptlessInteractiveLaunch(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cline"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:  ports.PermissionModeBypassPermissions,
+		SystemPrompt: "coordinate the project",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"cline",
+		"--yolo",
+		"-s", "coordinate the project",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if contains(cmd, "--json") {
+		t.Fatalf("promptless Cline launch must not use --json: %#v", cmd)
 	}
 }
 
@@ -90,7 +114,7 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "cline"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -102,7 +126,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "cline"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -221,11 +245,11 @@ func TestUninstallHooksRemovesClineHooks(t *testing.T) {
 	}
 
 	for _, spec := range clineManagedHooks {
-		if fileExists(filepath.Join(hooksDir, spec.Event)) {
+		if hookutil.FileExists(filepath.Join(hooksDir, spec.Event)) {
 			t.Fatalf("%s still present after uninstall", spec.Event)
 		}
 	}
-	if !fileExists(userHook) {
+	if !hookutil.FileExists(userHook) {
 		t.Fatal("user PostToolUse hook was removed by uninstall")
 	}
 }
@@ -254,7 +278,6 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want := []string{
 		"cline",
-		"--json",
 		"--auto-approve", "true",
 		"--id", "session-123",
 	}
@@ -301,8 +324,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "session-123",
-			clineTitleMetadataKey:           "Fix login redirect",
-			clineSummaryMetadataKey:         "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -341,29 +364,6 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
 		t.Fatalf("info = %#v, want zero value", info)
-	}
-}
-
-func TestDeriveActivityState(t *testing.T) {
-	tests := []struct {
-		event  string
-		want   domain.ActivityState
-		wantOK bool
-	}{
-		{"session-start", domain.ActivityActive, true},
-		{"user-prompt-submit", domain.ActivityActive, true},
-		{"stop", domain.ActivityIdle, true},
-		{"permission-request", domain.ActivityWaitingInput, true},
-		{"unknown", "", false},
-		{"", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.event, func(t *testing.T) {
-			got, ok := DeriveActivityState(tt.event, nil)
-			if got != tt.want || ok != tt.wantOK {
-				t.Fatalf("DeriveActivityState(%q) = (%q, %v), want (%q, %v)", tt.event, got, ok, tt.want, tt.wantOK)
-			}
-		})
 	}
 }
 
