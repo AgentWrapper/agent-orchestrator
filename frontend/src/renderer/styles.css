@@ -773,6 +773,18 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	padding: 18px 18px 40px;
 }
 
+/* Browser tab: the panel fills the rail edge-to-edge, so drop the body padding
+   and the panel's own border/radius so it sits flush against the resize handle. */
+.session-inspector__body.session-inspector__body--browser {
+	padding: 0;
+	overflow: hidden;
+}
+
+.session-inspector__body--browser .browser-panel {
+	border: 0;
+	border-radius: 0;
+}
+
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
  * transparent grab strip whose centered 1px line lights accent on hover, drag
  * (rrp sets data-separator="active"), and keyboard focus. */

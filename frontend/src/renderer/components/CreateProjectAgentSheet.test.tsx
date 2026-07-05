@@ -1,17 +1,36 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { CreateProjectAgentSheet } from "./CreateProjectAgentSheet";
 
 function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	queryClient.setQueryData(agentsQueryKey, {
+		supported: [
+			{ id: "claude-code", label: "claude-code" },
+			{ id: "codex", label: "codex" },
+		],
+		installed: [
+			{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
+			{ id: "codex", label: "codex", authStatus: "authorized" },
+		],
+		authorized: [
+			{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
+			{ id: "codex", label: "codex", authStatus: "authorized" },
+		],
+	});
 	render(
-		<CreateProjectAgentSheet
-			isCreating={false}
-			onOpenChange={() => undefined}
-			onSubmit={onSubmit}
-			open={true}
-			path="/repo/new-project"
-		/>,
+		<QueryClientProvider client={queryClient}>
+			<CreateProjectAgentSheet
+				isCreating={false}
+				onOpenChange={() => undefined}
+				onSubmit={onSubmit}
+				open={true}
+				path="/repo/new-project"
+			/>
+		</QueryClientProvider>,
 	);
 	return onSubmit;
 }

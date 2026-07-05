@@ -681,6 +681,7 @@ func TestPoll_DiscoveredPRPersistedAsBaselineBeforeRefresh(t *testing.T) {
 	}
 	if baseline == nil {
 		t.Fatalf("discovered PR #1 not persisted as a baseline row; writes=%#v", store.writes)
+		return
 	}
 	if baseline.Merged || baseline.Closed {
 		t.Fatalf("baseline row must be open, got merged=%v closed=%v", baseline.Merged, baseline.Closed)

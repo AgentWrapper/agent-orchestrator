@@ -229,33 +229,10 @@ func writeKiroHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMess
 		return fmt.Errorf("encode %s: %w", hooksPath, err)
 	}
 	data = append(data, '\n')
-	if err := atomicWriteFile(hooksPath, data, 0o600); err != nil {
+	if err := hookutil.AtomicWriteFile(hooksPath, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", hooksPath, err)
 	}
 	return nil
-}
-
-// atomicWriteFile writes data to path via a temp file + rename, so a crash mid-
-// write can't leave a truncated/empty file that Kiro then fails to parse.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ao-tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }
 
 // groupKiroHooksByEvent groups the managed hook specs by their Kiro event so

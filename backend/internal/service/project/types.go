@@ -4,12 +4,13 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
 // Summary is the row shape returned by GET /api/v1/projects.
 type Summary struct {
-	ID            domain.ProjectID   `json:"id"`
-	Name          string             `json:"name"`
-	Path          string             `json:"path"`
-	Kind          domain.ProjectKind `json:"kind"`
-	SessionPrefix string             `json:"sessionPrefix"`
-	ResolveError  string             `json:"resolveError,omitempty"`
+	ID                domain.ProjectID    `json:"id"`
+	Name              string              `json:"name"`
+	Path              string              `json:"path"`
+	Kind              domain.ProjectKind  `json:"kind"`
+	SessionPrefix     string              `json:"sessionPrefix"`
+	OrchestratorAgent domain.AgentHarness `json:"orchestratorAgent,omitempty"`
+	ResolveError      string              `json:"resolveError,omitempty"`
 }
 
 // Project is the full read-model returned by GET /api/v1/projects/{id}.

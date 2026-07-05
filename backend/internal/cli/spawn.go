@@ -2,9 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -19,14 +24,15 @@ import (
 const maxDisplayNameLen = 20
 
 type spawnOptions struct {
-	project    string
-	harness    string
-	branch     string
-	prompt     string
-	issue      string
-	name       string
-	claimPR    string
-	noTakeover bool
+	project        string
+	harness        string
+	branch         string
+	prompt         string
+	issue          string
+	name           string
+	claimPR        string
+	noTakeover     bool
+	skipAgentCheck bool
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
@@ -37,7 +43,7 @@ type spawnRequest struct {
 	Harness     string `json:"harness,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
-	DisplayName string `json:"displayName"`
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 type spawnResult struct {
@@ -45,6 +51,12 @@ type spawnResult struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	} `json:"session"`
+}
+
+type agentProbeResult struct {
+	Agent     agentInfo `json:"agent"`
+	Supported bool      `json:"supported"`
+	Installed bool      `json:"installed"`
 }
 
 func newSpawnCommand(ctx *commandContext) *cobra.Command {
@@ -57,25 +69,33 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			"fresh git worktree. Register the project first with `ao project add`.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.project == "" {
-				return usageError{fmt.Errorf("--project is required")}
-			}
-			name := strings.TrimSpace(opts.name)
-			if name == "" {
-				return usageError{fmt.Errorf("--name is required")}
-			}
-			if utf8.RuneCountInString(name) > maxDisplayNameLen {
-				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
-			}
 			if opts.noTakeover && opts.claimPR == "" {
 				return usageError{fmt.Errorf("--no-takeover requires --claim-pr")}
 			}
-			claimRef := ""
-			if opts.claimPR != "" {
-				project, err := ctx.fetchProjectDetails(cmd.Context(), opts.project)
-				if err != nil {
+			if explicitName := strings.TrimSpace(opts.name); utf8.RuneCountInString(explicitName) > maxDisplayNameLen {
+				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
+			}
+
+			project, err := ctx.resolveSpawnProject(cmd.Context(), opts.project)
+			if err != nil {
+				return err
+			}
+			opts.project = project.ID
+
+			harness, err := resolveSpawnHarness(opts.harness, project)
+			if err != nil {
+				return err
+			}
+			opts.harness = harness
+
+			name := resolveSpawnDisplayName(opts.name, opts.prompt)
+			if !opts.skipAgentCheck {
+				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
 					return err
 				}
+			}
+			claimRef := ""
+			if opts.claimPR != "" {
 				claimRef, err = ctx.resolvePRRef(cmd.Context(), opts.claimPR, project)
 				if err != nil {
 					return err
@@ -123,7 +143,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			} else {
 				attach = "Attach from the AO dashboard (ConPTY sessions have no CLI attach command)"
 			}
-			_, err := fmt.Fprintf(out, "attach with: %s\n", attach)
+			_, err = fmt.Fprintf(out, "attach with: %s\n", attach)
 			return err
 		},
 	}
@@ -136,15 +156,272 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		}
 		return pflag.NormalizedName(name)
 	})
-	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (required)")
+	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
 	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
-	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")
+	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (default: derived from --prompt, max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
+	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
 	return cmd
+}
+
+func (c *commandContext) fetchAgentInventory(ctx context.Context, refresh bool) (agentInventory, error) {
+	var inv agentInventory
+	if refresh {
+		if err := c.postJSON(ctx, "agents/refresh", struct{}{}, &inv); err != nil {
+			return agentInventory{}, err
+		}
+		return inv, nil
+	}
+	if err := c.getJSON(ctx, "agents", &inv); err != nil {
+		return agentInventory{}, err
+	}
+	return inv, nil
+}
+
+func (c *commandContext) resolveSpawnProject(ctx context.Context, explicit string) (projectDetails, error) {
+	if id := strings.TrimSpace(explicit); id != "" {
+		return c.fetchProjectDetails(ctx, id)
+	}
+	if id := strings.TrimSpace(os.Getenv("AO_PROJECT_ID")); id != "" {
+		return c.fetchProjectDetails(ctx, id)
+	}
+	if sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID")); sessionID != "" {
+		project, err := c.resolveProjectFromSession(ctx, sessionID)
+		if err != nil {
+			return projectDetails{}, err
+		}
+		return project, nil
+	}
+	project, ok, err := c.resolveProjectFromCWD(ctx)
+	if err != nil {
+		return projectDetails{}, err
+	}
+	if ok {
+		return project, nil
+	}
+	return projectDetails{}, usageError{fmt.Errorf("project could not be resolved; pass --project or run `ao project add --path <repo-path> --worker-agent <agent>`")}
+}
+
+func (c *commandContext) resolveProjectFromSession(ctx context.Context, sessionID string) (projectDetails, error) {
+	sess, err := c.fetchScopedSession(ctx, sessionID, "")
+	if err != nil {
+		return projectDetails{}, usageError{fmt.Errorf("project could not be resolved from AO_SESSION_ID %q; pass --project", sessionID)}
+	}
+	if strings.TrimSpace(sess.ProjectID) == "" {
+		return projectDetails{}, usageError{fmt.Errorf("project could not be resolved from AO_SESSION_ID %q; pass --project", sessionID)}
+	}
+	return c.fetchProjectDetails(ctx, sess.ProjectID)
+}
+
+func (c *commandContext) resolveProjectFromCWD(ctx context.Context) (projectDetails, bool, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return projectDetails{}, false, err
+	}
+	cwd, err = normalizeProjectMatchPath(cwd)
+	if err != nil {
+		return projectDetails{}, false, err
+	}
+
+	var list projectListResult
+	if err := c.getJSON(ctx, "projects", &list); err != nil {
+		return projectDetails{}, false, err
+	}
+	sort.Slice(list.Projects, func(i, j int) bool {
+		return list.Projects[i].ID < list.Projects[j].ID
+	})
+
+	var best projectDetails
+	bestLen := -1
+	ambiguous := false
+	for _, summary := range list.Projects {
+		project, err := c.fetchProjectDetails(ctx, summary.ID)
+		if err != nil {
+			return projectDetails{}, false, err
+		}
+		if project.Path == "" {
+			continue
+		}
+		projectPath, err := normalizeProjectMatchPath(project.Path)
+		if err != nil {
+			continue
+		}
+		if !pathContains(projectPath, cwd) {
+			continue
+		}
+		pathLen := len(projectPath)
+		switch {
+		case pathLen > bestLen:
+			best = project
+			bestLen = pathLen
+			ambiguous = false
+		case pathLen == bestLen:
+			ambiguous = true
+		}
+	}
+	if bestLen == -1 {
+		return projectDetails{}, false, nil
+	}
+	if ambiguous {
+		return projectDetails{}, false, usageError{fmt.Errorf("current directory matches multiple registered projects; pass --project")}
+	}
+	return best, true, nil
+}
+
+func normalizeProjectMatchPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if realPath, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = realPath
+	}
+	return filepath.Clean(abs), nil
+}
+
+func pathContains(root, child string) bool {
+	if root == child {
+		return true
+	}
+	rel, err := filepath.Rel(root, child)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func resolveSpawnHarness(explicit string, project projectDetails) (string, error) {
+	if harness := strings.TrimSpace(explicit); harness != "" {
+		return harness, nil
+	}
+	if project.Config != nil {
+		if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
+			return harness, nil
+		}
+	}
+	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>`", project.ID)}
+}
+
+func resolveSpawnDisplayName(explicit, prompt string) string {
+	if name := strings.TrimSpace(explicit); name != "" {
+		return name
+	}
+	return deriveDisplayNameFromPrompt(prompt)
+}
+
+func deriveDisplayNameFromPrompt(prompt string) string {
+	fields := strings.Fields(strings.TrimSpace(prompt))
+	if len(fields) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, field := range fields {
+		next := strings.Trim(field, " \t\r\n.,;:!?()[]{}\"'")
+		if next == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			next = " " + next
+		}
+		if utf8.RuneCountInString(b.String()+next) > maxDisplayNameLen {
+			break
+		}
+		b.WriteString(next)
+	}
+	return b.String()
+}
+
+func (c *commandContext) preflightSpawnAgentAuth(ctx context.Context, cmd *cobra.Command, agentID string) error {
+	inv, err := c.fetchAgentInventory(ctx, true)
+	if err != nil {
+		return err
+	}
+	state := agentCatalogStateFor(inv, agentID)
+	if !state.supported {
+		return fmt.Errorf("agent %q is not supported by this daemon; pass a supported --agent or run `ao agent ls`", agentID)
+	}
+	if !state.installed || state.authStatus == "unauthorized" {
+		fresh, err := c.probeSpawnAgent(ctx, agentID)
+		if err != nil {
+			if agentProbeUnavailable(err) {
+				_, err = fmt.Fprintf(cmd.ErrOrStderr(), "warning: agent %q fresh readiness probe is unavailable; continuing and letting spawn validate runtime readiness\n", agentID)
+				return err
+			}
+			return err
+		}
+		if !fresh.Supported {
+			return fmt.Errorf("agent %q is not supported by this daemon; pass a supported --agent or run `ao agent ls`", agentID)
+		}
+		if !fresh.Installed {
+			return fmt.Errorf("agent %q needs install; install the agent CLI or pass --skip-agent-check to let spawn validate it", agentID)
+		}
+		state.installed = true
+		state.authorized = fresh.Agent.AuthStatus == "authorized"
+		state.authStatus = fresh.Agent.AuthStatus
+	}
+	if state.authorized {
+		return nil
+	}
+	if state.authStatus == "unauthorized" {
+		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "warning: agent %q may need auth according to a fresh local probe; continuing and letting spawn validate runtime readiness\n", agentID)
+		return err
+	}
+	_, err = fmt.Fprintf(cmd.ErrOrStderr(), "warning: agent %q auth status is unknown; continuing and letting spawn validate runtime readiness\n", agentID)
+	return err
+}
+
+func (c *commandContext) probeSpawnAgent(ctx context.Context, agentID string) (agentProbeResult, error) {
+	var result agentProbeResult
+	if err := c.postJSON(ctx, "agents/"+url.PathEscape(agentID)+"/probe", struct{}{}, &result); err != nil {
+		return agentProbeResult{}, err
+	}
+	return result, nil
+}
+
+func agentProbeUnavailable(err error) bool {
+	var apiErr apiResponseError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.StatusCode == http.StatusNotFound || apiErr.StatusCode == http.StatusNotImplemented
+}
+
+type agentCatalogState struct {
+	supported  bool
+	installed  bool
+	authorized bool
+	authStatus string
+}
+
+func agentCatalogStateFor(inv agentInventory, agentID string) agentCatalogState {
+	state := agentCatalogState{}
+	for _, info := range inv.Supported {
+		if info.ID == agentID {
+			state.supported = true
+			break
+		}
+	}
+	for _, info := range inv.Authorized {
+		if info.ID == agentID {
+			state.installed = true
+			state.authorized = true
+			state.authStatus = "authorized"
+			return state
+		}
+	}
+	for _, info := range inv.Installed {
+		if info.ID == agentID {
+			state.installed = true
+			state.authorized = info.AuthStatus == "authorized"
+			state.authStatus = info.AuthStatus
+			return state
+		}
+	}
+	return state
 }
 
 // rollbackSpawnedSession reverses a partial `spawn` whose out-of-band follow-up

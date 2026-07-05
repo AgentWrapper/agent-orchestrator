@@ -83,8 +83,9 @@ func Build() (*adapters.Registry, error) {
 // harness is the adapter's manifest id, which is also the domain.AgentHarness
 // value a session carries and the `--harness` flag users pass.
 type HarnessAgent struct {
-	Harness domain.AgentHarness
-	Agent   ports.Agent
+	Harness  domain.AgentHarness
+	Manifest adapters.Manifest
+	Agent    ports.Agent
 }
 
 // Harnessed returns every shipped adapter that drives an agent, paired with its
@@ -99,8 +100,9 @@ func Harnessed() []HarnessAgent {
 			continue
 		}
 		out = append(out, HarnessAgent{
-			Harness: domain.AgentHarness(a.Manifest().ID),
-			Agent:   agent,
+			Harness:  domain.AgentHarness(a.Manifest().ID),
+			Manifest: a.Manifest(),
+			Agent:    agent,
 		})
 	}
 	return out

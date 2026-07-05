@@ -22,7 +22,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 		setBusy(true);
 		setError(undefined);
 		try {
-			const id = await spawnOrchestrator(session.workspaceId, true);
+			const id = await spawnOrchestrator(session.workspaceId, "restore_dialog", true);
 			onOpenChange(false);
 			onRecreated(id);
 		} catch (err) {

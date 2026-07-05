@@ -44,6 +44,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		id: project.id,
 		name: project.name,
 		path: project.path,
+		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
 		sessions: (sessionsData?.sessions ?? [])
 			.filter((session) => session.projectId === project.id)
 			.map((session) => ({

@@ -1,20 +1,46 @@
-import { apiClient } from "./api-client";
+import { apiClient, apiErrorMessage } from "./api-client";
+import { captureRendererEvent } from "./telemetry";
+
+// Every UI entry point that spawns an orchestrator: the board CTA, the topbar
+// and sidebar launchers, the restore-unavailable dialog, and the auto-spawn
+// right after a project is added. Emitting the triad from inside
+// spawnOrchestrator (keyed by source) guarantees each path reports, instead of
+// each call site remembering to instrument itself. Keep in sync with the
+// allowed-source list in telemetry.ts.
+export type OrchestratorSpawnSource =
+	| "board"
+	| "restore_dialog"
+	| "topbar"
+	| "sidebar"
+	| "project_add"
+	| "settings"
+	| "restart";
 
 /** Spawn the project's orchestrator session via the daemon API. When clean is
  *  true the daemon first tears down any active orchestrator for the project, then
  *  re-spawns one on the canonical branch (reattaching the existing branch). */
-export async function spawnOrchestrator(projectId: string, clean = false): Promise<string> {
-	const { data, error, response } = await apiClient.POST("/api/v1/orchestrators", {
-		body: { projectId, clean },
-	});
+export async function spawnOrchestrator(
+	projectId: string,
+	source: OrchestratorSpawnSource,
+	clean = false,
+): Promise<string> {
+	void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", { project_id: projectId, source });
+	try {
+		const { data, error, response } = await apiClient.POST("/api/v1/orchestrators", {
+			body: { projectId, clean },
+		});
 
-	if (error || !data?.orchestrator?.id) {
-		const message =
-			error && typeof error === "object" && "message" in error && typeof error.message === "string"
-				? error.message
+		if (error || !data?.orchestrator?.id) {
+			const message = error
+				? apiErrorMessage(error, `Failed to spawn orchestrator (${response.status})`)
 				: `Failed to spawn orchestrator (${response.status})`;
-		throw new Error(message);
-	}
+			throw new Error(message);
+		}
 
-	return data.orchestrator.id;
+		void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", { project_id: projectId, source });
+		return data.orchestrator.id;
+	} catch (err) {
+		void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", { project_id: projectId, source });
+		throw err;
+	}
 }

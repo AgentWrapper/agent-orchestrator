@@ -29,6 +29,12 @@ func TestManifest(t *testing.T) {
 	}
 }
 
+func TestDoesNotImplementAuthChecker(t *testing.T) {
+	if _, ok := any(&Plugin{}).(ports.AgentAuthChecker); ok {
+		t.Fatal("Continue must not implement AgentAuthChecker; catalog refresh must not run model-call auth probes")
+	}
+}
+
 func TestGetConfigSpecEmpty(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {

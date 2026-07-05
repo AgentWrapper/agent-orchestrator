@@ -18,6 +18,8 @@ import (
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -26,6 +28,7 @@ const adapterID = "aider"
 // Plugin is the Aider agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -49,14 +52,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a headless Aider session:
@@ -89,40 +84,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	// honored via --read. A cfg.SystemPrompt with no file is intentionally
 	// dropped here rather than written to disk.
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Aider receives its prompt in the launch
-// command itself (via -m).
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
-}
-
-// GetAgentHooks is a no-op: Aider emits no lifecycle hooks (Tier C), so there
-// is no native hook config to install AO hooks into.
-func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
-	return ctx.Err()
-}
-
-// GetRestoreCommand always reports that no native session can be continued.
-// Aider has no native session id or resume-by-id mechanism
-// (see github.com/Aider-AI/aider issues/166), so the manager always falls back
-// to a fresh launch.
-func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return nil, false, nil
-}
-
-// SessionInfo is a no-op: Aider exposes no captureable session metadata.
-func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.SessionInfo{}, false, err
-	}
-	return ports.SessionInfo{}, false, nil
 }
 
 // normalizePermissionMode collapses an empty mode onto PermissionModeDefault so
@@ -190,7 +151,7 @@ func ResolveAiderBinary(ctx context.Context) (string, error) {
 	}
 
 	for _, candidate := range candidates {
-		if fileExists(candidate) {
+		if hookutil.FileExists(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -215,9 +176,4 @@ func (p *Plugin) aiderBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
