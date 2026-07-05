@@ -313,7 +313,7 @@ func (m *Manager) IsSwitching(id domain.SessionID) bool {
 // try to native-resume the previous agent's session. Activity resets to idle
 // and the first-signal receipt clears so the new agent re-proves its hook
 // pipeline (a hookless harness will read as no_signal after the grace period).
-func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, runtimeHandleID string) error {
+func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -328,7 +328,21 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	rec.FirstSignalAt = time.Time{}
-	rec.Metadata.RuntimeHandleID = runtimeHandleID
+	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
+	// Persist the launch worktree: a terminated relaunch may restore to a
+	// different path (changed session prefix / managed root), and a stale
+	// WorkspacePath/Branch would break later terminal/workspace/cleanup ops.
+	if metadata.WorkspacePath != "" {
+		rec.Metadata.WorkspacePath = metadata.WorkspacePath
+	}
+	if metadata.Branch != "" {
+		rec.Metadata.Branch = metadata.Branch
+	}
+	if metadata.LaunchedHarnesses != nil {
+		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
+	}
+	// The new agent starts without the old agent's native resume id; its own
+	// hook re-reports one after launch.
 	rec.Metadata.AgentSessionID = ""
 	rec.UpdatedAt = now
 	return m.store.UpdateSession(ctx, rec)

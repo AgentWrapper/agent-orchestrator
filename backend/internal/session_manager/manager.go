@@ -67,9 +67,10 @@ const hookBinaryName = "ao"
 type lifecycleRecorder interface {
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
-	// MarkSwitched re-points a live session at a new harness + runtime handle
-	// and clears the harness-specific native resume id (AgentSessionID).
-	MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, runtimeHandleID string) error
+	// MarkSwitched re-points a session at a new harness and persists the launch
+	// metadata (runtime handle, workspace path/branch, launched-harnesses set),
+	// clearing the harness-specific native resume id (AgentSessionID).
+	MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error
 	// TryBeginSwitch atomically claims the switch guard for the session: false
 	// means a switch is already in flight. Rejecting a concurrent switch and
 	// suppressing the reaper during the runtime gap are the same claim. Pair a
@@ -621,20 +622,23 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 }
 
 // SwitchHarness re-points a session's agent to newHarness on the same worktree
-// (code and uncommitted work preserved), launching the new agent fresh — there
-// is no native resume, since a different harness cannot read the outgoing
-// agent's session. model, when non-empty, overrides the resolved agent model
-// for the new launch (e.g. a cheaper model on the same harness).
+// (code and uncommitted work preserved). model, when non-empty, overrides the
+// resolved agent model for the new launch (e.g. a cheaper model on the same
+// harness).
+//
+// The launch is FRESH for a harness that has never run this session, and a
+// RESUME for one that has: an agent that pins a deterministic native session id
+// (e.g. Claude Code's --session-id) would collide ("session id already in use")
+// if relaunched fresh over its own prior session, so a previously-used harness
+// resumes instead. The set of used harnesses is tracked in session metadata.
 //
 // It handles two cases:
 //   - LIVE session: swap in place. The old agent is torn down only AFTER the
 //     new launch command validates, so a bad/unknown harness never disrupts the
-//     running session; BeginSwitch/EndSwitch bracket the runtime gap so the
-//     reaper cannot terminate the session while it briefly has no live runtime.
+//     running session; the switch guard brackets the runtime gap so the reaper
+//     cannot terminate the session while it briefly has no live runtime.
 //   - TERMINATED session (e.g. the agent exited): relaunch-as. The worktree is
-//     restored and the new agent launched fresh under it — the way to bring a
-//     finished task back under a different agent (plain restore keeps the old
-//     harness).
+//     restored and the agent relaunched under it.
 func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHarness domain.AgentHarness, model string) (domain.SessionRecord, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -679,26 +683,43 @@ func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHar
 		agentConfig.Model = model
 	}
 
+	// A harness this session has already launched has a native session on disk;
+	// relaunching it fresh would collide, so resume it. The current harness
+	// counts as used even when the tracked set predates it (older sessions).
+	resume := newHarness == rec.Harness || containsHarness(meta.LaunchedHarnesses, newHarness)
+	launched := appendHarnessUnique(meta.LaunchedHarnesses, rec.Harness, newHarness)
+
 	if rec.IsTerminated {
-		return m.relaunchTerminatedWithHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig)
+		return m.relaunchTerminatedWithHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig, resume, launched)
 	}
-	return m.switchLiveHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig)
+	return m.switchLiveHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig, resume, launched)
 }
 
 // switchAgentArgv builds and pre-flight-validates the launch command for a
-// switch/relaunch, shared by the live and terminated paths.
-func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, issue domain.IssueID, systemPrompt string, cfg ports.AgentConfig, agent ports.Agent) ([]string, error) {
-	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
-		SessionID:     string(id),
-		WorkspacePath: workspacePath,
-		Prompt:        meta.Prompt,
-		SystemPrompt:  systemPrompt,
-		IssueID:       string(issue),
-		Config:        cfg,
-		Permissions:   cfg.Permissions,
-	})
+// switch/relaunch. When resume is true it uses the agent's resume command (via
+// restoreArgv, which falls back to a fresh launch when the adapter cannot
+// resume); otherwise it launches fresh. Shared by the live and terminated paths.
+func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, issue domain.IssueID, kind domain.SessionKind, systemPrompt string, cfg ports.AgentConfig, agent ports.Agent, resume bool) ([]string, error) {
+	var argv []string
+	var err error
+	if resume {
+		argv, err = restoreArgv(ctx, agent, id, workspacePath, meta, systemPrompt, cfg, kind)
+	} else {
+		argv, err = agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+			SessionID:     string(id),
+			WorkspacePath: workspacePath,
+			Prompt:        meta.Prompt,
+			SystemPrompt:  systemPrompt,
+			IssueID:       string(issue),
+			Config:        cfg,
+			Permissions:   cfg.Permissions,
+		})
+		if err != nil {
+			err = fmt.Errorf("launch command: %w", err)
+		}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("launch command: %w", err)
+		return nil, err
 	}
 	if err := m.validateAgentBinary(argv); err != nil {
 		return nil, err
@@ -707,13 +728,13 @@ func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, work
 }
 
 // switchLiveHarness swaps the agent of a running session in place.
-func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig) (domain.SessionRecord, error) {
+func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig, resume bool, launched []domain.AgentHarness) (domain.SessionRecord, error) {
 	id := rec.ID
 	meta := rec.Metadata
 	if meta.RuntimeHandleID == "" {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
 	}
-	argv, err := m.switchAgentArgv(ctx, id, meta.WorkspacePath, meta, rec.IssueID, systemPrompt, agentConfig, agent)
+	argv, err := m.switchAgentArgv(ctx, id, meta.WorkspacePath, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
@@ -740,7 +761,8 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 		_ = m.lcm.MarkTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
 	}
-	if err := m.lcm.MarkSwitched(ctx, id, newHarness, handle.ID); err != nil {
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, LaunchedHarnesses: launched}
+	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.lcm.MarkTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
@@ -752,14 +774,15 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 // different agent, reusing its worktree. There is no live runtime to tear down
 // and the reaper skips terminated sessions, so no BeginSwitch guard is needed —
 // MarkSwitched flips it back to live once the new runtime is up.
-func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig) (domain.SessionRecord, error) {
+func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig, resume bool, launched []domain.AgentHarness) (domain.SessionRecord, error) {
 	id := rec.ID
 	meta := rec.Metadata
-	// Mirror restoreArgv's guard: the new harness cannot native-resume the old
-	// agent's session, so a terminated WORKER with no saved prompt has nothing to
-	// launch from and would blank-relaunch. Restore deliberately refuses this, so
-	// switch-relaunch must too. Orchestrators are promptless by design.
-	if meta.Prompt == "" && rec.Kind != domain.KindOrchestrator {
+	// Mirror restoreArgv's guard, but only for a FRESH launch: a resumed harness
+	// has a native session to continue, so it needs no saved prompt. A fresh
+	// terminated WORKER with no prompt has nothing to launch from and would
+	// blank-relaunch, which Restore deliberately refuses. Orchestrators are
+	// promptless by design.
+	if !resume && meta.Prompt == "" && rec.Kind != domain.KindOrchestrator {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotResumable)
 	}
 	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
@@ -775,7 +798,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
-	argv, err := m.switchAgentArgv(ctx, id, ws.Path, meta, rec.IssueID, systemPrompt, agentConfig, agent)
+	argv, err := m.switchAgentArgv(ctx, id, ws.Path, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
@@ -788,11 +811,37 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
 	}
-	if err := m.lcm.MarkSwitched(ctx, id, newHarness, handle.ID); err != nil {
+	// Persist the RESTORED worktree path/branch: a changed session prefix or
+	// managed root can restore to a different path, and a stale one would break
+	// later terminal/workspace/cleanup operations.
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, WorkspacePath: ws.Path, Branch: ws.Branch, LaunchedHarnesses: launched}
+	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
 	}
 	return m.getRecord(ctx, id)
+}
+
+// containsHarness reports whether h is in hs.
+func containsHarness(hs []domain.AgentHarness, h domain.AgentHarness) bool {
+	for _, x := range hs {
+		if x == h {
+			return true
+		}
+	}
+	return false
+}
+
+// appendHarnessUnique returns hs with each non-empty add appended if absent,
+// leaving the input slice untouched.
+func appendHarnessUnique(hs []domain.AgentHarness, add ...domain.AgentHarness) []domain.AgentHarness {
+	out := append([]domain.AgentHarness(nil), hs...)
+	for _, h := range add {
+		if h != "" && !containsHarness(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
