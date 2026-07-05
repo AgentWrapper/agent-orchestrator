@@ -748,7 +748,7 @@ function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreate
 								<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
 							</button>
 						</TooltipTrigger>
-						<TooltipContent>{label}</TooltipContent>
+						<TooltipContent side="right">{label}</TooltipContent>
 					</Tooltip>
 				</SidebarMenuItem>
 			)}
