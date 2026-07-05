@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -307,6 +308,7 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 			Model:           row.Model,
 			PreviewURL:      row.PreviewURL,
 			PreviewRevision: row.PreviewRevision,
+			LaunchedHarnesses: parseHarnessCSV(row.LaunchedHarnesses),
 		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -335,8 +337,9 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Model:           rec.Metadata.Model,
 		PreviewURL:      rec.Metadata.PreviewURL,
 		PreviewRevision: rec.Metadata.PreviewRevision,
-		CreatedAt:       rec.CreatedAt,
-		UpdatedAt:       rec.UpdatedAt,
+		LaunchedHarnesses: harnessCSV(rec.Metadata.LaunchedHarnesses),
+		CreatedAt:         rec.CreatedAt,
+		UpdatedAt:         rec.UpdatedAt,
 	}
 }
 
@@ -360,8 +363,40 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Model:           rec.Metadata.Model,
 		PreviewURL:      rec.Metadata.PreviewURL,
 		PreviewRevision: rec.Metadata.PreviewRevision,
-		UpdatedAt:       rec.UpdatedAt,
+		LaunchedHarnesses: harnessCSV(rec.Metadata.LaunchedHarnesses),
+		UpdatedAt:         rec.UpdatedAt,
 	}
+}
+
+// harnessCSV serialises the launched-harness set to the comma-separated form
+// stored in sessions.launched_harnesses. Harness ids never contain commas.
+func harnessCSV(hs []domain.AgentHarness) string {
+	if len(hs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(hs))
+	for _, h := range hs {
+		if s := strings.TrimSpace(string(h)); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// parseHarnessCSV is the inverse of harnessCSV. An empty column yields nil.
+func parseHarnessCSV(s string) []domain.AgentHarness {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]domain.AgentHarness, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, domain.AgentHarness(p))
+		}
+	}
+	return out
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column
