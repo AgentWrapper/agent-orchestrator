@@ -8,13 +8,7 @@ import { captureRendererEvent } from "./telemetry";
 // each call site remembering to instrument itself. Keep in sync with the
 // allowed-source list in telemetry.ts.
 export type OrchestratorSpawnSource =
-	| "board"
-	| "restore_dialog"
-	| "topbar"
-	| "sidebar"
-	| "project_add"
-	| "settings"
-	| "restart";
+	"board" | "restore_dialog" | "topbar" | "sidebar" | "project_add" | "settings" | "restart";
 
 /** Spawn the project's orchestrator session via the daemon API. When clean is
  *  true the daemon first tears down any active orchestrator for the project, then
