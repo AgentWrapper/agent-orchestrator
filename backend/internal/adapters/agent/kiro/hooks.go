@@ -256,19 +256,18 @@ func setKiroAgentDefaults(topLevel map[string]json.RawMessage, systemPrompt stri
 		"resources":      []any{},
 		"toolsSettings":  map[string]any{},
 		"includeMcpJson": true,
-		"model":          nil,
 	}
 	if systemPrompt != "" {
 		defaults["prompt"] = systemPrompt
 	}
-	modelConfigured := false
 	if model := strings.TrimSpace(agentConfig.Model); model != "" {
 		defaults["model"] = model
-		modelConfigured = true
+	} else {
+		delete(topLevel, "model")
 	}
 
 	for key, value := range defaults {
-		managedKey := key == "name" || key == "prompt" || (key == "model" && modelConfigured)
+		managedKey := key == "name" || key == "prompt" || key == "model"
 		if !managedKey {
 			if _, ok := topLevel[key]; ok {
 				continue

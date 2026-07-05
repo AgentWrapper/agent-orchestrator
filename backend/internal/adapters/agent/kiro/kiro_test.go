@@ -449,6 +449,48 @@ func TestGetAgentHooksOverwritesStaleConfiguredModel(t *testing.T) {
 	}
 }
 
+func TestGetAgentHooksClearsStaleModelWhenConfigRemoved(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	workspace := t.TempDir()
+	hooksPath := kiroAgentPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"name":"ao","model":"stale-model","tools":["custom"]}`
+	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := ports.WorkspaceHookConfig{
+		DataDir:       t.TempDir(),
+		SessionID:     "sess-1",
+		SystemPrompt:  "standing AO instructions",
+		WorkspacePath: workspace,
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var topLevel map[string]json.RawMessage
+	if err := json.Unmarshal(data, &topLevel); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := topLevel["model"]; ok {
+		t.Fatalf("model still present in %s, want cleared when config has no model", data)
+	}
+	var tools []string
+	if err := json.Unmarshal(topLevel["tools"], &tools); err != nil {
+		t.Fatalf("decode tools from %s: %v", data, err)
+	}
+	if !reflect.DeepEqual(tools, []string{"custom"}) {
+		t.Fatalf("tools = %#v, want preserved custom tools", tools)
+	}
+}
+
 func TestUninstallHooksRemovesKiroHooks(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 	workspace := t.TempDir()
