@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -141,7 +142,15 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 		FirstSignalAt: time.Now(),
 		Metadata:      domain.SessionMetadata{RuntimeHandleID: "old", AgentSessionID: "old-native", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
 	}
-	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, "new-handle"); err != nil {
+	// A relaunch may restore to a different worktree path/branch; MarkSwitched
+	// must persist them (not keep the stale ones).
+	switched := domain.SessionMetadata{
+		RuntimeHandleID:   "new-handle",
+		WorkspacePath:     "/ws2",
+		Branch:            "b2",
+		LaunchedHarnesses: []domain.AgentHarness{domain.HarnessClaudeCode, domain.HarnessCodex},
+	}
+	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, switched); err != nil {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
@@ -154,12 +163,18 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	if got.Metadata.RuntimeHandleID != "new-handle" {
 		t.Fatalf("RuntimeHandleID = %q, want new-handle", got.Metadata.RuntimeHandleID)
 	}
+	if got.Metadata.WorkspacePath != "/ws2" || got.Metadata.Branch != "b2" {
+		t.Fatalf("workspace path/branch not persisted: %+v", got.Metadata)
+	}
+	if len(got.Metadata.LaunchedHarnesses) != 2 {
+		t.Fatalf("launched harnesses = %v, want 2", got.Metadata.LaunchedHarnesses)
+	}
 	if !got.FirstSignalAt.IsZero() {
 		t.Fatal("FirstSignalAt should reset so the new agent re-proves its hooks")
 	}
-	// Preserved facts survive the switch.
-	if got.Metadata.Prompt != "p" || got.Metadata.Branch != "b" || got.Metadata.WorkspacePath != "/ws" {
-		t.Fatalf("preserved metadata lost: %+v", got.Metadata)
+	// Prompt survives the switch.
+	if got.Metadata.Prompt != "p" {
+		t.Fatalf("preserved prompt lost: %+v", got.Metadata)
 	}
 }
 
@@ -170,7 +185,7 @@ func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeFailed}); err != nil {
 		t.Fatal(err)
 	}
-	if st.sessions["mer-1"] != before {
+	if !reflect.DeepEqual(st.sessions["mer-1"], before) {
 		t.Fatalf("failed probe should not persist a state, got %+v", st.sessions["mer-1"])
 	}
 }
@@ -182,7 +197,7 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: false, State: domain.ActivityIdle}); err != nil {
 		t.Fatal(err)
 	}
-	if st.sessions["mer-1"] != before {
+	if !reflect.DeepEqual(st.sessions["mer-1"], before) {
 		t.Fatal("invalid signal must not mutate")
 	}
 }
@@ -830,7 +845,7 @@ func TestApplyTrackerFacts_AssigneeChangedIsLogOnly(t *testing.T) {
 	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
 		t.Fatalf("ApplyTrackerFacts: %v", err)
 	}
-	if st.sessions["mer-1"] != before {
+	if !reflect.DeepEqual(st.sessions["mer-1"], before) {
 		t.Fatalf("assignee-only change must not mutate the session row, got %+v", st.sessions["mer-1"])
 	}
 	if len(msg.msgs) != 0 {
@@ -936,7 +951,7 @@ func TestApplyTrackerFacts_NotFetchedIsNoop(t *testing.T) {
 	if err := m.ApplyTrackerFacts(ctx, "mer-1", ports.TrackerObservation{Fetched: false}); err != nil {
 		t.Fatalf("ApplyTrackerFacts: %v", err)
 	}
-	if st.sessions["mer-1"] != before {
+	if !reflect.DeepEqual(st.sessions["mer-1"], before) {
 		t.Fatalf("not-fetched observation must not mutate state")
 	}
 	if len(msg.msgs) != 0 {
@@ -1011,7 +1026,7 @@ func TestActivity_SameStateRepeatAfterReceiptIsNoOp(t *testing.T) {
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
 		t.Fatal(err)
 	}
-	if st.sessions["mer-1"] != before {
+	if !reflect.DeepEqual(st.sessions["mer-1"], before) {
 		t.Fatalf("same-state repeat after receipt must not rewrite: %+v", st.sessions["mer-1"])
 	}
 }

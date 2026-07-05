@@ -151,13 +151,22 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	l.store.sessions[id] = rec
 	return nil
 }
-func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness domain.AgentHarness, runtimeHandleID string) error {
+func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error {
 	l.switched++
 	rec := l.store.sessions[id]
 	rec.Harness = harness
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
-	rec.Metadata.RuntimeHandleID = runtimeHandleID
+	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
+	if metadata.WorkspacePath != "" {
+		rec.Metadata.WorkspacePath = metadata.WorkspacePath
+	}
+	if metadata.Branch != "" {
+		rec.Metadata.Branch = metadata.Branch
+	}
+	if metadata.LaunchedHarnesses != nil {
+		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
+	}
 	rec.Metadata.AgentSessionID = ""
 	l.store.sessions[id] = rec
 	return nil
@@ -484,6 +493,66 @@ func TestSwitchHarness_TerminatedPromptlessWorkerRejected(t *testing.T) {
 	}
 	if rt.created != 0 || ws.lastCfg.Branch != "" {
 		t.Fatalf("relaunched a promptless worker: created=%d restoreBranch=%q", rt.created, ws.lastCfg.Branch)
+	}
+}
+
+// A harness this session already launched (e.g. Claude Code, which pins a
+// deterministic native session id) must RESUME on switch, not fresh-launch —
+// otherwise it collides with its own prior session ("session id already in use").
+func TestSwitchHarness_ResumesPreviouslyUsedHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: alwaysResumeAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	id := domain.SessionID("ao-1")
+	// Live on codex, but claude-code ran this session before.
+	st.sessions[id] = domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{
+			Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", RuntimeHandleID: "h1", Prompt: "do it",
+			LaunchedHarnesses: []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode},
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessClaudeCode, ""); err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	if len(rt.lastCfg.Argv) == 0 || rt.lastCfg.Argv[0] != "resume" {
+		t.Fatalf("argv = %v, want a resume command (harness used before)", rt.lastCfg.Argv)
+	}
+}
+
+// A harness this session has never launched must fresh-launch (create its
+// session), not resume a non-existent one.
+func TestSwitchHarness_FreshLaunchForNewHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: alwaysResumeAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{
+			Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", RuntimeHandleID: "h1", Prompt: "do it",
+			LaunchedHarnesses: []domain.AgentHarness{domain.HarnessCodex},
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessAider, ""); err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	if len(rt.lastCfg.Argv) == 0 || rt.lastCfg.Argv[0] != "launch" {
+		t.Fatalf("argv = %v, want a fresh launch (harness never used)", rt.lastCfg.Argv)
+	}
+	// The switched-to harness is now recorded.
+	if got := st.sessions[id].Metadata.LaunchedHarnesses; !containsHarness(got, domain.HarnessAider) {
+		t.Fatalf("launched harnesses = %v, want to include aider", got)
 	}
 }
 
