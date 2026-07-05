@@ -2,7 +2,7 @@ import { ChevronLeft, Maximize2, Minimize2, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
-import type { WorkspaceSession } from "../types/workspace";
+import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { TerminalPane } from "./TerminalPane";
 
 type CenterPaneProps = {
@@ -99,7 +99,9 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 			<div className="terminal-toolbar">
 				<div className="terminal-toolbar__label">
 					<span className="terminal-toolbar__eyebrow">TERMINAL</span>
-					<span className="terminal-toolbar__session">{session?.id ?? "No session"}</span>
+					<span className="terminal-toolbar__session">
+						{!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
+					</span>
 				</div>
 				<div className="terminal-toolbar__controls">
 					<button

@@ -1,4 +1,4 @@
-import { apiClient } from "./api-client";
+import { apiClient, apiErrorMessage } from "./api-client";
 
 /** Spawn the project's orchestrator session via the daemon API. When clean is
  *  true the daemon first tears down any active orchestrator for the project, then
@@ -9,10 +9,9 @@ export async function spawnOrchestrator(projectId: string, clean = false): Promi
 	});
 
 	if (error || !data?.orchestrator?.id) {
-		const message =
-			error && typeof error === "object" && "message" in error && typeof error.message === "string"
-				? error.message
-				: `Failed to spawn orchestrator (${response.status})`;
+		const message = error
+			? apiErrorMessage(error, `Failed to spawn orchestrator (${response.status})`)
+			: `Failed to spawn orchestrator (${response.status})`;
 		throw new Error(message);
 	}
 

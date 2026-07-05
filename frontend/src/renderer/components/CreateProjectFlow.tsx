@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { aoBridge } from "../lib/bridge";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 
-export type CreateProjectInput = { path: string; workerAgent: string; orchestratorAgent: string };
+export type CreateProjectInput = { path: string } & CreateProjectAgentSelection;
 
 // Shared create-project flow (native folder picker → agent sheet → create):
 // render-prop so the sidebar's + buttons and the board's first-run CTA drive

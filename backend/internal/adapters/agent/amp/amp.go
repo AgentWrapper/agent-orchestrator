@@ -8,15 +8,12 @@ package amp
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -25,6 +22,7 @@ const adapterID = "amp"
 // Plugin is the Amp agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -48,14 +46,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new interactive Amp session:
@@ -87,21 +77,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Amp receives its prompt in the launch
-// command itself.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
-}
-
-// GetAgentHooks is intentionally a no-op until Amp activity can be reported via
-// an Amp-specific plugin.
-func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
-	return ctx.Err()
-}
-
 // GetRestoreCommand rebuilds the argv that continues an existing Amp session
 // when plugin-derived native session metadata is available. Until that metadata
 // exists, ok is false and callers fall back to fresh launch behavior.
@@ -126,14 +101,6 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
-// SessionInfo is intentionally a no-op until Amp plugin metadata exists.
-func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.SessionInfo{}, false, err
-	}
-	return ports.SessionInfo{}, false, nil
-}
-
 func appendPermissionFlags(cmd *[]string, mode ports.PermissionMode) {
 	switch mode {
 	case ports.PermissionModeAcceptEdits:
@@ -145,66 +112,22 @@ func appendPermissionFlags(cmd *[]string, mode ports.PermissionMode) {
 	}
 }
 
+var ampBinarySpec = binaryutil.BinarySpec{
+	Label:         "amp",
+	Names:         []string{"amp"},
+	WinNames:      []string{"amp.cmd", "amp.exe", "amp"},
+	UnixPaths:     []string{"/usr/local/bin/amp", "/opt/homebrew/bin/amp"},
+	UnixHomePaths: [][]string{{".local", "bin", "amp"}, {".npm", "bin", "amp"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "amp.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "amp.exe"}},
+	},
+}
+
 // ResolveAmpBinary finds the `amp` binary, searching PATH then common install
-// locations. It returns "amp" as a last resort so callers get the shell's normal
-// command-not-found behavior if Amp is absent.
+// locations. It returns a wrapped ports.ErrAgentBinaryNotFound when Amp is absent.
 func ResolveAmpBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"amp.cmd", "amp.exe", "amp"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "amp.cmd"),
-				filepath.Join(appData, "npm", "amp.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("amp: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("amp"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/amp",
-		"/opt/homebrew/bin/amp",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "amp"),
-			filepath.Join(home, ".npm", "bin", "amp"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("amp: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, ampBinarySpec)
 }
 
 func (p *Plugin) ampBinary(ctx context.Context) (string, error) {
@@ -221,9 +144,4 @@ func (p *Plugin) ampBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

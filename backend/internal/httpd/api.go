@@ -19,6 +19,7 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
+	Agents             controllers.AgentCatalog
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
 	Activity           controllers.ActivityRecorder
@@ -36,6 +37,7 @@ type APIDeps struct {
 // router invokes to mount the /api/v1 surface.
 type API struct {
 	cfg           config.Config
+	agents        *controllers.AgentsController
 	projects      *controllers.ProjectsController
 	sessions      *controllers.SessionsController
 	prs           *controllers.PRsController
@@ -51,6 +53,9 @@ type API struct {
 func NewAPI(cfg config.Config, deps APIDeps) *API {
 	return &API{
 		cfg: cfg,
+		agents: &controllers.AgentsController{
+			Catalog: deps.Agents,
+		},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
@@ -80,6 +85,7 @@ func (a *API) Register(root chi.Router) {
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(timeout))
+			a.agents.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.prs.Register(r)

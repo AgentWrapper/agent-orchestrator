@@ -107,12 +107,14 @@ function WelcomeStep({ n, title, children }: { n: string; title: string; childre
 // (Orchestrator stays the primary, like the topbar) so the vocabulary holds.
 export function ProjectBoardEmpty({
 	hasOrchestrator,
+	isProjectRestarting,
 	isSpawning,
 	onNewTask,
 	onOpenOrchestrator,
 	spawnError,
 }: {
 	hasOrchestrator: boolean;
+	isProjectRestarting: boolean;
 	isSpawning: boolean;
 	onNewTask: () => void;
 	onOpenOrchestrator: () => void;
@@ -130,14 +132,26 @@ export function ProjectBoardEmpty({
 					<button
 						aria-label={hasOrchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 						className="dashboard-app-header__primary-btn"
-						disabled={isSpawning}
+						disabled={isSpawning || isProjectRestarting}
 						onClick={onOpenOrchestrator}
 						type="button"
 					>
 						<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-						{isSpawning ? "Spawning..." : hasOrchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+						{isProjectRestarting
+							? "Restarting..."
+							: isSpawning
+								? "Spawning..."
+								: hasOrchestrator
+									? "Orchestrator"
+									: "Spawn Orchestrator"}
 					</button>
-					<button aria-label="New task" className="dashboard-app-header__accent-btn" onClick={onNewTask} type="button">
+					<button
+						aria-label="New task"
+						className="dashboard-app-header__accent-btn"
+						disabled={isProjectRestarting}
+						onClick={onNewTask}
+						type="button"
+					>
 						<Plus className="h-3.5 w-3.5" aria-hidden="true" />
 						New task
 					</button>

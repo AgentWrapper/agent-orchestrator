@@ -22,15 +22,12 @@ package continueagent
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -39,9 +36,22 @@ import (
 // (NOT the Go package name "continueagent").
 const adapterID = "continue"
 
+var continueBinarySpec = binaryutil.BinarySpec{
+	Label:         "cn",
+	Names:         []string{"cn"},
+	WinNames:      []string{"cn.cmd", "cn.exe", "cn"},
+	UnixPaths:     []string{"/usr/local/bin/cn", "/opt/homebrew/bin/cn"},
+	UnixHomePaths: [][]string{{".npm-global", "bin", "cn"}, {".local", "bin", "cn"}, {".npm", "bin", "cn"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cn.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cn.exe"}},
+	},
+}
+
 // Plugin is the Continue CLI agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -67,14 +77,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
 // GetLaunchCommand builds `cn --print [--auto|--readonly] <prompt>`.
 //
 // `--print` runs Continue in non-interactive (headless) mode. The prompt is the
@@ -95,14 +97,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that the prompt is delivered in the launch command.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetAgentHooks reuses the Claude Code hook installer because the Continue CLI
@@ -154,15 +148,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[ports.MetadataKeyTitle],
-		Summary:        session.Metadata[ports.MetadataKeySummary],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // ResolveContinueBinary finds the `cn` binary (Continue CLI), searching PATH then
@@ -170,63 +157,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 // callers get the shell's normal command-not-found behavior if Continue is
 // absent.
 func ResolveContinueBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"cn.cmd", "cn.exe", "cn"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "cn.cmd"),
-				filepath.Join(appData, "npm", "cn.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("cn: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("cn"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/cn",
-		"/opt/homebrew/bin/cn",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".npm-global", "bin", "cn"),
-			filepath.Join(home, ".local", "bin", "cn"),
-			filepath.Join(home, ".npm", "bin", "cn"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("cn: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, continueBinarySpec)
 }
 
 func (p *Plugin) continueBinary(ctx context.Context) (string, error) {
@@ -251,7 +182,7 @@ func (p *Plugin) continueBinary(ctx context.Context) (string, error) {
 // and the two flags are mutually exclusive. Default and AcceptEdits emit no flag
 // so Continue defers to the user's own config / default behavior.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to the user's Continue config / default behavior.
 	case ports.PermissionModeAcceptEdits:
@@ -261,21 +192,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--auto")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

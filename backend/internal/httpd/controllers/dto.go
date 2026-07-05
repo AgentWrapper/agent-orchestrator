@@ -7,6 +7,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
+	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
@@ -24,6 +25,11 @@ import (
 // as the path parameter.
 type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
+}
+
+// AgentIDParam is the {agent} path parameter for one-agent catalog probes.
+type AgentIDParam struct {
+	Agent string `path:"agent" description:"Agent adapter identifier."`
 }
 
 // ListProjectsResponse is the body of GET /api/v1/projects.
@@ -434,6 +440,18 @@ type OrchestratorResponse struct {
 	ProjectID   domain.ProjectID `json:"projectId"`
 	ProjectName string           `json:"projectName,omitempty"`
 }
+
+// ListAgentsResponse is the body of GET /api/v1/agents.
+type ListAgentsResponse = agentsvc.Inventory
+
+// RefreshAgentsResponse is the body of POST /api/v1/agents/refresh.
+type RefreshAgentsResponse = agentsvc.Inventory
+
+// ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
+type ProbeAgentResponse = agentsvc.ProbeResult
+
+// AgentInfo is one supported or installed agent entry.
+type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {

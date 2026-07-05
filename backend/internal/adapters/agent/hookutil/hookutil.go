@@ -53,6 +53,14 @@ func EnsureWorkspaceGitignore(dir string, names ...string) error {
 	return nil
 }
 
+// FileExists reports whether path names an existing regular file (not a
+// directory). Adapters use it when probing well-known install locations for an
+// agent binary.
+func FileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 // AtomicWriteFile writes data to path via a temp file in the same directory
 // followed by a rename, so a crash or signal mid-write can't leave a truncated
 // or empty file that the agent then fails to parse (silently disabling hooks).

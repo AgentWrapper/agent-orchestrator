@@ -25,21 +25,17 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
 	adapterID = "goose"
-
-	gooseTitleMetadataKey   = "title"
-	gooseSummaryMetadataKey = "summary"
 
 	// gooseModeEnvVar is the only permission-control surface Goose honors: the
 	// approval mode is read from this process env var, not from any CLI flag.
@@ -49,6 +45,7 @@ const (
 // Plugin is the Goose agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -74,22 +71,17 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports the agent-specific config keys. Goose exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
 // GetLaunchCommand builds the argv to start a new headless Goose session:
 //
-//	[env GOOSE_MODE=<mode>] goose run [--system <text>] [-t <prompt>]
+//	[env GOOSE_MODE=<mode>] goose run [--system <text>] -t <prompt>
 //
 // The prompt is delivered in-command via `-t`. A non-default permission mode is
 // rendered as an `env GOOSE_MODE=<mode>` prefix because Goose reads its approval
 // mode from the environment, not from a flag. System instructions, when present,
-// are passed via `--system`.
+// are passed via `--system`. Goose requires one of --instructions, --text, or
+// --recipe even when AO intentionally starts a promptless orchestrator, so empty
+// prompts are delivered as `-t "" --interactive` to land in an input-ready
+// terminal without inventing an initial task.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.gooseBinary(ctx)
 	if err != nil {
@@ -106,20 +98,12 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--system", systemPrompt)
 	}
 
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "-t", cfg.Prompt)
+	cmd = append(cmd, "-t", cfg.Prompt)
+	if cfg.Prompt == "" {
+		cmd = append(cmd, "--interactive")
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Goose receives its prompt in the launch
-// command itself (via `-t`).
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Goose session:
@@ -152,15 +136,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[gooseTitleMetadataKey],
-		Summary:        session.Metadata[gooseSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // systemPromptText returns the system instructions to inject. Goose's `--system`
@@ -206,7 +183,7 @@ func gooseModeEnvPrefix(mode ports.PermissionMode) []string {
 //   - bypass-permissions → auto: Goose's fully-autonomous mode is the nearest
 //     equivalent to bypass.
 func gooseMode(mode ports.PermissionMode) string {
-	switch normalizePermissionMode(mode) {
+	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAcceptEdits:
 		return "smart_approve"
 	case ports.PermissionModeAuto:
@@ -218,90 +195,26 @@ func gooseMode(mode ports.PermissionMode) string {
 	}
 }
 
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		// Empty or unrecognized: defer to Goose's own config (no env).
-		return ports.PermissionModeDefault
-	}
+// gooseBinarySpec locates the goose binary: PATH first, then the install
+// script's ~/.local/bin, Homebrew, Cargo, and npm global locations.
+var gooseBinarySpec = binaryutil.BinarySpec{
+	Label:         "goose",
+	Names:         []string{"goose"},
+	WinNames:      []string{"goose.cmd", "goose.exe", "goose"},
+	UnixPaths:     []string{"/usr/local/bin/goose", "/opt/homebrew/bin/goose"},
+	UnixHomePaths: [][]string{{".local", "bin", "goose"}, {".cargo", "bin", "goose"}, {".npm", "bin", "goose"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "goose.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "goose.exe"}},
+		{Base: binaryutil.WinLocalAppData, Parts: []string{"Programs", "goose", "goose.exe"}},
+		{Base: binaryutil.WinHome, Parts: []string{".cargo", "bin", "goose.exe"}},
+	},
 }
 
-// ResolveGooseBinary returns the path to the goose binary on this machine,
-// searching PATH then a handful of well-known install locations (the install
-// script's ~/.local/bin, Homebrew, Cargo, npm global). Returns "goose" as a
-// last-ditch fallback so callers see a clear "command not found" rather than an
-// empty argv.
+// ResolveGooseBinary returns the path to the goose binary, or a wrapped
+// ports.ErrAgentBinaryNotFound when it is absent.
 func ResolveGooseBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"goose.cmd", "goose.exe", "goose"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "goose.cmd"),
-				filepath.Join(appData, "npm", "goose.exe"),
-			)
-		}
-		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			candidates = append(candidates, filepath.Join(localAppData, "Programs", "goose", "goose.exe"))
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "goose.exe"))
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		return "", fmt.Errorf("goose: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("goose"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/goose",
-		"/opt/homebrew/bin/goose",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "goose"),
-			filepath.Join(home, ".cargo", "bin", "goose"),
-			filepath.Join(home, ".npm", "bin", "goose"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("goose: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, gooseBinarySpec)
 }
 
 func (p *Plugin) gooseBinary(ctx context.Context) (string, error) {
@@ -318,9 +231,4 @@ func (p *Plugin) gooseBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

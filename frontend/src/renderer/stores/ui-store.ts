@@ -13,11 +13,15 @@ type UiState = {
 	isSidebarOpen: boolean;
 	isInspectorOpen: boolean;
 	theme: Theme;
+	restartingProjectIds: ReadonlySet<string>;
+	orchestratorReplacementErrors: Record<string, string>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setTheme: (theme: Theme) => void;
 	toggleTheme: () => void;
 	toggleSidebar: () => void;
 	toggleInspector: () => void;
+	setProjectRestarting: (projectId: string, restarting: boolean) => void;
+	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -58,6 +62,8 @@ export const useUiStore = create<UiState>((set) => ({
 	isSidebarOpen: initialSidebarOpen(),
 	isInspectorOpen: initialInspectorOpen(),
 	theme: initialTheme(),
+	restartingProjectIds: new Set<string>(),
+	orchestratorReplacementErrors: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setTheme: (theme) => {
 		getLocalStorage()?.setItem(themeStorageKey, theme);
@@ -80,5 +86,25 @@ export const useUiStore = create<UiState>((set) => ({
 			const isInspectorOpen = !state.isInspectorOpen;
 			getLocalStorage()?.setItem(inspectorStorageKey, String(isInspectorOpen));
 			return { isInspectorOpen };
+		}),
+	setProjectRestarting: (projectId, restarting) =>
+		set((state) => {
+			const restartingProjectIds = new Set(state.restartingProjectIds);
+			if (restarting) {
+				restartingProjectIds.add(projectId);
+			} else {
+				restartingProjectIds.delete(projectId);
+			}
+			return { restartingProjectIds };
+		}),
+	setOrchestratorReplacementError: (projectId, message) =>
+		set((state) => {
+			const orchestratorReplacementErrors = { ...state.orchestratorReplacementErrors };
+			if (message) {
+				orchestratorReplacementErrors[projectId] = message;
+			} else {
+				delete orchestratorReplacementErrors[projectId];
+			}
+			return { orchestratorReplacementErrors };
 		}),
 }));
