@@ -256,15 +256,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
+		Kind:          cfg.Kind,
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
@@ -575,9 +576,6 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if !ok {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
-	}
 	// The system prompt is derived, not persisted: recompute it so a restored
 	// session keeps its standing instructions across the relaunch.
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
@@ -586,7 +584,11 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, agentConfig, rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -1297,11 +1299,13 @@ type preLauncher interface {
 // starts the agent: installing the workspace-local activity hooks (so early
 // startup hooks can update the already-created session row), then any optional
 // PreLaunch step. Shared by Spawn and Restore.
-func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string) error {
+func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt string, agentConfig ports.AgentConfig) error {
 	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		DataDir:       m.dataDir,
+		SystemPrompt:  systemPrompt,
+		Config:        agentConfig,
 	}); err != nil {
 		return fmt.Errorf("install hooks: %w", err)
 	}
@@ -1326,7 +1330,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -1343,6 +1347,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
+		Kind:          kind,
 		Prompt:        meta.Prompt,
 		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,
