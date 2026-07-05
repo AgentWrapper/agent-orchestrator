@@ -1,4 +1,5 @@
 import type { AoBridge } from "../../preload";
+import type { RenderMarkdownResponse } from "../../shared/markdown-types";
 
 export const aoBridge: AoBridge =
 	window.ao ??
@@ -87,6 +88,13 @@ export const aoBridge: AoBridge =
 			}),
 			destroy: () => undefined,
 			onNavState: () => () => undefined,
+		renderMarkdown: async (): Promise<RenderMarkdownResponse> => ({
+			documentId: "md://preview/1",
+			url: "app://md-preview/md://preview/1",
+			title: "Preview",
+			revision: 1,
+		}),
+			onMarkdownFileChanged: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

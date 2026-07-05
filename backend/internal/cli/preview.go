@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -25,10 +26,10 @@ func newPreviewCommand(ctx *commandContext) *cobra.Command {
 		Long: "Open a URL in the desktop browser panel for the current session.\n\n" +
 			"With no argument it opens the workspace's static entry point, falling\n" +
 			"back to this session's existing preview target when no entry point exists.\n" +
-			"A local file can be opened by its absolute file:// URL\n" +
-			"(e.g. file:///home/me/proj/index.html). Use `ao preview clear` to empty the panel.",
+			"A relative path is resolved against the current directory.\n" +
+			"Use `ao preview clear` to empty the panel.",
 		Example: `  ao preview
-  ao preview file://$(pwd)/index.html
+  ao preview README.md
   ao preview http://localhost:5173
   ao preview clear`,
 		Args: cobra.MaximumNArgs(1),
@@ -55,6 +56,19 @@ func (c *commandContext) openPreview(ctx context.Context, target string) error {
 	path, err := sessionPreviewPath()
 	if err != nil {
 		return err
+	}
+	// Resolve bare relative paths to absolute before sending to the daemon.
+	// Without this, a relative path like "README.md" would be stored verbatim
+	// and Electron's MarkdownHost could not resolve it — it would not match
+	// the file://, daemon-proxy, or HTTP patterns resolveLocalPath understands.
+	// The daemon already handles absolute paths via absolutePreviewFileURL
+	// (stats the file, converts to file:// URL).
+	if target != "" && !filepath.IsAbs(target) {
+		if abs, err := filepath.Abs(target); err == nil {
+			if _, err := os.Stat(abs); err == nil {
+				target = abs
+			}
+		}
 	}
 	return c.postJSON(ctx, path, previewAPIRequest{Url: target}, nil)
 }

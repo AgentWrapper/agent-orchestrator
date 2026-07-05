@@ -254,17 +254,26 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(updated)})
 }
 
-// clearPreview resets a session's browser preview to empty (`ao preview
-// clear`). Unlike setPreview with an empty url it never autodetects: it persists
-// an empty target so the desktop browser panel returns to its blank state. The
-// write still bumps the preview revision, so the panel hears the change over
-// CDC even though the url field is now empty.
+// clearPreview resets a session's browser preview (`ao preview clear`). It
+// first checks for an index.html entry point in the workspace — if found, the
+// preview reverts to it. Otherwise the panel clears to its blank initial state.
+// The write always bumps the preview revision, so the panel hears the change
+// over CDC regardless.
 func (c *SessionsController) clearPreview(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "DELETE", "/api/v1/sessions/{sessionId}/preview")
 		return
 	}
-	updated, err := c.Svc.SetPreview(r.Context(), sessionID(r), "")
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	var previewURL string
+	if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
+		previewURL = previewFileURL(r, sessionID(r), entry)
+	}
+	updated, err := c.Svc.SetPreview(r.Context(), sessionID(r), previewURL)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -664,7 +673,7 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
+	return SessionView{Session: s, Branch: s.Metadata.Branch, WorkspacePath: s.Metadata.WorkspacePath, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {

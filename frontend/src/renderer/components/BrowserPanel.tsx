@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
+import { MARKDOWN_FILE_RE } from "../../shared/markdown-types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -19,6 +20,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		poppedOut,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
+		workspacePath: session.workspacePath,
 	});
 	return (
 		<BrowserPanelView
@@ -45,8 +47,26 @@ export function BrowserPanelView({
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		const nextURL = urlInput.trim();
-		if (nextURL) void navigate(nextURL);
+		const raw = urlInput.trim();
+		if (!raw) return;
+		// Normalise bare filesystem paths to file:// so that MarkdownHost can
+		// detect them as local files and set up file watching.
+		let nextURL = raw;
+		if (raw.startsWith("\\\\") || raw.startsWith("//")) {
+			// UNC path: \\host\share\path → file:////host/share/path
+			nextURL = `file://${raw.replace(/\\/g, "/")}`;
+		} else if (raw.startsWith("/") || raw.startsWith("\\")) {
+			// Unix absolute or backslash-prefixed: /path → file:///path
+			nextURL = `file://${raw.replace(/\\/g, "/")}`;
+		} else if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+			// Windows drive letter: C:\path → file:///C:/path
+			nextURL = `file:///${raw.replace(/\\/g, "/")}`;
+		}
+		if (MARKDOWN_FILE_RE.test(nextURL)) {
+			void browserView.renderMarkdown({ kind: "url", url: nextURL });
+		} else {
+			void navigate(nextURL);
+		}
 	};
 
 	return (

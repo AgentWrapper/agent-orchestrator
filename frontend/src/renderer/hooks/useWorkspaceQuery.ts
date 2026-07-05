@@ -60,6 +60,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				status: toSessionStatus(session.status, session.isTerminated),
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
+				workspacePath: session.workspacePath,
 				activity: toSessionActivity(session.activity),
 				previewUrl: session.previewUrl,
 				previewRevision: session.previewRevision,

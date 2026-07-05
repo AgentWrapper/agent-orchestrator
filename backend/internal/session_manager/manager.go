@@ -1051,7 +1051,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
-	return base + m.aoSkillPointer() + systemPromptGuard, nil
+	return base + m.aoSkillPointer() + m.aoMarkdownPreviewPointer() + systemPromptGuard, nil
 }
 
 // aoSkillPointer is appended to every agent system prompt. It points the agent
@@ -1066,6 +1066,16 @@ func (m *Manager) aoSkillPointer() string {
 	commandsGlob := filepath.Join(dir, "commands", "*.md")
 	return "\n\n" + "## Using the ao CLI\n\n" +
 		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
+}
+
+// aoMarkdownPreviewPointer is appended to every agent system prompt. It
+// points the agent at the markdown-preview skill so that agents know they
+// can produce `.md` output that renders in the Electron browser panel.
+func (m *Manager) aoMarkdownPreviewPointer() string {
+	dir := skillassets.DirFor(m.dataDir, skillassets.MarkdownPreviewName)
+	skillFile := filepath.Join(dir, "SKILL.md")
+	return "\n\n" + "## Markdown preview\n\n" +
+		"When you need to show the user formatted output (reports, specs, summaries, READMEs), produce a `.md` file and tell the user to open it in the browser panel. Read `" + skillFile + "` for the full guide."
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {

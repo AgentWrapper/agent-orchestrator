@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
+import type { MarkdownSource, RenderMarkdownResponse } from "../../shared/markdown-types";
+import { MARKDOWN_FILE_RE } from "../../shared/markdown-types";
 
 export type { BrowserNavState };
 
@@ -25,6 +27,8 @@ type UseBrowserViewOptions = {
 	 * unrelated session update, which leave it unchanged, are ignored).
 	 */
 	previewRevision?: number;
+	/** Session worktree path, used to resolve daemon-proxied markdown URLs to local files for watcher setup. */
+	workspacePath?: string;
 };
 
 export type BrowserViewModel = {
@@ -32,6 +36,8 @@ export type BrowserViewModel = {
 	navState: BrowserNavState;
 	slotRef: (node: HTMLDivElement | null) => void;
 	navigate: (url: string) => Promise<void>;
+	/** Render markdown from a source and navigate the view to the preview. */
+	renderMarkdown: (source: MarkdownSource) => Promise<RenderMarkdownResponse>;
 	goBack: () => Promise<void>;
 	goForward: () => Promise<void>;
 	reload: () => Promise<void>;
@@ -77,6 +83,7 @@ export function useBrowserView({
 	terminated,
 	previewUrl,
 	previewRevision,
+	workspacePath,
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
@@ -235,6 +242,28 @@ export function useBrowserView({
 
 	const clear = useCallback(() => withView((id) => window.ao!.browser.clear(id)), [withView]);
 
+	const currentDocIdRef = useRef("");
+
+	const renderMarkdown = useCallback(
+		async (source: MarkdownSource): Promise<RenderMarkdownResponse> => {
+			const result = await window.ao!.browser.renderMarkdown(sessionId, source, workspacePath);
+			currentDocIdRef.current = result.documentId;
+			await window.ao!.browser.navigate({ viewId: viewIdRef.current, url: result.url });
+			return result;
+		},
+		[sessionId],
+	);
+
+	// Auto-refresh the browser view when a file-backed markdown preview changes.
+	useEffect(() => {
+		return window.ao?.browser.onMarkdownFileChanged((event) => {
+			if (event.documentId !== currentDocIdRef.current) return;
+			const id = viewIdRef.current;
+			if (!id) return;
+			void window.ao!.browser.reload(id);
+		});
+	}, []);
+
 	// When the session is terminated, clear the view and stop reacting to
 	// daemon-driven preview changes so stale content does not remain visible.
 	useEffect(() => {
@@ -245,6 +274,7 @@ export function useBrowserView({
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
+	// When the target looks like a markdown file, route through renderMarkdown.
 	useEffect(() => {
 		if (!viewId || terminated) return;
 		const target = previewUrl?.trim() ?? "";
@@ -254,11 +284,15 @@ export function useBrowserView({
 		if (revision !== null && previous?.revision === revision) return;
 		previewTriggerRef.current = { revision, target };
 		if (target) {
-			void navigate(target);
+			if (MARKDOWN_FILE_RE.test(target)) {
+				void renderMarkdown({ kind: "url", url: target });
+			} else {
+				void navigate(target);
+			}
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, navigate, previewRevision, previewUrl, viewId]);
+	}, [clear, navigate, renderMarkdown, previewRevision, previewUrl, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -273,6 +307,7 @@ export function useBrowserView({
 		navState,
 		slotRef,
 		navigate,
+		renderMarkdown,
 		goBack: () => withView((id) => window.ao!.browser.goBack(id)),
 		goForward: () => withView((id) => window.ao!.browser.goForward(id)),
 		reload: () => withView((id) => window.ao!.browser.reload(id)),

@@ -4,6 +4,8 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { MarkdownSource, RenderMarkdownRequest, RenderMarkdownResponse, MarkdownUpdateEvent } from "./shared/markdown-types";
+import { MarkdownIpcChannels } from "./shared/markdown-types";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -56,6 +58,19 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		renderMarkdown: (sessionId: string, source: MarkdownSource, workspacePath?: string) =>
+			ipcRenderer.invoke("browser:renderMarkdown", {
+				sessionId,
+				source,
+				workspacePath,
+			} satisfies RenderMarkdownRequest) as Promise<RenderMarkdownResponse>,
+		onMarkdownFileChanged: (listener: (event: MarkdownUpdateEvent) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, event: MarkdownUpdateEvent) => listener(event);
+			ipcRenderer.on(MarkdownIpcChannels.fileChanged, wrapped);
+			return () => {
+				ipcRenderer.off(MarkdownIpcChannels.fileChanged, wrapped);
 			};
 		},
 	},

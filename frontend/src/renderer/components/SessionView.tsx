@@ -55,6 +55,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const hasInspector = !isOrchestrator;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
+	const workspacePath = session?.workspacePath || undefined;
 	const revealedPreviewRef = useRef<number | null>(null);
 	const browserView = useBrowserView({
 		sessionId,
@@ -63,6 +64,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		terminated: session?.status === "terminated",
 		previewUrl,
 		previewRevision,
+		workspacePath,
 	});
 
 	useEffect(() => {

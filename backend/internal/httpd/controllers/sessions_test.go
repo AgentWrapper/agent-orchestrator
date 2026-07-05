@@ -262,9 +262,6 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	if _, ok := rawList.Sessions[0]["metadata"]; ok {
 		t.Fatalf("list leaked metadata: %s", body)
 	}
-	if _, ok := rawList.Sessions[0]["workspacePath"]; ok {
-		t.Fatalf("list leaked workspacePath: %s", body)
-	}
 	if _, ok := rawList.Sessions[0]["prompt"]; ok {
 		t.Fatalf("list leaked prompt: %s", body)
 	}

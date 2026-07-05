@@ -1708,6 +1708,8 @@ components:
         updatedAt:
           format: date-time
           type: string
+        workspacePath:
+          type: string
       required:
       - id
       - projectId
