@@ -720,7 +720,18 @@ func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, work
 	var argv []string
 	var err error
 	if resume {
-		argv, err = restoreArgv(ctx, agent, id, workspacePath, meta, systemPrompt, cfg, kind)
+		// The target harness's own native session id is not reliably available:
+		// MarkSwitched clears AgentSessionID on every switch, and the durable set
+		// tracks only harness names, not each harness's id. Whatever is in
+		// meta.AgentSessionID belongs to some *other* harness, so clear it before
+		// restoreArgv. Adapters that deterministically derive their session id
+		// (e.g. Claude Code) still resume; adapters that need a captured id return
+		// ok=false and cleanly fall through to a fresh launch (which never collides
+		// for them, since they mint a new id each launch) rather than resuming
+		// against a wrong/empty id.
+		resumeMeta := meta
+		resumeMeta.AgentSessionID = ""
+		argv, err = restoreArgv(ctx, agent, id, workspacePath, resumeMeta, systemPrompt, cfg, kind)
 	} else {
 		argv, err = agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 			SessionID:     string(id),

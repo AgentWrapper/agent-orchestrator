@@ -546,6 +546,35 @@ func TestSwitchHarness_ResumesPreviouslyUsedHarness(t *testing.T) {
 
 // A harness this session has never launched must fresh-launch (create its
 // session), not resume a non-existent one.
+// Resuming a previously-used harness must not pass another harness's captured
+// native session id. fakeAgent resumes only WITH a captured id, so with the id
+// cleared it must fresh-launch rather than resume against a foreign id.
+func TestSwitchHarness_ResumeDoesNotUseForeignSessionID(t *testing.T) {
+	m, st, rt, _ := newManager()
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{
+			Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", RuntimeHandleID: "h1", Prompt: "do it",
+			AgentSessionID:    "other-harness-native-id",
+			LaunchedHarnesses: []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode},
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessClaudeCode, ""); err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	if len(rt.lastCfg.Argv) == 0 || rt.lastCfg.Argv[0] != "launch" {
+		t.Fatalf("argv = %v, want fresh launch (adapter can't derive its id)", rt.lastCfg.Argv)
+	}
+	for _, a := range rt.lastCfg.Argv {
+		if a == "other-harness-native-id" {
+			t.Fatalf("leaked another harness's session id into the launch: %v", rt.lastCfg.Argv)
+		}
+	}
+}
+
 func TestSwitchHarness_FreshLaunchForNewHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
