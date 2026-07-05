@@ -18,9 +18,8 @@ import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
-import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
-import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 import { useUiStore } from "../stores/ui-store";
 
 type SessionsBoardProps = {
@@ -169,7 +168,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				type="button"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-				{isProjectRestarting ? "Restarting..." : isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				{isProjectRestarting
+					? "Restarting..."
+					: isSpawning
+						? "Spawning..."
+						: orchestrator
+							? "Orchestrator"
+							: "Spawn Orchestrator"}
 			</button>
 		</>
 	) : undefined;
@@ -314,71 +319,101 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 		onOpen();
 	};
 	return (
-		<div
-			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
-			onClick={onOpen}
-			onKeyDown={handleKeyDown}
-			role="button"
-			tabIndex={0}
-		>
-			<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
-				<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
-					<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
-					{badge.label}
-				</span>
-				{issueId && (
-					<span
-						className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
-						title={`Intake issue: ${issueId}`}
-					>
-						{issueId}
+		<div className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong">
+			<div onClick={onOpen} onKeyDown={handleKeyDown} role="button" tabIndex={0}>
+				<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
+					<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
+						<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
+						{badge.label}
 					</span>
-				)}
-				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
-					{agentLabel(session.provider)}
-				</span>
+					{issueId && (
+						<span
+							className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
+							title={`Intake issue: ${issueId}`}
+						>
+							{issueId}
+						</span>
+					)}
+					<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
+						{agentLabel(session.provider)}
+					</span>
+				</div>
+				<div
+					className={cn(
+						"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+						showBranch ? "pb-2" : "pb-3",
+						"line-clamp-2 overflow-hidden",
+					)}
+				>
+					{session.title}
+				</div>
+				{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			</div>
 			<div
-				className={cn(
-					"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
-					showBranch ? "pb-2" : "pb-3",
-					"line-clamp-2 overflow-hidden",
-				)}
+				className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive"
+				onClick={(event) => event.stopPropagation()}
 			>
-				{session.title}
-			</div>
-			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
-			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{prSummaries.length > 0 ? (
-					<div className="flex flex-col gap-2">
-						{prSummaries.map((prSummary, index) => (
-							<BoardPRSummary
-								className={cn(index > 0 && "border-t border-border pt-2")}
-								key={prSummary.number}
-								pr={prSummary}
-							/>
+				{prSummaries.length === 0 ? (
+					"no PR yet"
+				) : (
+					<div className="flex flex-col gap-1">
+						{groupPRsByLifecycle(prSummaries).map((group) => (
+							<BoardPRGroup group={group} key={group.status.label} />
 						))}
 					</div>
-				) : (
-					"no PR yet"
 				)}
 			</div>
 		</div>
 	);
 }
 
-function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
-	const diffSummary = prDiffSummary(pr);
+type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
+type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
+
+function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 	return (
-		<div className={cn("flex min-w-0 flex-col gap-1", className)}>
-			<span>
-				PR #{pr.number} · {pr.state}
-			</span>
-			{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
-			<PRStatusStrip pr={pr} />
-			<PRAttentionPanel className="mt-1.5 pt-1.5" maxItems={2} pr={pr} />
-		</div>
+		<span
+			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
+			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
+		>
+			<span>PR</span>
+			{group.prs.map((pr, index) => (
+				<span key={pr.number}>
+					<a
+						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+						href={prBrowserUrl(pr)}
+						rel="noreferrer"
+						target="_blank"
+					>
+						#{pr.number}
+					</a>
+					{index < group.prs.length - 1 ? "," : null}
+				</span>
+			))}
+			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
+		</span>
 	);
+}
+
+function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
+	const groups = new Map<BoardPRLifecycleStatus["label"], BoardPRGroup>();
+	for (const pr of prs) {
+		const status = prLifecycleStatus(pr);
+		const group = groups.get(status.label);
+		if (group) {
+			group.prs.push(pr);
+		} else {
+			groups.set(status.label, { status, prs: [pr] });
+		}
+	}
+	return Array.from(groups.values());
+}
+
+function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
+	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
+	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
+	if (pr.state === "closed") return { label: "closed", className: "text-error" };
+	return { label: "open", className: "text-success" };
 }
 
 function sameLabel(a: string, b: string): boolean {

@@ -41,13 +41,18 @@ export function OrchestratorReplacementDialog({
 							<AlertTriangle className="size-4" aria-hidden="true" />
 						</div>
 						<div className="min-w-0 flex-1">
-							<Dialog.Title className="text-sm font-medium text-foreground">Orchestrator replacement failed</Dialog.Title>
+							<Dialog.Title className="text-sm font-medium text-foreground">
+								Orchestrator replacement failed
+							</Dialog.Title>
 							<Dialog.Description className="mt-2 text-[13px] leading-5 text-muted-foreground">
 								{error ?? "The project orchestrator could not be replaced."}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
-							<button className="rounded-md p-1 text-passive hover:bg-interactive-hover hover:text-foreground" type="button">
+							<button
+								className="rounded-md p-1 text-passive hover:bg-interactive-hover hover:text-foreground"
+								type="button"
+							>
 								<X className="size-4" aria-hidden="true" />
 								<span className="sr-only">Close</span>
 							</button>

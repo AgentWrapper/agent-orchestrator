@@ -6,7 +6,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prBrowserUrl, prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
+import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { BrowserPanelView } from "./BrowserPanel";
@@ -14,7 +14,7 @@ import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
+import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -231,38 +231,9 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 			</div>
 			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRStatusStack className="mt-2" pr={pr} />
-			<PRAttentionPanel pr={pr} />
+			<PRSummaryParts className="mt-2" pr={pr} variant="stacked" />
 		</div>
 	);
-}
-
-function PRStatusStack({ className, pr }: { className?: string; pr: SessionPRSummary }) {
-	return (
-		<div className={cn("flex flex-col gap-0.5 font-mono text-[10.5px] leading-4", className)}>
-			{prStatusRows(pr).map((row) => (
-				<div key={row.key} className="min-w-0 truncate">
-					<span className="text-passive">{row.label}</span>{" "}
-					<span className={cn("font-medium", inspectorStatusToneClass(row.tone))}>{row.value}</span>
-				</div>
-			))}
-		</div>
-	);
-}
-
-function inspectorStatusToneClass(tone: PRDisplayTone): string {
-	switch (tone) {
-		case "success":
-			return "text-success";
-		case "warning":
-			return "text-warning";
-		case "error":
-			return "text-error";
-		case "neutral":
-			return "text-muted-foreground";
-		case "passive":
-			return "text-passive";
-	}
 }
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";

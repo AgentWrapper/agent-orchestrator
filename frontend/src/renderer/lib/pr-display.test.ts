@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prAttentionItems, prBrowserUrl, prDiffSummary, prStatusRows } from "./pr-display";
+import { prBrowserUrl, prDiffSummary, prStatusRows, prSummaryParts } from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -37,7 +37,7 @@ describe("prStatusRows", () => {
 			}),
 		);
 
-		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual(["CI:Checking", "Review:None", "Merge:Checking"]);
+		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual(["CI:Checking", "Merge:Checking", "Review:None"]);
 	});
 
 	it("includes minimal diff detail on the merge row", () => {
@@ -69,13 +69,13 @@ describe("prBrowserUrl", () => {
 	});
 });
 
-describe("prAttentionItems", () => {
-	it("returns no attention for clean open PRs", () => {
-		expect(prAttentionItems(summary())).toEqual([]);
+describe("prSummaryParts", () => {
+	it("always returns CI, Merge, and Review parts", () => {
+		expect(prSummaryParts(summary()).map((part) => part.label)).toEqual(["CI", "Merge", "Review"]);
 	});
 
-	it("details active CI, review, and merge blockers", () => {
-		const items = prAttentionItems(
+	it("details active CI, merge, and review blockers under their parts", () => {
+		const parts = prSummaryParts(
 			summary({
 				ci: {
 					state: "failing",
@@ -102,19 +102,34 @@ describe("prAttentionItems", () => {
 			}),
 		);
 
-		expect(items.map((item) => item.kind)).toEqual(["merge_blocked", "ci_failing", "review_changes_requested"]);
-		expect(items.find((item) => item.kind === "ci_failing")?.links[0]).toMatchObject({
+		expect(parts.map((part) => part.key)).toEqual(["ci", "merge", "review"]);
+		expect(parts.find((part) => part.key === "ci")).toMatchObject({
+			status: "Failing",
+			summary: undefined,
+			tone: "error",
+		});
+		expect(parts.find((part) => part.key === "ci")?.links[0]).toMatchObject({
 			label: "copy-check",
 			href: "https://checks.example/copy",
 		});
-		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+		expect(parts.find((part) => part.key === "merge")).toMatchObject({
+			status: "Blocked",
+			summary: undefined,
+			tone: "warning",
+		});
+		expect(parts.find((part) => part.key === "review")).toMatchObject({
+			status: "Changes requested",
+			summary: undefined,
+			tone: "warning",
+		});
+		expect(parts.find((part) => part.key === "review")?.links[0]).toMatchObject({
 			label: "alice +5",
 			href: "https://github.com/acme/repo/pull/7#discussion_r1",
 		});
 	});
 
 	it("links failing CI checks to their provider URLs", () => {
-		const items = prAttentionItems(
+		const parts = prSummaryParts(
 			summary({
 				ci: {
 					state: "failing",
@@ -128,17 +143,17 @@ describe("prAttentionItems", () => {
 			}),
 		);
 
-		const ciItem = items.find((item) => item.kind === "ci_failing");
-		expect(ciItem?.links).toEqual([
+		const ciPart = parts.find((part) => part.key === "ci");
+		expect(ciPart?.links).toEqual([
 			{ label: "unit", href: "https://checks.example/unit", title: "failure" },
 			{ label: "lint", href: "https://checks.example/lint", title: "failure" },
 			{ label: "build", href: "https://checks.example/build", title: "failure" },
 		]);
-		expect(ciItem?.overflowLabel).toBe("+1 check");
+		expect(ciPart?.overflowLabel).toBe("+1 check");
 	});
 
 	it("prefers the submitted review summary over inline comments", () => {
-		const items = prAttentionItems(
+		const parts = prSummaryParts(
 			summary({
 				review: {
 					decision: "changes_requested",
@@ -158,7 +173,7 @@ describe("prAttentionItems", () => {
 			}),
 		);
 
-		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+		expect(parts.find((part) => part.key === "review")?.links[0]).toMatchObject({
 			label: "alice +1",
 			href: "https://github.com/acme/repo/pull/7#pullrequestreview-1",
 			title: "Open requested-changes review from alice",
@@ -166,7 +181,7 @@ describe("prAttentionItems", () => {
 	});
 
 	it("falls back to the first inline comment when no review summary exists", () => {
-		const items = prAttentionItems(
+		const parts = prSummaryParts(
 			summary({
 				review: {
 					decision: "changes_requested",
@@ -185,7 +200,7 @@ describe("prAttentionItems", () => {
 			}),
 		);
 
-		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+		expect(parts.find((part) => part.key === "review")?.links[0]).toMatchObject({
 			label: "alice +1",
 			href: "https://github.com/acme/repo/pull/7#discussion_r1",
 			title: "2 unresolved comments from alice",
@@ -193,7 +208,7 @@ describe("prAttentionItems", () => {
 	});
 
 	it("falls back to the PR page when review summary and inline comment URLs are missing", () => {
-		const items = prAttentionItems(
+		const parts = prSummaryParts(
 			summary({
 				url: "https://github.com/acme/repo/issues/7",
 				htmlUrl: "https://github.com/acme/repo/issues/7",
@@ -205,7 +220,7 @@ describe("prAttentionItems", () => {
 			}),
 		);
 
-		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+		expect(parts.find((part) => part.key === "review")?.links[0]).toMatchObject({
 			label: "alice",
 			href: "https://github.com/acme/repo/pull/7",
 			title: "Open pull request for alice",
@@ -213,7 +228,7 @@ describe("prAttentionItems", () => {
 	});
 
 	it("shows bot reviewers with a bot label", () => {
-		const items = prAttentionItems(
+		const parts = prSummaryParts(
 			summary({
 				review: {
 					decision: "changes_requested",
@@ -231,7 +246,7 @@ describe("prAttentionItems", () => {
 			}),
 		);
 
-		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+		expect(parts.find((part) => part.key === "review")?.links[0]).toMatchObject({
 			label: "copilot bot",
 			href: "https://github.com/acme/repo/pull/7#pullrequestreview-2",
 			title: "Open requested-changes review from copilot bot",
@@ -239,7 +254,7 @@ describe("prAttentionItems", () => {
 	});
 
 	it("links merge conflicts to GitHub's conflict resolution page", () => {
-		const items = prAttentionItems(
+		const parts = prSummaryParts(
 			summary({
 				url: "https://github.com/acme/repo/issues/7",
 				htmlUrl: "https://github.com/acme/repo/issues/7",
@@ -251,22 +266,39 @@ describe("prAttentionItems", () => {
 			}),
 		);
 
-		expect(items.find((item) => item.kind === "merge_conflict")?.links[0]).toMatchObject({
+		expect(parts.find((part) => part.key === "merge")).toMatchObject({
+			status: "Conflict",
+			summary: undefined,
+		});
+		expect(parts.find((part) => part.key === "merge")?.links[0]).toMatchObject({
 			label: "conflicts",
 			href: "https://github.com/acme/repo/pull/7/conflicts",
 		});
 	});
 
-	it("suppresses attention once the PR is closed or merged", () => {
-		expect(
-			prAttentionItems(
-				summary({
-					state: "merged",
-					ci: { state: "failing", failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
-					review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
-					mergeability: { state: "conflicting", reasons: ["conflicts"], prUrl: "https://github.com/acme/repo/pull/7" },
-				}),
-			),
-		).toEqual([]);
+	it("keeps closed or merged PR summaries to the three status parts", () => {
+		const parts = prSummaryParts(
+			summary({
+				state: "merged",
+				ci: { state: "failing", failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
+				review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
+				mergeability: { state: "conflicting", reasons: ["conflicts"], prUrl: "https://github.com/acme/repo/pull/7" },
+			}),
+		);
+
+		expect(parts).toHaveLength(3);
+		expect(parts.find((part) => part.key === "merge")?.links).toEqual([]);
+		expect(parts.find((part) => part.key === "review")?.links).toEqual([]);
+	});
+
+	it("puts draft readiness under Review", () => {
+		const parts = prSummaryParts(
+			summary({ state: "draft", review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] } }),
+		);
+
+		expect(parts.find((part) => part.key === "review")).toMatchObject({
+			status: "None",
+			summary: "Draft PR · Not ready for review",
+		});
 	});
 });

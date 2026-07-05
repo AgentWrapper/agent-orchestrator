@@ -1,7 +1,7 @@
 import { ArrowUpDown, ArrowUpRight } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prAttentionItems, prStatusRows, type PRAttentionLink, type PRDisplayTone } from "../lib/pr-display";
+import { prSummaryParts, type PRDisplayTone, type PRSummaryLink } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 
 const toneClass: Record<PRDisplayTone, string> = {
@@ -11,20 +11,6 @@ const toneClass: Record<PRDisplayTone, string> = {
 	warning: "text-warning",
 	error: "text-error",
 };
-
-export function PRStatusStrip({ className, pr }: { className?: string; pr: SessionPRSummary }) {
-	return (
-		<div className={cn("flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10.5px]", className)}>
-			{prStatusRows(pr).map((row) => (
-				<span key={row.key} className="min-w-0">
-					<span className="text-passive">{row.label}</span>{" "}
-					<span className={cn("font-medium", toneClass[row.tone])}>{row.value}</span>
-					{row.detail ? <span className="text-passive"> · {row.detail}</span> : null}
-				</span>
-			))}
-		</div>
-	);
-}
 
 export function PRSummaryMeta({
 	className,
@@ -85,56 +71,66 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 	);
 }
 
-export function PRAttentionPanel({
+export function PRSummaryParts({
 	className,
 	interactiveLinks = true,
-	maxItems = 3,
+	maxLinks = 3,
 	pr,
+	variant = "compact",
 }: {
 	className?: string;
 	interactiveLinks?: boolean;
-	maxItems?: number;
+	maxLinks?: number;
 	pr: SessionPRSummary;
+	variant?: "compact" | "stacked";
 }) {
-	const items = prAttentionItems(pr);
-	if (items.length === 0) {
-		return null;
-	}
-	const visible = items.slice(0, maxItems);
-	const extra = items.length - visible.length;
+	const parts = prSummaryParts(pr);
+	const stacked = variant === "stacked";
 	return (
-		<div className={cn("mt-2 border-t border-border pt-2", className)}>
-			<div className="mb-1 font-mono text-[9.5px] font-semibold uppercase tracking-[0.08em] text-passive">
-				Needs attention
-			</div>
-			<div className="flex flex-col gap-1.5">
-				{visible.map((item) => (
-					<div key={item.kind} className="min-w-0 text-[11px] leading-4">
-						<div className={cn("font-medium", toneClass[item.tone])}>{item.title}</div>
-						{item.summary ? (
-							<div className="truncate font-mono text-[10.5px] text-muted-foreground">{item.summary}</div>
-						) : null}
-						{item.links.length > 0 ? (
-							<div className="mt-0.5 flex min-w-0 flex-wrap gap-x-1.5 gap-y-1 font-mono text-[10.5px]">
-								{item.links.map((link, index) => (
-									<AttentionLink
-										interactive={interactiveLinks}
-										key={`${item.kind}-${index}-${link.label}`}
-										link={link}
-									/>
+		<div
+			className={cn(
+				stacked
+					? "flex flex-col gap-1.5 font-mono text-[10.5px] leading-4"
+					: "flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10.5px]",
+				className,
+			)}
+		>
+			{parts.map((part) => {
+				const links = part.links.slice(0, maxLinks);
+				const overflowLabel = overflowPartLabel(
+					(part.linkTotal ?? part.links.length) - links.length,
+					part.overflowNoun,
+				);
+				return (
+					<div key={part.key} className={cn("min-w-0", stacked ? "flex flex-col" : "inline-flex flex-wrap gap-x-1")}>
+						<div className="min-w-0 truncate">
+							<span className="text-passive">{part.label}</span>{" "}
+							<span className={cn("font-medium", toneClass[part.tone])}>{part.status}</span>
+							{part.summary ? <span className="text-passive"> · {part.summary}</span> : null}
+						</div>
+						{links.length > 0 || overflowLabel ? (
+							<div className={cn("flex min-w-0 flex-wrap gap-x-1.5 gap-y-1", stacked ? "mt-0.5" : "")}>
+								{links.map((link, index) => (
+									<SummaryLink interactive={interactiveLinks} key={`${part.key}-${index}-${link.label}`} link={link} />
 								))}
-								{item.overflowLabel ? <span className="text-passive">{item.overflowLabel}</span> : null}
+								{overflowLabel ? <span className="text-passive">{overflowLabel}</span> : null}
 							</div>
 						) : null}
 					</div>
-				))}
-				{extra > 0 ? <div className="font-mono text-[10.5px] text-passive">+{extra} more</div> : null}
-			</div>
+				);
+			})}
 		</div>
 	);
 }
 
-function AttentionLink({ interactive, link }: { interactive: boolean; link: PRAttentionLink }) {
+function overflowPartLabel(extra: number, noun?: string): string | undefined {
+	if (extra <= 0) {
+		return undefined;
+	}
+	return noun ? `+${extra} ${pluralize(noun, extra)}` : `+${extra}`;
+}
+
+function SummaryLink({ interactive, link }: { interactive: boolean; link: PRSummaryLink }) {
 	if (interactive && link.href) {
 		return (
 			<a
