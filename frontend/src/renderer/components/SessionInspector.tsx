@@ -9,7 +9,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { prBrowserUrl, prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
-import { AGENT_OPTIONS } from "../lib/agent-options";
+import { useAgentsQuery } from "../hooks/useAgentsQuery";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { BrowserPanelView } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
@@ -742,6 +742,11 @@ function AgentRow({ session }: { session: WorkspaceSession }) {
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
 	const current = session.provider;
+	// Only offer agents whose local auth probe recently passed — switching to an
+	// un-authenticated agent just fails at launch. Advisory (spawn stays the
+	// authoritative check), but it keeps the menu to agents that can actually run.
+	const agentsQuery = useAgentsQuery();
+	const authorized = agentsQuery.data?.authorized ?? [];
 
 	const switchAgent = useMutation({
 		mutationFn: async (harness: string) => {
@@ -784,21 +789,29 @@ function AgentRow({ session }: { session: WorkspaceSession }) {
 						/>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
-						{AGENT_OPTIONS.map((agent) => (
-							<DropdownMenuItem
-								key={agent}
-								disabled={switchAgent.isPending}
-								onSelect={() => {
-									if (agent !== current) switchAgent.mutate(agent);
-								}}
-							>
-								<Check
-									className={cn("h-3.5 w-3.5", agent === current ? "opacity-100" : "opacity-0")}
-									aria-hidden="true"
-								/>
-								<span className="font-mono text-[12px]">{agent}</span>
+						{authorized.length === 0 ? (
+							<DropdownMenuItem disabled>
+								<span className="text-[12px] text-passive">
+									{agentsQuery.isLoading ? "Loading agents…" : "No authenticated agents"}
+								</span>
 							</DropdownMenuItem>
-						))}
+						) : (
+							authorized.map((agent) => (
+								<DropdownMenuItem
+									key={agent.id}
+									disabled={switchAgent.isPending}
+									onSelect={() => {
+										if (agent.id !== current) switchAgent.mutate(agent.id);
+									}}
+								>
+									<Check
+										className={cn("h-3.5 w-3.5", agent.id === current ? "opacity-100" : "opacity-0")}
+										aria-hidden="true"
+									/>
+									<span className="font-mono text-[12px]">{agent.id}</span>
+								</DropdownMenuItem>
+							))
+						)}
 					</DropdownMenuContent>
 				</DropdownMenu>
 				{error ? (

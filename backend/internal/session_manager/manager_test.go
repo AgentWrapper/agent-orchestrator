@@ -459,6 +459,25 @@ func TestSwitchHarness_TerminatedRelaunchesUnderNewAgent(t *testing.T) {
 	}
 }
 
+// A terminated session's runtime can linger (keep-alive shell outlives the
+// agent), so its deterministic session name is still taken. The relaunch must
+// tear it down before Create, or Create collides ("duplicate session").
+func TestSwitchHarness_TerminatedClearsLingeringRuntime(t *testing.T) {
+	m, st, rt, _ := newManager()
+	id := domain.SessionID("ao-1")
+	seedTerminal(st, id, domain.SessionMetadata{Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", RuntimeHandleID: "ao-1", Prompt: "do it"})
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, ""); err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	if rt.destroyed != 1 || len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "ao-1" {
+		t.Fatalf("stale runtime not cleared before relaunch: destroyed=%d ids=%v", rt.destroyed, rt.destroyedIDs)
+	}
+	if rt.created != 1 {
+		t.Fatalf("new runtime not created: created=%d", rt.created)
+	}
+}
+
 func TestSwitchHarness_RejectsConcurrentSwitch(t *testing.T) {
 	m, st, rt, _ := newManager()
 	id := domain.SessionID("ao-1")

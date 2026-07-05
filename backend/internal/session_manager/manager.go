@@ -802,6 +802,16 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
+	// A terminated agent's runtime can linger: the keep-alive shell outlives the
+	// agent process, so the runtime's deterministic session name may still be
+	// taken and a fresh Create would collide ("duplicate session"). Tear down any
+	// leftover handle first — Destroy is idempotent, so an already-gone session
+	// is a no-op.
+	if meta.RuntimeHandleID != "" {
+		if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: meta.RuntimeHandleID}); err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("switch %s: clear stale runtime: %w", id, err)
+		}
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
