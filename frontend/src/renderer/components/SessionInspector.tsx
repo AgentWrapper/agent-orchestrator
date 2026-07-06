@@ -7,6 +7,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { hasElectronBridge } from "../lib/runtime-environment";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { BrowserPanelView } from "./BrowserPanel";
@@ -91,7 +92,9 @@ export function SessionInspector({
 	onViewChange?: (view: InspectorView) => void;
 }) {
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
-	const view = viewProp ?? internalView;
+	const views = hasElectronBridge() ? VIEWS : VIEWS.filter((entry) => entry.id !== "browser");
+	const requestedView = viewProp ?? internalView;
+	const view = views.some((entry) => entry.id === requestedView) ? requestedView : "summary";
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
@@ -110,7 +113,7 @@ export function SessionInspector({
 	return (
 		<aside className="session-inspector" aria-label="Session inspector">
 			<div className="session-inspector__tabs" role="tablist">
-				{VIEWS.map((entry) => (
+				{views.map((entry) => (
 					<button
 						key={entry.id}
 						type="button"

@@ -3,7 +3,16 @@ import { act } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getStatusMock, onStatusMock, removeStatusMock, connectMock, stopTransportMock, setApiBaseUrlMock } = vi.hoisted(
+const {
+	getStatusMock,
+	onStatusMock,
+	removeStatusMock,
+	connectMock,
+	stopTransportMock,
+	setApiBaseUrlMock,
+	getApiBaseUrlMock,
+	fetchMock,
+} = vi.hoisted(
 	() => ({
 		getStatusMock: vi.fn(),
 		onStatusMock: vi.fn(),
@@ -11,6 +20,8 @@ const { getStatusMock, onStatusMock, removeStatusMock, connectMock, stopTranspor
 		connectMock: vi.fn(),
 		stopTransportMock: vi.fn(),
 		setApiBaseUrlMock: vi.fn(),
+		getApiBaseUrlMock: vi.fn(),
+		fetchMock: vi.fn(),
 	}),
 );
 
@@ -23,6 +34,7 @@ vi.mock("../lib/event-transport", () => ({
 }));
 
 vi.mock("../lib/api-client", () => ({
+	getApiBaseUrl: getApiBaseUrlMock,
 	setApiBaseUrl: setApiBaseUrlMock,
 }));
 
@@ -42,10 +54,14 @@ beforeEach(() => {
 	connectMock.mockReset().mockReturnValue(stopTransportMock);
 	stopTransportMock.mockReset();
 	setApiBaseUrlMock.mockReset();
+	getApiBaseUrlMock.mockReset().mockReturnValue("http://127.0.0.1:5173");
+	fetchMock.mockReset();
+	vi.stubGlobal("fetch", fetchMock);
 });
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.unstubAllGlobals();
 });
 
 describe("useDaemonStatus", () => {
@@ -170,6 +186,35 @@ describe("useDaemonStatus", () => {
 
 		await waitFor(() => expect(connectMock).toHaveBeenCalledTimes(1));
 		expect(result.current).toEqual({ state: "stopped" });
+	});
+
+	it("reads daemon status from HTTP health in browser mode without the Electron bridge", async () => {
+		const originalAo = window.ao;
+		delete window.ao;
+		fetchMock.mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				pid: 1234,
+				executablePath: "/usr/local/bin/ao",
+				workingDirectory: "/repo",
+			}),
+		});
+		const queryClient = fakeQueryClient();
+
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		await waitFor(() =>
+			expect(result.current).toEqual({
+				state: "ready",
+				pid: 1234,
+				executablePath: "/usr/local/bin/ao",
+				workingDirectory: "/repo",
+			}),
+		);
+		expect(getStatusMock).not.toHaveBeenCalled();
+		expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5173/healthz", { cache: "no-store" });
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
+		window.ao = originalAo;
 	});
 
 	it("tears down the transport and the status listener on unmount", async () => {

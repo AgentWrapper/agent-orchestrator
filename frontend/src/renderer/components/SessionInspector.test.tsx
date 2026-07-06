@@ -346,6 +346,17 @@ describe("SessionInspector tabs", () => {
 		expect(tabs).toEqual(["Summary", "Reviews", "Browser"]);
 	});
 
+	it("hides the Electron Browser tab in browser mode", () => {
+		const originalAo = window.ao;
+		delete window.ao;
+
+		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
+
+		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
+		expect(tabs).toEqual(["Summary", "Reviews"]);
+		window.ao = originalAo;
+	});
+
 	it("shows the intake issue id in the summary overview when present", () => {
 		renderWithQuery(<SessionInspector session={{ ...session([]), issueId: "github:acme/project-one#42" }} />);
 

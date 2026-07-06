@@ -6,6 +6,7 @@ import { SessionInspector, type InspectorView } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
+import { hasElectronBridge } from "../lib/runtime-environment";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
@@ -55,6 +56,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const hasInspector = !isOrchestrator;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
+	const electronBridgeAvailable = hasElectronBridge();
 	const revealedPreviewRef = useRef<number | null>(null);
 	const browserView = useBrowserView({
 		sessionId,
@@ -79,11 +81,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// sticks for a given revision. `ao preview clear` (empty url) does not reveal.
 	useEffect(() => {
 		const revision = previewRevision ?? 0;
+		if (!electronBridgeAvailable) return;
 		if (!previewUrl || revealedPreviewRef.current === revision) return;
 		revealedPreviewRef.current = revision;
 		setInspectorView("browser");
 		if (!useUiStore.getState().isInspectorOpen) toggleInspector();
-	}, [previewRevision, previewUrl, toggleInspector]);
+	}, [electronBridgeAvailable, previewRevision, previewUrl, toggleInspector]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,

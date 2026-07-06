@@ -9,7 +9,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorMessage, getApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
@@ -49,7 +49,7 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
-	const agentCatalogPortRef = useRef<number | undefined>(undefined);
+	const agentCatalogEndpointRef = useRef<number | string | undefined>(undefined);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
@@ -77,7 +77,7 @@ function ShellLayout() {
 			});
 			void captureRendererEvent("ao.renderer.project_add_requested");
 			const status = await refreshDaemonStatus();
-			if (status.state !== "ready" || !status.port) {
+			if (status.state !== "ready") {
 				throw new Error(status.message || "AO daemon is not ready.");
 			}
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
@@ -176,10 +176,11 @@ function ShellLayout() {
 	}, [theme]);
 
 	useEffect(() => {
-		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
-		if (agentCatalogPortRef.current === daemonStatus.port) return;
+		if (daemonStatus.state !== "ready") return;
+		const endpointKey = daemonStatus.port ?? getApiBaseUrl();
+		if (agentCatalogEndpointRef.current === endpointKey) return;
 
-		agentCatalogPortRef.current = daemonStatus.port;
+		agentCatalogEndpointRef.current = endpointKey;
 		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
 		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });

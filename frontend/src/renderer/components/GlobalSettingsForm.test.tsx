@@ -17,6 +17,7 @@ const {
 	updInstall,
 	updOnStatus,
 	getVersion,
+	hasElectronBridgeMock,
 } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
@@ -30,6 +31,7 @@ const {
 	updInstall: vi.fn(),
 	updOnStatus: vi.fn(),
 	getVersion: vi.fn(),
+	hasElectronBridgeMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -52,6 +54,10 @@ vi.mock("../lib/bridge", () => ({
 	},
 }));
 
+vi.mock("../lib/runtime-environment", () => ({
+	hasElectronBridge: hasElectronBridgeMock,
+}));
+
 function renderForm() {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(
@@ -63,7 +69,22 @@ function renderForm() {
 }
 
 beforeEach(() => {
-	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate]) m.mockReset();
+	for (const m of [
+		getMock,
+		postMock,
+		getMigration,
+		setMigration,
+		getUpdate,
+		setUpdate,
+		updGetStatus,
+		updCheck,
+		updDownload,
+		updInstall,
+		updOnStatus,
+		getVersion,
+	]) {
+		m.mockReset();
+	}
 	getMigration.mockResolvedValue({ status: "pending" });
 	getMock.mockResolvedValue({ data: { available: true, legacyRoot: "/home/u/.agent-orchestrator" }, error: undefined });
 	postMock.mockResolvedValue({ data: { report: { projectsImported: 2, projectsSkipped: 1 } }, error: undefined });
@@ -76,6 +97,7 @@ beforeEach(() => {
 	updInstall.mockResolvedValue(undefined);
 	updOnStatus.mockReturnValue(() => undefined);
 	getVersion.mockResolvedValue("1.4.0");
+	hasElectronBridgeMock.mockReturnValue(true);
 });
 
 describe("GlobalSettingsForm", () => {
@@ -136,6 +158,18 @@ describe("GlobalSettingsForm", () => {
 	it("shows the current app version", async () => {
 		renderForm();
 		expect(await screen.findByText("v1.4.0")).toBeInTheDocument();
+	});
+
+	it("shows browser-mode update information without dead Electron update controls", async () => {
+		hasElectronBridgeMock.mockReturnValue(false);
+		renderForm();
+
+		expect(await screen.findByText("Updates")).toBeInTheDocument();
+		expect(screen.getByText(/managed outside browser mode/i)).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
+		expect(getUpdate).not.toHaveBeenCalled();
+		expect(updGetStatus).not.toHaveBeenCalled();
 	});
 
 	it("Check for updates triggers a manual check", async () => {

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
+import { hasElectronBridge } from "../lib/runtime-environment";
 import type { UpdateChannel, UpdateSettings, UpdateStatus } from "../../main/update-settings";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -21,9 +22,11 @@ const CHANNEL_OPTIONS: { value: UpdateChannel; label: string }[] = [
 // Changes apply on the next launch / update check.
 export function UpdatesSection() {
 	const queryClient = useQueryClient();
+	const electronBridgeAvailable = hasElectronBridge();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
 		queryFn: () => aoBridge.updateSettings.get(),
+		enabled: electronBridgeAvailable,
 	});
 
 	const [form, setForm] = useState<UpdateSettings>({ enabled: false, channel: "latest", nightlyAck: false });
@@ -55,6 +58,21 @@ export function UpdatesSection() {
 		// instability warning shown below; Stable clears it.
 		setForm((f) => ({ ...f, channel, nightlyAck: channel === "nightly" }));
 	};
+
+	if (!electronBridgeAvailable) {
+		return (
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-[13px]">Updates</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<p className="text-[12px] leading-5 text-muted-foreground">
+						Updates are managed outside browser mode by the deployed web service.
+					</p>
+				</CardContent>
+			</Card>
+		);
+	}
 
 	return (
 		<Card>

@@ -65,6 +65,14 @@ export default defineConfig({
 				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
 				changeOrigin: false,
 			},
+			"/healthz": {
+				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+				changeOrigin: false,
+			},
+			"/readyz": {
+				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+				changeOrigin: false,
+			},
 			"/mux": {
 				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
 				changeOrigin: false,

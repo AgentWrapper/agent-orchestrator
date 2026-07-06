@@ -9,6 +9,7 @@ const {
 	showNotificationMock,
 	subscribeApiBaseUrlMock,
 	unsubscribeBaseUrlMock,
+	hasElectronBridgeMock,
 } = vi.hoisted(() => ({
 	getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
 	onStatusMock: vi.fn(),
@@ -16,6 +17,7 @@ const {
 	showNotificationMock: vi.fn(),
 	subscribeApiBaseUrlMock: vi.fn(),
 	unsubscribeBaseUrlMock: vi.fn(),
+	hasElectronBridgeMock: vi.fn(),
 }));
 
 vi.mock("./api-client", () => ({
@@ -30,6 +32,10 @@ vi.mock("./bridge", () => ({
 		daemon: { onStatus: onStatusMock },
 		notifications: { show: showNotificationMock },
 	},
+}));
+
+vi.mock("./runtime-environment", () => ({
+	hasElectronBridge: hasElectronBridgeMock,
 }));
 
 import { createNotificationsTransport, mergeUnreadNotification, unreadNotificationsQueryKey } from "./notifications";
@@ -90,6 +96,7 @@ beforeEach(() => {
 	showNotificationMock.mockReset().mockResolvedValue(undefined);
 	subscribeApiBaseUrlMock.mockReset().mockReturnValue(unsubscribeBaseUrlMock);
 	unsubscribeBaseUrlMock.mockReset();
+	hasElectronBridgeMock.mockReset().mockReturnValue(true);
 	(globalThis as unknown as { EventSource: unknown }).EventSource = EventSourceStub;
 });
 
@@ -136,6 +143,18 @@ describe("createNotificationsTransport", () => {
 			title: "checkout-flow needs input",
 			body: "The agent is waiting for your response.",
 		});
+	});
+
+	it("keeps browser-mode notifications in NotificationCenter without native toasts", () => {
+		hasElectronBridgeMock.mockReturnValue(false);
+		const qc = queryClient();
+		createNotificationsTransport(qc).connect();
+		const source = EventSourceStub.instances[0];
+
+		source.dispatch("notification_created", notification());
+
+		expect(qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)).toHaveLength(1);
+		expect(showNotificationMock).not.toHaveBeenCalled();
 	});
 
 	it("reconnects when the API base URL changes", () => {

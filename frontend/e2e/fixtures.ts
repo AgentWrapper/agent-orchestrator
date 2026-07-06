@@ -191,10 +191,26 @@ async function fulfill(route: Route, json: unknown) {
 	});
 }
 
+async function fulfillSse(route: Route) {
+	await route.fulfill({
+		contentType: "text/event-stream",
+		body: ": ok\n\n",
+	});
+}
+
 export async function mockAoApi(page: Page) {
+	await page.route("**/healthz", async (route) => {
+		await fulfill(route, { status: "ok", service: "agent-orchestrator", pid: 4242 });
+	});
+	await page.route("**/readyz", async (route) => {
+		await fulfill(route, { status: "ready", service: "agent-orchestrator", pid: 4242 });
+	});
 	await page.route("**/api/v1/**", async (route) => {
 		const url = new URL(route.request().url());
 		const path = url.pathname;
+		if (path === "/api/v1/events" || path === "/api/v1/notifications/stream") {
+			return fulfillSse(route);
+		}
 		if (path === "/api/v1/projects") {
 			return fulfill(route, { projects });
 		}

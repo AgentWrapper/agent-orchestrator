@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { aoBridge } from "./bridge";
 import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { hasElectronBridge } from "./runtime-environment";
 
 export type NotificationDTO = components["schemas"]["NotificationResponse"];
 
@@ -90,7 +91,7 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 						const notification = parseNotificationEvent(event);
 						if (!notification) return;
 						const inserted = mergeUnreadNotification(queryClient, notification);
-						if (inserted) {
+						if (inserted && hasElectronBridge()) {
 							void aoBridge.notifications.show({
 								id: notification.id,
 								title: notification.title,
