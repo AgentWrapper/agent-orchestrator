@@ -315,8 +315,32 @@ Each loop:
    stuck → answer, restore (`ao session restore`), or respawn and reassign.
 2. Dead/terminated workers holding unfinished items → respawn (`--claim-pr`
    for a stranded green PR).
-3. `git worktree prune` + `ao session cleanup` for stragglers.
-4. **Zombie sweep (codex brokers — they accumulate FAST):** find long-lived
+3. **Conflict auto-resolution:** for every fleet-owned PR, check merge state
+   during supervision (`gh pr view <n> --json mergeable,mergeStateStatus`).
+   When GitHub reports `mergeable=CONFLICTING` or `mergeStateStatus=DIRTY`,
+   automatically dispatch or perform a rebase onto the current remote default
+   branch (`origin/<default-branch>`, `origin/main` for this repo today) and
+   hand-resolve the conflicts. Scope is deliberately limited to PRs the
+   orchestrator can cleanly attribute to a managed session/worktree; skip
+   anything outside the fleet or ambiguous in ownership. The resolution must
+   preserve **all** intended changesets from both sides — never drop one side
+   merely to make the rebase apply. A resolved conflict is new integrated code:
+   re-run the full backend gate (`go build ./...`, `go vet ./...`, and
+   `go test ./...` from `backend/`) plus frontend typecheck when relevant,
+   push with `--force-with-lease`, confirm required CI is green, and confirm
+   the PR is no longer conflicting (`mergeStateStatus=CLEAN`, or `UNSTABLE`
+   only when required CI is green and the remaining instability is non-blocking),
+   then re-request cross-family review because any prior verdict is stale.
+   Conflict auto-resolution never grants merge authority:
+   re-park the PR merge-ready for the human, and keep the sensitive-path park
+   rule in force (`backend/internal/daemon/**`,
+   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**`).
+   If the conflict is semantic or cannot be resolved confidently, park it for
+   the human with a written note instead of forcing a dubious resolution. If a
+   PR repeatedly re-conflicts behind churn, flag it as "merge this next to stop
+   the treadmill" rather than rebasing indefinitely.
+4. `git worktree prune` + `ao session cleanup` for stragglers.
+5. **Zombie sweep (codex brokers — they accumulate FAST):** find long-lived
    sleeping `app-server-broker.mjs serve` processes (and their
    codex/MainThread children). Key on **orphanhood**, not socket-liveness — a
    running broker _always_ holds its socket dir and _always_ keeps an internal
@@ -339,7 +363,7 @@ Each loop:
    never touch another user's brokers (e.g. `/home/<other>/...`). Any doubt →
    leave it and note it; a broker whose cwd is owned by a live `ao session ls`
    entry, or that has a genuine external client, is serving real work.
-5. Daemon health: `ao status`; the systemd user unit restarts it, but if the
+6. Daemon health: `ao status`; the systemd user unit restarts it, but if the
    API is unreachable, say so loudly in the digest.
 
 ### Digest — proactive, not on request
