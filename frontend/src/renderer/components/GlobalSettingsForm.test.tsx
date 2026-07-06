@@ -17,6 +17,8 @@ const {
 	updInstall,
 	updOnStatus,
 	getVersion,
+	featListBuilds,
+	featGetActive,
 } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
@@ -30,6 +32,8 @@ const {
 	updInstall: vi.fn(),
 	updOnStatus: vi.fn(),
 	getVersion: vi.fn(),
+	featListBuilds: vi.fn(),
+	featGetActive: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -49,6 +53,7 @@ vi.mock("../lib/bridge", () => ({
 			install: updInstall,
 			onStatus: updOnStatus,
 		},
+		featureBuilds: { list: featListBuilds, getActive: featGetActive },
 	},
 }));
 
@@ -63,12 +68,12 @@ function renderForm() {
 }
 
 beforeEach(() => {
-	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate]) m.mockReset();
+	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate, featListBuilds, featGetActive]) m.mockReset();
 	getMigration.mockResolvedValue({ status: "pending" });
 	getMock.mockResolvedValue({ data: { available: true, legacyRoot: "/home/u/.agent-orchestrator" }, error: undefined });
 	postMock.mockResolvedValue({ data: { report: { projectsImported: 2, projectsSkipped: 1 } }, error: undefined });
 	setMigration.mockResolvedValue(undefined);
-	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false });
+	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -76,6 +81,8 @@ beforeEach(() => {
 	updInstall.mockResolvedValue(undefined);
 	updOnStatus.mockReturnValue(() => undefined);
 	getVersion.mockResolvedValue("1.4.0");
+	featListBuilds.mockResolvedValue([]);
+	featGetActive.mockResolvedValue(null);
 });
 
 describe("GlobalSettingsForm", () => {
@@ -86,7 +93,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("shows the nightly warning and saves the loaded channel", async () => {
-		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true });
+		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
 		renderForm();
 		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
