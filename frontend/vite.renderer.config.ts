@@ -19,7 +19,8 @@ const POSTHOG_ORIGIN = (() => {
 	}
 })();
 
-const SAME_ORIGIN_BROWSER_BUILD = process.env.VITE_NO_ELECTRON === "1" && (process.env.VITE_AO_API_BASE_URL ?? "") === "";
+const SAME_ORIGIN_BROWSER_BUILD =
+	process.env.VITE_NO_ELECTRON === "1" && (process.env.VITE_AO_API_BASE_URL ?? "") === "";
 const CONNECT_SRC = [
 	"'self'",
 	...(SAME_ORIGIN_BROWSER_BUILD ? [] : ["http://127.0.0.1:*", "ws://127.0.0.1:*"]),

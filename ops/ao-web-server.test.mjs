@@ -15,7 +15,12 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-	await Promise.all(cleanup.splice(0).reverse().map((item) => item()));
+	await Promise.all(
+		cleanup
+			.splice(0)
+			.reverse()
+			.map((item) => item()),
+	);
 });
 
 describe("ao web production server", () => {
