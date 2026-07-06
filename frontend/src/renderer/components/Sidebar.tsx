@@ -326,15 +326,6 @@ export function Sidebar({
 						</DropdownMenuContent>
 					</DropdownMenu>
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span
-								aria-label={`Daemon ${daemonStatus.state}`}
-								className={cn(
-									"absolute right-1.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full",
-									daemonStatus.state === "ready" && eventsConnection !== "disconnected" ? "bg-success" : "bg-amber",
-								)}
-							/>
-						</TooltipTrigger>
 						<TooltipContent side="top">
 							daemon {daemonStatus.state}
 							{eventsConnection === "disconnected" && " · events offline"}
