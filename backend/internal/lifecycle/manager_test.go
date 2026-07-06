@@ -259,6 +259,37 @@ func TestPRObservation_ReviewNudgeNotStarvedByDedupedCI(t *testing.T) {
 	}
 }
 
+func TestPRObservation_DuplicateCheckNamesDoNotAlternateAndStarveReview(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+
+	ci := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing,
+		Checks: []ports.PRCheckObservation{
+			{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, URL: "ci/1", LogTail: "first"},
+			{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, URL: "ci/2", LogTail: "second"},
+		}}
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ci); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ci); err != nil {
+		t.Fatal(err)
+	}
+	withReview := ci
+	withReview.Review = domain.ReviewChangesRequest
+	withReview.Comments = []ports.PRCommentObservation{{ID: "c9", Author: "alice", Body: "please fix"}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", withReview); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(msg.msgs) != 3 {
+		t.Fatalf("want two CI nudges and one review nudge, got %v", msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "first") || !strings.Contains(msg.msgs[1], "second") || !strings.Contains(msg.msgs[2], "please fix") {
+		t.Fatalf("unexpected nudge sequence: %v", msg.msgs)
+	}
+}
+
 func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

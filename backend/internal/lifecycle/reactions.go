@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -151,8 +152,20 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// actually delivered a nudge; a dedup no-op (e.g. CI still red on the same
 	// commit) falls through so a lower lane's fresh feedback is not starved.
 	if o.CI == domain.CIFailing {
+		ciNameCounts := map[string]int{}
 		for _, ch := range o.Checks {
 			if ch.Status == domain.PRCheckFailed {
+				ciNameCounts[ch.Name]++
+			}
+		}
+		seenCIKeys := map[string]bool{}
+		for _, ch := range o.Checks {
+			if ch.Status == domain.PRCheckFailed {
+				key := ciDedupeKey(o.URL, ch, ciNameCounts[ch.Name])
+				if seenCIKeys[key] {
+					continue
+				}
+				seenCIKeys[key] = true
 				msg := "CI is failing on your PR. Review the output below and push a fix."
 				if ch.LogTail != "" {
 					// LogTail is raw CI job output; sanitize before it reaches the
@@ -160,7 +173,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 					// terminal (the dedup signature stays on the raw bytes).
 					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
 				}
-				sent, err := m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				sent, err := m.sendOnce(ctx, id, o.URL, key, ch.CommitHash+":"+ch.LogTail, msg, 0)
 				if err != nil {
 					return err
 				}
@@ -549,6 +562,15 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 		ids = append(ids, c.ID)
 	}
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
+}
+
+func ciDedupeKey(prURL string, ch ports.PRCheckObservation, nameCount int) string {
+	key := ch.Name
+	if nameCount > 1 && ch.LogTail != "" {
+		sum := sha256.Sum256([]byte(ch.LogTail))
+		key += ":" + fmt.Sprintf("%x", sum[:8])
+	}
+	return "ci:" + prURL + ":" + key
 }
 
 // sendOnce delivers a one-shot, deduped nudge and reports whether a message was
