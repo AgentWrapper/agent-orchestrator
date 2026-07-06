@@ -312,14 +312,27 @@ Each loop:
 3. `git worktree prune` + `ao session cleanup` for stragglers.
 4. **Zombie sweep (codex brokers — they accumulate FAST):** find long-lived
    sleeping `app-server-broker.mjs serve` processes (and their
-   codex/MainThread children). For EACH, double-check it is truly orphaned —
-   ALL THREE must hold before killing:
-   (a) its `/tmp/cxc-*` socket dir no longer exists,
-   (b) its cwd/worktree has been deleted,
-   (c) no live tmux session or `ao session ls` entry references it and
-   `lsof -p <pid>` shows no live socket peers.
-   Any doubt → leave it and note it. Never kill a broker whose socket dir
-   exists or whose parent session is alive.
+   codex/MainThread children). Key on **orphanhood**, not socket-liveness — a
+   running broker _always_ holds its socket dir and _always_ keeps an internal
+   connection to its own child `codex app-server`, so "socket dir gone" and
+   "no socket peers" are invariants of any live broker and can never fire.
+   Reap when ALL THREE hold:
+   (a) **`ppid` is an init-like reaper** — `1` (init) or the `systemd --user`
+   pid — meaning the launching session died and the process was reparented;
+   (b) **its cwd/worktree is deleted OR referenced by no live `ao session ls`
+   entry** — `readlink /proc/<pid>/cwd` shows `(deleted)` or a retired path
+   (e.g. under an `oldao/` tree) that no active session owns;
+   (c) **no EXTERNAL socket client** — the only holders of its `broker.sock`
+   are the broker itself and its own descendant `codex app-server`; exclude
+   the broker's own process tree from the `lsof`/peer check, then an orphan
+   shows zero real clients.
+   Reap the WHOLE tree (broker + descendant codex workers — a days-old broker
+   accumulates ~100 pids): SIGTERM the tree, SIGKILL survivors, then `rm -rf`
+   the `/tmp/cxc-*` dir (it does NOT self-delete after a kill). Guard your own
+   session's broker (its `ppid` is your live agent process, not init) and
+   never touch another user's brokers (e.g. `/home/<other>/...`). Any doubt →
+   leave it and note it; a broker whose cwd is owned by a live `ao session ls`
+   entry, or that has a genuine external client, is serving real work.
 5. Daemon health: `ao status`; the systemd user unit restarts it, but if the
    API is unreachable, say so loudly in the digest.
 
