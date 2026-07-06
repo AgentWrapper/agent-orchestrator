@@ -10,6 +10,32 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   a bad change here takes down the whole fleet; a human reviews those merges.
 - **Env:** sessions run with `POLYPOWERS_AUTOMERGE=1` and
   `POLYPOWERS_REPO=polymath-ventures/agent-orchestrator` (project config).
+- **Deploy target:** ao production is the local self-hosted user daemon and
+  browser-mode web surface, not an external PaaS. Deploy command:
+  `ops/deploy.sh`. The script backs up `~/.local/bin/ao` to
+  `~/.local/bin/ao.prev`, rebuilds the daemon binary from `backend/`, restarts
+  `ao.service`, and retries readiness for about 30 seconds so the brief
+  self-hosted API outage is not treated as a failure. If `frontend/` changed
+  in the deployed range it restarts `ao-web.service` (whose `ExecStartPre`
+  rebuilds the web bundle); if `ops/` changed it restarts
+  `ao-slack-notifier.service`.
+
+### Deploy
+
+- **Command:** `ops/deploy.sh`
+- **Verify:** `ao status` reports ready; `ao doctor` has no failures;
+  `curl http://127.0.0.1:3001/api/v1/projects` returns 200; the
+  pre-restart `ao session ls --json` count matches the post-restart
+  re-adopted count; the tailnet web URL returns 200; and
+  `ao-slack-notifier.service` is active after notifier restarts.
+- **Logs:** `journalctl --user -u ao`; for web and notifier follow-ups use
+  `journalctl --user -u ao-web` and
+  `journalctl --user -u ao-slack-notifier`.
+- **Rollback:** `ops/deploy.sh --rollback` restores `~/.local/bin/ao.prev` to
+  `~/.local/bin/ao`, restarts `ao.service`, and reruns the same daemon
+  readiness/API/session/web checks.
+- **Pool:** deploy-only work runs on the cheap haiku pool:
+  `ao spawn --model haiku`.
 - **Session self-naming (ao-hosted sessions):** keep your session's names in
   sync with the current work item so the dashboard and the Claude Code session
   list read like a live work log. Workers set both surfaces on claiming a work

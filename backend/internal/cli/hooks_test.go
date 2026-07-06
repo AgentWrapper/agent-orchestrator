@@ -163,6 +163,7 @@ func TestHooks_PostToolUseCarriesCorrelationFields(t *testing.T) {
 	// Tool-use signals must carry the event and the native tool identity so
 	// lifecycle can clear a stale blocked only on the approved tool's post.
 	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "")
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
@@ -189,6 +190,7 @@ func TestHooks_EventWithoutToolIdentityOmitsIt(t *testing.T) {
 	// payload here has tool_name only) still tag the event; missing identity
 	// fields stay empty rather than inventing values.
 	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "")
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
