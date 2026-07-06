@@ -45,9 +45,20 @@ worker on a deploy.
 
 ### Fleet caps + naming
 
-Hard cap: **4 concurrent workers per project** (check `ao session ls` before
-every spawn; queue the rest). Every spawn gets `--name "#<issue> <slug>"` so
-the dashboard reads like a work log.
+Hard cap: **8 concurrent workers per project** (raised from 4 by Nick,
+2026-07-06; check `ao session ls` before every spawn; queue the rest).
+
+The dashboard and Claude Code session list are the work log — three naming
+duties:
+- **Yourself, at startup:** `ao session rename
+  "${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "AO Master Orch"`
+  (shortened for the 20-char ao cap), and set the full
+  "AO Master Orchestrator" as your Claude Code session title via the
+  send-keys `/rename` mechanics in Repo extensions → Session self-naming.
+- **Every spawn** gets `--name "#<issue> <slug>"` (≤20 chars).
+- **Every spawn prompt** instructs the worker to self-rename per Session
+  self-naming (Repo extensions): on claiming its work item, and again on
+  every queue item transition.
 
 ### Always-running supervision
 

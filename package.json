@@ -2,6 +2,9 @@
 	"name": "agent-orchestrator",
 	"private": true,
 	"scripts": {
+		"agents": "bash scripts/polyscribe.sh",
+		"agents:check": "bash scripts/polyscribe.sh --check",
+		"agents:system": "bash scripts/polyscribe.sh --system",
 		"lint": "cd backend && go test ./... && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run --path-mode=abs",
 		"frontend:typecheck": "npm --prefix frontend run typecheck",
 		"sqlc": "cd backend && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate",
