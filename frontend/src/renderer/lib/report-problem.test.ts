@@ -83,8 +83,38 @@ describe("report problem drafts", () => {
 		expect(draft).toContain("No diagnostics included");
 	});
 
-	it("builds copy handoff destinations for GitHub, Discord, and email", () => {
-		const github = new URL(reportProblemDestinationUrl(completeInput, diagnostics, "github"));
+	it("uses report-type specific field labels in generated drafts", () => {
+		const featureDraft = formatReportProblemDraft(
+			{
+				type: "feature",
+				summary: "Make feedback reports easier to send",
+				details: "Users want fewer generic bug-report questions for non-bug reports.",
+				expected: "Show feature-specific prompts and output labels.",
+				includeDiagnostics: false,
+			},
+			diagnostics,
+			"github",
+		);
+		expect(featureDraft).toContain("## Problem / use case");
+		expect(featureDraft).toContain("## Requested behavior");
+
+		const questionDraft = formatReportProblemDraft(
+			{
+				type: "question",
+				summary: "Need help setting up Claude Code",
+				details: "Trying to create my first project.",
+				expected: "I installed the CLI and checked PATH.",
+				includeDiagnostics: false,
+			},
+			diagnostics,
+			"email",
+		);
+		expect(questionDraft).toContain("What are you trying to do?:");
+		expect(questionDraft).toContain("What did you try?:");
+	});
+
+	it("builds copy handoff destinations for GitHub and Discord while leaving email copy-only", () => {
+		const github = new URL(reportProblemDestinationUrl(completeInput, diagnostics, "github")!);
 		expect(`${github.origin}${github.pathname}`).toBe("https://github.com/AgentWrapper/agent-orchestrator/issues/new");
 		expect(github.searchParams.get("title")).toBe("Terminal keeps reconnecting after daemon restart");
 		expect(github.searchParams.get("body")).toContain("[redacted-local-path]");
@@ -94,11 +124,7 @@ describe("report problem drafts", () => {
 			"https://discord.com/invite/UZv7JjxbwG",
 		);
 
-		const email = reportProblemDestinationUrl(completeInput, diagnostics, "email");
-		const params = new URLSearchParams(email.replace(/^mailto:\?/, ""));
-		expect(params.get("subject")).toBe("AO feedback: Terminal keeps reconnecting after daemon restart");
-		expect(params.get("body")).toContain("[redacted-local-path]");
-		expect(params.get("body")).toContain("[redacted-local-url]");
+		expect(reportProblemDestinationUrl(completeInput, diagnostics, "email")).toBeNull();
 	});
 
 	it("derives route surface from the hash-history route", async () => {

@@ -209,7 +209,7 @@ function createWindow(): void {
 	// navigate the privileged window away from the app origin. External links go to
 	// the OS browser. Keep this in place before exposing any daemon output to the renderer.
 	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-		if (/^(https?:\/\/|mailto:)/.test(url)) {
+		if (/^https?:\/\//.test(url)) {
 			void shell.openExternal(url);
 		}
 		return { action: "deny" };

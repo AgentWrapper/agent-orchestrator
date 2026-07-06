@@ -5,6 +5,7 @@ import {
 	collectReportProblemDiagnostics,
 	formatReportProblemDraft,
 	reportProblemDestinationUrl,
+	reportProblemFieldCopy,
 	type ReportProblemDiagnostics,
 	type ReportProblemInput,
 	type ReportProblemOutput,
@@ -82,13 +83,17 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 		() => formatReportProblemDraft(input, diagnostics, previewOutput),
 		[input, diagnostics, previewOutput],
 	);
+	const fieldCopy = reportProblemFieldCopy(type);
 
 	const copyDraft = async (output: ReportProblemOutput) => {
 		setCopyError(null);
 		setPreviewOutput(output);
 		try {
 			await aoBridge.clipboard.writeText(formatReportProblemDraft(input, diagnostics, output));
-			window.open(reportProblemDestinationUrl(input, diagnostics, output), "_blank", "noopener,noreferrer");
+			const destinationUrl = reportProblemDestinationUrl(input, diagnostics, output);
+			if (destinationUrl) {
+				window.open(destinationUrl, "_blank", "noopener,noreferrer");
+			}
 			setCopiedOutput(output);
 		} catch (err) {
 			setCopyError(err instanceof Error ? err.message : "Could not copy report draft");
@@ -140,39 +145,39 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 							<div className="space-y-1.5">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={summaryId}>
-									Summary
+									{fieldCopy.summaryLabel}
 								</label>
 								<Input
 									id={summaryId}
 									value={summary}
 									onChange={(event) => setSummary(event.target.value)}
-									placeholder="One sentence summary"
+									placeholder={fieldCopy.summaryPlaceholder}
 								/>
 							</div>
 
 							<div className="space-y-1.5">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={detailsId}>
-									Details / repro
+									{fieldCopy.detailsLabel}
 								</label>
 								<textarea
 									id={detailsId}
 									className="min-h-[112px] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
 									value={details}
 									onChange={(event) => setDetails(event.target.value)}
-									placeholder="Steps, context, or the rough idea"
+									placeholder={fieldCopy.detailsPlaceholder}
 								/>
 							</div>
 
 							<div className="space-y-1.5">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={expectedId}>
-									Expected / request
+									{fieldCopy.expectedLabel}
 								</label>
 								<textarea
 									id={expectedId}
 									className="min-h-[84px] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
 									value={expected}
 									onChange={(event) => setExpected(event.target.value)}
-									placeholder="What should happen or what you want"
+									placeholder={fieldCopy.expectedPlaceholder}
 								/>
 							</div>
 
@@ -240,7 +245,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						</Button>
 						<Button type="button" onClick={() => void copyDraft("email")}>
 							<Clipboard className="size-3.5" aria-hidden="true" />
-							Copy and open email
+							Copy email draft
 						</Button>
 					</div>
 				</Dialog.Content>

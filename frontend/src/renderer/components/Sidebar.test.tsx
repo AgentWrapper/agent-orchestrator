@@ -324,12 +324,12 @@ describe("Sidebar", () => {
 		await user.click(feedbackButton);
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 
-		await user.type(screen.getByLabelText("Summary"), "Create project fails in /Users/alice/private-repo");
+		await user.type(screen.getByLabelText("Bug summary"), "Create project fails in /Users/alice/private-repo");
 		await user.type(
-			screen.getByLabelText("Details / repro"),
+			screen.getByLabelText("Steps to reproduce"),
 			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create.",
 		);
-		await user.type(screen.getByLabelText("Expected / request"), "Show a clear prerequisite error.");
+		await user.type(screen.getByLabelText("Expected behavior"), "Show a clear prerequisite error.");
 
 		expect(screen.getByLabelText("Report preview")).toHaveTextContent("[redacted-local-path]");
 		await user.click(screen.getByRole("button", { name: "Copy and open GitHub" }));
@@ -350,7 +350,7 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("copies Discord and email drafts when daemon diagnostics are unavailable", async () => {
+	it("copies Discord with an official invite and keeps email draft copy-only when no support address exists", async () => {
 		const user = userEvent.setup();
 		const writeText = vi.fn().mockResolvedValue(undefined);
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
@@ -361,16 +361,48 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Summary"), "Need help with setup");
+		await user.type(screen.getByLabelText("Bug summary"), "Need help with setup");
 
 		await user.click(screen.getByRole("button", { name: "Copy and open Discord" }));
-		await user.click(screen.getByRole("button", { name: "Copy and open email" }));
+		await user.click(screen.getByRole("button", { name: "Copy email draft" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
 		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
-		expect(open).toHaveBeenNthCalledWith(1, "https://discord.com/invite/UZv7JjxbwG", "_blank", "noopener,noreferrer");
-		expect(open).toHaveBeenNthCalledWith(2, expect.stringMatching(/^mailto:\?/), "_blank", "noopener,noreferrer");
+		expect(open).toHaveBeenCalledOnce();
+		expect(open).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG", "_blank", "noopener,noreferrer");
+	});
+
+	it("shows report-type specific prompts instead of one generic questionnaire", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		expect(screen.getByLabelText("Bug summary")).toHaveAttribute("placeholder", "Short description of the bug");
+		expect(screen.getByLabelText("Steps to reproduce")).toHaveAttribute(
+			"placeholder",
+			"1. Open...\n2. Click...\n3. See...",
+		);
+		expect(screen.getByLabelText("Expected behavior")).toHaveAttribute(
+			"placeholder",
+			"What should have happened instead?",
+		);
+
+		await chooseOption(screen.getByRole("combobox", { name: "Report type" }), "Feature request");
+		expect(screen.getByLabelText("Feature summary")).toHaveAttribute("placeholder", "Short description of the idea");
+		expect(screen.getByLabelText("Problem / use case")).toBeInTheDocument();
+		expect(screen.getByLabelText("Requested behavior")).toBeInTheDocument();
+
+		await chooseOption(screen.getByRole("combobox", { name: "Report type" }), "General feedback");
+		expect(screen.getByLabelText("Feedback summary")).toBeInTheDocument();
+		expect(screen.getByLabelText("Message")).toBeInTheDocument();
+		expect(screen.getByLabelText("Optional context")).toBeInTheDocument();
+
+		await chooseOption(screen.getByRole("combobox", { name: "Report type" }), "Setup question");
+		expect(screen.getByLabelText("Question summary")).toBeInTheDocument();
+		expect(screen.getByLabelText("What are you trying to do?")).toBeInTheDocument();
+		expect(screen.getByLabelText("What did you try?")).toBeInTheDocument();
 	});
 
 	it("renames a session inline and persists via the daemon", async () => {
