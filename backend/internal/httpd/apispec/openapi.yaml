@@ -33,6 +33,45 @@ paths:
       summary: Return cached supported and locally installed agent adapters
       tags:
       - agents
+  /api/v1/agents/{agent}/probe:
+    post:
+      operationId: probeAgent
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeAgentResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Run a fresh local readiness probe for one agent adapter
+      tags:
+      - agents
   /api/v1/agents/refresh:
     post:
       operationId: refreshAgents
@@ -1975,6 +2014,19 @@ components:
       - targetSha
       - status
       type: object
+    ProbeAgentResponse:
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentInfo'
+        installed:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - agent
+      - supported
+      - installed
+      type: object
     Project:
       properties:
         agent:
@@ -2068,6 +2120,8 @@ components:
         kind:
           type: string
         name:
+          type: string
+        orchestratorAgent:
           type: string
         path:
           type: string

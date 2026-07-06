@@ -17,9 +17,12 @@ import (
 type fakeAgentCatalog struct {
 	inventory    agentsvc.Inventory
 	refreshed    agentsvc.Inventory
+	probed       agentsvc.ProbeResult
 	err          error
 	listCalls    int
 	refreshCalls int
+	probeCalls   int
+	probeAgent   string
 }
 
 func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
@@ -33,6 +36,12 @@ func (f *fakeAgentCatalog) Refresh(context.Context) (agentsvc.Inventory, error) 
 		return f.refreshed, f.err
 	}
 	return f.inventory, f.err
+}
+
+func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.ProbeResult, error) {
+	f.probeCalls++
+	f.probeAgent = agentID
+	return f.probed, f.err
 }
 
 func TestListAgents(t *testing.T) {
@@ -90,5 +99,33 @@ func TestRefreshAgents(t *testing.T) {
 	}
 	if catalog.listCalls != 0 || catalog.refreshCalls != 1 {
 		t.Fatalf("calls: list=%d refresh=%d, want list=0 refresh=1", catalog.listCalls, catalog.refreshCalls)
+	}
+}
+
+func TestProbeAgent(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	catalog := &fakeAgentCatalog{
+		probed: agentsvc.ProbeResult{
+			Agent:     agentsvc.Info{ID: "codex", Label: "Codex", AuthStatus: "authorized"},
+			Supported: true,
+			Installed: true,
+		},
+	}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Agents: catalog,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/probe", "")
+	if status != http.StatusOK {
+		t.Fatalf("POST /agents/codex/probe = %d, body=%s", status, body)
+	}
+	for _, want := range []string{`"supported":true`, `"installed":true`, `"id":"codex"`, `"authStatus":"authorized"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+	if catalog.probeCalls != 1 || catalog.probeAgent != "codex" {
+		t.Fatalf("probe calls=%d agent=%q, want one codex probe", catalog.probeCalls, catalog.probeAgent)
 	}
 }

@@ -27,6 +27,11 @@ type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
 }
 
+// AgentIDParam is the {agent} path parameter for one-agent catalog probes.
+type AgentIDParam struct {
+	Agent string `path:"agent" description:"Agent adapter identifier."`
+}
+
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`
@@ -441,6 +446,9 @@ type ListAgentsResponse = agentsvc.Inventory
 
 // RefreshAgentsResponse is the body of POST /api/v1/agents/refresh.
 type RefreshAgentsResponse = agentsvc.Inventory
+
+// ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
+type ProbeAgentResponse = agentsvc.ProbeResult
 
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info

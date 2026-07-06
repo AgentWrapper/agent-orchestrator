@@ -128,6 +128,19 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 	return safe;
 }
 
+// Allowed `source` enum for the orchestrator-spawn triad. Kept as a literal set
+// here (rather than imported from spawn-orchestrator.ts, which imports this
+// module) to avoid a cycle; keep in sync with OrchestratorSpawnSource.
+const ORCHESTRATOR_SPAWN_SOURCES = new Set([
+	"board",
+	"restore_dialog",
+	"topbar",
+	"sidebar",
+	"project_add",
+	"settings",
+	"restart",
+]);
+
 export async function sanitizeRendererProperties(
 	event: string,
 	properties?: TelemetryProperties,
@@ -166,11 +179,7 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.orchestrator_spawn_failed": {
 			const projectIDHash = await hashedTelemetryID(properties?.project_id);
 			if (projectIDHash) safe.project_id_hash = projectIDHash;
-			if (
-				properties?.source === "board" ||
-				properties?.source === "restore_dialog" ||
-				properties?.source === "project_add"
-			) {
+			if (typeof properties?.source === "string" && ORCHESTRATOR_SPAWN_SOURCES.has(properties.source)) {
 				safe.source = properties.source;
 			}
 			break;

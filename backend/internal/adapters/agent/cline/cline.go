@@ -16,26 +16,19 @@ package cline
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-)
-
-const (
-	clineTitleMetadataKey   = "title"
-	clineSummaryMetadataKey = "summary"
 )
 
 // Plugin is the Cline agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -59,14 +52,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports the agent-specific config keys. Cline exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new Cline session. Prompted
@@ -95,15 +80,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Cline receives its prompt in the
-// launch command itself (as a positional argument).
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Cline session:
@@ -138,82 +114,27 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[clineTitleMetadataKey],
-		Summary:        session.Metadata[clineSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
+}
+
+var clineBinarySpec = binaryutil.BinarySpec{
+	Label:         "cline",
+	Names:         []string{"cline"},
+	WinNames:      []string{"cline.cmd", "cline.exe", "cline"},
+	UnixPaths:     []string{"/usr/local/bin/cline", "/opt/homebrew/bin/cline"},
+	UnixHomePaths: [][]string{{".npm-global", "bin", "cline"}, {".npm", "bin", "cline"}, {".local", "bin", "cline"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cline.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cline.exe"}},
+	},
 }
 
 // ResolveClineBinary returns the path to the cline binary on this machine,
-// searching PATH then a handful of well-known install locations
-// (Homebrew, npm global). Returns "cline" as a last-ditch fallback so callers
-// see a clear "command not found" rather than an empty argv.
+// searching PATH then a handful of well-known install locations (Homebrew, npm
+// global). It returns a wrapped ports.ErrAgentBinaryNotFound when cline is absent.
 func ResolveClineBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"cline.cmd", "cline.exe", "cline"} {
-			path, err := exec.LookPath(name)
-			if err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "cline.cmd"),
-				filepath.Join(appData, "npm", "cline.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		return "", fmt.Errorf("cline: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("cline"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/cline",
-		"/opt/homebrew/bin/cline",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".npm-global", "bin", "cline"),
-			filepath.Join(home, ".npm", "bin", "cline"),
-			filepath.Join(home, ".local", "bin", "cline"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("cline: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, clineBinarySpec)
 }
 
 func (p *Plugin) clineBinary(ctx context.Context) (string, error) {
@@ -233,7 +154,7 @@ func (p *Plugin) clineBinary(ctx context.Context) (string, error) {
 }
 
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to the user's Cline config/default behavior.
 	case ports.PermissionModeAcceptEdits:
@@ -248,21 +169,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 		// yolo mode: auto-approve tools with the restricted (safer) toolset.
 		*cmd = append(*cmd, "--yolo")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

@@ -3,9 +3,9 @@
 // and reading hook-derived session info.
 //
 // Kiro is AWS's agentic coding assistant. Its terminal CLI ships as the
-// `kiro-cli` binary and exposes a non-interactive ("headless") mode via
-// `kiro-cli chat --no-interactive "<prompt>"`, suitable for AO-driven worker
-// sessions. See https://kiro.dev/docs/cli/headless/ and
+// `kiro-cli` binary. AO launches Kiro with a workspace-local custom agent so
+// both worker and orchestrator sessions can use Kiro's normal interactive
+// approval flow. See https://kiro.dev/docs/cli/headless/ and
 // https://kiro.dev/docs/cli/reference/cli-commands/.
 //
 // Launch delivers the initial prompt as a positional argument after `--` so a
@@ -15,31 +15,25 @@
 // captured from a Kiro hook payload.
 //
 // AO-managed sessions derive native session identity and display metadata from
-// Kiro's native hooks (see hooks.go / activity.go) rather than transcript scans.
+// Kiro's native hooks (see hooks.go) rather than transcript scans.
 package kiro
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-)
-
-const (
-	kiroTitleMetadataKey   = "title"
-	kiroSummaryMetadataKey = "summary"
 )
 
 // Plugin is the Kiro agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -65,46 +59,47 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports the agent-specific config keys. Kiro exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
-// GetLaunchCommand builds the argv to start a new headless Kiro session:
-// `kiro-cli chat --no-interactive [trust flags] -- <prompt>`.
+// GetLaunchCommand builds the argv to start a new Kiro session:
+// `kiro-cli chat --agent ao [trust flags] [-- <prompt>]`.
 //
 // The prompt is passed as a positional argument after `--` so a leading "-" is
-// not read as a flag. Kiro's --no-interactive mode requires a prompt argument.
+// not read as a flag. Kiro runs interactively for both workers and orchestrators;
+// standing instructions come from the generated custom agent.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kiroBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary, "chat", "--no-interactive"}
+	cmd = []string{binary, "chat", "--agent", kiroAgentName}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
+	prompt := cfg.Prompt
+	if prompt != "" {
+		cmd = append(cmd, "--", prompt)
 	}
 
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Kiro receives its prompt in the launch
-// command itself.
+// GetPromptDeliveryStrategy reports how Kiro receives the initial task prompt.
+// Orchestrator standing instructions are delivered through the generated
+// custom-agent prompt, so no command or post-start prompt injection is needed
+// there.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if cfg.Prompt != "" {
+		return ports.PromptDeliveryInCommand, nil
+	}
+	if cfg.Kind == domain.KindOrchestrator {
+		return ports.PromptDeliveryCustomAgent, nil
+	}
 	return ports.PromptDeliveryInCommand, nil
 }
 
-// GetRestoreCommand rebuilds the argv that continues an existing Kiro session:
-// `kiro-cli chat --no-interactive --resume-id <agentSessionId> [trust flags]`.
+// GetRestoreCommand rebuilds the argv that continues an existing Kiro session.
 // ok is false when the hook-derived native session id has not landed yet, so
 // callers can fall back to fresh launch behavior.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
@@ -121,8 +116,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 8)
-	cmd = append(cmd, binary, "chat", "--no-interactive", "--resume-id", agentSessionID)
+	cmd = []string{binary, "chat", "--agent", kiroAgentName, "--resume-id", agentSessionID}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	return cmd, true, nil
 }
@@ -133,91 +127,31 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[kiroTitleMetadataKey],
-		Summary:        session.Metadata[kiroSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
+}
+
+var kiroBinarySpec = binaryutil.BinarySpec{
+	Label:         "kiro",
+	Names:         []string{"kiro-cli"},
+	WinNames:      []string{"kiro-cli.cmd", "kiro-cli.exe", "kiro-cli"},
+	UnixPaths:     []string{"/usr/local/bin/kiro-cli", "/opt/homebrew/bin/kiro-cli"},
+	UnixHomePaths: [][]string{{".kiro", "bin", "kiro-cli"}, {".local", "bin", "kiro-cli"}},
+	// The native Kiro installer location is probed before the npm shim, matching
+	// the pre-refactor order so a native install still wins when both are present.
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinLocalAppData, Parts: []string{"Programs", "kiro", "kiro-cli.exe"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kiro-cli.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kiro-cli.exe"}},
+		{Base: binaryutil.WinHome, Parts: []string{".kiro", "bin", "kiro-cli.exe"}},
+	},
 }
 
 // ResolveKiroBinary returns the path to the kiro-cli binary on this machine,
-// searching PATH then a handful of well-known install locations. Returns
-// "kiro-cli" as a last-ditch fallback so callers see a clear "command not
-// found" rather than an empty argv.
+// searching PATH then a handful of well-known install locations. It returns a
+// wrapped ports.ErrAgentBinaryNotFound when kiro-cli is absent.
 func ResolveKiroBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"kiro-cli.cmd", "kiro-cli.exe", "kiro-cli"} {
-			path, err := exec.LookPath(name)
-			if err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		candidates := []string{}
-		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			candidates = append(candidates,
-				filepath.Join(localAppData, "Programs", "kiro", "kiro-cli.exe"),
-			)
-		}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "kiro-cli.cmd"),
-				filepath.Join(appData, "npm", "kiro-cli.exe"),
-			)
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates,
-				filepath.Join(home, ".kiro", "bin", "kiro-cli.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		return "", fmt.Errorf("kiro: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("kiro-cli"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/kiro-cli",
-		"/opt/homebrew/bin/kiro-cli",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".kiro", "bin", "kiro-cli"),
-			filepath.Join(home, ".local", "bin", "kiro-cli"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("kiro: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, kiroBinarySpec)
 }
 
 func (p *Plugin) kiroBinary(ctx context.Context) (string, error) {
@@ -236,14 +170,14 @@ func (p *Plugin) kiroBinary(ctx context.Context) (string, error) {
 	return binary, nil
 }
 
-// appendApprovalFlags maps AO's 4 permission modes onto Kiro's tool-trust
-// flags. Default emits no flag so Kiro defers to the user's own configuration
-// (the interactive per-tool prompt). accept-edits grants the write-capable
-// built-in tools; auto/bypass grant all tools.
+// appendApprovalFlags maps AO's permission modes onto Kiro's tool-trust flags.
+// Default emits no flag so Kiro uses its normal interactive approval flow.
+// accept-edits grants the write-capable built-in tools; auto/bypass grant all
+// tools.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
-		// No flag: defer to the user's Kiro config / per-tool prompting.
+		// No flag: defer to Kiro's normal interactive approval flow.
 	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--trust-tools=fs_read,fs_write")
 	case ports.PermissionModeAuto:
@@ -251,21 +185,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--trust-all-tools")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

@@ -436,6 +436,32 @@ func TestManager_SetConfig(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
+func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+
+	cfg := domain.ProjectConfig{
+		DefaultBranch: "develop",
+		Env:           map[string]string{"GITHUB_TOKEN": "secret"},
+		Orchestrator:  domain.RoleOverride{Harness: domain.HarnessCodex},
+	}
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao"), Config: &cfg}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	list, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List len = %d, want 1", len(list))
+	}
+	if list[0].OrchestratorAgent != domain.HarnessCodex {
+		t.Fatalf("summary orchestrator agent = %q, want codex", list[0].OrchestratorAgent)
+	}
+}
+
 func TestManager_ReaddAfterRemove(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

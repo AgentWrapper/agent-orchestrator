@@ -137,6 +137,7 @@ var schemaNames = map[string]string{
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
+	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
@@ -174,6 +175,7 @@ var schemaNames = map[string]string{
 	"ControllersOrchestratorResponse":             "OrchestratorResponse",
 	"AgentInventory":                              "ListAgentsResponse",
 	"AgentInfo":                                   "AgentInfo",
+	"AgentProbeResult":                            "ProbeAgentResponse",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
 	"ControllersNotificationStreamQuery":          "NotificationStreamQuery",
 	"ControllersNotificationIDParam":              "NotificationIDParam",
@@ -309,6 +311,17 @@ func agentOperations() []operation {
 			summary: "Refresh the cached local agent adapter catalog",
 			resps: []respUnit{
 				{http.StatusOK, controllers.RefreshAgentsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/probe", id: "probeAgent", tag: "agents",
+			summary:    "Run a fresh local readiness probe for one agent adapter",
+			pathParams: []any{controllers.AgentIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProbeAgentResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -45,13 +45,31 @@ func TestGetConfigSpecEmpty(t *testing.T) {
 	}
 }
 
-func TestGetPromptDeliveryStrategy(t *testing.T) {
+func TestGetPromptDeliveryStrategyNoPrompt(t *testing.T) {
 	s, err := (&Plugin{}).GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if s != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want after_start", s)
+	}
+}
+
+func TestGetPromptDeliveryStrategyWithPrompt(t *testing.T) {
+	s, err := (&Plugin{}).GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{Prompt: "fix it"})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if s != ports.PromptDeliveryInCommand {
 		t.Fatalf("strategy = %q, want in_command", s)
+	}
+}
+
+func TestGetPromptDeliveryStrategyContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (&Plugin{}).GetPromptDeliveryStrategy(ctx, ports.LaunchConfig{}); err == nil {
+		t.Fatal("expected error from canceled context, got nil")
 	}
 }
 
@@ -124,7 +142,21 @@ func TestGetLaunchCommandNoPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print"}
+	want := []string{"cn"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandNoPromptWithAuto(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions: ports.PermissionModeAuto,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"cn", "--auto"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

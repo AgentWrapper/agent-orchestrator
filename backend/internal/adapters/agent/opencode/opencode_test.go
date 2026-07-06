@@ -344,7 +344,7 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "opencode"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -356,7 +356,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "opencode"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -599,8 +599,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			opencodeAgentSessionIDMetadataKey: "ses_abc123",
-			opencodeTitleMetadataKey:          "Fix login redirect",
-			opencodeSummaryMetadataKey:        "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:            "Fix login redirect",
+			ports.MetadataKeySummary:          "Updated the auth callback and tests.",
 			"ignored":                         "not returned",
 		},
 	})

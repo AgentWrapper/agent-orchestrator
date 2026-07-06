@@ -6,7 +6,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prBrowserUrl, prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
+import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { BrowserPanelView } from "./BrowserPanel";
@@ -14,7 +14,7 @@ import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
+import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -59,6 +59,8 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 		),
 	},
 ];
+
+const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-success/40 bg-success/10 text-success",
@@ -125,7 +127,15 @@ export function SessionInspector({
 				))}
 			</div>
 
-			<div className="session-inspector__body">
+			<div
+				className={cn(
+					"session-inspector__body",
+					// The Browser tab renders its own bordered panel edge-to-edge, so
+					// drop the body padding for it (except when popped out, where the
+					// body only holds the "return to panel" empty state).
+					view === "browser" && !browserPoppedOut && "session-inspector__body--browser",
+				)}
+			>
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 				{view === "browser" ? (
@@ -223,38 +233,9 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 			</div>
 			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRStatusStack className="mt-2" pr={pr} />
-			<PRAttentionPanel pr={pr} />
+			<PRSummaryParts className="mt-2" pr={pr} variant="stacked" />
 		</div>
 	);
-}
-
-function PRStatusStack({ className, pr }: { className?: string; pr: SessionPRSummary }) {
-	return (
-		<div className={cn("flex flex-col gap-0.5 font-mono text-[10.5px] leading-4", className)}>
-			{prStatusRows(pr).map((row) => (
-				<div key={row.key} className="min-w-0 truncate">
-					<span className="text-passive">{row.label}</span>{" "}
-					<span className={cn("font-medium", inspectorStatusToneClass(row.tone))}>{row.value}</span>
-				</div>
-			))}
-		</div>
-	);
-}
-
-function inspectorStatusToneClass(tone: PRDisplayTone): string {
-	switch (tone) {
-		case "success":
-			return "text-success";
-		case "warning":
-			return "text-warning";
-		case "error":
-			return "text-error";
-		case "neutral":
-			return "text-muted-foreground";
-		case "passive":
-			return "text-passive";
-	}
 }
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";
@@ -442,6 +423,7 @@ function ReviewsView({
 			return reviews.some((review) => review.status === "running") ? 2500 : false;
 		},
 		queryFn: async () => {
+			if (usePreviewData) return mockReviewsResponse(session);
 			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
 				params: { path: { sessionId: session.id } },
 			});
@@ -453,6 +435,7 @@ function ReviewsView({
 		queryKey: ["project-config", session.workspaceId],
 		enabled: hasPr,
 		queryFn: async () => {
+			if (usePreviewData) return mockProjectConfig();
 			const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
 				params: { path: { id: session.workspaceId } },
 			});
@@ -510,6 +493,76 @@ function ReviewsView({
 function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {
 	if (!project || !("config" in project)) return undefined;
 	return project.config;
+}
+
+function mockProjectConfig(): ProjectConfig {
+	return {
+		worker: { agent: "codex" },
+		orchestrator: { agent: "codex" },
+		reviewers: [{ harness: "codex" }],
+	};
+}
+
+function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
+	return {
+		reviewerHandleId: `${session.id}-reviewer`,
+		reviews: sortedPRs(session).map((pr, index) => {
+			const targetSha = `demo${pr.number}${index}`;
+			const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
+			const latestRun =
+				pr.review === "approved" || pr.review === "changes_requested"
+					? {
+							batchId: `demo-batch-${session.id}`,
+							body:
+								pr.review === "approved"
+									? "Demo review approved. The implementation is ready for the README screenshot flow."
+									: "Demo review found polish feedback for the terminal presentation.",
+							createdAt: reviewedAt,
+							githubReviewId: `${pr.number}01`,
+							harness: "codex",
+							id: `demo-review-run-${pr.number}`,
+							prUrl: pr.url,
+							reviewId: `demo-review-${pr.number}`,
+							sessionId: session.id,
+							status: "delivered",
+							targetSha,
+							verdict: pr.review === "approved" ? "approved" : "changes_requested",
+						}
+					: undefined;
+			return {
+				latestRun,
+				prNumber: pr.number,
+				prUrl: pr.url,
+				status:
+					pr.review === "approved"
+						? "up_to_date"
+						: pr.review === "changes_requested"
+							? "changes_requested"
+							: pr.state === "draft"
+								? "ineligible"
+								: "needs_review",
+				targetSha,
+				title: mockReviewTitle(pr.number),
+			};
+		}),
+	};
+}
+
+function mockReviewTitle(prNumber: number): string {
+	switch (prNumber) {
+		case 319:
+			return "Browser preview rail renders inside AO";
+		case 320:
+			return "Review tab keeps stacked PR rows visible";
+		case 321:
+			return "Draft child PR waits for parent review";
+		case 318:
+			return "Terminal polish feedback";
+		case 323:
+			return "README screenshot assets ready";
+		default:
+			return `Demo pull request ${prNumber}`;
+	}
 }
 
 function ReviewPanel({

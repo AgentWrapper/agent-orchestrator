@@ -23,6 +23,13 @@ type probeResult struct {
 	authorized bool
 }
 
+// ProbeResult describes a fresh readiness probe for one supported agent.
+type ProbeResult struct {
+	Agent     Info `json:"agent"`
+	Supported bool `json:"supported"`
+	Installed bool `json:"installed"`
+}
+
 // Info is the user-facing identity for an agent adapter.
 type Info struct {
 	ID         string                `json:"id"`
@@ -138,6 +145,31 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	s.lastRefresh = time.Now()
 	s.mu.Unlock()
 	return next, nil
+}
+
+// Probe runs a fresh bounded binary/auth probe for one agent, bypassing the
+// catalog refresh rate limit. It is intended for user-initiated preflight paths
+// where a cached negative catalog result may be stale.
+func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ProbeResult{}, err
+	}
+	for _, item := range s.agents {
+		info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
+		if info.Label == "" {
+			info.Label = info.ID
+		}
+		if info.ID != agentID {
+			continue
+		}
+		res := probeAgent(ctx, item)
+		return ProbeResult{
+			Agent:     res.info,
+			Supported: true,
+			Installed: res.installed,
+		}, nil
+	}
+	return ProbeResult{Agent: Info{ID: agentID}, Supported: false, Installed: false}, nil
 }
 
 func supportedInfos(agents []agentregistry.HarnessAgent) []Info {

@@ -14,23 +14,21 @@
 // callbacks through the existing "ao hooks claude-code <evt>" dispatcher — no
 // Continue-specific native hook config or activity deriver is needed.
 //
-// Launch is headless via `cn --print [--auto|--readonly] <prompt>`; the prompt
-// is the positional argument (in-command delivery). Restore continues a specific
-// native session by id with `cn --fork <sessionId>` (Continue's `--resume` only
-// continues the *last* session, so it cannot target a particular AO session).
+// Prompted launch is headless via `cn --print [--auto|--readonly] <prompt>`;
+// promptless launch is interactive via `cn [--auto|--readonly]`. Restore
+// continues a specific native session by id with `cn --fork <sessionId>`
+// (Continue's `--resume` only continues the *last* session, so it cannot target
+// a particular AO session).
 package continueagent
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -39,9 +37,22 @@ import (
 // (NOT the Go package name "continueagent").
 const adapterID = "continue"
 
+var continueBinarySpec = binaryutil.BinarySpec{
+	Label:         "cn",
+	Names:         []string{"cn"},
+	WinNames:      []string{"cn.cmd", "cn.exe", "cn"},
+	UnixPaths:     []string{"/usr/local/bin/cn", "/opt/homebrew/bin/cn"},
+	UnixHomePaths: [][]string{{".npm-global", "bin", "cn"}, {".local", "bin", "cn"}, {".npm", "bin", "cn"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cn.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cn.exe"}},
+	},
+}
+
 // Plugin is the Continue CLI agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -67,27 +78,24 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports no agent-specific config keys yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
-// GetLaunchCommand builds `cn --print [--auto|--readonly] <prompt>`.
+// GetLaunchCommand builds the Continue CLI argv for a fresh launch.
 //
-// `--print` runs Continue in non-interactive (headless) mode. The prompt is the
-// positional argument and is delivered in-command. Permission flags map AO's 4
-// modes onto Continue's two booleans (--auto / --readonly); Default and
-// AcceptEdits emit no flag so Continue resolves behavior from the user's config.
+// `--print` runs Continue in non-interactive (headless) mode, but Continue
+// rejects it without a prompt. Prompted launches therefore use
+// `cn --print ... -- <prompt>`, while promptless AO orchestrator launches stay
+// interactive as `cn ...`. Permission flags map AO's 4 modes onto Continue's
+// two booleans (--auto / --readonly); Default and AcceptEdits emit no flag so
+// Continue resolves behavior from the user's config.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.continueBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary, "--print"}
+	cmd = []string{binary}
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--print")
+	}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	if cfg.Prompt != "" {
@@ -97,12 +105,17 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that the prompt is delivered in the launch command.
+// GetPromptDeliveryStrategy reports how Continue receives the initial prompt.
+// Prompted launches carry the prompt in `cn --print ... -- <prompt>`;
+// promptless launches start interactively and have no command prompt to deliver.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	return ports.PromptDeliveryInCommand, nil
+	if cfg.Prompt != "" {
+		return ports.PromptDeliveryInCommand, nil
+	}
+	return ports.PromptDeliveryAfterStart, nil
 }
 
 // GetAgentHooks reuses the Claude Code hook installer because the Continue CLI
@@ -154,15 +167,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[ports.MetadataKeyTitle],
-		Summary:        session.Metadata[ports.MetadataKeySummary],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // ResolveContinueBinary finds the `cn` binary (Continue CLI), searching PATH then
@@ -170,63 +176,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 // callers get the shell's normal command-not-found behavior if Continue is
 // absent.
 func ResolveContinueBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"cn.cmd", "cn.exe", "cn"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "cn.cmd"),
-				filepath.Join(appData, "npm", "cn.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("cn: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("cn"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/cn",
-		"/opt/homebrew/bin/cn",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".npm-global", "bin", "cn"),
-			filepath.Join(home, ".local", "bin", "cn"),
-			filepath.Join(home, ".npm", "bin", "cn"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("cn: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, continueBinarySpec)
 }
 
 func (p *Plugin) continueBinary(ctx context.Context) (string, error) {
@@ -251,7 +201,7 @@ func (p *Plugin) continueBinary(ctx context.Context) (string, error) {
 // and the two flags are mutually exclusive. Default and AcceptEdits emit no flag
 // so Continue defers to the user's own config / default behavior.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to the user's Continue config / default behavior.
 	case ports.PermissionModeAcceptEdits:
@@ -261,21 +211,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--auto")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

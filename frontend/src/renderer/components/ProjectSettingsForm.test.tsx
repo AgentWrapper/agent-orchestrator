@@ -3,15 +3,17 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, putMock } = vi.hoisted(() => ({
+const { getMock, putMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	putMock: vi.fn(),
+	postMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
 		PUT: putMock,
+		POST: postMock,
 	},
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
@@ -23,14 +25,19 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import type { WorkspaceSummary } from "../types/workspace";
 
-function renderSettings(projectId = "proj-1") {
+function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
 	const queryClient = new QueryClient({
 		defaultOptions: {
 			queries: { retry: false },
 			mutations: { retry: false },
 		},
 	});
+	if (workspaces) {
+		queryClient.setQueryData(workspaceQueryKey, workspaces);
+	}
 	render(
 		<QueryClientProvider client={queryClient}>
 			<ProjectSettingsForm projectId={projectId} />
@@ -86,7 +93,13 @@ function mockProject(project: Record<string, unknown>) {
 beforeEach(() => {
 	getMock.mockReset();
 	putMock.mockReset();
+	postMock.mockReset();
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
+	postMock.mockResolvedValue({
+		data: { orchestrator: { id: "proj-1-orch-2" } },
+		error: undefined,
+		response: { status: 200 },
+	});
 });
 
 describe("ProjectSettingsForm", () => {
@@ -168,6 +181,10 @@ describe("ProjectSettingsForm", () => {
 				},
 			},
 		});
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", {
+			body: { projectId: "proj-1", clean: true },
+		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	}, 20_000);
 
@@ -195,6 +212,7 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
@@ -322,5 +340,102 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findAllByText("Enabling intake requires an assignee.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("restarts when the saved orchestrator agent already differs from the running orchestrator", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "goose" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings("proj-1", [
+			{
+				id: "proj-1",
+				name: "Project One",
+				path: "/repo/project-one",
+				orchestratorAgent: "goose",
+				sessions: [
+					{
+						id: "proj-1-orchestrator",
+						workspaceId: "proj-1",
+						workspaceName: "Project One",
+						title: "Orchestrator",
+						provider: "claude-code",
+						kind: "orchestrator",
+						branch: "ao/proj-1-orchestrator",
+						status: "working",
+						createdAt: "2026-07-03T00:00:00Z",
+						updatedAt: "2026-07-03T00:00:00Z",
+						prs: [],
+					},
+				],
+			},
+		]);
+
+		const orchestratorAgent = await screen.findByRole("combobox", { name: "Default orchestrator agent" });
+		expect(orchestratorAgent).toHaveTextContent("goose");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", {
+			body: { projectId: "proj-1", clean: true },
+		});
+	});
+
+	it("keeps the config save successful when orchestrator replacement fails", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { message: "missing goose binary" },
+			response: { status: 500 },
+		});
+
+		const queryClient = renderSettings();
+		const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+		const orchestratorAgent = await screen.findByRole("combobox", { name: "Default orchestrator agent" });
+		await chooseOption(orchestratorAgent, "goose");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+		expect(await screen.findByText("Orchestrator restart failed: missing goose binary")).toBeInTheDocument();
+		expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 	});
 });

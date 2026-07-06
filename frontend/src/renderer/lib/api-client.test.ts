@@ -175,12 +175,23 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("get", "/api/v1/projects/my project id")).toBe("GET /api/v1/projects/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/kill")).toBe("POST /api/v1/sessions/:id/kill");
 		expect(normalizeApiOperation("PUT", "/api/v1/projects/p1/config")).toBe("PUT /api/v1/projects/:id/config");
-		expect(normalizeApiOperation("DELETE", "/api/v1/orchestrators/orch-42")).toBe("DELETE /api/v1/orchestrators/:id");
 	});
 
 	it("leaves collection and non-resource paths untouched", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/projects")).toBe("GET /api/v1/projects");
 		expect(normalizeApiOperation("POST", "/api/v1/orchestrators")).toBe("POST /api/v1/orchestrators");
+	});
+
+	it("keeps static child routes instead of treating them as ids", () => {
+		// These match an exact OpenAPI template, so the trailing segment must not
+		// be collapsed to :id (which would break aggregation and hide the route).
+		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
+		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
+	});
+
+	it("normalizes ids for resources a collection heuristic would miss", () => {
+		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
+		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");
 	});
 });
 

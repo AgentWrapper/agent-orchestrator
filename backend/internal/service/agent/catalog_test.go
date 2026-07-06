@@ -280,6 +280,61 @@ func TestRefreshIsRateLimited(t *testing.T) {
 	}
 }
 
+func TestProbeBypassesRefreshRateLimitForOneAgent(t *testing.T) {
+	previous := agentRefreshMinInterval
+	agentRefreshMinInterval = time.Hour
+	t.Cleanup(func() { agentRefreshMinInterval = previous })
+
+	probes := 0
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness: domain.AgentHarness("codex"),
+			Manifest: adapters.Manifest{
+				ID:   "codex",
+				Name: "Codex",
+			},
+			Agent: probeTrackingAgent{fakeAgent: fakeAgent{}, onProbe: func() { probes++ }},
+		},
+		harnessAgent("missing", "Missing", ports.ErrAgentBinaryNotFound),
+	})
+
+	if _, err := svc.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	got, err := svc.Probe(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if !got.Supported || !got.Installed || got.Agent.ID != "codex" {
+		t.Fatalf("Probe = %#v, want supported installed codex", got)
+	}
+	if probes != 2 {
+		t.Fatalf("probes = %d, want refresh plus fresh probe", probes)
+	}
+}
+
+func TestProbeReportsUnsupportedAndMissingAgent(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAgent("missing", "Missing", ports.ErrAgentBinaryNotFound),
+	})
+
+	missing, err := svc.Probe(context.Background(), "missing")
+	if err != nil {
+		t.Fatalf("Probe missing: %v", err)
+	}
+	if !missing.Supported || missing.Installed {
+		t.Fatalf("Probe missing = %#v, want supported but not installed", missing)
+	}
+
+	unsupported, err := svc.Probe(context.Background(), "unknown")
+	if err != nil {
+		t.Fatalf("Probe unknown: %v", err)
+	}
+	if unsupported.Supported || unsupported.Installed || unsupported.Agent.ID != "unknown" {
+		t.Fatalf("Probe unknown = %#v, want unsupported unknown", unsupported)
+	}
+}
+
 func harnessAgent(id, label string, err error) agentregistry.HarnessAgent {
 	return agentregistry.HarnessAgent{
 		Harness: domain.AgentHarness(id),

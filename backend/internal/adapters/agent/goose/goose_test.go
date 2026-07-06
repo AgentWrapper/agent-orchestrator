@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -141,7 +142,7 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "goose"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -153,7 +154,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "goose"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -419,8 +420,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "thread-123",
-			gooseTitleMetadataKey:           "Fix login redirect",
-			gooseSummaryMetadataKey:         "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -511,7 +512,13 @@ func containsSubsequence(values []string, needle []string) bool {
 	return false
 }
 
-func countGooseHookCommand(entries []gooseMatcherGroup, command string) int {
+// gooseHookFile is the on-disk shape of the hooks file, used to decode and
+// assert on what GetAgentHooks wrote.
+type gooseHookFile struct {
+	Hooks map[string][]hooksjson.MatcherGroup `json:"hooks"`
+}
+
+func countGooseHookCommand(entries []hooksjson.MatcherGroup, command string) int {
 	count := 0
 	for _, entry := range entries {
 		for _, hook := range entry.Hooks {

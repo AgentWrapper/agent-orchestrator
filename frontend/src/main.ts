@@ -70,6 +70,14 @@ process.stderr.on("error", ignoreStdStreamError);
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
 
+// Windows shows native toasts only when the app declares an AppUserModelID that
+// matches its installer shortcut (the NSIS maker's appId). Without it,
+// Notification.isSupported() still returns true but show() silently drops the
+// toast, so notifications never appear. No-op on macOS/Linux.
+if (process.platform === "win32") {
+	app.setAppUserModelId("dev.agent-orchestrator.desktop");
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
@@ -756,7 +764,16 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
-		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
+		// An explicit stopDaemon() already set a clean `{ state: "stopped" }`.
+		// daemon-telemetry reports any status carrying a `code` as
+		// ao.renderer.daemon_failure, so don't stamp `code: "exited"` on a stop
+		// the user or app asked for — that would count intentional stops as
+		// failures. Preserve the clean stopped status instead.
+		if (daemonStoppingProcess === child) {
+			daemonStoppingProcess = null;
+			setDaemonStatus({ state: "stopped" });
+			return;
+		}
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,

@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -15,6 +16,7 @@ import (
 type AgentCatalog interface {
 	List(ctx context.Context) (agentsvc.Inventory, error)
 	Refresh(ctx context.Context) (agentsvc.Inventory, error)
+	Probe(ctx context.Context, agentID string) (agentsvc.ProbeResult, error)
 }
 
 // AgentsController owns the /agents routes.
@@ -26,6 +28,7 @@ type AgentsController struct {
 func (c *AgentsController) Register(r chi.Router) {
 	r.Get("/agents", c.list)
 	r.Post("/agents/refresh", c.refresh)
+	r.Post("/agents/{agent}/probe", c.probe)
 }
 
 func (c *AgentsController) list(w http.ResponseWriter, r *http.Request) {
@@ -52,4 +55,22 @@ func (c *AgentsController) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, inventory)
+}
+
+func (c *AgentsController) probe(w http.ResponseWriter, r *http.Request) {
+	if c.Catalog == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/{agent}/probe")
+		return
+	}
+	agentID := strings.TrimSpace(chi.URLParam(r, "agent"))
+	if agentID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "AGENT_REQUIRED", "agent is required", nil)
+		return
+	}
+	result, err := c.Catalog.Probe(r.Context(), agentID)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, result)
 }
