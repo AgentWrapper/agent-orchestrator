@@ -37,6 +37,11 @@ type ReviewInvocation struct {
 	PRURL string
 	// TargetSHA is the PR head commit under review.
 	TargetSHA string
+	// ReviewQueue lists all review tasks created by the same trigger so a shared
+	// reviewer pane can review multiple PRs and submit the results together.
+	ReviewQueue []ReviewTask
+	// ReviewIndex is this invocation's zero-based position in ReviewQueue.
+	ReviewIndex int
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
 	// Prompt and SystemPrompt are the review instructions AO authored centrally,
@@ -46,6 +51,13 @@ type ReviewInvocation struct {
 	// ignore them.
 	Prompt       string
 	SystemPrompt string
+}
+
+// ReviewTask is one PR/run in a multi-PR review trigger queue.
+type ReviewTask struct {
+	RunID     string
+	PRURL     string
+	TargetSHA string
 }
 
 // ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the

@@ -14,9 +14,8 @@ import (
 //
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
 // PostCreate, AgentConfig, and the role overrides are consumed at spawn;
-// SessionPrefix feeds the display prefix. Settings whose consumers do not yet
-// exist (tracker/SCM per-project config, prompt rules) are intentionally absent
-// and land in focused follow-up PRs alongside the code that reads them.
+// SessionPrefix feeds the display prefix. TrackerIntake feeds the background
+// issue-intake loop.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -39,8 +38,13 @@ type ProjectConfig struct {
 
 	// Reviewers names the agent(s) that review a worker's PR when a review is
 	// triggered. It is configured independently of the Worker override; an empty
-	// list falls back to the worker's own harness (see ResolveReviewerHarness).
+	// list falls back to claude-code (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
+
+	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
+	// read-only toward the tracker in v1: matching issues spawn sessions, but the
+	// tracker is not commented on or transitioned.
+	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -55,14 +59,10 @@ type ReviewerConfig struct {
 const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins; otherwise it reuses the worker's own harness when that harness
-// is also a supported reviewer, falling back to claude-code.
-func (c ProjectConfig) ResolveReviewerHarness(workerHarness AgentHarness) ReviewerHarness {
+// reviewer wins; otherwise claude-code is used.
+func (c ProjectConfig) ResolveReviewerHarness(_ AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
-	}
-	if h := ReviewerHarness(workerHarness); h.IsKnown() {
-		return h
 	}
 	return FallbackReviewerHarness
 }
@@ -92,6 +92,7 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
 	}
+	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	return c
 }
 
@@ -127,6 +128,19 @@ func (c ProjectConfig) Validate() error {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
+	}
+	if err := c.TrackerIntake.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateNoWhitespaceField(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s: must not have leading or trailing whitespace", name)
 	}
 	return nil
 }

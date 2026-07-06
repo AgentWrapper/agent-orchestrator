@@ -27,23 +27,32 @@ export type PRStatusRow = {
 	tone: PRDisplayTone;
 };
 
-export type PRAttentionLink = {
+export type PRSummaryPartKey = "ci" | "review" | "merge";
+
+export type PRSummaryLink = {
 	label: string;
 	href?: string;
 	title?: string;
 };
 
-export type PRAttentionItem = {
-	kind: "draft" | "ci_failing" | "review_changes_requested" | "review_pending" | "merge_conflict" | "merge_blocked";
-	title: string;
+export type PRSummaryPart = {
+	key: PRSummaryPartKey;
+	label: string;
+	status: string;
 	summary?: string;
-	links: PRAttentionLink[];
+	links: PRSummaryLink[];
+	linkTotal?: number;
 	overflowLabel?: string;
+	overflowNoun?: string;
 	tone: PRDisplayTone;
 };
 
 export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSummary): number {
 	return prStateRank[a.state] - prStateRank[b.state] || a.number - b.number;
+}
+
+export function prBrowserUrl(pr: SessionPRSummary): string {
+	return prBaseUrl(pr) ?? pr.htmlUrl ?? pr.url;
 }
 
 export function sessionPRDisplaySummaries(
@@ -99,25 +108,52 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 }
 
 export function prStatusRows(pr: SessionPRSummary): PRStatusRow[] {
+	return prSummaryParts(pr).map((part) => ({
+		key: part.key,
+		label: part.label,
+		value: part.status,
+		detail: part.key === "merge" ? formatDiffSummary(pr) : undefined,
+		tone: part.tone,
+	}));
+}
+
+export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 	return [
 		{
 			key: "ci",
 			label: "CI",
-			value: ciLabel(pr.ci.state),
+			status: ciLabel(pr.ci.state),
+			summary: ciSummary(pr),
+			links: ciLinks(pr),
+			linkTotal: pr.ci.state === "failing" ? pr.ci.failingChecks.length : 0,
+			overflowLabel: pr.ci.state === "failing" ? overflowLabel(pr.ci.failingChecks.length, 3, "check") : undefined,
+			overflowNoun: "check",
 			tone: ciTone(pr.ci.state),
-		},
-		{
-			key: "review",
-			label: "Review",
-			value: reviewLabel(pr.review.decision),
-			tone: reviewTone(pr.review.decision, pr.review.hasUnresolvedHumanComments),
 		},
 		{
 			key: "merge",
 			label: "Merge",
-			value: mergeabilityLabel(pr.mergeability.state),
-			detail: formatDiffSummary(pr),
+			status: mergeabilityLabel(pr.mergeability.state),
+			summary: mergeSummary(pr),
+			links: mergeLinks(pr),
+			linkTotal: mergeLinkTotal(pr),
+			overflowLabel: mergeOverflowLabel(pr),
+			overflowNoun: mergeOverflowNoun(pr),
 			tone: mergeabilityTone(pr.mergeability.state),
+		},
+		{
+			key: "review",
+			label: "Review",
+			status: reviewLabel(pr.review.decision),
+			summary: reviewSummary(pr),
+			links: reviewLinks(pr),
+			linkTotal: reviewLinkTotal(pr),
+			overflowLabel:
+				pr.state === "draft" || pr.review.decision === "review_required"
+					? undefined
+					: overflowLabel(pr.review.unresolvedBy.length, 3, "reviewer"),
+			overflowNoun: "reviewer",
+			tone: reviewTone(pr.review.decision, pr.review.hasUnresolvedHumanComments),
 		},
 	];
 }
@@ -134,70 +170,120 @@ export function prDiffSummary(pr: SessionPRSummary): string | undefined {
 	return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
-export function prAttentionItems(pr: SessionPRSummary): PRAttentionItem[] {
+function ciSummary(pr: SessionPRSummary): string | undefined {
+	if (pr.ci.state === "failing") {
+		return pr.ci.failingChecks.length === 0 ? "No failing check link observed" : undefined;
+	}
+	return undefined;
+}
+
+function ciLinks(pr: SessionPRSummary): PRSummaryLink[] {
+	if (pr.ci.state !== "failing") {
+		return [];
+	}
+	return pr.ci.failingChecks.slice(0, 3).map((check) => ({
+		label: check.name,
+		href: check.url || undefined,
+		title: check.conclusion || check.status,
+	}));
+}
+
+function reviewSummary(pr: SessionPRSummary): string | undefined {
+	if (pr.state === "merged" || pr.state === "closed") {
+		return undefined;
+	}
+	if (pr.state === "draft") {
+		return "Draft PR · Not ready for review";
+	}
+	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
+		return reviewLinks(pr).length === 0 ? "Requested changes still active" : undefined;
+	}
+	if (pr.review.decision === "review_required") {
+		return "Required review not submitted";
+	}
+	return undefined;
+}
+
+function reviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
+	if (pr.state === "merged" || pr.state === "closed" || pr.state === "draft") {
+		return [];
+	}
+	if (pr.review.decision !== "changes_requested" && !pr.review.hasUnresolvedHumanComments) {
+		return [];
+	}
+	const links = pr.review.unresolvedBy.slice(0, 3).map((reviewer) => reviewAttentionLink(pr, reviewer));
+	if (links.length === 0 && pr.review.decision === "changes_requested") {
+		links.push({ label: "PR", href: prBrowserUrl(pr), title: "Open pull request" });
+	}
+	return links;
+}
+
+function mergeSummary(pr: SessionPRSummary): string | undefined {
+	if (pr.state === "merged" || pr.state === "closed") {
+		return formatDiffSummary(pr);
+	}
+	if (pr.mergeability.state === "conflicting") {
+		return mergeLinks(pr).length === 0 ? "Conflicts with the base branch" : undefined;
+	}
+	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
+		return mergeLinks(pr).length === 0 ? "Provider reports merge is blocked" : undefined;
+	}
+	return formatDiffSummary(pr);
+}
+
+function mergeLinks(pr: SessionPRSummary): PRSummaryLink[] {
 	if (pr.state === "merged" || pr.state === "closed") {
 		return [];
 	}
-	if (pr.state === "draft") {
-		return [
-			{
-				kind: "draft",
-				title: "Draft PR",
-				summary: "Not ready for review",
-				links: [],
-				tone: "passive",
-			},
-		];
-	}
-
-	const items: PRAttentionItem[] = [];
 	if (pr.mergeability.state === "conflicting") {
-		items.push(
-			mergeAttention(pr, "merge_conflict", "Resolve merge conflict", "Conflicts with the base branch", "error"),
-		);
-	} else if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		items.push(mergeAttention(pr, "merge_blocked", "Merge blocked", "Provider reports merge is blocked", "warning"));
+		return mergeAttentionLinks(pr, "merge_conflict");
 	}
-	if (pr.ci.state === "failing") {
-		const links = pr.ci.failingChecks.slice(0, 3).map((check) => ({
-			label: check.name,
-			href: check.url || undefined,
-			title: check.conclusion || check.status,
-		}));
-		items.push({
-			kind: "ci_failing",
-			title: "Fix failing CI",
-			summary: links.length === 0 ? "No failing check link observed" : undefined,
-			links,
-			overflowLabel: overflowLabel(pr.ci.failingChecks.length, 3, "check"),
-			tone: "error",
-		});
+	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
+		return mergeAttentionLinks(pr, "merge_blocked");
 	}
-	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
-		const reviewers = pr.review.unresolvedBy.slice(0, 3);
-		const links = reviewers.map((reviewer) => ({
-			label: reviewerLabel(reviewer),
-			href: reviewer.links.find((link) => link.url)?.url || undefined,
-			title: `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)}`,
-		}));
-		items.push({
-			kind: "review_changes_requested",
-			title: "Address requested changes",
-			summary: links.length === 0 ? "Requested changes still active" : undefined,
-			links,
-			overflowLabel: overflowLabel(pr.review.unresolvedBy.length, 3, "reviewer"),
-			tone: "warning",
-		});
-	} else if (pr.review.decision === "review_required") {
-		items.push({
-			kind: "review_pending",
-			title: "Review pending",
-			summary: "Required review not submitted",
-			links: [],
-			tone: "neutral",
-		});
+	return [];
+}
+
+function mergeOverflowLabel(pr: SessionPRSummary): string | undefined {
+	if (pr.state === "merged" || pr.state === "closed") {
+		return undefined;
 	}
-	return items;
+	const hasFileLinks = (pr.mergeability.conflictFiles ?? []).length > 0;
+	if (hasFileLinks) {
+		return overflowLabel(pr.mergeability.conflictFiles?.length ?? 0, 3, "file");
+	}
+	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
+		return overflowLabel(pr.mergeability.reasons.length, 3, "reason");
+	}
+	return undefined;
+}
+
+function mergeLinkTotal(pr: SessionPRSummary): number {
+	if (pr.state === "merged" || pr.state === "closed") {
+		return 0;
+	}
+	if (pr.mergeability.state === "conflicting") {
+		const conflictFileCount = pr.mergeability.conflictFiles?.length ?? 0;
+		return conflictFileCount > 0 ? conflictFileCount : mergeLinks(pr).length;
+	}
+	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
+		return pr.mergeability.reasons.length;
+	}
+	return 0;
+}
+
+function mergeOverflowNoun(pr: SessionPRSummary): string {
+	return (pr.mergeability.conflictFiles ?? []).length > 0 ? "file" : "reason";
+}
+
+function reviewLinkTotal(pr: SessionPRSummary): number {
+	if (pr.state === "merged" || pr.state === "closed" || pr.state === "draft") {
+		return 0;
+	}
+	if (pr.review.decision !== "changes_requested" && !pr.review.hasUnresolvedHumanComments) {
+		return 0;
+	}
+	return pr.review.unresolvedBy.length > 0 ? pr.review.unresolvedBy.length : reviewLinks(pr).length;
 }
 
 function toCIState(value: string): SessionPRSummary["ci"]["state"] {
@@ -324,43 +410,98 @@ function formatLineDelta(additions: number, deletions: number): string | undefin
 	return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-function mergeAttention(
-	pr: SessionPRSummary,
-	kind: Extract<PRAttentionItem["kind"], "merge_conflict" | "merge_blocked">,
-	title: string,
-	fallback: string,
-	tone: PRDisplayTone,
-): PRAttentionItem {
+function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "merge_blocked"): PRSummaryLink[] {
+	const href =
+		kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
-		href: file.url || pr.mergeability.prUrl || undefined,
+		href: file.url || href,
+		title: kind === "merge_conflict" ? "Open merge conflicts" : undefined,
 	}));
 	const reasonLinks =
-		fileLinks.length > 0
+		fileLinks.length > 0 || kind === "merge_conflict"
 			? []
 			: pr.mergeability.reasons.slice(0, 3).map((reason) => ({
 					label: mergeReasonLabel(reason),
-					href: pr.mergeability.prUrl || undefined,
+					href,
 				}));
-	const links = fileLinks.length > 0 ? fileLinks : reasonLinks;
-	return {
-		kind,
-		title,
-		summary: links.length === 0 ? fallback : undefined,
-		links,
-		overflowLabel:
-			fileLinks.length > 0
-				? overflowLabel(pr.mergeability.conflictFiles?.length ?? 0, 3, "file")
-				: overflowLabel(pr.mergeability.reasons.length, 3, "reason"),
-		tone,
-	};
+	const fallbackLink =
+		kind === "merge_conflict" && href ? [{ label: "conflicts", href, title: "Open merge conflicts" }] : [];
+	return fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
+}
+
+function mergeConflictUrl(pr: SessionPRSummary): string | undefined {
+	return prSubpageUrl(pr, "conflicts") ?? pr.mergeability.prUrl ?? prBrowserUrl(pr);
+}
+
+function prBaseUrl(pr: SessionPRSummary): string | undefined {
+	return prURL(pr);
+}
+
+function prSubpageUrl(pr: SessionPRSummary, subpage: "conflicts"): string | undefined {
+	const base = prURL(pr);
+	return base ? `${base}/${subpage}` : undefined;
+}
+
+function prURL(pr: SessionPRSummary): string | undefined {
+	const raw = pr.htmlUrl || pr.mergeability.prUrl || pr.url;
+	if (!raw) {
+		return undefined;
+	}
+	try {
+		const url = new URL(raw);
+		const match = url.pathname.match(/^(\/[^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:\/.*)?$/);
+		if (!match) {
+			return undefined;
+		}
+		url.pathname = `${match[1]}/pull/${match[2]}`;
+		url.search = "";
+		url.hash = "";
+		return url.toString();
+	} catch {
+		return undefined;
+	}
 }
 
 function reviewerLabel(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
+	const name = reviewerDisplayName(reviewer);
 	if (reviewer.count <= 1) {
-		return reviewer.reviewerId;
+		return name;
 	}
-	return `${reviewer.reviewerId} +${reviewer.count - 1}`;
+	return `${name} +${reviewer.count - 1}`;
+}
+
+function reviewerDisplayName(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
+	return reviewer.isBot ? `${reviewer.reviewerId} bot` : reviewer.reviewerId;
+}
+
+function reviewAttentionLink(
+	pr: SessionPRSummary,
+	reviewer: SessionPRSummary["review"]["unresolvedBy"][number],
+): PRSummaryLink {
+	const inlineURL = reviewer.links.find((link) => link.url)?.url;
+	if (reviewer.reviewUrl) {
+		return {
+			label: reviewerLabel(reviewer),
+			href: reviewer.reviewUrl,
+			title: `Open requested-changes review from ${reviewerDisplayName(reviewer)}`,
+		};
+	}
+	if (inlineURL) {
+		return {
+			label: reviewerLabel(reviewer),
+			href: inlineURL,
+			title:
+				reviewer.count > 0
+					? `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)} from ${reviewerDisplayName(reviewer)}`
+					: `Open review comments from ${reviewerDisplayName(reviewer)}`,
+		};
+	}
+	return {
+		label: reviewerLabel(reviewer),
+		href: prBrowserUrl(pr),
+		title: `Open pull request for ${reviewerDisplayName(reviewer)}`,
+	};
 }
 
 function mergeReasonLabel(reason: string): string {

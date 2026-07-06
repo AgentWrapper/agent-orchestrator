@@ -9,6 +9,18 @@ export interface UpdateSettings {
 	nightlyAck: boolean;
 }
 
+// Live state of a manual update check/download, streamed to the renderer so the
+// Global Settings "Check for updates" / "Update" buttons can reflect progress.
+export type UpdateState =
+	"idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error" | "unsupported";
+
+export interface UpdateStatus {
+	state: UpdateState;
+	version?: string;
+	percent?: number;
+	message?: string;
+}
+
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */
 export const UPDATE_SETTINGS_FILE_NAME = "update-settings.json";
 

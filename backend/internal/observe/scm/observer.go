@@ -53,7 +53,7 @@ type Store interface {
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
-	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
+	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
 }
 
 // Lifecycle is the provider-neutral lifecycle notification sink.
@@ -191,12 +191,18 @@ type subject struct {
 	hasPR   bool
 }
 
-// sessionRepo pairs a live session with its parsed repo and branch for per-repo
-// branch-prefix discovery of new (including stacked) pull requests.
+// sessionRepo pairs a live session with a repo to scan and its branch for
+// per-repo branch-prefix discovery of new (including stacked) pull requests.
+// A session is scanned against its push origin plus every other remote in the
+// project checkout, so repo is the repo whose open-PR list is listed while
+// headRepo is the repo the session's head branch actually lives in (the push
+// origin). For same-repo PRs repo == headRepo; for a cross-fork PR (fork head,
+// upstream base) repo is the upstream base and headRepo is the fork origin.
 type sessionRepo struct {
-	session domain.SessionRecord
-	repo    ports.SCMRepo
-	branch  string
+	session  domain.SessionRecord
+	repo     ports.SCMRepo
+	headRepo ports.SCMRepo
+	branch   string
 }
 
 type repoGuardState struct {
@@ -344,8 +350,8 @@ func (o *Observer) Poll(ctx context.Context) error {
 			prRefreshOK[key] = true
 			continue
 		}
-		finalPR, finalChecks, finalThreads, finalComments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
-		pr, checks, threads, comments := finalPR, finalChecks, finalThreads, finalComments
+		finalPR, finalChecks, finalReviews, finalThreads, finalComments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
+		pr, checks, reviews, threads, comments := finalPR, finalChecks, finalReviews, finalThreads, finalComments
 		// Lifecycle is allowed to run only after the observed facts are durable,
 		// but semantic hashes are the observer's acknowledgement cursor. Keep
 		// changed hashes at their local values until lifecycle succeeds; if the
@@ -362,9 +368,9 @@ func (o *Observer) Poll(ctx context.Context) error {
 			if prepared.Changed.Review {
 				pendingOpts.preserveLocalReviewHash = true
 			}
-			pr, checks, threads, comments = domainFromObservation(subj.session.ID, prepared, local, pendingOpts, now)
+			pr, checks, reviews, threads, comments = domainFromObservation(subj.session.ID, prepared, local, pendingOpts, now)
 		}
-		if err := o.store.WriteSCMObservation(ctx, pr, checks, threads, comments, reviewMode); err != nil {
+		if err := o.store.WriteSCMObservation(ctx, pr, checks, reviews, threads, comments, reviewMode); err != nil {
 			o.logger.Error("scm observer: DB write failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
 			markRepoRefreshFailed(subj.repo)
 			continue
@@ -375,7 +381,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 				markRepoRefreshFailed(subj.repo)
 				continue
 			}
-			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, nil, nil, ports.ReviewWritePreserve); err != nil {
+			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
 				o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
 				markRepoRefreshFailed(subj.repo)
 				continue
@@ -424,6 +430,8 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 		return nil, nil, err
 	}
 	projects := map[domain.ProjectID]domain.ProjectRecord{}
+	originRepos := map[domain.ProjectID]ports.SCMRepo{}
+	scanRepos := map[domain.ProjectID][]ports.SCMRepo{}
 	out := map[string]*subject{}
 	var sessionRepos []sessionRepo
 	for _, sess := range sessions {
@@ -453,27 +461,85 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 			}
 			projects[sess.ProjectID] = p
 			proj = p
+			if origin, ok := o.provider.ParseRepository(p.RepoOriginURL); ok {
+				originRepos[sess.ProjectID] = origin
+				scanRepos[sess.ProjectID] = o.resolveScanRepos(p, origin)
+			}
 		}
-		repo, ok := o.provider.ParseRepository(proj.RepoOriginURL)
+		origin, ok := originRepos[sess.ProjectID]
 		if !ok {
 			o.logger.Debug("scm observer: project has no supported SCM origin", "project", proj.ID, "origin", proj.RepoOriginURL)
 			continue
 		}
-		sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, branch: branch})
+		for _, repo := range scanRepos[sess.ProjectID] {
+			sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: origin, branch: branch})
+		}
 		prs, err := o.store.ListPRsBySession(ctx, sess.ID)
 		if err != nil {
 			return nil, nil, err
 		}
 		for _, pr := range openTrackedPRs(prs) {
-			key := prKey(repo, pr.Number)
+			// A tracked PR may live on an upstream repo (cross-fork), so its
+			// refresh subject is keyed by the PR's own recorded repo, not the
+			// push origin, or the GraphQL refetch would target the wrong repo.
+			prRepo := subjectRepoForPR(pr, origin)
+			key := prKey(prRepo, pr.Number)
 			if existing, ok := out[key]; ok {
 				o.logger.Warn("scm observer: duplicate tracked PR ownership skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
 				continue
 			}
-			out[key] = &subject{session: sess, repo: repo, branch: branch, known: pr, hasPR: true}
+			out[key] = &subject{session: sess, repo: prRepo, branch: branch, known: pr, hasPR: true}
 		}
 	}
 	return out, sessionRepos, nil
+}
+
+// resolveScanRepos returns the deduped set of repos whose open-PR lists should be
+// scanned to attribute PRs to this project's sessions: the push origin plus every
+// other GitHub remote configured in the project checkout (upstreams, mirrors).
+// Attribution still requires a PR's head branch to live in the origin, so scanning
+// extra remotes only surfaces cross-fork PRs (fork head, upstream base) and can
+// never misattribute a stranger's PR.
+//
+// ponytail: remotes are read once per project per process (memoized by the
+// caller); a remote added after the daemon started is picked up on restart. Move
+// to a git-config watch if that latency ever matters.
+func (o *Observer) resolveScanRepos(proj domain.ProjectRecord, origin ports.SCMRepo) []ports.SCMRepo {
+	repos := []ports.SCMRepo{origin}
+	if strings.TrimSpace(proj.Path) == "" {
+		return repos
+	}
+	seen := map[string]bool{prKey(origin, 0): true}
+	for _, url := range gitRemoteURLs(proj.Path) {
+		repo, ok := o.provider.ParseRepository(url)
+		if !ok {
+			continue
+		}
+		key := prKey(repo, 0)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		repos = append(repos, repo)
+	}
+	return repos
+}
+
+// subjectRepoForPR resolves the repo that owns a tracked PR's number for refresh.
+// A cross-fork PR lives on the base/upstream repo recorded in pr.Repo rather than
+// the push origin, so the refresh/GraphQL fetch must target pr.Repo. Legacy rows
+// written before pr.Repo was populated fall back to the origin.
+func subjectRepoForPR(pr domain.PullRequest, origin ports.SCMRepo) ports.SCMRepo {
+	if strings.TrimSpace(pr.Repo) == "" {
+		return origin
+	}
+	return ports.SCMRepo{
+		Provider: firstNonEmpty(pr.Provider, origin.Provider),
+		Host:     firstNonEmpty(pr.Host, origin.Host),
+		Repo:     pr.Repo,
+		Owner:    ownerOf(pr.Repo),
+		Name:     nameOf(pr.Repo),
+	}
 }
 
 func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {
@@ -550,20 +616,19 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			if pr.Number <= 0 || pr.SourceBranch == "" {
 				continue
 			}
-			// Branch-prefix attribution must only claim PRs whose head branch
-			// lives in the project repo. A fork PR can carry a head branch whose
-			// name matches an AO session branch; its commits live in the fork, so
-			// auto-claiming it would misattribute work. Same-repo PRs always
-			// report the base repo's full name as their head repo, so anything
-			// else (including an empty head repo from a deleted fork) is skipped.
-			if !strings.EqualFold(pr.HeadRepo, repoFullName(repo)) {
-				continue
-			}
 			key := prKey(repo, pr.Number)
 			if _, ok := subjects[key]; ok {
 				continue
 			}
-			sr, ok := matchSession(byRepo[repoKey], pr.SourceBranch)
+			// Branch-prefix attribution must only claim PRs whose head branch
+			// lives in a session's push origin. A same-repo PR has head == origin
+			// == this scanned repo; a cross-fork PR (fork head, upstream base) has
+			// head == origin while this scanned repo is the upstream base. A
+			// stranger's fork PR carries a head repo no session owns and is
+			// dropped (as is an empty head repo from a deleted fork), preserving
+			// the no-misattribution guarantee.
+			eligible := candidatesForHeadRepo(byRepo[repoKey], pr.HeadRepo)
+			sr, ok := matchSession(eligible, pr.SourceBranch)
 			if !ok {
 				continue
 			}
@@ -586,7 +651,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			// reads every PR of the session from the store. Without this write, an
 			// open sibling/child discovered in the same poll would not yet be
 			// durable, and the session could terminate while that PR is still open.
-			if err := o.store.WriteSCMObservation(ctx, known, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+			if err := o.store.WriteSCMObservation(ctx, known, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
 				o.logger.Error("scm observer: persist discovered PR failed", "session", sr.session.ID, "pr", known.URL, "err", err)
 				if markRepoFailed != nil {
 					markRepoFailed(repo)
@@ -612,6 +677,24 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 // branches are prefixes of the same source branch the longest (most specific)
 // one wins, so a child session claims its own stacked PRs rather than the
 // ancestor session.
+// candidatesForHeadRepo narrows the scanned repo's session candidates to those
+// whose head branch lives in headRepo (the PR's head repository full name). This
+// is the fork guard: a PR is only attributable when its head repo equals a
+// session's push origin, whether the PR was found on the origin itself or on a
+// scanned upstream base repo.
+func candidatesForHeadRepo(candidates []sessionRepo, headRepo string) []sessionRepo {
+	if strings.TrimSpace(headRepo) == "" {
+		return nil
+	}
+	var out []sessionRepo
+	for _, sr := range candidates {
+		if strings.EqualFold(repoFullName(sr.headRepo), headRepo) {
+			out = append(out, sr)
+		}
+	}
+	return out
+}
+
 func matchSession(candidates []sessionRepo, sourceBranch string) (sessionRepo, bool) {
 	var best sessionRepo
 	bestLen := -1
@@ -793,6 +876,7 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		if review.Decision != "" {
 			obs.Review.Decision = review.Decision
 		}
+		obs.Review.Reviews = review.Reviews
 		obs.Review.Threads = review.Threads
 		obs.Review.Partial = review.Partial
 		obs.ObservedAt = now
@@ -850,7 +934,7 @@ func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.
 	return obs
 }
 
-func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
+func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
 	metadataHash := metadataSemanticHash(obs)
 	if opts.preserveLocalMetadataHash {
 		metadataHash = local.MetadataHash
@@ -924,6 +1008,17 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 	for _, ch := range obs.CI.Checks {
 		checks = append(checks, domain.PullRequestCheck{Name: ch.Name, CommitHash: obs.CI.HeadSHA, Status: domain.PRCheckStatus(ch.Status), Conclusion: ch.Conclusion, URL: ch.URL, Details: ch.ProviderID, LogTail: ch.LogTail, CreatedAt: now})
 	}
+	reviews := make([]domain.PullRequestReview, 0, len(obs.Review.Reviews))
+	for _, review := range obs.Review.Reviews {
+		reviews = append(reviews, domain.PullRequestReview{
+			ID:          review.ID,
+			Author:      review.Author,
+			State:       domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
+			URL:         review.URL,
+			IsBot:       review.IsBot,
+			SubmittedAt: firstTime(review.SubmittedAt, now),
+		})
+	}
 	threads := make([]domain.PullRequestReviewThread, 0, len(obs.Review.Threads))
 	commentCount := 0
 	for _, th := range obs.Review.Threads {
@@ -936,7 +1031,7 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now})
 		}
 	}
-	return pr, checks, threads, comments
+	return pr, checks, reviews, threads, comments
 }
 
 func observationFromLocal(repo ports.SCMRepo, pr domain.PullRequest, checks []domain.PullRequestCheck) ports.SCMObservation {
@@ -1119,10 +1214,11 @@ func ciSemanticHash(ci ports.SCMCIObservation) string {
 func reviewSemanticHash(review ports.SCMReviewObservation) string {
 	type reviewHashPayload struct {
 		Decision string
+		Reviews  []ports.SCMReviewSummaryObservation
 		Threads  []ports.SCMReviewThreadObservation
 		Partial  bool `json:",omitempty"`
 	}
-	return stableHash(reviewHashPayload{Decision: review.Decision, Threads: review.Threads, Partial: review.Partial})
+	return stableHash(reviewHashPayload{Decision: review.Decision, Reviews: review.Reviews, Threads: review.Threads, Partial: review.Partial})
 }
 
 func threadSemanticHash(th ports.SCMReviewThreadObservation) string {
@@ -1217,6 +1313,27 @@ func resolveGitOriginURL(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// gitRemoteURLs lists the fetch URL of every git remote configured at path. It
+// returns nil on any error (missing repo, no git, no remotes). The observer uses
+// it to scan upstream/mirror remotes for cross-fork PRs in addition to origin.
+func gitRemoteURLs(path string) []string {
+	out, err := aoprocess.Command("git", "-C", path, "remote").Output()
+	if err != nil {
+		return nil
+	}
+	var urls []string
+	for _, name := range strings.Fields(string(out)) {
+		u, err := aoprocess.Command("git", "-C", path, "remote", "get-url", name).Output()
+		if err != nil {
+			continue
+		}
+		if s := strings.TrimSpace(string(u)); s != "" {
+			urls = append(urls, s)
+		}
+	}
+	return urls
 }
 
 func scrubLine(s string) string {

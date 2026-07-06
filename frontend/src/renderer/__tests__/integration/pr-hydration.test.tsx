@@ -38,20 +38,10 @@ function respondWithProjectAndPRs() {
 							projectId: "proj-1",
 							displayName: "fix the bug",
 							harness: "claude-code",
-							status: "pr_open",
+							status: "draft",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
 							prs: [
-								{
-									number: 278,
-									state: "open",
-									url: "https://github.com/aoagents/ReverbCode/pull/278",
-									ci: "passing",
-									review: "approved",
-									mergeability: "clean",
-									reviewComments: false,
-									updatedAt: "2026-06-10T16:15:04Z",
-								},
 								{
 									number: 279,
 									state: "draft",
@@ -61,6 +51,140 @@ function respondWithProjectAndPRs() {
 									mergeability: "unknown",
 									reviewComments: false,
 									updatedAt: "2026-06-10T16:20:04Z",
+								},
+								{
+									number: 278,
+									state: "open",
+									url: "https://github.com/aoagents/ReverbCode/pull/278",
+									ci: "passing",
+									review: "review_required",
+									mergeability: "clean",
+									reviewComments: false,
+									updatedAt: "2026-06-10T16:15:04Z",
+								},
+								{
+									number: 280,
+									state: "open",
+									url: "https://github.com/aoagents/ReverbCode/issues/280",
+									ci: "passing",
+									review: "approved",
+									mergeability: "clean",
+									reviewComments: false,
+									updatedAt: "2026-06-10T16:25:04Z",
+								},
+								{
+									number: 281,
+									state: "merged",
+									url: "https://github.com/aoagents/ReverbCode/pull/281",
+									ci: "passing",
+									review: "approved",
+									mergeability: "mergeable",
+									reviewComments: false,
+									updatedAt: "2026-06-10T16:30:04Z",
+								},
+								{
+									number: 282,
+									state: "closed",
+									url: "https://github.com/aoagents/ReverbCode/pull/282",
+									ci: "passing",
+									review: "approved",
+									mergeability: "unknown",
+									reviewComments: false,
+									updatedAt: "2026-06-10T16:35:04Z",
+								},
+							],
+						},
+					],
+				},
+				error: undefined,
+			};
+		}
+		throw new Error(`unexpected GET ${url}`);
+	});
+}
+
+function respondWithAttentionPR() {
+	getMock.mockImplementation(async (url: string) => {
+		if (url === "/api/v1/projects") {
+			return { data: { projects: [{ id: "proj-1", name: "my-app", path: "/repo/my-app" }] }, error: undefined };
+		}
+		if (url === "/api/v1/sessions/sess-1/pr") {
+			return {
+				data: {
+					sessionId: "sess-1",
+					prs: [
+						{
+							url: "https://github.com/aoagents/ReverbCode/pull/278",
+							htmlUrl: "https://github.com/aoagents/ReverbCode/pull/278",
+							number: 278,
+							title: "fix the bug",
+							state: "open",
+							provider: "github",
+							repo: "aoagents/ReverbCode",
+							author: "worker",
+							sourceBranch: "fix/bug",
+							targetBranch: "main",
+							headSha: "abc123",
+							additions: 1,
+							deletions: 1,
+							changedFiles: 1,
+							ci: { state: "passing", failingChecks: [] },
+							review: {
+								decision: "changes_requested",
+								hasUnresolvedHumanComments: true,
+								unresolvedBy: [
+									{
+										reviewerId: "reviewer-a",
+										count: 1,
+										reviewUrl: "https://github.com/aoagents/ReverbCode/pull/278#pullrequestreview-1",
+										links: [
+											{
+												url: "https://github.com/aoagents/ReverbCode/pull/278#discussion_r1",
+												file: "main.go",
+												line: 12,
+											},
+										],
+									},
+								],
+							},
+							mergeability: {
+								state: "conflicting",
+								reasons: ["conflicts"],
+								prUrl: "https://github.com/aoagents/ReverbCode/pull/278",
+								conflictFiles: [],
+							},
+							updatedAt: "2026-06-10T16:15:04Z",
+							observedAt: "2026-06-10T16:15:04Z",
+							ciObservedAt: "2026-06-10T16:15:04Z",
+							reviewObservedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			};
+		}
+		if (url === "/api/v1/sessions") {
+			return {
+				data: {
+					sessions: [
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							displayName: "fix the bug",
+							harness: "claude-code",
+							status: "changes_requested",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+							prs: [
+								{
+									number: 278,
+									state: "open",
+									url: "https://github.com/aoagents/ReverbCode/pull/278",
+									ci: "passing",
+									review: "changes_requested",
+									mergeability: "conflicting",
+									reviewComments: true,
+									updatedAt: "2026-06-10T16:15:04Z",
 								},
 							],
 						},
@@ -85,12 +209,54 @@ beforeEach(() => {
 });
 
 describe("PR hydration for a normal project (#251)", () => {
-	it("renders every session PR on the Board card instead of 'no PR yet'", async () => {
+	it("renders Board card PR numbers with lifecycle statuses only instead of 'no PR yet'", async () => {
 		renderWithProviders(<SessionsBoard />);
 
-		expect(await screen.findByText("PR #278 · open")).toBeInTheDocument();
-		expect(screen.getByText("PR #279 · draft")).toBeInTheDocument();
+		expect(await screen.findByRole("link", { name: "#278" })).toHaveAttribute(
+			"href",
+			"https://github.com/aoagents/ReverbCode/pull/278",
+		);
+		expect(screen.getByText("open")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "#279" })).toHaveAttribute(
+			"href",
+			"https://github.com/aoagents/ReverbCode/pull/279",
+		);
+		expect(screen.getByRole("link", { name: "#280" })).toHaveAttribute(
+			"href",
+			"https://github.com/aoagents/ReverbCode/pull/280",
+		);
+		expect(screen.getByRole("link", { name: "#281" })).toHaveAttribute(
+			"href",
+			"https://github.com/aoagents/ReverbCode/pull/281",
+		);
+		expect(screen.getByRole("link", { name: "#282" })).toHaveAttribute(
+			"href",
+			"https://github.com/aoagents/ReverbCode/pull/282",
+		);
+		expect(screen.getByLabelText("#278, #280 open")).toBeInTheDocument();
+		expect(screen.getByLabelText("#279 draft")).toBeInTheDocument();
+		expect(screen.getByLabelText("#281 merged")).toBeInTheDocument();
+		expect(screen.getByLabelText("#282 closed")).toBeInTheDocument();
+		expect(screen.getByText("draft")).toBeInTheDocument();
+		expect(screen.getByText("merged")).toHaveClass("text-accent");
+		expect(screen.getByText("closed")).toHaveClass("text-error");
+		expect(screen.queryByText("review pending")).not.toBeInTheDocument();
+		expect(screen.queryByText("CI")).not.toBeInTheDocument();
+		expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
 		expect(screen.queryByText("no PR yet")).not.toBeInTheDocument();
+	});
+
+	it("links Board attention states to PR fallback and merge conflict targets", async () => {
+		respondWithAttentionPR();
+		renderWithProviders(<SessionsBoard />);
+
+		expect(await screen.findByRole("link", { name: "#278" })).toHaveAttribute(
+			"href",
+			"https://github.com/aoagents/ReverbCode/pull/278",
+		);
+		expect(screen.getByText("open")).toBeInTheDocument();
+		expect(screen.queryByText("changes requested")).not.toBeInTheDocument();
+		expect(screen.queryByRole("link", { name: "conflicts" })).not.toBeInTheDocument();
 	});
 
 	it("lists every session PR on the PR page instead of being empty", async () => {
@@ -98,7 +264,10 @@ describe("PR hydration for a normal project (#251)", () => {
 
 		expect(await screen.findByText("#278")).toBeInTheDocument();
 		expect(screen.getByText("#279")).toBeInTheDocument();
+		expect(screen.getByText("#280")).toBeInTheDocument();
+		expect(screen.getByText("#281")).toBeInTheDocument();
+		expect(screen.getByText("#282")).toBeInTheDocument();
 		expect(screen.queryByText("No open pull requests.")).not.toBeInTheDocument();
-		expect(screen.getAllByText("fix the bug")).toHaveLength(2);
+		expect(screen.getAllByText("fix the bug")).toHaveLength(5);
 	});
 });

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ type fakeStore struct {
 	pr       map[domain.SessionID]domain.PRFacts
 	projects map[string]domain.ProjectRecord
 	checks   map[string][]domain.PullRequestCheck
+	reviews  map[string][]domain.PullRequestReview
 	threads  map[string][]domain.PullRequestReviewThread
 	comments map[string][]domain.PullRequestComment
 	num      int
@@ -36,6 +38,7 @@ func newFakeStore() *fakeStore {
 		pr:       map[domain.SessionID]domain.PRFacts{},
 		projects: map[string]domain.ProjectRecord{},
 		checks:   map[string][]domain.PullRequestCheck{},
+		reviews:  map[string][]domain.PullRequestReview{},
 		threads:  map[string][]domain.PullRequestReviewThread{},
 		comments: map[string][]domain.PullRequestComment{},
 	}
@@ -118,6 +121,10 @@ func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 	return append([]domain.PullRequestCheck(nil), f.checks[prURL]...), nil
 }
 
+func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
+}
+
 func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
 	return append([]domain.PullRequestReviewThread(nil), f.threads[prURL]...), nil
 }
@@ -195,10 +202,15 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 // clean-orchestrator ordering without wiring a real session engine.
 type fakeCommander struct {
 	killed          []domain.SessionID
+	retired         []domain.SessionID
+	sent            []domain.SessionID
 	cleanupProjects []domain.ProjectID
 	killErr         error
+	retireErr       error
+	sendErr         error
 	cleanupErr      error
 	spawnErr        error
+	spawnRecord     domain.SessionRecord
 	spawned         bool
 	killsAtSpawn    int
 }
@@ -208,7 +220,10 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 		return domain.SessionRecord{}, f.spawnErr
 	}
 	f.spawned = true
-	f.killsAtSpawn = len(f.killed)
+	f.killsAtSpawn = len(f.retired)
+	if f.spawnRecord.ID != "" {
+		return f.spawnRecord, nil
+	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
@@ -221,7 +236,20 @@ func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, erro
 	f.killed = append(f.killed, id)
 	return true, nil
 }
-func (f *fakeCommander) Send(context.Context, domain.SessionID, string) error { return nil }
+func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.SessionID) error {
+	if f.retireErr != nil {
+		return f.retireErr
+	}
+	f.retired = append(f.retired, id)
+	return nil
+}
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, _ string) error {
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sent = append(f.sent, id)
+	return nil
+}
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)
 	if f.cleanupErr != nil {
@@ -287,7 +315,7 @@ func TestTeardownProjectStopsOnKillError(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T) {
+func TestSpawnOrchestratorCleanRetiresActiveOrchestratorsBeforeSpawn(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	// Two active orchestrators plus an unrelated worker and a terminated
@@ -304,11 +332,35 @@ func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T)
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 
-	if len(fc.killed) != 2 {
-		t.Fatalf("killed = %v, want the two active orchestrators", fc.killed)
+	if len(fc.retired) != 2 {
+		t.Fatalf("retired = %v, want the two active orchestrators", fc.retired)
+	}
+	if len(fc.sent) != 2 {
+		t.Fatalf("retire notices = %v, want the two active orchestrators", fc.sent)
 	}
 	if !fc.spawned || fc.killsAtSpawn != 2 {
-		t.Fatalf("spawn must run after both kills: spawned=%v killsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+		t.Fatalf("spawn must run after both retirements: spawned=%v retirementsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+	}
+	if len(fc.killed) != 0 {
+		t.Fatalf("interactive Kill must not be used for replacement: killed=%v", fc.killed)
+	}
+}
+
+func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{sendErr: errors.New("pane closed")}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if len(fc.retired) != 1 || fc.retired[0] != "mer-1" {
+		t.Fatalf("retired = %v, want mer-1 despite retire notice failure", fc.retired)
+	}
+	if !fc.spawned {
+		t.Fatal("replacement should still spawn when retire notice delivery fails")
 	}
 }
 
@@ -528,6 +580,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
+		{"runtime prerequisite missing", fmt.Errorf("spawn: %w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite), apierr.KindInvalid, "RUNTIME_PREREQUISITE_MISSING"},
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 	}
@@ -613,6 +666,29 @@ func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	fc := &fakeCommander{
+		spawnRecord: domain.SessionRecord{
+			ID:        "mer-9",
+			ProjectID: "mer",
+			Kind:      domain.KindOrchestrator,
+			Harness:   domain.HarnessClaudeCode,
+			Metadata:  domain.SessionMetadata{Branch: "ao/mer-orchestrator"},
+		},
+	}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err == nil || !strings.Contains(err.Error(), `uses harness "claude-code", want "codex"`) {
+		t.Fatalf("SpawnOrchestrator err = %v, want harness verification failure", err)
+	}
+}
+
 type fakePRClaimer struct {
 	out errorFreeClaimOutcome
 	err error
@@ -622,7 +698,7 @@ type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
+func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
 	return f.out.ClaimOutcome, f.err
 }
 
@@ -740,6 +816,9 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 		{Name: "unit", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://github.com/acme/repo/actions/runs/1", LogTail: "panic: secret"},
 		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
 	}
+	stList.reviews[prURL] = []domain.PullRequestReview{
+		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", SubmittedAt: now.Add(-30 * time.Second)},
+	}
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
@@ -765,6 +844,8 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 	}
 	if reviewer := pr.Review.UnresolvedBy[0]; reviewer.ReviewerID != "reviewer-a" || reviewer.Count != 2 || len(reviewer.Links) != 2 {
 		t.Fatalf("reviewer = %+v", reviewer)
+	} else if reviewer.ReviewURL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
+		t.Fatalf("review url = %q", reviewer.ReviewURL)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
+	canonicalTrackerIssueId,
 	findProjectOrchestrator,
+	newestActiveOrchestrator,
+	orchestratorHealth,
 	sessionIsActive,
 	sessionNeedsAttention,
 	toAgentProvider,
@@ -19,6 +22,14 @@ import {
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "./workspace";
+
+describe("canonicalTrackerIssueId", () => {
+	it("keeps provider-prefixed intake ids and rejects manual task titles", () => {
+		expect(canonicalTrackerIssueId("github:acme/project#42")).toBe("github:acme/project#42");
+		expect(canonicalTrackerIssueId("Fix fallback renderer")).toBeUndefined();
+		expect(canonicalTrackerIssueId(undefined)).toBeUndefined();
+	});
+});
 
 function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 	return {
@@ -115,6 +126,12 @@ describe("findProjectOrchestrator", () => {
 		expect(findProjectOrchestrator([workspaceWith([dead, live, worker])], "skills")).toBe(live);
 	});
 
+	it("prefers the newest live orchestrator when multiple replacements overlap", () => {
+		const older = sessionWith({ id: "skills-4", kind: "orchestrator", status: "idle", provider: "claude-code" });
+		const newer = sessionWith({ id: "skills-5", kind: "orchestrator", status: "working", provider: "codex" });
+		expect(findProjectOrchestrator([workspaceWith([older, newer])], "skills")).toBe(newer);
+	});
+
 	it("returns undefined when every orchestrator is terminated", () => {
 		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", status: "terminated" });
 		expect(findProjectOrchestrator([workspaceWith([dead])], "skills")).toBeUndefined();
@@ -128,6 +145,50 @@ describe("findProjectOrchestrator", () => {
 	it("returns undefined for an unknown project", () => {
 		const live = sessionWith({ id: "skills-5", kind: "orchestrator", status: "working" });
 		expect(findProjectOrchestrator([workspaceWith([live])], "other")).toBeUndefined();
+	});
+
+	it("selects the newest active orchestrator, not the first active one", () => {
+		const older = sessionWith({
+			id: "skills-1",
+			kind: "orchestrator",
+			status: "working",
+			createdAt: "2026-01-01T00:00:00Z",
+			updatedAt: "2026-01-01T00:00:00Z",
+		});
+		const newer = sessionWith({
+			id: "skills-2",
+			kind: "orchestrator",
+			status: "working",
+			createdAt: "2026-01-02T00:00:00Z",
+			updatedAt: "2026-01-02T00:00:00Z",
+		});
+		expect(findProjectOrchestrator([workspaceWith([older, newer])], "skills")).toBe(newer);
+	});
+
+	it("uses updatedAt and id as newest orchestrator tie breakers", () => {
+		const oldUpdate = sessionWith({
+			id: "skills-2",
+			kind: "orchestrator",
+			status: "working",
+			createdAt: "2026-01-01T00:00:00Z",
+			updatedAt: "2026-01-01T00:00:00Z",
+		});
+		const newUpdate = sessionWith({
+			id: "skills-1",
+			kind: "orchestrator",
+			status: "working",
+			createdAt: "2026-01-01T00:00:00Z",
+			updatedAt: "2026-01-02T00:00:00Z",
+		});
+		const sameTimesHigherID = sessionWith({
+			id: "skills-3",
+			kind: "orchestrator",
+			status: "working",
+			createdAt: "2026-01-01T00:00:00Z",
+			updatedAt: "2026-01-02T00:00:00Z",
+		});
+		expect(newestActiveOrchestrator([oldUpdate, newUpdate])).toBe(newUpdate);
+		expect(newestActiveOrchestrator([newUpdate, sameTimesHigherID])).toBe(sameTimesHigherID);
 	});
 });
 
@@ -146,6 +207,51 @@ describe("sessionNeedsAttention", () => {
 	it("is false for statuses that don't need the user", () => {
 		expect(sessionNeedsAttention(sessionWith({ status: "working" }))).toBe(false);
 		expect(sessionNeedsAttention(sessionWith({ status: "mergeable" }))).toBe(false);
+	});
+});
+
+describe("orchestratorHealth", () => {
+	it("reports restart_needed when the configured orchestrator agent differs from the newest active orchestrator", () => {
+		const older = sessionWith({
+			id: "skills-1",
+			kind: "orchestrator",
+			provider: "codex",
+			status: "working",
+			createdAt: "2026-01-01T00:00:00Z",
+			updatedAt: "2026-01-01T00:00:00Z",
+		});
+		const newest = sessionWith({
+			id: "skills-2",
+			kind: "orchestrator",
+			provider: "claude-code",
+			status: "working",
+			createdAt: "2026-01-02T00:00:00Z",
+			updatedAt: "2026-01-02T00:00:00Z",
+		});
+
+		expect(
+			orchestratorHealth({
+				id: "skills",
+				name: "skills",
+				path: "/tmp/skills",
+				orchestratorAgent: "codex",
+				sessions: [older, newest],
+			}),
+		).toEqual({
+			state: "duplicates",
+			message:
+				"Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
+		});
+
+		expect(
+			orchestratorHealth({
+				id: "skills",
+				name: "skills",
+				path: "/tmp/skills",
+				orchestratorAgent: "codex",
+				sessions: [newest],
+			}).state,
+		).toBe("restart_needed");
 	});
 });
 

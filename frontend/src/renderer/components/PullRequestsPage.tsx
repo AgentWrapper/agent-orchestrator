@@ -13,7 +13,7 @@ import type { WorkspaceSession } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
+import { PRSummaryParts } from "./PRSummaryDisplay";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { cn } from "../lib/utils";
 
@@ -145,8 +145,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 						.filter(Boolean)
 						.join(" · ")}
 				</div>
-				<PRStatusStrip className="mt-1" pr={row.pr} />
-				<PRAttentionPanel className="mt-1.5 pt-1.5" maxItems={2} pr={row.pr} />
+				<PRSummaryParts className="mt-1" maxLinks={2} pr={row.pr} />
 			</TableCell>
 			<TableCell>
 				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", stateTone[row.pr.state])}>

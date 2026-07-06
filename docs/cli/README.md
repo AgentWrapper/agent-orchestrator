@@ -5,6 +5,18 @@ It starts, discovers, inspects, and stops the daemon through the loopback HTTP
 surface and the `running.json` handshake. It must not open SQLite directly or
 call runtime, workspace, tracker, or agent adapters in-process.
 
+When using the CLI directly from a shell, make sure the daemon is running first
+with `ao start` or by opening the desktop app. Product commands such as
+`ao agent ls` and `ao spawn` call the loopback daemon and will fail with a
+"daemon is not running" error if no `running.json` points at a live process. From
+a source checkout, build and run the local binary explicitly, for example:
+
+```bash
+cd backend
+go build -o ./bin/ao ./cmd/ao
+./bin/ao agent ls
+```
+
 ## Current commands
 
 Every product command resolves to a daemon HTTP route. Run `ao <command>
@@ -31,6 +43,8 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao project get <id>`               | `GET /api/v1/projects/{id}`                    |
 | `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`             |
 | `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                 |
+| `ao agent ls`                       | `GET /api/v1/agents`                           |
+| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                  |
 | `ao spawn`                          | `POST /api/v1/sessions`                        |
 | `ao session ls`                     | `GET /api/v1/sessions`                         |
 | `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |
@@ -43,6 +57,23 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
 | `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
 | `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
+
+`ao agent ls` prints the daemon-supported agent catalog with local install/auth
+readiness. Use `--refresh` to rerun the bounded local probes and `--json` to
+print the raw inventory response.
+
+`ao spawn` resolves project context in this order: explicit `--project`,
+`AO_PROJECT_ID`, `AO_SESSION_ID` (by fetching the current session from the
+daemon), then the current working directory matched against registered project
+paths. If `AO_SESSION_ID` is set but the session cannot be fetched, pass
+`--project` explicitly.
+
+If `--agent` / `--harness` is omitted, `ao spawn` uses the resolved project's
+`worker.agent` config. Before spawning, the CLI refreshes the advisory agent
+catalog and fails early when the selected agent is unsupported, not installed,
+or unauthorized. It warns-but-continues when auth remains unknown because daemon
+spawn remains the authoritative runtime validation point. Use
+`--skip-agent-check` to bypass only this CLI-side preflight.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it

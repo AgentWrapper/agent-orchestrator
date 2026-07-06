@@ -551,6 +551,18 @@ func TestAttachCommandRejectsInvalidHandle(t *testing.T) {
 	}
 }
 
+func TestAttachEnvForcesUsableTerm(t *testing.T) {
+	env := attachEnv([]string{"PATH=/bin", "TERM=dumb", "SHELL=/bin/sh"})
+	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "SHELL=/bin/sh"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attachEnv = %#v, want %#v", got, want)
+	}
+
+	env = attachEnv([]string{"PATH=/bin"})
+	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attachEnv without TERM = %#v, want %#v", got, want)
+	}
+}
+
 // -- commandError tests --
 
 func TestCommandErrorUnwraps(t *testing.T) {

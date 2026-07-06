@@ -6,34 +6,27 @@
 // command mode (`autohand -p <prompt>` / positional prompt), native session
 // resume (`autohand resume <sessionId>`), and a native hook/lifecycle system
 // whose events (session-start, stop, permission-request, ...) AO maps onto
-// activity states. See hooks.go for hook installation and activity.go for the
-// event→state mapping.
+// activity states. See hooks.go for hook installation.
 package autohand
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const (
-	adapterID = "autohand"
-
-	autohandTitleMetadataKey   = "title"
-	autohandSummaryMetadataKey = "summary"
-)
+const adapterID = "autohand"
 
 // Plugin is the Autohand agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
+
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -57,14 +50,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports the agent-specific config keys. Autohand exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new Autohand command-mode session,
@@ -96,15 +81,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Autohand receives its prompt in the
-// launch command itself.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Autohand
@@ -139,15 +115,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[autohandTitleMetadataKey],
-		Summary:        session.Metadata[autohandSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // appendWorkspaceFlag scopes the run to the given workspace path via --path.
@@ -160,10 +129,10 @@ func appendWorkspaceFlag(cmd *[]string, workspacePath string) {
 // appendApprovalFlags maps AO's four permission modes onto Autohand's approval
 // flags. Default emits no flag so Autohand resolves its starting mode from the
 // user's own config (permissions.mode). Autohand has no distinct "accept-edits"
-// mode, so it maps to --yes (auto-confirm risky actions) — the least-privileged
-// non-interactive option — while auto/bypass map to --unrestricted.
+// mode, so it maps to --yes (auto-confirm risky actions) -- the least-privileged
+// non-interactive option -- while auto/bypass map to --unrestricted.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to the user's Autohand config/default behavior.
 	case ports.PermissionModeAcceptEdits:
@@ -175,85 +144,23 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	}
 }
 
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
+var autohandBinarySpec = binaryutil.BinarySpec{
+	Label:         "autohand",
+	Names:         []string{"autohand"},
+	WinNames:      []string{"autohand.cmd", "autohand.exe", "autohand"},
+	UnixPaths:     []string{"/usr/local/bin/autohand", "/opt/homebrew/bin/autohand"},
+	UnixHomePaths: [][]string{{".local", "bin", "autohand"}, {".npm", "bin", "autohand"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "autohand.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "autohand.exe"}},
+		{Base: binaryutil.WinHome, Parts: []string{".local", "bin", "autohand.exe"}},
+	},
 }
 
-// ResolveAutohandBinary returns the path to the autohand binary on this machine,
-// searching PATH then a handful of well-known install locations (Homebrew, the
-// official ~/.local/bin installer, npm global). Returns "autohand" as a
-// last-ditch fallback so callers see a clear "command not found" rather than an
-// empty argv.
+// ResolveAutohandBinary returns the path to the autohand binary, or a wrapped
+// ports.ErrAgentBinaryNotFound when it is absent.
 func ResolveAutohandBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"autohand.cmd", "autohand.exe", "autohand"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "autohand.cmd"),
-				filepath.Join(appData, "npm", "autohand.exe"),
-			)
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates, filepath.Join(home, ".local", "bin", "autohand.exe"))
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		return "", fmt.Errorf("autohand: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("autohand"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/autohand",
-		"/opt/homebrew/bin/autohand",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "autohand"),
-			filepath.Join(home, ".npm", "bin", "autohand"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("autohand: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, autohandBinarySpec)
 }
 
 func (p *Plugin) autohandBinary(ctx context.Context) (string, error) {
@@ -276,9 +183,4 @@ func (p *Plugin) autohandBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
+	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
@@ -24,6 +25,11 @@ import (
 // as the path parameter.
 type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
+}
+
+// AgentIDParam is the {agent} path parameter for one-agent catalog probes.
+type AgentIDParam struct {
+	Agent string `path:"agent" description:"Agent adapter identifier."`
 }
 
 // ListProjectsResponse is the body of GET /api/v1/projects.
@@ -146,6 +152,10 @@ type SpawnSessionRequest struct {
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
+	// DisplayName is the sidebar label for the session, capped at 20 characters.
+	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
+	// dialog) may omit it and fall back to the session id in the read model.
+	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
 }
 
 // SessionResponse is the { session } body shared by session create/get.
@@ -295,6 +305,8 @@ type SessionPRUnresolvedReviewer struct {
 	ReviewerID string                       `json:"reviewerId"`
 	Count      int                          `json:"count"`
 	Links      []SessionPRReviewCommentLink `json:"links"`
+	ReviewURL  string                       `json:"reviewUrl,omitempty"`
+	IsBot      bool                         `json:"isBot,omitempty"`
 }
 
 // SessionPRReviewCommentLink points to one unresolved review comment.
@@ -366,7 +378,7 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 		for _, link := range reviewer.Links {
 			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line})
 		}
-		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links})
+		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}
 	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers}
 }
@@ -428,6 +440,18 @@ type OrchestratorResponse struct {
 	ProjectID   domain.ProjectID `json:"projectId"`
 	ProjectName string           `json:"projectName,omitempty"`
 }
+
+// ListAgentsResponse is the body of GET /api/v1/agents.
+type ListAgentsResponse = agentsvc.Inventory
+
+// RefreshAgentsResponse is the body of POST /api/v1/agents/refresh.
+type RefreshAgentsResponse = agentsvc.Inventory
+
+// ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
+type ProbeAgentResponse = agentsvc.ProbeResult
+
+// AgentInfo is one supported or installed agent entry.
+type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {

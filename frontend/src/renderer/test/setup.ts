@@ -141,5 +141,16 @@ if (typeof window !== "undefined") {
 			getMigration: async () => ({ status: "pending" }),
 			setMigration: async () => undefined,
 		},
+		updateSettings: {
+			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false }),
+			set: async () => undefined,
+		},
+		updates: {
+			getStatus: async () => ({ state: "idle" }),
+			check: async () => undefined,
+			download: async () => undefined,
+			install: async () => undefined,
+			onStatus: () => () => undefined,
+		},
 	};
 } // end if (typeof window !== "undefined")

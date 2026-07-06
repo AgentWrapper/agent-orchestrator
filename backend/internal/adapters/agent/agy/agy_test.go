@@ -43,7 +43,7 @@ func TestGetLaunchCommand(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategy(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "agy"}
+	plugin := &Plugin{}
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -198,5 +198,17 @@ func TestHooksLifecycle(t *testing.T) {
 	}
 	if installed {
 		t.Fatal("expected hooks to be uninstalled after UninstallHooks")
+	}
+}
+
+func TestAuthStatus(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "agy"}
+
+	status, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != ports.AgentAuthStatusAuthorized {
+		t.Errorf("AuthStatus() = %v, want AgentAuthStatusAuthorized", status)
 	}
 }

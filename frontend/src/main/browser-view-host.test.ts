@@ -14,6 +14,7 @@ function setupHost() {
 	const webContents = {
 		canGoBack: () => false,
 		canGoForward: () => false,
+		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
 		goBack: () => undefined,
@@ -120,6 +121,7 @@ describe("dispose after the window is destroyed", () => {
 			webContents: {
 				canGoBack: () => false,
 				canGoForward: () => false,
+				clearHistory: () => undefined,
 				getTitle: () => "",
 				getURL: () => "",
 				goBack: () => undefined,

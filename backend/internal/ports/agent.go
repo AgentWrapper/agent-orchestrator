@@ -14,6 +14,22 @@ import (
 // for a live session.
 var ErrAgentBinaryNotFound = errors.New("agent: binary not found on PATH")
 
+// AgentAuthStatus describes the result of a short local auth probe for an
+// installed agent. It is advisory only: credentials, quota, selected model
+// availability, or CLI state can still fail at session spawn/model-call time.
+type AgentAuthStatus string
+
+const (
+	// AgentAuthStatusAuthorized means the local auth probe recently passed.
+	// It does not guarantee that a later spawn or model call will succeed.
+	AgentAuthStatusAuthorized AgentAuthStatus = "authorized"
+	// AgentAuthStatusUnauthorized means the agent is installed but its local
+	// auth probe reported missing or invalid authentication.
+	AgentAuthStatusUnauthorized AgentAuthStatus = "unauthorized"
+	// AgentAuthStatusUnknown means the daemon could not determine auth status.
+	AgentAuthStatusUnknown AgentAuthStatus = "unknown"
+)
+
 // Agent is the contract every CLI coding agent adapter (claude-code, codex, …)
 // must satisfy. It supplies the argv and process configuration the Session
 // Manager needs to launch, restore, and read back a native agent session.
@@ -40,6 +56,18 @@ type Agent interface {
 	// SessionInfo reads agent-owned session metadata such as native session id,
 	// display title, or summary. ok=false means no info is available.
 	SessionInfo(ctx context.Context, session SessionRef) (info SessionInfo, ok bool, err error)
+}
+
+// AgentAuthChecker is the optional capability for adapters whose native CLI has
+// a cheap local authentication status probe.
+type AgentAuthChecker interface {
+	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
+}
+
+// AgentBinaryResolver is the optional capability adapters expose when their
+// binary can be checked without constructing a real session launch command.
+type AgentBinaryResolver interface {
+	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
 // AgentResolver maps a session's harness onto the Agent adapter that drives it,
@@ -100,11 +128,20 @@ const (
 
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
-	Config           AgentConfig
-	IssueID          string
-	Permissions      PermissionMode
-	Prompt           string
-	SessionID        string
+	Config      AgentConfig
+	IssueID     string
+	Kind        domain.SessionKind
+	Permissions PermissionMode
+	Prompt      string
+	SessionID   string
+	// AllowedTools and DisallowedTools scope the agent to a tool allowlist when
+	// it runs in a non-bypass permission mode (allow rules auto-approve, deny
+	// rules auto-reject). They are the enforced read-only guarantee the reviewer
+	// relies on: bypassPermissions ignores both lists, so a restricted launch
+	// must leave Permissions off bypass. Empty means no restriction, so worker
+	// sessions are unaffected.
+	AllowedTools     []string
+	DisallowedTools  []string
 	SystemPrompt     string
 	SystemPromptFile string
 	WorkspacePath    string
@@ -115,12 +152,14 @@ type WorkspaceHookConfig struct {
 	Config        AgentConfig
 	DataDir       string
 	SessionID     string
+	SystemPrompt  string
 	WorkspacePath string
 }
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
 	Config      AgentConfig
+	Kind        domain.SessionKind
 	Permissions PermissionMode
 	Session     SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the
@@ -160,11 +199,28 @@ const (
 	PermissionModeBypassPermissions = domain.PermissionModeBypassPermissions
 )
 
+// NormalizePermissionMode collapses an empty or unrecognized mode to
+// PermissionModeDefault, leaving the four known modes unchanged. Adapters call
+// it so a stored value they don't recognize defers to the agent's own config
+// (usually by emitting no flag) rather than mapping onto a bogus one.
+func NormalizePermissionMode(mode PermissionMode) PermissionMode {
+	switch mode {
+	case PermissionModeDefault,
+		PermissionModeAcceptEdits,
+		PermissionModeAuto,
+		PermissionModeBypassPermissions:
+		return mode
+	default:
+		return PermissionModeDefault
+	}
+}
+
 // PromptDeliveryStrategy describes how AO should deliver the initial prompt.
 type PromptDeliveryStrategy string
 
 // How the orchestrator hands the initial prompt to a freshly launched agent.
 const (
-	PromptDeliveryInCommand  PromptDeliveryStrategy = "in_command"
-	PromptDeliveryAfterStart PromptDeliveryStrategy = "after_start"
+	PromptDeliveryInCommand   PromptDeliveryStrategy = "in_command"
+	PromptDeliveryAfterStart  PromptDeliveryStrategy = "after_start"
+	PromptDeliveryCustomAgent PromptDeliveryStrategy = "custom_agent"
 )

@@ -8,6 +8,95 @@ servers:
 - description: Local daemon (loopback only)
   url: http://127.0.0.1:3001
 paths:
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return cached supported and locally installed agent adapters
+      tags:
+      - agents
+  /api/v1/agents/{agent}/probe:
+    post:
+      operationId: probeAgent
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeAgentResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Run a fresh local readiness probe for one agent adapter
+      tags:
+      - agents
+  /api/v1/agents/refresh:
+    post:
+      operationId: refreshAgents
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh the cached local agent adapter catalog
+      tags:
+      - agents
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -1292,13 +1381,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewRunResponse'
+                $ref: '#/components/schemas/TriggerReviewResponse'
           description: OK
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewRunResponse'
+                $ref: '#/components/schemas/TriggerReviewResponse'
           description: Created
         "404":
           content:
@@ -1485,6 +1574,24 @@ components:
           type: string
         permissions:
           type: string
+      type: object
+    AgentInfo:
+      properties:
+        authStatus:
+          description: Advisory local auth probe result. authorized means a recent
+            local probe passed; spawn remains the authoritative validation point.
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+      required:
+      - id
+      - label
       type: object
     ClaimPRRequest:
       properties:
@@ -1695,6 +1802,31 @@ components:
       - ok
       - sessionId
       type: object
+    ListAgentsResponse:
+      properties:
+        authorized:
+          description: Compatibility list of installed agents whose local auth probe
+            recently returned authorized. Advisory and stale-prone; spawn may still
+            fail.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+        installed:
+          description: Agents whose binary resolved during the latest best-effort
+            local catalog probe.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+        supported:
+          description: Agents supported by this daemon build.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+      required:
+      - supported
+      - installed
+      - authorized
+      type: object
     ListNotificationsResponse:
       properties:
         notifications:
@@ -1719,7 +1851,7 @@ components:
           type: string
         reviews:
           items:
-            $ref: '#/components/schemas/ReviewRun'
+            $ref: '#/components/schemas/PRReviewState'
           type: array
       required:
       - reviewerHandleId
@@ -1855,6 +1987,46 @@ components:
       - id
       - projectId
       type: object
+    PRReviewState:
+      properties:
+        latestRun:
+          $ref: '#/components/schemas/ReviewRun'
+        prNumber:
+          type: integer
+        prUrl:
+          type: string
+        status:
+          enum:
+          - needs_review
+          - running
+          - up_to_date
+          - changes_requested
+          - ineligible
+          type: string
+        targetSha:
+          type: string
+        title:
+          type: string
+      required:
+      - prUrl
+      - prNumber
+      - title
+      - targetSha
+      - status
+      type: object
+    ProbeAgentResponse:
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentInfo'
+        installed:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - agent
+      - supported
+      - installed
+      type: object
     Project:
       properties:
         agent:
@@ -1911,6 +2083,8 @@ components:
           items:
             type: string
           type: array
+        trackerIntake:
+          $ref: '#/components/schemas/TrackerIntakeConfig'
         worker:
           $ref: '#/components/schemas/RoleOverride'
       type: object
@@ -1946,6 +2120,8 @@ components:
         kind:
           type: string
         name:
+          type: string
+        orchestratorAgent:
           type: string
         path:
           type: string
@@ -2016,6 +2192,8 @@ components:
       type: object
     ReviewRun:
       properties:
+        batchId:
+          type: string
         body:
           type: string
         createdAt:
@@ -2048,6 +2226,7 @@ components:
       - id
       - reviewId
       - sessionId
+      - batchId
       - harness
       - prUrl
       - targetSha
@@ -2063,8 +2242,13 @@ components:
           $ref: '#/components/schemas/ReviewRun'
         reviewerHandleId:
           type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - review
+      - reviews
       - reviewerHandleId
       type: object
     RoleOverride:
@@ -2336,10 +2520,14 @@ components:
       properties:
         count:
           type: integer
+        isBot:
+          type: boolean
         links:
           items:
             $ref: '#/components/schemas/SessionPRReviewCommentLink'
           type: array
+        reviewUrl:
+          type: string
         reviewerId:
           type: string
       required:
@@ -2425,6 +2613,9 @@ components:
       properties:
         branch:
           type: string
+        displayName:
+          maxLength: 20
+          type: string
         harness:
           enum:
           - claude-code
@@ -2474,6 +2665,26 @@ components:
         githubReviewId:
           description: Id of the GitHub PR review the reviewer posted, if any.
           type: string
+        reviews:
+          description: Batched review results recorded by one reviewer CLI command.
+          items:
+            $ref: '#/components/schemas/SubmitReviewItem'
+          type: array
+        runId:
+          description: Review run id being completed.
+          type: string
+        verdict:
+          description: 'Review verdict: approved or changes_requested.'
+          type: string
+      type: object
+    SubmitReviewItem:
+      properties:
+        body:
+          description: Review body recorded by AO. Required for changes_requested.
+          type: string
+        githubReviewId:
+          description: Id of the GitHub PR review the reviewer posted, if any.
+          type: string
         runId:
           description: Review run id being completed.
           type: string
@@ -2483,8 +2694,31 @@ components:
       required:
       - runId
       - verdict
-      - body
-      - githubReviewId
+      type: object
+    TrackerIntakeConfig:
+      properties:
+        assignee:
+          type: string
+        enabled:
+          type: boolean
+        provider:
+          enum:
+          - github
+          type: string
+        repo:
+          type: string
+      type: object
+    TriggerReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
       type: object
     WorkspaceRepo:
       properties:
@@ -2500,6 +2734,8 @@ components:
       - repo
       type: object
 tags:
+- description: Supported and locally runnable agent adapters
+  name: agents
 - description: Project registry, configuration, and lifecycle administration
   name: projects
 - description: Agent session lifecycle and messaging

@@ -33,6 +33,8 @@ const (
 	githubReviewCommentLimitPerThread = 5
 	// githubReviewThreadMaxPages bounds the explicit older-thread fallback.
 	githubReviewThreadMaxPages = 2
+	// githubReviewSummaryLimit bounds submitted decisive reviews used for summary links.
+	githubReviewSummaryLimit = 20
 )
 
 // ParseRepository normalizes a GitHub remote/origin URL into a provider-neutral
@@ -156,12 +158,12 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 
 // FetchReviewThreads fetches review threads separately from the fast PR/CI path.
 func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error) {
-	latest, decision, pi, err := p.fetchReviewThreadPage(ctx, ref, "")
+	latest, reviews, decision, pi, err := p.fetchReviewThreadPage(ctx, ref, "", true)
 	if err != nil {
 		return ports.SCMReviewObservation{}, err
 	}
 	if !boolv(pi["hasPreviousPage"]) {
-		return ports.SCMReviewObservation{Decision: decision, Threads: latest}, nil
+		return ports.SCMReviewObservation{Decision: decision, Reviews: reviews, Threads: latest}, nil
 	}
 	out := latest
 	startCursor := str(pi["startCursor"])
@@ -175,7 +177,7 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 			p.logger.Warn("github scm: review thread page is partial but missing start cursor",
 				"repo", repoFullName(ref.Repo), "pr", ref.Number)
 		} else {
-			older, _, olderPI, err := p.fetchReviewThreadPage(ctx, ref, startCursor)
+			older, _, _, olderPI, err := p.fetchReviewThreadPage(ctx, ref, startCursor, false)
 			if err != nil {
 				return ports.SCMReviewObservation{}, err
 			}
@@ -190,7 +192,7 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 			}
 		}
 	}
-	return ports.SCMReviewObservation{Decision: decision, Threads: out, Partial: true}, nil
+	return ports.SCMReviewObservation{Decision: decision, Reviews: reviews, Threads: out, Partial: true}, nil
 }
 
 type restListPull struct {
@@ -518,38 +520,76 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 	return out
 }
 
-func (p *Provider) fetchReviewThreadPage(ctx context.Context, ref ports.SCMPRRef, beforeCursor string) ([]ports.SCMReviewThreadObservation, string, map[string]any, error) {
-	query := buildReviewThreadsQuery(ref, beforeCursor)
+func (p *Provider) fetchReviewThreadPage(ctx context.Context, ref ports.SCMPRRef, beforeCursor string, includeReviews bool) ([]ports.SCMReviewThreadObservation, []ports.SCMReviewSummaryObservation, string, map[string]any, error) {
+	query := buildReviewThreadsQuery(ref, beforeCursor, includeReviews)
 	data, err := p.client.doGraphQL(ctx, query, nil)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, "", nil, err
 	}
 	repoData, _ := data["repo"].(map[string]any)
 	pr, _ := repoData["pullRequest"].(map[string]any)
 	if pr == nil {
-		return nil, "", nil, fmt.Errorf("%w: pull request not found in review response", ErrNotFound)
+		return nil, nil, "", nil, fmt.Errorf("%w: pull request not found in review response", ErrNotFound)
 	}
 	decision := string(reviewDecisionFromGraphQL(pr))
+	reviewSummaries, _ := pr["reviewSummaries"].(map[string]any)
+	reviews := make([]ports.SCMReviewSummaryObservation, 0, len(nodes(reviewSummaries["nodes"])))
+	for _, review := range nodes(reviewSummaries["nodes"]) {
+		summary := scmReviewSummaryFromGraphQL(review)
+		if summary.ID == "" && summary.URL == "" {
+			continue
+		}
+		reviews = append(reviews, summary)
+	}
 	threads, _ := pr["reviewThreads"].(map[string]any)
 	out := make([]ports.SCMReviewThreadObservation, 0, len(nodes(threads["nodes"])))
 	for _, th := range nodes(threads["nodes"]) {
 		out = append(out, scmThreadFromGraphQL(th))
 	}
 	pi, _ := threads["pageInfo"].(map[string]any)
-	return out, decision, pi, nil
+	return out, reviews, decision, pi, nil
 }
 
-func buildReviewThreadsQuery(ref ports.SCMPRRef, beforeCursor string) string {
+func buildReviewThreadsQuery(ref ports.SCMPRRef, beforeCursor string, includeReviews bool) string {
 	before := "null"
 	if beforeCursor != "" {
 		before = graphQLString(beforeCursor)
 	}
+	reviewSelection := ""
+	if includeReviews {
+		reviewSelection = fmt.Sprintf(" reviewSummaries: reviews(last:%d, states:[APPROVED,CHANGES_REQUESTED]){ nodes{ id state url submittedAt author{ login __typename } } }", githubReviewSummaryLimit)
+	}
 	return fmt.Sprintf(`query{
-repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision reviewThreads(last:%d, before:%s){ nodes{
+repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision%s reviewThreads(last:%d, before:%s){ nodes{
   id isResolved path line
   comments(first:%d){ nodes{ id body url author{ login __typename } } }
 } pageInfo{ hasPreviousPage startCursor } } } }
-}`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, githubReviewThreadPageSize, before, githubReviewCommentLimitPerThread)
+}`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, reviewSelection, githubReviewThreadPageSize, before, githubReviewCommentLimitPerThread)
+}
+
+func scmReviewSummaryFromGraphQL(review map[string]any) ports.SCMReviewSummaryObservation {
+	author, _ := review["author"].(map[string]any)
+	return ports.SCMReviewSummaryObservation{
+		ID:          str(review["id"]),
+		Author:      str(author["login"]),
+		State:       string(reviewStateFromGraphQL(review["state"])),
+		URL:         str(review["url"]),
+		IsBot:       isBotAuthor(author),
+		SubmittedAt: parseGitHubTime(str(review["submittedAt"])),
+	}
+}
+
+func reviewStateFromGraphQL(state any) domain.ReviewDecision {
+	switch strings.ToUpper(strings.TrimSpace(str(state))) {
+	case "APPROVED":
+		return domain.ReviewApproved
+	case "CHANGES_REQUESTED":
+		return domain.ReviewChangesRequest
+	case "REVIEW_REQUIRED":
+		return domain.ReviewRequired
+	default:
+		return domain.ReviewNone
+	}
 }
 
 func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {

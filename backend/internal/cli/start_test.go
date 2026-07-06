@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -317,7 +320,7 @@ func TestDownload_IgnoresShortClientTimeout(t *testing.T) {
 	}.withDefaults()}
 
 	dst := filepath.Join(t.TempDir(), "out.zip")
-	if err := c.download(context.Background(), srv.URL, dst); err != nil {
+	if err := c.download(context.Background(), io.Discard, srv.URL, "out.zip", dst); err != nil {
 		t.Fatalf("download failed (short client timeout leaked into large-asset path?): %v", err)
 	}
 	got, err := os.ReadFile(dst)
@@ -326,6 +329,104 @@ func TestDownload_IgnoresShortClientTimeout(t *testing.T) {
 	}
 	if string(got) != body {
 		t.Fatalf("downloaded %q, want %q", got, body)
+	}
+}
+
+// TestDownload_NonTTYProgress proves a non-interactive writer (a bytes.Buffer is
+// not an *os.File, so it's non-TTY) gets a plain start line plus a final done
+// line and NO carriage returns, while the bytes still land on disk correctly.
+func TestDownload_NonTTYProgress(t *testing.T) {
+	const body = "release-zip-bytes-payload"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body)) // net/http sets Content-Length for a known body
+	}))
+	t.Cleanup(srv.Close)
+
+	orig := releaseRepo
+	releaseRepo = "owner/repo"
+	t.Cleanup(func() { releaseRepo = orig })
+
+	c := &commandContext{deps: Deps{}.withDefaults()}
+	dst := filepath.Join(t.TempDir(), "out.zip")
+
+	var buf bytes.Buffer
+	if err := c.download(context.Background(), &buf, srv.URL, "agent-orchestrator.zip", dst); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+
+	// Bytes on disk are intact.
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("downloaded %q, want %q", got, body)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "\r") {
+		t.Fatalf("non-TTY progress must not emit carriage returns, got %q", out)
+	}
+	// Start line: asset name, size, and repo are all present.
+	if !strings.Contains(out, "Downloading Agent Orchestrator (agent-orchestrator.zip, ") {
+		t.Fatalf("missing start line in %q", out)
+	}
+	if !strings.Contains(out, "from owner/repo...") {
+		t.Fatalf("start line missing repo in %q", out)
+	}
+	// Done line is present (the only per-copy line off a TTY).
+	if !strings.Contains(out, "Downloaded ") {
+		t.Fatalf("missing done line in %q", out)
+	}
+}
+
+// TestDownload_NoContentLengthOmitsSize proves the start line drops the size
+// segment when the server omits Content-Length, and still reports transferred
+// bytes on the done line.
+func TestDownload_NoContentLengthOmitsSize(t *testing.T) {
+	const body = "streamed-bytes"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Chunked transfer (no Content-Length): flush so the header omits length.
+		w.Header().Set("Transfer-Encoding", "chunked")
+		_, _ = w.Write([]byte(body))
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := &commandContext{deps: Deps{}.withDefaults()}
+	dst := filepath.Join(t.TempDir(), "out.bin")
+
+	var buf bytes.Buffer
+	if err := c.download(context.Background(), &buf, srv.URL, "asset.bin", dst); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	out := buf.String()
+	// No "~<size>)" segment when Content-Length is absent.
+	if strings.Contains(out, "~") {
+		t.Fatalf("size segment should be omitted without Content-Length, got %q", out)
+	}
+	if !strings.Contains(out, "Downloading Agent Orchestrator (asset.bin) from") {
+		t.Fatalf("unexpected start line in %q", out)
+	}
+	if !strings.Contains(out, "Downloaded ") {
+		t.Fatalf("missing done line in %q", out)
+	}
+}
+
+func TestHumanBytes(t *testing.T) {
+	cases := map[int64]string{
+		0:         "0 B",
+		512:       "512 B",
+		1024:      "1.0 KiB",
+		1536:      "1.5 KiB",
+		314572800: "300.0 MiB",
+	}
+	for n, want := range cases {
+		if got := humanBytes(n); got != want {
+			t.Errorf("humanBytes(%d) = %q, want %q", n, got, want)
+		}
 	}
 }
 

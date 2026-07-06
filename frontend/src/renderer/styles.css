@@ -111,6 +111,7 @@
 	--green-strong: #74b98a;
 	--amber: #e8c14a;
 	--red: #ef6b6b;
+	--purple: #a78bfa;
 	/* Terminal — dark palette (light override below). */
 	--term-bg: #15171b;
 	--term-fg: #d7d7d2;
@@ -148,6 +149,7 @@
 	--green-strong: #1a7f37;
 	--amber: #9a6b00;
 	--red: #c0392b;
+	--purple: #7c3aed;
 	--interactive-hover: rgb(0 0 0 / 0.04);
 	--interactive-active: rgb(0 0 0 / 0.07);
 	--kanban-column-bg: rgb(0 0 0 / 0.02);
@@ -771,6 +773,18 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	padding: 18px 18px 40px;
 }
 
+/* Browser tab: the panel fills the rail edge-to-edge, so drop the body padding
+   and the panel's own border/radius so it sits flush against the resize handle. */
+.session-inspector__body.session-inspector__body--browser {
+	padding: 0;
+	overflow: hidden;
+}
+
+.session-inspector__body--browser .browser-panel {
+	border: 0;
+	border-radius: 0;
+}
+
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
  * transparent grab strip whose centered 1px line lights accent on hover, drag
  * (rrp sets data-separator="active"), and keyboard focus. */
@@ -945,7 +959,39 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .reviewer-list {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 14px;
+}
+
+.reviewer-kicker {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+	font-family: var(--font-mono);
+	font-size: 13px;
+	font-weight: 700;
+	color: var(--fg);
+}
+
+.reviewer-kicker svg {
+	width: 15px;
+	height: 15px;
+	flex-shrink: 0;
+	color: var(--fg-passive);
+}
+
+.reviewer-kicker span:first-of-type {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.reviewer-kicker span:last-child {
+	font-family: var(--font-sans);
+	font-size: 11.5px;
+	font-weight: 500;
+	color: var(--fg-passive);
 }
 
 .reviewer-error {
@@ -973,11 +1019,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .reviewer-card {
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: 12px;
 	border-radius: 8px;
 	border: 1px solid var(--border);
 	background: var(--bg-1);
-	padding: 14px;
+	padding: 12px;
 }
 
 .reviewer-card--success {
@@ -1000,9 +1046,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	display: inline-flex;
 	min-width: 0;
 	align-items: center;
-	gap: 9px;
+	gap: 8px;
 	font-family: var(--font-mono);
-	font-size: 13px;
+	font-size: 12.5px;
 	font-weight: 600;
 	color: var(--fg);
 }
@@ -1021,17 +1067,34 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	white-space: nowrap;
 }
 
+.reviewer-card__identity {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.reviewer-card__label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	font-weight: 650;
+	color: var(--fg-muted);
+}
+
 .reviewer-status {
 	display: inline-flex;
-	height: 24px;
+	height: 20px;
 	max-width: 58%;
 	flex-shrink: 0;
 	align-items: center;
 	gap: 5px;
 	overflow: hidden;
-	border-radius: 7px;
-	padding: 0 9px;
-	font-size: 11.5px;
+	border-radius: 6px;
+	padding: 0 8px;
+	font-size: 10.5px;
 	font-weight: 650;
 	line-height: 1;
 	white-space: nowrap;
@@ -1068,6 +1131,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 10px;
+	padding-top: 4px;
 }
 
 .reviewer-card__actions:has(.reviewer-card__action:only-child) {
@@ -1117,6 +1181,138 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-color: color-mix(in srgb, var(--green) 42%, transparent);
 	background: color-mix(in srgb, var(--green) 10%, transparent);
 	color: #8bdc75;
+}
+
+.reviewer-card__action--wide {
+	width: 100%;
+}
+
+.reviewer-summary-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+	overflow: hidden;
+	border-radius: 7px;
+	border: 1px solid var(--border);
+	background: color-mix(in srgb, var(--bg-0) 35%, transparent);
+}
+
+.reviewer-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 10px;
+	border-radius: 0;
+	border: 0;
+	border-bottom: 1px solid var(--border);
+	background: transparent;
+	padding: 11px 12px;
+	min-height: 52px;
+}
+
+.reviewer-row:last-child {
+	border-bottom: 0;
+}
+
+.reviewer-row--success {
+	border-color: var(--border);
+}
+
+.reviewer-row--danger {
+	border-color: var(--border);
+}
+
+.reviewer-row__main {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 9px;
+}
+
+.reviewer-row__dot {
+	width: 7px;
+	height: 7px;
+	flex-shrink: 0;
+	border-radius: 999px;
+	background: var(--fg-passive);
+}
+
+.reviewer-row__dot--running {
+	background: var(--orange);
+}
+
+.reviewer-row__dot--success {
+	background: var(--green);
+}
+
+.reviewer-row__dot--danger {
+	background: var(--red);
+}
+
+.reviewer-row__copy {
+	display: grid;
+	grid-template-columns: auto auto;
+	min-width: 0;
+	align-items: baseline;
+	column-gap: 6px;
+	row-gap: 2px;
+	font-size: 12px;
+	font-weight: 650;
+	color: var(--fg);
+}
+
+.reviewer-row__copy svg {
+	display: none;
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	color: var(--fg-passive);
+}
+
+.reviewer-row__copy a {
+	grid-column: 1 / -1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: inherit;
+	text-decoration: none;
+}
+
+.reviewer-row__copy a:hover {
+	text-decoration: underline;
+}
+
+.reviewer-row__number {
+	grid-column: 1;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--fg-passive);
+}
+
+.reviewer-row__verdict {
+	white-space: nowrap;
+	font-size: 11px;
+	font-weight: 650;
+	color: var(--fg-muted);
+}
+
+.reviewer-row__verdict--running {
+	color: var(--orange);
+}
+
+.reviewer-row__verdict--success {
+	color: var(--green);
+}
+
+.reviewer-row__verdict--danger {
+	color: var(--red);
+}
+
+@media (max-width: 680px) {
+	.reviewer-row {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
 }
 
 :root[data-theme="light"] .reviewer-card__action--primary {

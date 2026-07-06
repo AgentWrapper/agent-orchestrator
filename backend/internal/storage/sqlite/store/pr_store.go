@@ -36,7 +36,7 @@ var (
 // not touch pr_review_threads: those rows are owned by WriteSCMObservation's
 // slower review-thread refresh path.
 func (s *Store) WritePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, comments []domain.PullRequestComment) error {
-	return s.writePR(ctx, pr, checks, nil, comments, ports.ReviewWritePreserve, true)
+	return s.writePR(ctx, pr, checks, nil, nil, comments, ports.ReviewWritePreserve, true)
 }
 
 // WriteSCMObservation persists a provider-neutral SCM observation in one write
@@ -44,14 +44,14 @@ func (s *Store) WritePR(ctx context.Context, pr domain.PullRequest, checks []dom
 // and comments are preserved, replaced, or merged according to reviewMode
 // because review polling runs at a slower and sometimes intentionally bounded
 // cadence than metadata/CI polling.
-func (s *Store) WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
-	return s.writePR(ctx, pr, checks, threads, comments, reviewMode, false)
+func (s *Store) WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
+	return s.writePR(ctx, pr, checks, reviews, threads, comments, reviewMode, false)
 }
 
 // ClaimPR moves (or creates) a PR row to pr.SessionID and applies the live SCM
 // observation in the same transaction. The session_id update is what fires the
 // pr_session_changed CDC trigger added in migration 0005.
-func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, allowActiveTakeover bool) (ports.ClaimOutcome, error) {
+func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, allowActiveTakeover bool) (ports.ClaimOutcome, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	var outcome ports.ClaimOutcome
@@ -73,20 +73,20 @@ func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []dom
 		}); err != nil {
 			return err
 		}
-		return writePRRows(ctx, q, pr, checks, threads, comments, reviewMode, false, false)
+		return writePRRows(ctx, q, pr, checks, reviews, threads, comments, reviewMode, false, false)
 	})
 	return outcome, err
 }
 
-func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, replaceLegacyComments bool) error {
+func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, replaceLegacyComments bool) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.inTx(ctx, "write pr observation", func(q *gen.Queries) error {
-		return writePRRows(ctx, q, pr, checks, threads, comments, reviewMode, replaceLegacyComments, true)
+		return writePRRows(ctx, q, pr, checks, reviews, threads, comments, reviewMode, replaceLegacyComments, true)
 	})
 }
 
-func writePRRows(ctx context.Context, q *gen.Queries, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, replaceLegacyComments, rejectReassignment bool) error {
+func writePRRows(ctx context.Context, q *gen.Queries, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, replaceLegacyComments, rejectReassignment bool) error {
 	if rejectReassignment {
 		existing, err := q.GetPR(ctx, pr.URL)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -114,9 +114,19 @@ func writePRRows(ctx context.Context, q *gen.Queries, pr domain.PullRequest, che
 		if err := q.DeletePRComments(ctx, pr.URL); err != nil {
 			return err
 		}
+		if err := q.DeletePRReviews(ctx, pr.URL); err != nil {
+			return err
+		}
 	} else if replaceLegacyComments {
 		if err := q.DeleteLegacyPRComments(ctx, pr.URL); err != nil {
 			return err
+		}
+	}
+	if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
+		for _, review := range reviews {
+			if err := q.UpsertPRReview(ctx, genReviewParams(pr.URL, review)); err != nil {
+				return fmt.Errorf("review %q: %w", review.ID, err)
+			}
 		}
 	}
 	if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
@@ -278,6 +288,19 @@ func (s *Store) ListPRReviewThreads(ctx context.Context, prURL string) ([]domain
 	out := make([]domain.PullRequestReviewThread, 0, len(rows))
 	for _, th := range rows {
 		out = append(out, reviewThreadFromGen(th))
+	}
+	return out, nil
+}
+
+// ListPRReviews returns a PR's submitted reviews, oldest first.
+func (s *Store) ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	rows, err := s.qr.ListPRReviews(ctx, prURL)
+	if err != nil {
+		return nil, fmt.Errorf("list pr reviews %s: %w", prURL, err)
+	}
+	out := make([]domain.PullRequestReview, 0, len(rows))
+	for _, review := range rows {
+		out = append(out, reviewFromGen(review))
 	}
 	return out, nil
 }
@@ -478,6 +501,33 @@ func reviewThreadFromGen(th gen.PRReviewThread) domain.PullRequestReviewThread {
 		ThreadID: th.ThreadID, Path: th.Path, Line: int(th.Line),
 		Resolved: th.Resolved != 0, IsBot: th.IsBot != 0,
 		SemanticHash: th.SemanticHash, UpdatedAt: th.UpdatedAt,
+	}
+}
+
+func genReviewParams(prURL string, review domain.PullRequestReview) gen.UpsertPRReviewParams {
+	id := review.ID
+	if id == "" {
+		id = review.URL
+	}
+	return gen.UpsertPRReviewParams{
+		PRURL:       prURL,
+		ReviewID:    id,
+		Author:      review.Author,
+		State:       string(reviewOrDefault(review.State)),
+		URL:         review.URL,
+		IsBot:       boolInt(review.IsBot),
+		SubmittedAt: review.SubmittedAt,
+	}
+}
+
+func reviewFromGen(review gen.PRReview) domain.PullRequestReview {
+	return domain.PullRequestReview{
+		ID:          review.ReviewID,
+		Author:      review.Author,
+		State:       domain.ReviewDecision(review.State),
+		URL:         review.URL,
+		IsBot:       review.IsBot != 0,
+		SubmittedAt: review.SubmittedAt,
 	}
 }
 

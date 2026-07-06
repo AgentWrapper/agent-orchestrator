@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 )
 
 // Sentinel errors returned by the Session Manager; callers match them with
@@ -96,6 +97,10 @@ type Store interface {
 	// presence of any row is the marker; preserved_ref may be empty for clean
 	// worktrees.
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
+	// DeleteSessionWorktrees consumes stale shutdown-restore markers. Explicit
+	// Kill and successful RestoreAll must remove these rows to prevent
+	// resurrecting sessions the user intentionally terminated.
+	DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -202,6 +207,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 
+	if err := m.validateRuntimePrerequisites(); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	}
+
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
@@ -237,25 +246,26 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
+		Kind:          cfg.Kind,
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
@@ -264,7 +274,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -273,7 +283,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
@@ -284,7 +294,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -443,6 +453,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
+	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+		return false, fmt.Errorf("kill %s: delete restore marker: %w", id, err)
+	}
 
 	// Only tear down what exists. A session may have lost its handle after a
 	// crash or never acquired one if spawn failed partway.
@@ -462,6 +475,59 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		freed = true
 	}
 	return freed, nil
+}
+
+// RetireForReplacement terminates a live orchestrator and releases its branch
+// for a replacement session. Unlike Kill, this captures uncommitted work before
+// force-removing the worktree, so a dirty canonical orchestrator worktree does
+// not block the replacement from claiming the canonical branch.
+//
+// This deliberately does not write a session_worktrees row: those rows are
+// boot-restore markers, and a replaced orchestrator must stay terminated.
+func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("retire replacement %s: %w", id, err)
+	}
+	if !ok || rec.IsTerminated {
+		return nil
+	}
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+		}
+		handle := runtimeHandle(rec.Metadata)
+		if handle.ID != "" {
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
+			}
+		}
+		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+		}
+		return nil
+	}
+
+	ws := workspaceInfo(rec)
+	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
+		return fmt.Errorf("retire replacement %s: stash: %w", id, err)
+	}
+	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
+		}
+	}
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		return fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+	}
+	return nil
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs
@@ -510,9 +576,6 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if !ok {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
-	}
 	// The system prompt is derived, not persisted: recompute it so a restored
 	// session keeps its standing instructions across the relaunch.
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
@@ -521,7 +584,11 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, agentConfig, rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -836,6 +903,10 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			} else {
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 			}
+			continue
+		}
+		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+			m.logger.Error("restore-all: delete consumed worktree marker failed", "sessionID", rec.ID, "error", err)
 		}
 	}
 	return nil
@@ -918,13 +989,14 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 
 func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
-		ProjectID: cfg.ProjectID,
-		IssueID:   cfg.IssueID,
-		Kind:      cfg.Kind,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Harness:   cfg.Harness,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		ProjectID:   cfg.ProjectID,
+		IssueID:     cfg.IssueID,
+		Kind:        cfg.Kind,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Harness:     cfg.Harness,
+		DisplayName: cfg.DisplayName,
+		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 	}
 }
 
@@ -981,7 +1053,21 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
-	return base + systemPromptGuard, nil
+	return base + m.aoSkillPointer() + systemPromptGuard, nil
+}
+
+// aoSkillPointer is appended to every agent system prompt. It points the agent
+// at the using-ao skill the daemon installs under the data dir, rather than
+// inlining the whole CLI catalog. The path is absolute so it resolves from any
+// project's worktree, not just the AO repo (the only place a repo-relative
+// skills/ path would exist). The skill file carries exact flags and examples,
+// so the standing prompt stays a short pointer rather than a command dump.
+func (m *Manager) aoSkillPointer() string {
+	dir := skillassets.Dir(m.dataDir)
+	skillFile := filepath.Join(dir, "SKILL.md")
+	commandsGlob := filepath.Join(dir, "commands", "*.md")
+	return "\n\n" + "## Using the ao CLI\n\n" +
+		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
@@ -1011,14 +1097,17 @@ func orchestratorPrompt(project domain.ProjectID) string {
 You are the human-facing coordinator for project %s. Coordinate work for the human, keep the project moving, and avoid doing implementation yourself unless it is necessary.
 
 Spawn worker sessions for implementation with:
-`+"`ao spawn --project %s --prompt \"<clear worker task>\"`"+`
+`+"`ao spawn --project %s --name \"<label, max 20 chars>\" --prompt \"<clear worker task>\"`"+`
+Both --project and --name are required.
+
+To run a worker on a specific agent, add `+"`--agent <name>`"+` (an alias for `+"`--harness`"+`) — for example `+"`--agent codex`"+` or `+"`--agent claude-code`"+`. If you omit it, the project's default worker agent is used. Run `+"`ao spawn --help`"+` for the full list of agents and every flag.
 
 Message workers with `+"`ao send`"+`, for example:
 `+"`ao send --session <worker-session-id> --message \"<your message>\"`"+`
 
 Check on workers with `+"`ao session ls`"+` and `+"`ao session get <worker-session-id>`"+`.
 
-If you're unsure which command to use, run `+"`ao --help`"+` before guessing.
+If you're unsure which command to use, run `+"`ao --help`"+` (and `+"`ao <command> --help`"+` for details on one) before guessing.
 
 Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
 }
@@ -1212,11 +1301,13 @@ type preLauncher interface {
 // starts the agent: installing the workspace-local activity hooks (so early
 // startup hooks can update the already-created session row), then any optional
 // PreLaunch step. Shared by Spawn and Restore.
-func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string) error {
+func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt string, agentConfig ports.AgentConfig) error {
 	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		DataDir:       m.dataDir,
+		SystemPrompt:  systemPrompt,
+		Config:        agentConfig,
 	}); err != nil {
 		return fmt.Errorf("install hooks: %w", err)
 	}
@@ -1241,7 +1332,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -1258,6 +1349,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
+		Kind:          kind,
 		Prompt:        meta.Prompt,
 		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,
@@ -1281,6 +1373,16 @@ func (m *Manager) validateAgentBinary(argv []string) error {
 	bin := argv[0]
 	if _, err := m.lookPath(bin); err != nil {
 		return fmt.Errorf("agent binary %q: %w", bin, ports.ErrAgentBinaryNotFound)
+	}
+	return nil
+}
+
+func (m *Manager) validateRuntimePrerequisites() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if path, err := m.lookPath("tmux"); err != nil || path == "" {
+		return fmt.Errorf("%w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite)
 	}
 	return nil
 }

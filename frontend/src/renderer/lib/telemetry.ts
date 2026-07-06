@@ -128,6 +128,19 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 	return safe;
 }
 
+// Allowed `source` enum for the orchestrator-spawn triad. Kept as a literal set
+// here (rather than imported from spawn-orchestrator.ts, which imports this
+// module) to avoid a cycle; keep in sync with OrchestratorSpawnSource.
+const ORCHESTRATOR_SPAWN_SOURCES = new Set([
+	"board",
+	"restore_dialog",
+	"topbar",
+	"sidebar",
+	"project_add",
+	"settings",
+	"restart",
+]);
+
 export async function sanitizeRendererProperties(
 	event: string,
 	properties?: TelemetryProperties,
@@ -147,11 +160,52 @@ export async function sanitizeRendererProperties(
 			break;
 		case "ao.renderer.project_add_succeeded":
 		case "ao.renderer.project_removed":
-		case "ao.renderer.orchestrator_open_requested": {
+		case "ao.renderer.orchestrator_open_requested":
+		case "ao.renderer.task_create_requested":
+		case "ao.renderer.task_create_succeeded":
+		case "ao.renderer.task_create_failed":
+		case "ao.renderer.session_kill_requested":
+		case "ao.renderer.session_kill_succeeded":
+		case "ao.renderer.session_kill_failed":
+		case "ao.renderer.settings_save_requested":
+		case "ao.renderer.settings_save_succeeded":
+		case "ao.renderer.settings_save_failed": {
 			const projectIDHash = await hashedTelemetryID(properties?.project_id);
 			if (projectIDHash) safe.project_id_hash = projectIDHash;
 			break;
 		}
+		case "ao.renderer.orchestrator_spawn_requested":
+		case "ao.renderer.orchestrator_spawn_succeeded":
+		case "ao.renderer.orchestrator_spawn_failed": {
+			const projectIDHash = await hashedTelemetryID(properties?.project_id);
+			if (projectIDHash) safe.project_id_hash = projectIDHash;
+			if (typeof properties?.source === "string" && ORCHESTRATOR_SPAWN_SOURCES.has(properties.source)) {
+				safe.source = properties.source;
+			}
+			break;
+		}
+		case "ao.renderer.notification_opened":
+			if (properties?.target === "pr" || properties?.target === "session") safe.target = properties.target;
+			break;
+		case "ao.renderer.notification_marked_read":
+			if (properties?.scope === "single" || properties?.scope === "all") safe.scope = properties.scope;
+			break;
+		case "ao.renderer.daemon_failure":
+			if (typeof properties?.daemon_state === "string") safe.daemon_state = properties.daemon_state;
+			if (typeof properties?.code === "string") safe.code = properties.code;
+			if (typeof properties?.exit_code === "number") safe.exit_code = properties.exit_code;
+			if (typeof properties?.signal === "string") safe.signal = properties.signal;
+			break;
+		case "ao.renderer.api_error":
+			if (typeof properties?.operation === "string") safe.operation = properties.operation;
+			if (typeof properties?.error_category === "string") safe.error_category = properties.error_category;
+			if (typeof properties?.status === "number") safe.status = properties.status;
+			break;
+		case "ao.renderer.terminal_attach_failed":
+			if (properties?.reason === "open_timeout" || properties?.reason === "pane_error") {
+				safe.reason = properties.reason;
+			}
+			break;
 	}
 	return safe;
 }

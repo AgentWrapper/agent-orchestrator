@@ -5,13 +5,27 @@ import {
 	dialog,
 	ipcMain,
 	net,
+	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
 	shell,
 	WebContentsView,
 	type OpenDialogOptions,
 } from "electron";
-import { startAutoUpdates, ensureUpdatePrefs } from "./main/auto-updater";
+import {
+	startAutoUpdates,
+	ensureUpdatePrefs,
+	checkForUpdatesNow,
+	downloadUpdateNow,
+	quitAndInstallUpdate,
+	getUpdateStatus,
+} from "./main/auto-updater";
+import {
+	readUpdateSettings,
+	writeUpdateSettings,
+	type UpdateSettings,
+	type UpdateStatus,
+} from "./main/update-settings";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
@@ -55,6 +69,14 @@ process.stderr.on("error", ignoreStdStreamError);
 
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
+
+// Windows shows native toasts only when the app declares an AppUserModelID that
+// matches its installer shortcut (the NSIS maker's appId). Without it,
+// Notification.isSupported() still returns true but show() silently drops the
+// toast, so notifications never appear. No-op on macOS/Linux.
+if (process.platform === "win32") {
+	app.setAppUserModelId("dev.agent-orchestrator.desktop");
+}
 
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
@@ -141,6 +163,16 @@ function windowIconPath(): string | undefined {
 		? path.join(process.resourcesPath, "icon.png")
 		: path.join(__dirname, "../../assets/icon.png");
 	return existsSync(candidate) ? candidate : undefined;
+}
+
+function applyRuntimeAppIcon(): void {
+	if (process.platform !== "darwin") return;
+	const iconPath = windowIconPath();
+	if (!iconPath) return;
+	const icon = nativeImage.createFromPath(iconPath);
+	if (!icon.isEmpty()) {
+		app.dock.setIcon(icon);
+	}
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
@@ -454,6 +486,7 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO daemon is no longer reachable.",
+			code: "daemon_unreachable",
 		});
 	}
 	return daemonStatus;
@@ -494,6 +527,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
+			code: "not_configured",
 		});
 		return daemonStatus;
 	}
@@ -616,6 +650,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "error",
 			message: `Bundled AO daemon binary was not found at ${launch.command}. Rebuild the desktop package.`,
+			code: "binary_missing",
 		});
 		return daemonStatus;
 	}
@@ -713,6 +748,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			state: "ready",
 			port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
 			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
+			code: "port_unconfirmed",
 		});
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
@@ -721,17 +757,29 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message });
+		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
 	});
 
 	child.once("exit", (code, signal) => {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
-		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
+		// An explicit stopDaemon() already set a clean `{ state: "stopped" }`.
+		// daemon-telemetry reports any status carrying a `code` as
+		// ao.renderer.daemon_failure, so don't stamp `code: "exited"` on a stop
+		// the user or app asked for — that would count intentional stops as
+		// failures. Preserve the clean stopped status instead.
+		if (daemonStoppingProcess === child) {
+			daemonStoppingProcess = null;
+			setDaemonStatus({ state: "stopped" });
+			return;
+		}
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			code: "exited",
+			exitCode: code,
+			signal,
 		});
 	});
 
@@ -804,6 +852,30 @@ ipcMain.handle("appState:setMigration", async (_event, migration: MigrationState
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await updateMigration({ stateDir: path.dirname(runFile), migration, now: () => new Date() });
+});
+
+ipcMain.handle("updateSettings:get", async (): Promise<UpdateSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return { enabled: false, channel: "latest", nightlyAck: false };
+	return readUpdateSettings(path.dirname(runFile));
+});
+ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) => {
+	const runFile = runFilePath();
+	if (!runFile) return;
+	await writeUpdateSettings(path.dirname(runFile), settings);
+});
+
+ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
+ipcMain.handle("updates:check", async () => {
+	const runFile = runFilePath();
+	if (!runFile) return;
+	await checkForUpdatesNow(path.dirname(runFile));
+});
+ipcMain.handle("updates:download", async () => {
+	await downloadUpdateNow();
+});
+ipcMain.handle("updates:install", () => {
+	quitAndInstallUpdate();
 });
 
 ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
@@ -915,6 +987,7 @@ app.whenReady().then(async () => {
 	}
 
 	registerRendererProtocol();
+	applyRuntimeAppIcon();
 	createWindow();
 	void startDaemon();
 	initAutoUpdates();

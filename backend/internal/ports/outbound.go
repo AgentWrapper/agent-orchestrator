@@ -38,13 +38,13 @@ const (
 // whether review facts are preserved, replaced with a complete snapshot, or
 // merged as a bounded partial window.
 type SCMWriter interface {
-	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode) error
+	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode) error
 }
 
 // PRClaimer atomically moves (or creates) a PR row for a target session and
 // persists the live SCM facts observed for that PR in the same transaction.
 type PRClaimer interface {
-	ClaimPR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode, allowActiveTakeover bool) (ClaimOutcome, error)
+	ClaimPR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode, allowActiveTakeover bool) (ClaimOutcome, error)
 }
 
 // ErrPRClaimedByActiveSession is returned by PRClaimer.ClaimPR when takeover is
@@ -164,6 +164,9 @@ var (
 	// conflict markers for manual resolution. Adapters wrap this sentinel via
 	// fmt.Errorf so callers can match it with errors.Is.
 	ErrPreservedConflict = errors.New("workspace: preserved apply produced conflicts")
+	// ErrRuntimePrerequisite reports a missing host prerequisite for the selected
+	// runtime before a session can be created.
+	ErrRuntimePrerequisite = errors.New("runtime: prerequisite missing")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

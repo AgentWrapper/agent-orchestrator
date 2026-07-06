@@ -41,6 +41,7 @@ type fakeStore struct {
 type fakeWrite struct {
 	pr         domain.PullRequest
 	checks     []domain.PullRequestCheck
+	reviews    []domain.PullRequestReview
 	comments   []domain.PullRequestComment
 	reviewMode ports.ReviewWriteMode
 }
@@ -94,13 +95,13 @@ func (s *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 	return append([]domain.PullRequestCheck(nil), s.checks[prURL]...), nil
 }
 
-func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
+func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.writeErr != nil {
 		return s.writeErr
 	}
-	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
+	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), reviews: append([]domain.PullRequestReview(nil), reviews...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
 	return nil
 }
 
@@ -138,7 +139,18 @@ func (p *fakeProvider) SCMCredentialsAvailable(context.Context) (bool, error) {
 }
 
 func (p *fakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
-	return testRepo, remote != ""
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return ports.SCMRepo{}, false
+	}
+	s := strings.TrimSuffix(remote, ".git")
+	s = strings.TrimPrefix(s, "https://github.com/")
+	s = strings.TrimPrefix(s, "git@github.com:")
+	parts := strings.Split(strings.Trim(s, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ports.SCMRepo{}, false
+	}
+	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: parts[0], Name: parts[1], Repo: parts[0] + "/" + parts[1]}, true
 }
 func (p *fakeProvider) RepoPRListGuard(_ context.Context, repo ports.SCMRepo, _ string) (ports.SCMGuardResult, error) {
 	p.mu.Lock()
@@ -229,7 +241,7 @@ func testObs(num int) ports.SCMObservation {
 
 func knownPR(num int) domain.PullRequest {
 	obs := testObs(num)
-	pr, _, _, _ := domainFromObservation("p-1", obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
+	pr, _, _, _, _ := domainFromObservation("p-1", obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
 	return pr
 }
 
@@ -539,6 +551,111 @@ func TestPoll_IgnoresForkPRWithMatchingBranch(t *testing.T) {
 	}
 }
 
+func mustGit(t *testing.T, args ...string) {
+	t.Helper()
+	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v (%s)", args, err, out)
+	}
+}
+
+// A PR opened from the fork push origin against an upstream base repo (the
+// standard fork -> upstream contribution flow) must be discovered and attributed
+// by scanning every remote in the project checkout, not just origin. Its head
+// lives in origin (o/r) while its base lives in upstream (up/r); the persisted
+// row records the upstream base repo so refresh refetches against it.
+func TestPoll_DiscoversCrossForkPRFromUpstreamRemote(t *testing.T) {
+	dir := t.TempDir()
+	mustGit(t, "init", dir)
+	mustGit(t, "-C", dir, "remote", "add", "origin", "https://github.com/o/r.git")
+	mustGit(t, "-C", dir, "remote", "add", "upstream", "https://github.com/up/r.git")
+
+	upstream := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "up", Name: "r", Repo: "up/r"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "ao/p-1/root"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: dir, RepoOriginURL: "https://github.com/o/r.git"}},
+		prs:      map[domain.SessionID][]domain.PullRequest{},
+		checks:   map[string][]domain.PullRequestCheck{},
+	}
+	crossObs := ports.SCMObservation{
+		Fetched: true, Provider: "github", Host: "github.com", Repo: "up/r",
+		PR:           ports.SCMPRObservation{URL: "https://github.com/up/r/pull/1", Number: 1, State: "open", SourceBranch: "ao/p-1/feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1", Title: "PR"},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: "sha1"},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewNone)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable), Mergeable: true},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "origin"}, prKey(upstream, 0): {ETag: "up"}},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(upstream, 0): {{URL: "https://github.com/up/r/pull/1", Number: 1, SourceBranch: "ao/p-1/feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1"}},
+		},
+		observations: map[string]ports.SCMObservation{prKey(upstream, 1): crossObs},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected cross-fork PR write")
+	}
+	got := store.writes[0].pr
+	if got.SessionID != "p-1" {
+		t.Fatalf("session id = %q, want p-1", got.SessionID)
+	}
+	if got.Repo != "up/r" {
+		t.Fatalf("pr repo = %q, want up/r (upstream base)", got.Repo)
+	}
+	if got.SourceBranch != "ao/p-1/feat" {
+		t.Fatalf("source branch = %q, want ao/p-1/feat", got.SourceBranch)
+	}
+	fetched := false
+	for _, batch := range provider.fetchBatches {
+		for _, ref := range batch {
+			if ref.Repo.Repo == "up/r" && ref.Number == 1 {
+				fetched = true
+			}
+		}
+	}
+	if !fetched {
+		t.Fatalf("cross-fork PR must be refreshed against upstream, batches=%#v", provider.fetchBatches)
+	}
+}
+
+// A PR on a scanned upstream remote whose head lives in some third-party fork
+// (not this project's origin) must never be attributed, even though its branch
+// name matches a session. Scanning extra remotes stays safe.
+func TestPoll_IgnoresUpstreamPRFromForeignHead(t *testing.T) {
+	dir := t.TempDir()
+	mustGit(t, "init", dir)
+	mustGit(t, "-C", dir, "remote", "add", "origin", "https://github.com/o/r.git")
+	mustGit(t, "-C", dir, "remote", "add", "upstream", "https://github.com/up/r.git")
+
+	upstream := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "up", Name: "r", Repo: "up/r"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "ao/p-1/root"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: dir, RepoOriginURL: "https://github.com/o/r.git"}},
+		prs:      map[domain.SessionID][]domain.PullRequest{},
+		checks:   map[string][]domain.PullRequestCheck{},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "origin"}, prKey(upstream, 0): {ETag: "up"}},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(upstream, 0): {{URL: "https://github.com/up/r/pull/9", Number: 9, SourceBranch: "ao/p-1/feat", HeadRepo: "stranger/r", TargetBranch: "main", HeadSHA: "sha9"}},
+		},
+		observations: map[string]ports.SCMObservation{},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 0 {
+		t.Fatalf("foreign-head upstream PR must not be fetched, got %#v", provider.fetchBatches)
+	}
+	if len(store.writes) != 0 {
+		t.Fatalf("foreign-head upstream PR must not be persisted, got %d writes", len(store.writes))
+	}
+}
+
 // A newly discovered open PR is persisted as a baseline row during discovery,
 // before the refresh/lifecycle pass. This is what lets a same-poll terminal
 // observation for a sibling PR see the open PR in the store and avoid completing
@@ -564,6 +681,7 @@ func TestPoll_DiscoveredPRPersistedAsBaselineBeforeRefresh(t *testing.T) {
 	}
 	if baseline == nil {
 		t.Fatalf("discovered PR #1 not persisted as a baseline row; writes=%#v", store.writes)
+		return
 	}
 	if baseline.Merged || baseline.Closed {
 		t.Fatalf("baseline row must be open, got merged=%v closed=%v", baseline.Merged, baseline.Closed)
@@ -731,7 +849,11 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	local.ReviewHash = "old"
 	local.Review = domain.ReviewChangesRequest
 	store.prs["p-1"] = []domain.PullRequest{local}
-	review := ports.SCMReviewObservation{Decision: string(domain.ReviewChangesRequest), Threads: []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix this"}}}}}
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewChangesRequest),
+		Reviews:  []ports.SCMReviewSummaryObservation{{ID: "review-1", Author: "ann", State: string(domain.ReviewChangesRequest), URL: "https://github.com/o/r/pull/1#pullrequestreview-1", SubmittedAt: time.Unix(199, 0).UTC()}},
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix this"}}}},
+	}
 	provider := &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}}, observations: map[string]ports.SCMObservation{}, reviews: map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review}}
 	lc := &fakeLifecycle{}
 	obs := newTestObserver(store, provider, lc, time.Unix(200, 0).UTC())
@@ -741,6 +863,9 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	}
 	if len(store.writes) == 0 || len(store.writes[0].comments) != 1 {
 		t.Fatalf("review change not persisted: %#v", store.writes)
+	}
+	if len(store.writes[0].reviews) != 1 || store.writes[0].reviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" {
+		t.Fatalf("review summaries not persisted: %#v", store.writes[0].reviews)
 	}
 	if len(store.writes) != 2 {
 		t.Fatalf("review change with lifecycle should write held-back facts then acknowledgement, got %d writes", len(store.writes))

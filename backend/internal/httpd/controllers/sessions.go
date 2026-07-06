@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -22,8 +23,9 @@ import (
 )
 
 const (
-	maxPromptLen  = 4096
-	maxMessageLen = 4096
+	maxPromptLen      = 4096
+	maxMessageLen     = 4096
+	maxDisplayNameLen = 20
 )
 
 var errPreviewFileNotFound = errors.New("preview file not found")
@@ -120,10 +122,19 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
 	}
+	// displayName is optional at the API (the desktop new-task dialog omits it
+	// and the read model falls back to the session id). `ao spawn` makes it
+	// required CLI-side. When present, it is held to the same length cap here so
+	// a direct API call cannot exceed it.
+	displayName := strings.TrimSpace(in.DisplayName)
+	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
+		return
+	}
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt})
+	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

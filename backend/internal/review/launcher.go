@@ -31,6 +31,8 @@ type LaunchSpec struct {
 	WorkspacePath string
 	PRURL         string
 	TargetSHA     string
+	ReviewQueue   []ports.ReviewTask
+	ReviewIndex   int
 }
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
@@ -73,6 +75,8 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		WorkerSessionID: spec.WorkerID,
 		PRURL:           spec.PRURL,
 		TargetSHA:       spec.TargetSHA,
+		ReviewQueue:     spec.ReviewQueue,
+		ReviewIndex:     spec.ReviewIndex,
 		WorkspacePath:   spec.WorkspacePath,
 		Prompt:          prompt,
 		SystemPrompt:    systemPrompt,

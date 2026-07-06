@@ -1,11 +1,10 @@
 name: Prettier
 
-# Auto-formats the codebase on every push and commits the result back.
-# Formatting is a CI concern — developers never need to run Prettier locally
-# and formatted output never shows up as local uncommitted changes.
-#
-# GitHub Actions does not re-trigger workflows on commits made with GITHUB_TOKEN,
-# so there is no feedback loop risk.
+# Check-only: reports formatting issues without modifying the branch.
+# The job fails (and annotates unformatted files) when `prettier --check`
+# finds files that are not formatted, but it never writes, commits, or
+# pushes anything back to the PR. Developers run `npx prettier@3 --write .`
+# locally to fix the reported files.
 
 on:
   push:
@@ -18,21 +17,9 @@ jobs:
   format:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Format with Prettier
-        run: npx --yes prettier@3 --write .
-
-      - name: Commit formatted files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git diff --quiet && exit 0
-          git add -A
-          git commit -m "chore: format with prettier [skip ci]"
-          git push
+      - name: Check formatting with Prettier
+        run: npx --yes prettier@3 --check .

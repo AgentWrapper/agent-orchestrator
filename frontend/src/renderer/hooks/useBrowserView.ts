@@ -8,6 +8,12 @@ type UseBrowserViewOptions = {
 	active: boolean;
 	poppedOut: boolean;
 	/**
+	 * When true, the view is cleared and the daemon-driven preview is suppressed.
+	 * Use when the session is terminated: the old preview content should not
+	 * remain visible even if the DB still carries a preview_url.
+	 */
+	terminated?: boolean;
+	/**
 	 * Preview target driven by the daemon (via `ao preview`, streamed over CDC).
 	 * When set, the view navigates here automatically; an empty value clears it.
 	 */
@@ -68,6 +74,7 @@ export function useBrowserView({
 	sessionId,
 	active,
 	poppedOut,
+	terminated,
 	previewUrl,
 	previewRevision,
 }: UseBrowserViewOptions): BrowserViewModel {
@@ -77,12 +84,19 @@ export function useBrowserView({
 	const viewIdRef = useRef("");
 	const activeRef = useRef(active);
 	const frameRef = useRef<number | null>(null);
+	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
+	const hasUrlRef = useRef(false);
+	const hasNativeBrowser = Boolean(window.ao?.browser);
 
 	useEffect(() => {
 		activeRef.current = active;
 	}, [active]);
+
+	useEffect(() => {
+		hasUrlRef.current = Boolean(navState.url);
+	}, [navState.url]);
 
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
@@ -94,7 +108,7 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (!activeRef.current || !node || !node.isConnected) {
+		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current) {
 			sendHiddenBounds(id);
 			return;
 		}
@@ -123,6 +137,23 @@ export function useBrowserView({
 			: window.setTimeout(() => measureAndSend(), 16);
 	}, [measureAndSend]);
 
+	// A ResizeObserver only fires on size changes, so a position-only layout shift
+	// leaves the native overlay at stale bounds: entering/leaving pop-out moves the
+	// slot into a different panel, and opening the inspector (what `ao preview`
+	// does) reflows the slot's x without changing the observed node's box size.
+	// Neither fires the observer, so the view visibly spills over the sidebar/
+	// terminal until an unrelated window resize re-measures it. Re-measure now and
+	// again once the panel transition has settled (~240ms) so the final geometry
+	// always wins.
+	const scheduleSettleMeasure = useCallback(() => {
+		scheduleMeasure();
+		if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+		settleTimerRef.current = window.setTimeout(() => {
+			settleTimerRef.current = null;
+			measureAndSend();
+		}, 280);
+	}, [measureAndSend, scheduleMeasure]);
+
 	const slotRef = useCallback(
 		(node: HTMLDivElement | null) => {
 			observerRef.current?.disconnect();
@@ -146,12 +177,27 @@ export function useBrowserView({
 
 	useEffect(() => {
 		let disposed = false;
+		if (!hasNativeBrowser) {
+			const state = {
+				...EMPTY_NAV_STATE,
+				viewId: `preview-${sessionId}`,
+				url: "",
+				title: "",
+			};
+			viewIdRef.current = state.viewId;
+			setViewId(state.viewId);
+			setNavState(state);
+			return () => {
+				disposed = true;
+				viewIdRef.current = "";
+			};
+		}
 		window.ao?.browser.ensure(sessionId).then((state) => {
 			if (disposed) return;
 			viewIdRef.current = state.viewId;
 			setViewId(state.viewId);
 			setNavState(state);
-			scheduleMeasure();
+			scheduleSettleMeasure();
 		});
 		return () => {
 			disposed = true;
@@ -161,7 +207,7 @@ export function useBrowserView({
 			}
 			viewIdRef.current = "";
 		};
-	}, [scheduleMeasure, sendHiddenBounds, sessionId]);
+	}, [hasNativeBrowser, scheduleSettleMeasure, sendHiddenBounds, sessionId]);
 
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
@@ -171,12 +217,12 @@ export function useBrowserView({
 	}, []);
 
 	useEffect(() => {
-		if (active) {
-			scheduleMeasure();
+		if (navState.url && active) {
+			scheduleSettleMeasure();
 		} else {
 			sendHiddenBounds();
 		}
-	}, [active, poppedOut, scheduleMeasure, sendHiddenBounds]);
+	}, [active, navState.url, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
@@ -187,6 +233,7 @@ export function useBrowserView({
 			window.removeEventListener("scroll", handle, true);
 			observerRef.current?.disconnect();
 			cancelScheduledMeasure();
+			if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
 		};
 	}, [cancelScheduledMeasure, scheduleMeasure]);
 
@@ -198,17 +245,42 @@ export function useBrowserView({
 	}, []);
 
 	const navigate = useCallback(
-		(url: string) => withView((id) => window.ao!.browser.navigate({ viewId: id, url })),
-		[withView],
+		(url: string) => {
+			if (!hasNativeBrowser) {
+				const normalized = url.trim();
+				setNavState((current) => ({
+					...current,
+					url: normalized,
+					title: normalized ? "AO preview" : "",
+					isLoading: false,
+				}));
+				return Promise.resolve();
+			}
+			return withView((id) => window.ao!.browser.navigate({ viewId: id, url }));
+		},
+		[hasNativeBrowser, withView],
 	);
 
-	const clear = useCallback(() => withView((id) => window.ao!.browser.clear(id)), [withView]);
+	const clear = useCallback(() => {
+		if (!hasNativeBrowser) {
+			setNavState((current) => ({ ...current, url: "", title: "", isLoading: false }));
+			return Promise.resolve();
+		}
+		return withView((id) => window.ao!.browser.clear(id));
+	}, [hasNativeBrowser, withView]);
+
+	// When the session is terminated, clear the view and stop reacting to
+	// daemon-driven preview changes so stale content does not remain visible.
+	useEffect(() => {
+		if (!terminated) return;
+		void clear();
+	}, [clear, terminated]);
 
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
 	useEffect(() => {
-		if (!viewId) return;
+		if (!viewId || terminated) return;
 		const target = previewUrl?.trim() ?? "";
 		const revision = typeof previewRevision === "number" ? previewRevision : null;
 		const previous = previewTriggerRef.current;
@@ -235,10 +307,10 @@ export function useBrowserView({
 		navState,
 		slotRef,
 		navigate,
-		goBack: () => withView((id) => window.ao!.browser.goBack(id)),
-		goForward: () => withView((id) => window.ao!.browser.goForward(id)),
-		reload: () => withView((id) => window.ao!.browser.reload(id)),
-		stop: () => withView((id) => window.ao!.browser.stop(id)),
+		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),
+		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
+		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
+		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
 		destroy,
 	};
 }
