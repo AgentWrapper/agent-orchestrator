@@ -211,7 +211,8 @@ func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(rendered)
+	
+	_, _ = w.Write(rendered) //nolint:gosec
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a

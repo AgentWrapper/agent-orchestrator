@@ -83,7 +83,8 @@ func mostRecentPreviewable(workspacePath string) (Entry, bool) {
 	seen := 0
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil // skip unreadable entries rather than aborting the scan
+			//nolint:nilerr
+			return nil
 		}
 		if d.IsDir() {
 			if p != root && skipPreviewDir(d.Name()) {
@@ -100,10 +101,12 @@ func mostRecentPreviewable(workspacePath string) (Entry, bool) {
 		}
 		info, err := d.Info()
 		if err != nil {
+			//nolint:nilerr
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
+			//nolint:nilerr
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
