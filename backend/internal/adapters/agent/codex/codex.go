@@ -82,6 +82,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
+	p.appendWrapperFlags(&cmd)
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
@@ -121,8 +122,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 24)
-	cmd = append(cmd, binary, "resume")
+	cmd = make([]string, 0, 25)
+	cmd = append(cmd, binary)
+	p.appendWrapperFlags(&cmd)
+	cmd = append(cmd, "resume")
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
@@ -164,6 +167,12 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
+}
+
+func (p *Plugin) appendWrapperFlags(cmd *[]string) {
+	if p.adapterID() == "codex-fugu" {
+		*cmd = append(*cmd, "--no-update")
+	}
 }
 
 func loginStatusForBinary(ctx context.Context, binary string) (ports.AgentAuthStatus, string, error, error) {

@@ -106,6 +106,7 @@ func TestFuguManifestAndLaunchCommandMirrorCodex(t *testing.T) {
 
 	want := []string{
 		"codex-fugu",
+		"--no-update",
 		"-c", "check_for_update_on_startup=false",
 		"-c", "notice.hide_rate_limit_model_nudge=true",
 		"--dangerously-bypass-hook-trust",
@@ -656,6 +657,7 @@ func TestFuguGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want := []string{
 		"codex-fugu",
+		"--no-update",
 		"resume",
 		"-c", "check_for_update_on_startup=false",
 		"-c", "notice.hide_rate_limit_model_nudge=true",
