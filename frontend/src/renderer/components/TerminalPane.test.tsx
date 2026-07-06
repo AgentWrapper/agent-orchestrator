@@ -1,18 +1,72 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane } from "./TerminalPane";
 
+const terminalState = vi.hoisted(() => ({
+	attach: vi.fn(() => () => undefined),
+	fakeTerminal: {
+		cols: 80,
+		rows: 24,
+		write: vi.fn(),
+		writeln: vi.fn(),
+		clear: vi.fn(),
+		onUserInput: vi.fn(() => ({ dispose: vi.fn() })),
+		onResize: vi.fn(() => ({ dispose: vi.fn() })),
+	},
+}));
+
+const muxState = vi.hoisted(() => ({
+	open: vi.fn(),
+	close: vi.fn(),
+	dispose: vi.fn(),
+	dataListener: undefined as undefined | ((bytes: Uint8Array) => void),
+	openedListener: undefined as undefined | (() => void),
+}));
+
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: vi.fn() },
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+	getApiBaseUrl: () => "http://127.0.0.1:3001",
 }));
 
-vi.mock("./XtermTerminal", () => ({
-	XtermTerminal: () => <div>terminal</div>,
+vi.mock("../hooks/useTerminalSession", () => ({
+	useTerminalSession: () => ({ attach: terminalState.attach, state: "attached", error: undefined }),
 }));
+
+vi.mock("../lib/terminal-mux", () => ({
+	muxUrlFromApiBase: (baseUrl: string) => `${baseUrl.replace(/^http/, "ws")}/mux`,
+	createTerminalMux: () => ({
+		open: muxState.open,
+		close: muxState.close,
+		dispose: muxState.dispose,
+		onData: (_id: string, listener: (bytes: Uint8Array) => void) => {
+			muxState.dataListener = listener;
+			return vi.fn();
+		},
+		onOpened: (_id: string, listener: () => void) => {
+			muxState.openedListener = listener;
+			return vi.fn();
+		},
+		onExit: () => vi.fn(),
+		onError: () => vi.fn(),
+		onConnectionChange: () => vi.fn(),
+	}),
+}));
+
+vi.mock("./XtermTerminal", async () => {
+	const React = await vi.importActual<typeof import("react")>("react");
+	return {
+		XtermTerminal: ({ onReady }: { onReady?: (terminal: typeof terminalState.fakeTerminal) => void }) => {
+			React.useEffect(() => {
+				onReady?.(terminalState.fakeTerminal);
+			}, [onReady]);
+			return React.createElement("div", null, "terminal");
+		},
+	};
+});
 
 const baseSession = {
 	id: "sess-a",
@@ -38,6 +92,26 @@ function renderPane(session: WorkspaceSession) {
 }
 
 describe("TerminalPane message composer", () => {
+	it("renders live mux transcript output in browser mode without the Electron bridge", async () => {
+		const bridge = window.ao;
+		muxState.open.mockClear();
+		muxState.dataListener = undefined;
+		muxState.openedListener = undefined;
+		delete window.ao;
+		try {
+			renderPane({ ...baseSession, kind: "orchestrator", title: "my-app Orchestrator" });
+
+			await waitFor(() => expect(muxState.open).toHaveBeenCalledWith("sess-a/terminal_0", 120, 40));
+			act(() => muxState.openedListener?.());
+			act(() => muxState.dataListener?.(new TextEncoder().encode("\x1b[32mhello orchestrator\x1b[0m\r")));
+
+			expect(screen.getByText(/hello orchestrator/)).toBeInTheDocument();
+			expect(screen.queryByText("terminal")).not.toBeInTheDocument();
+		} finally {
+			window.ao = bridge;
+		}
+	});
+
 	it("clears draft text when navigating between sessions", async () => {
 		const user = userEvent.setup();
 		const { rerender } = renderPane(baseSession);

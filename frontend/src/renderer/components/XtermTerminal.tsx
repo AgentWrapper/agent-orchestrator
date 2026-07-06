@@ -48,8 +48,11 @@ export type XtermTerminalProps = {
 
 // Prefer the WebGL renderer, fall back to 2D canvas. Both rasterize box-drawing
 // glyphs themselves onto a fixed cell grid; the DOM renderer does not, so TUI
-// borders would drift. Loaded after open().
+// borders would drift. Loaded after open(). Browser mode deliberately keeps
+// xterm's DOM renderer: headless Chromium can construct the raster addons but
+// then crash in xterm's viewport dimension path before the terminal settles.
 function loadRenderer(term: Terminal): void {
+	if (!window.ao) return;
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => webgl.dispose());
@@ -246,8 +249,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// history (the alt screen doesn't feed scrollback) and wheel events
 				// are forwarded as mouse reports instead of scrolling locally. 0 also
 				// stops FitAddon reserving ~14px on the right for a scrollbar that can
-				// never appear.
-				scrollback: 0,
+				// never appear. Browser mode uses xterm's DOM renderer, whose viewport
+				// setup in headless Chromium can race when scrollback is 0.
+				scrollback: window.ao ? 0 : 1000,
 				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
 			});
 		} catch (error) {

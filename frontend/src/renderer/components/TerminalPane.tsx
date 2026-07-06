@@ -6,7 +6,8 @@ import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorMessage, getApiBaseUrl } from "../lib/api-client";
+import { createTerminalMux, muxUrlFromApiBase } from "../lib/terminal-mux";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
@@ -28,22 +29,9 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 		) : null;
 
 	if (!window.ao) {
-		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		return (
 			<div className="flex h-full min-h-0 flex-col bg-terminal">
-				<pre
-					className="min-h-0 flex-1 overflow-auto bg-terminal p-4 font-mono leading-relaxed text-[var(--term-fg)]"
-					style={{ fontSize }}
-				>
-					<span className="text-[var(--term-dim)]">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
-					<span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {provider}
-					{"\n"}
-					<span className="text-[var(--term-green)]">{session?.title ?? "Agent Orchestrator"}</span>
-					{"\n\n"}
-					<span className="text-[var(--term-dim)]">
-						Browser mode sends messages through AO. Electron attaches the live PTY.
-					</span>
-				</pre>
+				<BrowserTerminalTranscript session={session} fontSize={fontSize} />
 				{messageComposer}
 			</div>
 		);
@@ -64,6 +52,77 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			{messageComposer}
 		</div>
 	);
+}
+
+function BrowserTerminalTranscript({ session, fontSize }: { session?: WorkspaceSession; fontSize: number }) {
+	const [lines, setLines] = useState<string[]>([]);
+	const [status, setStatus] = useState("Connecting to session transcript...");
+	const decoderRef = useRef(new TextDecoder());
+	const handleId = session?.terminalHandleId;
+
+	useEffect(() => {
+		setLines([]);
+		decoderRef.current = new TextDecoder();
+		if (!handleId) {
+			setStatus("No terminal transcript is available for this session.");
+			return undefined;
+		}
+
+		setStatus("Connecting to session transcript...");
+		const mux = createTerminalMux(muxUrlFromApiBase(getApiBaseUrl()));
+		const disposers = [
+			mux.onOpened(handleId, () => setStatus("")),
+			mux.onData(handleId, (bytes) => {
+				const chunk = decoderRef.current.decode(bytes, { stream: true });
+				if (!chunk) return;
+				setLines((current) => [...current, stripAnsi(chunk)].slice(-200));
+			}),
+			mux.onExit(handleId, () => setStatus("Session terminal exited.")),
+			mux.onError(handleId, (message) => setStatus(`Terminal error: ${message}`)),
+			mux.onConnectionChange((state) => {
+				if (state === "closed") setStatus("Transcript disconnected. Retrying when the page refreshes.");
+			}),
+		];
+		mux.open(handleId, 120, 40);
+
+		return () => {
+			disposers.forEach((dispose) => dispose());
+			mux.close(handleId);
+			mux.dispose();
+		};
+	}, [handleId]);
+
+	return (
+		<pre
+			className="min-h-0 flex-1 overflow-auto bg-terminal p-4 font-mono leading-relaxed text-[var(--term-fg)]"
+			style={{ fontSize }}
+		>
+			{session ? (
+				<>
+					<span className="text-[var(--term-dim)]">~/{session.workspaceName}</span>{" "}
+					<span className="text-[var(--term-blue)]">{session.branch || "main"}</span>
+					{"\n"}
+					<span className="text-[var(--term-green)]">{session.title}</span>
+					{"\n\n"}
+				</>
+			) : null}
+			{lines.join("")}
+			{status ? (
+				<>
+					{lines.length > 0 ? "\n" : ""}
+					<span className="text-[var(--term-dim)]">{status}</span>
+				</>
+			) : null}
+		</pre>
+	);
+}
+
+function stripAnsi(value: string): string {
+	return value
+		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+		.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+		.replace(/\x1b[()][A-Za-z0-9]/g, "")
+		.replace(/\r(?!\n)/g, "\n");
 }
 
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
