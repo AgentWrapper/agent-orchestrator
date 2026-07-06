@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,6 +60,13 @@ type Manager struct {
 	clock     func() time.Time
 	react     reactionState
 	telemetry ports.EventSink
+	// switching holds sessions currently mid agent-switch: the old runtime has
+	// been (or is about to be) torn down and the new one is not yet live, so a
+	// stale "dead/exited" fact would otherwise wrongly terminate them.
+	switching map[domain.SessionID]struct{}
+	// switchExitSuppressUntil suppresses late exit facts from the retired
+	// runtime after MarkSwitched points the session at the replacement.
+	switchExitSuppressUntil map[domain.SessionID]time.Time
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -68,7 +76,15 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState()}
+	m := &Manager{
+		store:                   store,
+		messenger:               messenger,
+		window:                  defaultRecentActivityWindow,
+		clock:                   clock,
+		react:                   newReactionState(),
+		switching:               make(map[domain.SessionID]struct{}),
+		switchExitSuppressUntil: make(map[domain.SessionID]time.Time),
+	}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -99,6 +115,12 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // failed probe or liveness disagreement is ignored; no transient lifecycle state is stored.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		// A session mid agent-switch has no live runtime by design, and a
+		// just-retired runtime can still report dead briefly; ignore those
+		// stale facts so the replacement is not mistaken for a crash.
+		if m.suppressesSwitchExitLocked(id, now) {
+			return cur, false
+		}
 		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
@@ -126,6 +148,14 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
+	if staleRuntimeTokenSignal(rec, s) {
+		m.mu.Unlock()
+		return nil
+	}
+	if staleSwitchExitSignal(rec, s) && m.suppressesSwitchExitLocked(id, now) {
+		m.mu.Unlock()
+		return nil
+	}
 	if rec.IsTerminated {
 		m.mu.Unlock()
 		return nil
@@ -263,6 +293,120 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	})
 }
 
+// TryBeginSwitch atomically claims the switch guard for id: it returns true and
+// marks the session mid-switch, or false if a switch is already in flight. The
+// check-and-set is a single critical section so two concurrent switches cannot
+// both proceed and race two teardown/relaunch cycles over one worktree. While
+// the guard is held, ApplyRuntimeObservation ignores the reaper's "dead" fact
+// (the window where the old runtime is gone and the new one is not yet live).
+// Pair a true result with EndSwitch (defer it).
+func (m *Manager) TryBeginSwitch(id domain.SessionID) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.switching[id]; ok {
+		return false
+	}
+	m.switching[id] = struct{}{}
+	return true
+}
+
+// EndSwitch clears the mid-switch guard set by BeginSwitch. Idempotent.
+func (m *Manager) EndSwitch(id domain.SessionID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.switching, id)
+}
+
+func (m *Manager) suppressesSwitchExitLocked(id domain.SessionID, now time.Time) bool {
+	if _, sw := m.switching[id]; sw {
+		return true
+	}
+	until, ok := m.switchExitSuppressUntil[id]
+	if !ok {
+		return false
+	}
+	if now.Before(until) || now.Equal(until) {
+		return true
+	}
+	delete(m.switchExitSuppressUntil, id)
+	return false
+}
+
+// IsSwitching reports whether a switch is currently in flight for id, so a
+// caller can reject a concurrent switch on the same session.
+func (m *Manager) IsSwitching(id domain.SessionID) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.switching[id]
+	return ok
+}
+
+// MarkSwitched atomically re-points a live session at a new agent harness and
+// runtime handle. Unlike MarkSpawned (whose mergeMetadata only sets non-empty
+// fields) it changes the persisted harness and replaces AgentSessionID with the
+// target harness's native resume id, which may be empty until the new agent's
+// hook reports one. Activity resets to idle and the first-signal receipt clears
+// so the new agent re-proves its hook pipeline (a hookless harness will read as
+// no_signal after the grace period).
+func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("lifecycle: MarkSwitched for unknown session %q", id)
+	}
+	now := m.clock()
+	m.switchExitSuppressUntil[id] = now.Add(switchExitSignalSuppressTime)
+	rec.Harness = harness
+	rec.IsTerminated = false
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.FirstSignalAt = time.Time{}
+	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
+	rec.Metadata.RuntimeToken = metadata.RuntimeToken
+	// Persist the launch worktree: a terminated relaunch may restore to a
+	// different path (changed session prefix / managed root), and a stale
+	// WorkspacePath/Branch would break later terminal/workspace/cleanup ops.
+	if metadata.WorkspacePath != "" {
+		rec.Metadata.WorkspacePath = metadata.WorkspacePath
+	}
+	if metadata.Branch != "" {
+		rec.Metadata.Branch = metadata.Branch
+	}
+	rec.Metadata.Model = metadata.Model
+	if metadata.LaunchedHarnesses != nil {
+		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
+	}
+	if metadata.AgentSessionIDs != nil {
+		rec.Metadata.AgentSessionIDs = metadata.AgentSessionIDs
+	}
+	rec.Metadata.AgentSessionID = metadata.AgentSessionID
+	rec.UpdatedAt = now
+	return m.store.UpdateSession(ctx, rec)
+}
+
+func staleSwitchExitSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
+	if s.State != domain.ActivityExited {
+		return false
+	}
+	currentToken := strings.TrimSpace(rec.Metadata.RuntimeToken)
+	if currentToken != "" {
+		return false
+	}
+	return s.Harness != "" && s.Harness != rec.Harness
+}
+
+func staleRuntimeTokenSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
+	currentToken := strings.TrimSpace(rec.Metadata.RuntimeToken)
+	if currentToken == "" {
+		return false
+	}
+	signalToken := strings.TrimSpace(s.RuntimeToken)
+	return signalToken == "" || signalToken != currentToken
+}
+
 // sameActivity reports whether two activity signals describe the same state.
 // LastActivityAt is intentionally ignored: same-state repeats (e.g. a stream
 // of idle notifications) must not rewrite UpdatedAt or fan out a CDC event.
@@ -281,7 +425,19 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.Branch, in.Branch)
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
+	set(&base.RuntimeToken, in.RuntimeToken)
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	set(&base.Model, in.Model)
+	set(&base.PreviewURL, in.PreviewURL)
+	if in.PreviewRevision != 0 {
+		base.PreviewRevision = in.PreviewRevision
+	}
+	if in.LaunchedHarnesses != nil {
+		base.LaunchedHarnesses = in.LaunchedHarnesses
+	}
+	if in.AgentSessionIDs != nil {
+		base.AgentSessionIDs = in.AgentSessionIDs
+	}
 	return base
 }

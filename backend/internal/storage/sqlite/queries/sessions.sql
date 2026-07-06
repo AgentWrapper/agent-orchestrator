@@ -5,34 +5,34 @@ SELECT COALESCE(MAX(num), 0) + 1 AS next FROM sessions WHERE project_id = ?;
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
-    branch, workspace_path, runtime_handle_id, agent_session_id, prompt, model,
-    preview_url, preview_revision, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    branch, workspace_path, runtime_handle_id, runtime_token, agent_session_id, prompt, model,
+    preview_url, preview_revision, launched_harnesses, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
-    branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?, model = ?,
-    preview_url = ?, preview_revision = ?, updated_at = ?
+    branch = ?, workspace_path = ?, runtime_handle_id = ?, runtime_token = ?, agent_session_id = ?, prompt = ?, model = ?,
+    preview_url = ?, preview_revision = ?, launched_harnesses = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
 FROM sessions ORDER BY project_id, num;
 
 

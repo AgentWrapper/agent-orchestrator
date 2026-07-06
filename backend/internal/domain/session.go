@@ -28,6 +28,7 @@ type SessionMetadata struct {
 	Branch          string `json:"branch,omitempty"`
 	WorkspacePath   string `json:"workspacePath,omitempty"`
 	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
+	RuntimeToken    string `json:"runtimeToken,omitempty"`
 	AgentSessionID  string `json:"agentSessionId,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	// Model is the per-session model override supplied at spawn. Empty means
@@ -41,6 +42,17 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// LaunchedHarnesses records every agent harness that has actually launched
+	// for this session. Agent switching reads it to decide resume vs fresh
+	// launch: a harness already in this set has a native session on disk (e.g.
+	// Claude Code pins a deterministic --session-id), so relaunching it fresh
+	// would collide ("session id already in use") — it must resume instead. A
+	// harness absent from the set is launched fresh.
+	LaunchedHarnesses []AgentHarness `json:"launchedHarnesses,omitempty"`
+	// AgentSessionIDs preserves hook-captured native resume ids by harness. The
+	// scalar AgentSessionID is the current harness's id; switch uses this map to
+	// restore a previously-used token-based harness after another agent ran.
+	AgentSessionIDs map[AgentHarness]string `json:"agentSessionIds,omitempty"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable

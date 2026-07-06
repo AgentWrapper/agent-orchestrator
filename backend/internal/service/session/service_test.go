@@ -205,6 +205,7 @@ type fakeCommander struct {
 	retired         []domain.SessionID
 	sent            []domain.SessionID
 	cleanupProjects []domain.ProjectID
+	switched        int
 	killErr         error
 	retireErr       error
 	sendErr         error
@@ -229,12 +230,38 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
 	return domain.SessionRecord{}, nil
 }
+func (f *fakeCommander) SwitchHarness(context.Context, domain.SessionID, domain.AgentHarness, string) (domain.SessionRecord, error) {
+	f.switched++
+	return domain.SessionRecord{}, nil
+}
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
 		return false, f.killErr
 	}
 	f.killed = append(f.killed, id)
 	return true, nil
+}
+
+func TestSwitchHarness_RejectsMergedSessionAtServiceLayer(t *testing.T) {
+	st := newFakeStore()
+	id := domain.SessionID("mer-1")
+	// Terminated session with a merged PR derives StatusMerged in the read model.
+	st.sessions[id] = domain.SessionRecord{
+		ID: id, ProjectID: "mer", IsTerminated: true,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws", Branch: "b"},
+	}
+	st.pr[id] = domain.PRFacts{Merged: true}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SwitchHarness(context.Background(), id, domain.HarnessCodex, "")
+	if err == nil || !strings.Contains(err.Error(), "merged") {
+		t.Fatalf("err = %v, want a merged-session rejection", err)
+	}
+	if fc.switched != 0 {
+		t.Fatalf("manager.SwitchHarness called %d times; a merged session must be rejected before delegating", fc.switched)
+	}
 }
 func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.SessionID) error {
 	if f.retireErr != nil {

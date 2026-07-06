@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -187,100 +190,108 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 }
 
 type sessionRow struct {
-	ID              domain.SessionID
-	ProjectID       domain.ProjectID
-	IssueID         domain.IssueID
-	Kind            domain.SessionKind
-	Harness         domain.AgentHarness
-	DisplayName     string
-	ActivityState   domain.ActivityState
-	ActivityLastAt  time.Time
-	FirstSignalAt   sql.NullTime
-	IsTerminated    bool
-	Branch          string
-	WorkspacePath   string
-	RuntimeHandleID string
-	AgentSessionID  string
-	Prompt          string
-	Model           string
-	PreviewURL      string
-	PreviewRevision int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                domain.SessionID
+	ProjectID         domain.ProjectID
+	IssueID           domain.IssueID
+	Kind              domain.SessionKind
+	Harness           domain.AgentHarness
+	DisplayName       string
+	ActivityState     domain.ActivityState
+	ActivityLastAt    time.Time
+	FirstSignalAt     sql.NullTime
+	IsTerminated      bool
+	Branch            string
+	WorkspacePath     string
+	RuntimeHandleID   string
+	RuntimeToken      string
+	AgentSessionID    string
+	Prompt            string
+	Model             string
+	PreviewURL        string
+	PreviewRevision   int64
+	LaunchedHarnesses string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 func getSessionRow(row gen.GetSessionRow) sessionRow {
 	return sessionRow{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		DisplayName:     row.DisplayName,
-		ActivityState:   row.ActivityState,
-		ActivityLastAt:  row.ActivityLastAt,
-		FirstSignalAt:   row.FirstSignalAt,
-		IsTerminated:    row.IsTerminated,
-		Branch:          row.Branch,
-		WorkspacePath:   row.WorkspacePath,
-		RuntimeHandleID: row.RuntimeHandleID,
-		AgentSessionID:  row.AgentSessionID,
-		Prompt:          row.Prompt,
-		Model:           row.Model,
-		PreviewURL:      row.PreviewURL,
-		PreviewRevision: row.PreviewRevision,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                row.ID,
+		ProjectID:         row.ProjectID,
+		IssueID:           row.IssueID,
+		Kind:              row.Kind,
+		Harness:           row.Harness,
+		DisplayName:       row.DisplayName,
+		ActivityState:     row.ActivityState,
+		ActivityLastAt:    row.ActivityLastAt,
+		FirstSignalAt:     row.FirstSignalAt,
+		IsTerminated:      row.IsTerminated,
+		Branch:            row.Branch,
+		WorkspacePath:     row.WorkspacePath,
+		RuntimeHandleID:   row.RuntimeHandleID,
+		RuntimeToken:      row.RuntimeToken,
+		AgentSessionID:    row.AgentSessionID,
+		Prompt:            row.Prompt,
+		Model:             row.Model,
+		PreviewURL:        row.PreviewURL,
+		PreviewRevision:   row.PreviewRevision,
+		LaunchedHarnesses: row.LaunchedHarnesses,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
 	}
 }
 
 func listSessionsByProjectRow(row gen.ListSessionsByProjectRow) sessionRow {
 	return sessionRow{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		DisplayName:     row.DisplayName,
-		ActivityState:   row.ActivityState,
-		ActivityLastAt:  row.ActivityLastAt,
-		FirstSignalAt:   row.FirstSignalAt,
-		IsTerminated:    row.IsTerminated,
-		Branch:          row.Branch,
-		WorkspacePath:   row.WorkspacePath,
-		RuntimeHandleID: row.RuntimeHandleID,
-		AgentSessionID:  row.AgentSessionID,
-		Prompt:          row.Prompt,
-		Model:           row.Model,
-		PreviewURL:      row.PreviewURL,
-		PreviewRevision: row.PreviewRevision,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                row.ID,
+		ProjectID:         row.ProjectID,
+		IssueID:           row.IssueID,
+		Kind:              row.Kind,
+		Harness:           row.Harness,
+		DisplayName:       row.DisplayName,
+		ActivityState:     row.ActivityState,
+		ActivityLastAt:    row.ActivityLastAt,
+		FirstSignalAt:     row.FirstSignalAt,
+		IsTerminated:      row.IsTerminated,
+		Branch:            row.Branch,
+		WorkspacePath:     row.WorkspacePath,
+		RuntimeHandleID:   row.RuntimeHandleID,
+		RuntimeToken:      row.RuntimeToken,
+		AgentSessionID:    row.AgentSessionID,
+		Prompt:            row.Prompt,
+		Model:             row.Model,
+		PreviewURL:        row.PreviewURL,
+		PreviewRevision:   row.PreviewRevision,
+		LaunchedHarnesses: row.LaunchedHarnesses,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
 	}
 }
 
 func listAllSessionsRow(row gen.ListAllSessionsRow) sessionRow {
 	return sessionRow{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		DisplayName:     row.DisplayName,
-		ActivityState:   row.ActivityState,
-		ActivityLastAt:  row.ActivityLastAt,
-		FirstSignalAt:   row.FirstSignalAt,
-		IsTerminated:    row.IsTerminated,
-		Branch:          row.Branch,
-		WorkspacePath:   row.WorkspacePath,
-		RuntimeHandleID: row.RuntimeHandleID,
-		AgentSessionID:  row.AgentSessionID,
-		Prompt:          row.Prompt,
-		Model:           row.Model,
-		PreviewURL:      row.PreviewURL,
-		PreviewRevision: row.PreviewRevision,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                row.ID,
+		ProjectID:         row.ProjectID,
+		IssueID:           row.IssueID,
+		Kind:              row.Kind,
+		Harness:           row.Harness,
+		DisplayName:       row.DisplayName,
+		ActivityState:     row.ActivityState,
+		ActivityLastAt:    row.ActivityLastAt,
+		FirstSignalAt:     row.FirstSignalAt,
+		IsTerminated:      row.IsTerminated,
+		Branch:            row.Branch,
+		WorkspacePath:     row.WorkspacePath,
+		RuntimeHandleID:   row.RuntimeHandleID,
+		RuntimeToken:      row.RuntimeToken,
+		AgentSessionID:    row.AgentSessionID,
+		Prompt:            row.Prompt,
+		Model:             row.Model,
+		PreviewURL:        row.PreviewURL,
+		PreviewRevision:   row.PreviewRevision,
+		LaunchedHarnesses: row.LaunchedHarnesses,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
 	}
 }
 
@@ -299,14 +310,17 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:  row.IsTerminated,
 		Metadata: domain.SessionMetadata{
-			Branch:          row.Branch,
-			WorkspacePath:   row.WorkspacePath,
-			RuntimeHandleID: row.RuntimeHandleID,
-			AgentSessionID:  row.AgentSessionID,
-			Prompt:          row.Prompt,
-			Model:           row.Model,
-			PreviewURL:      row.PreviewURL,
-			PreviewRevision: row.PreviewRevision,
+			Branch:            row.Branch,
+			WorkspacePath:     row.WorkspacePath,
+			RuntimeHandleID:   row.RuntimeHandleID,
+			RuntimeToken:      row.RuntimeToken,
+			AgentSessionID:    row.AgentSessionID,
+			Prompt:            row.Prompt,
+			Model:             row.Model,
+			PreviewURL:        row.PreviewURL,
+			PreviewRevision:   row.PreviewRevision,
+			LaunchedHarnesses: launchedHarnesses(row.LaunchedHarnesses),
+			AgentSessionIDs:   launchedHarnessSessionIDs(row.LaunchedHarnesses, row.Harness, row.AgentSessionID),
 		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -316,52 +330,198 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:              rec.ID,
-		ProjectID:       rec.ProjectID,
-		Num:             num,
-		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
-		Harness:         rec.Harness,
-		DisplayName:     rec.DisplayName,
-		ActivityState:   activity.State,
-		ActivityLastAt:  activity.LastActivityAt,
-		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:    rec.IsTerminated,
-		Branch:          rec.Metadata.Branch,
-		WorkspacePath:   rec.Metadata.WorkspacePath,
-		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
-		AgentSessionID:  rec.Metadata.AgentSessionID,
-		Prompt:          rec.Metadata.Prompt,
-		Model:           rec.Metadata.Model,
-		PreviewURL:      rec.Metadata.PreviewURL,
-		PreviewRevision: rec.Metadata.PreviewRevision,
-		CreatedAt:       rec.CreatedAt,
-		UpdatedAt:       rec.UpdatedAt,
+		ID:                rec.ID,
+		ProjectID:         rec.ProjectID,
+		Num:               num,
+		IssueID:           rec.IssueID,
+		Kind:              rec.Kind,
+		Harness:           rec.Harness,
+		DisplayName:       rec.DisplayName,
+		ActivityState:     activity.State,
+		ActivityLastAt:    activity.LastActivityAt,
+		FirstSignalAt:     timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:      rec.IsTerminated,
+		Branch:            rec.Metadata.Branch,
+		WorkspacePath:     rec.Metadata.WorkspacePath,
+		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
+		RuntimeToken:      rec.Metadata.RuntimeToken,
+		AgentSessionID:    rec.Metadata.AgentSessionID,
+		Prompt:            rec.Metadata.Prompt,
+		Model:             rec.Metadata.Model,
+		PreviewURL:        rec.Metadata.PreviewURL,
+		PreviewRevision:   rec.Metadata.PreviewRevision,
+		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),
+		CreatedAt:         rec.CreatedAt,
+		UpdatedAt:         rec.UpdatedAt,
 	}
 }
 
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:              rec.ID,
-		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
-		Harness:         rec.Harness,
-		DisplayName:     rec.DisplayName,
-		ActivityState:   activity.State,
-		ActivityLastAt:  activity.LastActivityAt,
-		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:    rec.IsTerminated,
-		Branch:          rec.Metadata.Branch,
-		WorkspacePath:   rec.Metadata.WorkspacePath,
-		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
-		AgentSessionID:  rec.Metadata.AgentSessionID,
-		Prompt:          rec.Metadata.Prompt,
-		Model:           rec.Metadata.Model,
-		PreviewURL:      rec.Metadata.PreviewURL,
-		PreviewRevision: rec.Metadata.PreviewRevision,
-		UpdatedAt:       rec.UpdatedAt,
+		ID:                rec.ID,
+		IssueID:           rec.IssueID,
+		Kind:              rec.Kind,
+		Harness:           rec.Harness,
+		DisplayName:       rec.DisplayName,
+		ActivityState:     activity.State,
+		ActivityLastAt:    activity.LastActivityAt,
+		FirstSignalAt:     timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:      rec.IsTerminated,
+		Branch:            rec.Metadata.Branch,
+		WorkspacePath:     rec.Metadata.WorkspacePath,
+		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
+		RuntimeToken:      rec.Metadata.RuntimeToken,
+		AgentSessionID:    rec.Metadata.AgentSessionID,
+		Prompt:            rec.Metadata.Prompt,
+		Model:             rec.Metadata.Model,
+		PreviewURL:        rec.Metadata.PreviewURL,
+		PreviewRevision:   rec.Metadata.PreviewRevision,
+		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),
+		UpdatedAt:         rec.UpdatedAt,
 	}
+}
+
+type launchedHarnessesPayload struct {
+	Harnesses       []domain.AgentHarness          `json:"harnesses,omitempty"`
+	AgentSessionIDs map[domain.AgentHarness]string `json:"agentSessionIds,omitempty"`
+}
+
+// launchedHarnessPayload serialises the launched harness set and optional
+// per-harness native resume ids into sessions.launched_harnesses. Older rows
+// used a comma-separated list; launchedHarnesses still accepts that legacy form.
+func launchedHarnessPayload(meta domain.SessionMetadata) string {
+	ids := normalizedAgentSessionIDs(meta.AgentSessionIDs, meta.LaunchedHarnesses, "", "")
+	if len(meta.LaunchedHarnesses) == 0 && len(ids) == 0 {
+		return ""
+	}
+	if len(ids) == 0 {
+		return harnessCSV(meta.LaunchedHarnesses)
+	}
+	data, err := json.Marshal(launchedHarnessesPayload{
+		Harnesses:       normalizedHarnesses(meta.LaunchedHarnesses),
+		AgentSessionIDs: ids,
+	})
+	if err != nil {
+		return harnessCSV(meta.LaunchedHarnesses)
+	}
+	return string(data)
+}
+
+func harnessCSV(hs []domain.AgentHarness) string {
+	hs = normalizedHarnesses(hs)
+	parts := make([]string, 0, len(hs))
+	for _, h := range hs {
+		parts = append(parts, string(h))
+	}
+	return strings.Join(parts, ",")
+}
+
+func launchedHarnesses(s string) []domain.AgentHarness {
+	if payload, ok := parseLaunchedHarnessesPayload(s); ok {
+		return payload.Harnesses
+	}
+	return parseHarnessCSV(s)
+}
+
+func launchedHarnessSessionIDs(s string, current domain.AgentHarness, currentID string) map[domain.AgentHarness]string {
+	payload, _ := parseLaunchedHarnessesPayload(s)
+	launched := payload.Harnesses
+	if launched == nil {
+		launched = parseHarnessCSV(s)
+	}
+	return normalizedAgentSessionIDs(payload.AgentSessionIDs, launched, current, currentID)
+}
+
+func parseLaunchedHarnessesPayload(s string) (launchedHarnessesPayload, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || !strings.HasPrefix(s, "{") {
+		return launchedHarnessesPayload{}, false
+	}
+	var payload launchedHarnessesPayload
+	if err := json.Unmarshal([]byte(s), &payload); err != nil {
+		return launchedHarnessesPayload{}, false
+	}
+	payload.Harnesses = normalizedHarnesses(payload.Harnesses)
+	payload.AgentSessionIDs = normalizedAgentSessionIDs(payload.AgentSessionIDs, payload.Harnesses, "", "")
+	return payload, true
+}
+
+func parseHarnessCSV(s string) []domain.AgentHarness {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]domain.AgentHarness, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, domain.AgentHarness(p))
+		}
+	}
+	return normalizedHarnesses(out)
+}
+
+func normalizedHarnesses(hs []domain.AgentHarness) []domain.AgentHarness {
+	if len(hs) == 0 {
+		return nil
+	}
+	out := make([]domain.AgentHarness, 0, len(hs))
+	seen := make(map[domain.AgentHarness]struct{}, len(hs))
+	for _, h := range hs {
+		h = domain.AgentHarness(strings.TrimSpace(string(h)))
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
+func normalizedAgentSessionIDs(ids map[domain.AgentHarness]string, launched []domain.AgentHarness, current domain.AgentHarness, currentID string) map[domain.AgentHarness]string {
+	out := make(map[domain.AgentHarness]string, len(ids)+1)
+	for h, id := range ids {
+		h = domain.AgentHarness(strings.TrimSpace(string(h)))
+		id = strings.TrimSpace(id)
+		if h != "" && id != "" {
+			out[h] = id
+		}
+	}
+	if current != "" && strings.TrimSpace(currentID) != "" {
+		out[current] = strings.TrimSpace(currentID)
+	}
+	launchedSet := make(map[domain.AgentHarness]struct{}, len(launched)+1)
+	for _, h := range launched {
+		if h != "" {
+			launchedSet[h] = struct{}{}
+		}
+	}
+	if current != "" {
+		launchedSet[current] = struct{}{}
+	}
+	for h := range out {
+		if _, ok := launchedSet[h]; !ok {
+			delete(out, h)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(out))
+	for h := range out {
+		keys = append(keys, string(h))
+	}
+	sort.Strings(keys)
+	stable := make(map[domain.AgentHarness]string, len(out))
+	for _, k := range keys {
+		h := domain.AgentHarness(k)
+		stable[h] = out[h]
+	}
+	return stable
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column

@@ -4,6 +4,8 @@ package sessionmanager
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,6 +45,10 @@ var (
 	// with the system prompt only). Workers without a task and without a native
 	// session id have nothing meaningful to restore.
 	ErrNotResumable = errors.New("session: nothing to resume from")
+	// ErrSwitchInProgress means an agent switch is already running for this
+	// session. The API maps it to a 409 so a double-submit does not race two
+	// teardown/relaunch cycles over one worktree.
+	ErrSwitchInProgress = errors.New("session: switch already in progress")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -50,6 +56,9 @@ const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
 	EnvIssueID   = "AO_ISSUE_ID"
+	// EnvRuntimeToken identifies one launched runtime generation. Hooks echo it
+	// so lifecycle can ignore late callbacks from a retired same-harness runtime.
+	EnvRuntimeToken = "AO_RUNTIME_TOKEN" // #nosec G101 -- env var name, not a credential value.
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 	// EnvRunFile tells a spawned agent's AO hook commands where the daemon's
@@ -70,6 +79,16 @@ const hookBinaryName = "ao"
 type lifecycleRecorder interface {
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
+	// MarkSwitched re-points a session at a new harness and persists the launch
+	// metadata (runtime handle, workspace path/branch, launched-harnesses set),
+	// clearing the harness-specific native resume id (AgentSessionID).
+	MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error
+	// TryBeginSwitch atomically claims the switch guard for the session: false
+	// means a switch is already in flight. Rejecting a concurrent switch and
+	// suppressing the reaper during the runtime gap are the same claim. Pair a
+	// true result with EndSwitch (defer it).
+	TryBeginSwitch(id domain.SessionID) bool
+	EndSwitch(id domain.SessionID)
 }
 
 type runtimeController interface {
@@ -297,11 +316,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime token: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -309,7 +334,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, Model: strings.TrimSpace(cfg.Model)}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt, Model: strings.TrimSpace(cfg.Model)}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -607,21 +632,288 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime token: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
 	}
 	return m.getRecord(ctx, id)
+}
+
+// SwitchHarness re-points a session's agent to newHarness on the same worktree
+// (code and uncommitted work preserved). model, when non-empty, overrides the
+// resolved agent model for the new launch (e.g. a cheaper model on the same
+// harness).
+//
+// The launch is FRESH for a harness that has never run this session, and a
+// RESUME for one that has: an agent that pins a deterministic native session id
+// (e.g. Claude Code's --session-id) would collide ("session id already in use")
+// if relaunched fresh over its own prior session, so a previously-used harness
+// resumes instead. The set of used harnesses is tracked in session metadata.
+//
+// It handles two cases:
+//   - LIVE session: swap in place. The old agent is torn down only AFTER the
+//     new launch command validates, so a bad/unknown harness never disrupts the
+//     running session; the switch guard brackets the runtime gap so the reaper
+//     cannot terminate the session while it briefly has no live runtime.
+//   - TERMINATED session (e.g. the agent exited): relaunch-as. The worktree is
+//     restored and the agent relaunched under it.
+func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHarness domain.AgentHarness, model string) (domain.SessionRecord, error) {
+	// Atomically claim the guard before reading the session row: the snapshot,
+	// validation, teardown, and relaunch must describe one switch attempt. If
+	// the row were loaded first, a second request could use a stale runtime handle
+	// after an earlier switch completed.
+	if !m.lcm.TryBeginSwitch(id) {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrSwitchInProgress)
+	}
+	defer m.lcm.EndSwitch(id)
+
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	if !ok {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotFound)
+	}
+	meta := rec.Metadata
+	// Both the in-place swap and the relaunch-as path reuse the session's
+	// worktree, so its path and branch must exist.
+	if meta.WorkspacePath == "" || meta.Branch == "" {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
+	}
+
+	// ---- validate the new agent BEFORE touching anything ----
+	if !newHarness.IsKnown() {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w: %q", id, ErrUnknownHarness, newHarness)
+	}
+	agent, ok := m.agents.Agent(newHarness)
+	if !ok {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w: %q", id, ErrUnknownHarness, newHarness)
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: system prompt: %w", id, err)
+	}
+	switchModel := strings.TrimSpace(model)
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config, switchModel)
+
+	// A harness this session has already launched has a native session on disk;
+	// relaunching it fresh would collide, so resume it. The current harness
+	// counts as used even when the tracked set predates it (older sessions).
+	agentSessionIDs := agentSessionIDsForSwitch(meta, rec.Harness)
+	resume := newHarness == rec.Harness || containsHarness(meta.LaunchedHarnesses, newHarness)
+	resumeAgentSessionID := agentSessionIDs[newHarness]
+	launched := appendHarnessUnique(meta.LaunchedHarnesses, rec.Harness, newHarness)
+
+	if rec.IsTerminated {
+		return m.relaunchTerminatedWithHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig, switchModel, resume, resumeAgentSessionID, agentSessionIDs, launched)
+	}
+	return m.switchLiveHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig, switchModel, resume, resumeAgentSessionID, agentSessionIDs, launched)
+}
+
+// switchAgentArgv builds and pre-flight-validates the launch command for a
+// switch/relaunch. When resume is true it uses the agent's resume command (via
+// restoreArgv, which falls back to a fresh launch when the adapter cannot
+// resume); otherwise it launches fresh. Shared by the live and terminated paths.
+func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, issue domain.IssueID, kind domain.SessionKind, systemPrompt string, cfg ports.AgentConfig, agent ports.Agent, resume bool, resumeAgentSessionID string) ([]string, error) {
+	var argv []string
+	var err error
+	if resume {
+		resumeMeta := meta
+		// Use the target harness's native id, not the current harness's scalar
+		// AgentSessionID. Deterministic-id adapters can still resume with empty.
+		resumeMeta.AgentSessionID = resumeAgentSessionID
+		argv, err = restoreArgv(ctx, agent, id, workspacePath, resumeMeta, systemPrompt, cfg, kind)
+	} else {
+		argv, err = agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+			SessionID:     string(id),
+			WorkspacePath: workspacePath,
+			Prompt:        meta.Prompt,
+			SystemPrompt:  systemPrompt,
+			IssueID:       string(issue),
+			Config:        cfg,
+			Permissions:   cfg.Permissions,
+		})
+		if err != nil {
+			err = fmt.Errorf("launch command: %w", err)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := m.validateAgentBinary(argv); err != nil {
+		return nil, err
+	}
+	return argv, nil
+}
+
+// switchLiveHarness swaps the agent of a running session in place.
+func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig, switchModel string, resume bool, resumeAgentSessionID string, agentSessionIDs map[domain.AgentHarness]string, launched []domain.AgentHarness) (domain.SessionRecord, error) {
+	id := rec.ID
+	meta := rec.Metadata
+	if meta.RuntimeHandleID == "" {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
+	}
+	argv, err := m.switchAgentArgv(ctx, id, meta.WorkspacePath, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume, resumeAgentSessionID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+
+	// The switch guard is already held by SwitchHarness (which defers EndSwitch),
+	// so the reaper ignores the runtime gap opened by the destroy/create below.
+	if err := m.prepareWorkspace(ctx, agent, id, meta.WorkspacePath); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	// Same worktree means the two agents must never run at once: stop the old
+	// one before creating the new.
+	if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: meta.RuntimeHandleID}); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: stop old agent: %w", id, err)
+	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		_ = m.lcm.MarkTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime token: %w", id, err)
+	}
+	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
+		SessionID:     id,
+		WorkspacePath: meta.WorkspacePath,
+		Argv:          argv,
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
+	})
+	if err != nil {
+		// No live runtime now. Mark terminated so the session stops cleanly with
+		// its worktree intact; it can be relaunched (switch/restore) afterward.
+		_ = m.lcm.MarkTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
+	}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		_ = m.lcm.MarkTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
+	}
+	return m.getRecord(ctx, id)
+}
+
+// relaunchTerminatedWithHarness brings a terminated session back to life under a
+// different agent, reusing its worktree. There is no live runtime to tear down
+// and the reaper skips terminated sessions, so no BeginSwitch guard is needed —
+// MarkSwitched flips it back to live once the new runtime is up.
+func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig, switchModel string, resume bool, resumeAgentSessionID string, agentSessionIDs map[domain.AgentHarness]string, launched []domain.AgentHarness) (domain.SessionRecord, error) {
+	id := rec.ID
+	meta := rec.Metadata
+	// Mirror restoreArgv's guard, but only for a FRESH launch: a resumed harness
+	// has a native session to continue, so it needs no saved prompt. A fresh
+	// terminated WORKER with no prompt has nothing to launch from and would
+	// blank-relaunch, which Restore deliberately refuses. Orchestrators are
+	// promptless by design.
+	if !resume && meta.Prompt == "" && rec.Kind != domain.KindOrchestrator {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotResumable)
+	}
+	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
+		ProjectID:     rec.ProjectID,
+		SessionID:     id,
+		Kind:          rec.Kind,
+		SessionPrefix: sessionPrefix(project),
+		Branch:        meta.Branch,
+	})
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: workspace: %w", id, err)
+	}
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	argv, err := m.switchAgentArgv(ctx, id, ws.Path, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume, resumeAgentSessionID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	// A terminated agent's runtime can linger: the keep-alive shell outlives the
+	// agent process, so the runtime's deterministic session name may still be
+	// taken and a fresh Create would collide ("duplicate session"). Tear down any
+	// leftover handle first — Destroy is idempotent, so an already-gone session
+	// is a no-op.
+	if meta.RuntimeHandleID != "" {
+		if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: meta.RuntimeHandleID}); err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("switch %s: clear stale runtime: %w", id, err)
+		}
+	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime token: %w", id, err)
+	}
+	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
+		SessionID:     id,
+		WorkspacePath: ws.Path,
+		Argv:          argv,
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
+	})
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
+	}
+	// Persist the RESTORED worktree path/branch: a changed session prefix or
+	// managed root can restore to a different path, and a stale one would break
+	// later terminal/workspace/cleanup operations.
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
+	}
+	return m.getRecord(ctx, id)
+}
+
+// containsHarness reports whether h is in hs.
+func containsHarness(hs []domain.AgentHarness, h domain.AgentHarness) bool {
+	for _, x := range hs {
+		if x == h {
+			return true
+		}
+	}
+	return false
+}
+
+// appendHarnessUnique returns hs with each non-empty add appended if absent,
+// leaving the input slice untouched.
+func appendHarnessUnique(hs []domain.AgentHarness, add ...domain.AgentHarness) []domain.AgentHarness {
+	out := append([]domain.AgentHarness(nil), hs...)
+	for _, h := range add {
+		if h != "" && !containsHarness(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+func agentSessionIDsForSwitch(meta domain.SessionMetadata, current domain.AgentHarness) map[domain.AgentHarness]string {
+	out := make(map[domain.AgentHarness]string, len(meta.AgentSessionIDs)+1)
+	for h, id := range meta.AgentSessionIDs {
+		if h != "" && strings.TrimSpace(id) != "" {
+			out[h] = strings.TrimSpace(id)
+		}
+	}
+	if current != "" && strings.TrimSpace(meta.AgentSessionID) != "" {
+		out[current] = strings.TrimSpace(meta.AgentSessionID)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
@@ -1155,14 +1447,15 @@ Keep branch names within your session's branch namespace so AO can track every P
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runFile string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+5)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runFile, runtimeToken string, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+6)
 	for k, v := range projectEnv {
 		env[k] = v
 	}
 	env[EnvSessionID] = string(id)
 	env[EnvProjectID] = string(project)
 	env[EnvIssueID] = string(issue)
+	env[EnvRuntimeToken] = runtimeToken
 	env[EnvDataDir] = dataDir
 	if runFile != "" {
 		env[EnvRunFile] = runFile
@@ -1177,8 +1470,8 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // command, which fails every callback and silently kills activity tracking).
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
-func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, m.runFile, projectEnv)
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, runtimeToken string, projectEnv map[string]string) map[string]string {
+	env := spawnEnv(id, project, issue, m.dataDir, m.runFile, runtimeToken, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
@@ -1187,6 +1480,14 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
+}
+
+func newRuntimeToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon
