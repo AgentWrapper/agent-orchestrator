@@ -156,40 +156,56 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(probeCtx, binary, "login", "status").CombinedOutput()
-	if probeCtx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, probeCtx.Err()
-	}
-	text := strings.ToLower(string(out))
-	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
-	if strings.Contains(text, "logged in") {
-		return ports.AgentAuthStatusAuthorized, nil
-	}
-	if p.adapterID() == "codex-fugu" && err != nil && strings.Contains(text, "--profile only applies") {
-		return p.fuguRuntimeAuthStatus(ctx, binary)
-	}
+	status, text, cmdErr, err := loginStatusForBinary(ctx, binary)
 	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	if status != ports.AgentAuthStatusUnknown {
+		return status, nil
+	}
+	if p.adapterID() == "codex-fugu" && cmdErr != nil && strings.Contains(text, "--profile only applies") {
+		return fuguSharedCodexAuthStatus(ctx)
+	}
+	if cmdErr != nil {
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
 }
 
-func (p *Plugin) fuguRuntimeAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStatus, error) {
+func loginStatusForBinary(ctx context.Context, binary string) (ports.AgentAuthStatus, string, error, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	if err := exec.CommandContext(probeCtx, binary, "exec", "--help").Run(); err != nil {
-		if probeCtx.Err() != nil {
-			return ports.AgentAuthStatusUnknown, probeCtx.Err()
-		}
+	out, err := exec.CommandContext(probeCtx, binary, "login", "status").CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.AgentAuthStatusUnknown, "", err, probeCtx.Err()
+	}
+	text := strings.ToLower(string(out))
+	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
+		return ports.AgentAuthStatusUnauthorized, text, err, nil
+	}
+	if strings.Contains(text, "logged in") {
+		return ports.AgentAuthStatusAuthorized, text, err, nil
+	}
+	return ports.AgentAuthStatusUnknown, text, err, nil
+}
+
+func fuguSharedCodexAuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	codexBinary, err := ResolveCodexBinary(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	status, _, cmdErr, err := loginStatusForBinary(ctx, codexBinary)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	if status != ports.AgentAuthStatusUnknown {
+		return status, nil
+	}
+	if cmdErr != nil {
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
-	return ports.AgentAuthStatusAuthorized, nil
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,

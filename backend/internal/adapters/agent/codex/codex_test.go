@@ -240,8 +240,9 @@ func TestFuguAuthStatusFallsBackWhenLoginStatusRejectsProfile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake is Unix-specific")
 	}
-	bin := filepath.Join(t.TempDir(), "codex-fugu")
-	script := `#!/bin/sh
+	binDir := t.TempDir()
+	fuguBin := filepath.Join(binDir, "codex-fugu")
+	fuguScript := `#!/bin/sh
 if [ "$1" = "login" ] && [ "$2" = "status" ]; then
   echo 'Error: --profile only applies to runtime commands and codex mcp' >&2
   exit 1
@@ -252,18 +253,74 @@ if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
 fi
 exit 2
 `
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fuguBin, []byte(fuguScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	codexBin := filepath.Join(binDir, "codex")
+	codexScript := `#!/bin/sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo 'Logged in as test@example.com'
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(codexBin, []byte(codexScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
 
 	plugin := NewFugu()
-	plugin.resolvedBinary = bin
+	plugin.resolvedBinary = fuguBin
 	got, err := plugin.AuthStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != ports.AgentAuthStatusAuthorized {
 		t.Fatalf("AuthStatus = %q, want authorized", got)
+	}
+}
+
+func TestFuguAuthStatusDoesNotTreatRuntimeHelpAsAuthorized(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	binDir := t.TempDir()
+	fuguBin := filepath.Join(binDir, "codex-fugu")
+	fuguScript := `#!/bin/sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo 'Error: --profile only applies to runtime commands and codex mcp' >&2
+  exit 1
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
+  echo 'Run Codex non-interactively'
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(fuguBin, []byte(fuguScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := filepath.Join(binDir, "codex")
+	codexScript := `#!/bin/sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo 'Not logged in'
+  exit 1
+fi
+exit 2
+`
+	if err := os.WriteFile(codexBin, []byte(codexScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	plugin := NewFugu()
+	plugin.resolvedBinary = fuguBin
+	got, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("AuthStatus = %q, want unauthorized", got)
 	}
 }
 
