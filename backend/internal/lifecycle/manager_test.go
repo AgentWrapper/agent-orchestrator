@@ -226,8 +226,30 @@ func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
 	if err := m.ApplyActivitySignal(ctx, "mer-2", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode, RuntimeToken: "older-token"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := st.sessions["mer-2"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
-		t.Fatalf("real exit after suppression window was ignored: %+v", got)
+	if got := st.sessions["mer-2"]; got.IsTerminated {
+		t.Fatalf("old-token exit after suppression window terminated switched session: %+v", got)
+	}
+}
+
+func TestActivity_PreTokenSwitchExitSuppressionExpires(t *testing.T) {
+	m, st, _ := newManager()
+	now := time.Unix(150, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+	}
+	switched := domain.SessionMetadata{RuntimeHandleID: "new-handle", WorkspacePath: "/ws", Branch: "b"}
+	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, switched); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(31 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("pre-token exit after suppression window was ignored: %+v", got)
 	}
 }
 

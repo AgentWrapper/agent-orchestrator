@@ -148,6 +148,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
+	if staleRuntimeTokenSignal(rec, s) {
+		m.mu.Unlock()
+		return nil
+	}
 	if staleSwitchExitSignal(rec, s) && m.suppressesSwitchExitLocked(id, now) {
 		m.mu.Unlock()
 		return nil
@@ -387,12 +391,20 @@ func staleSwitchExitSignal(rec domain.SessionRecord, s ports.ActivitySignal) boo
 	if s.State != domain.ActivityExited {
 		return false
 	}
-	signalToken := strings.TrimSpace(s.RuntimeToken)
 	currentToken := strings.TrimSpace(rec.Metadata.RuntimeToken)
 	if currentToken != "" {
-		return signalToken == "" || signalToken != currentToken
+		return false
 	}
 	return s.Harness != "" && s.Harness != rec.Harness
+}
+
+func staleRuntimeTokenSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
+	currentToken := strings.TrimSpace(rec.Metadata.RuntimeToken)
+	if currentToken == "" {
+		return false
+	}
+	signalToken := strings.TrimSpace(s.RuntimeToken)
+	return signalToken == "" || signalToken != currentToken
 }
 
 // sameActivity reports whether two activity signals describe the same state.
