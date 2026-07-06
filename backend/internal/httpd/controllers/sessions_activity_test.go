@@ -45,7 +45,7 @@ func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"waiting_input"}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"waiting_input","agent":"codex"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
@@ -64,6 +64,9 @@ func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {
 	if !rec.gotSignal.Valid || rec.gotSignal.State != domain.ActivityWaitingInput {
 		t.Fatalf("recorder signal = %#v", rec.gotSignal)
 	}
+	if rec.gotSignal.Harness != domain.HarnessCodex {
+		t.Fatalf("recorder harness = %q, want codex", rec.gotSignal.Harness)
+	}
 }
 
 func TestSessionsAPI_ActivityRejectsUnknownState(t *testing.T) {
@@ -74,6 +77,17 @@ func TestSessionsAPI_ActivityRejectsUnknownState(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_ACTIVITY_STATE")
 	if rec.calls != 0 {
 		t.Fatalf("recorder should not be called for an invalid state; calls=%d", rec.calls)
+	}
+}
+
+func TestSessionsAPI_ActivityRejectsUnknownAgent(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"idle","agent":"bogus"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_AGENT")
+	if rec.calls != 0 {
+		t.Fatalf("recorder should not be called for an invalid agent; calls=%d", rec.calls)
 	}
 }
 

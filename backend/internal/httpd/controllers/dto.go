@@ -425,6 +425,7 @@ type ClaimPRResponse struct {
 // SetActivityRequest is the body of POST /api/v1/sessions/{sessionId}/activity.
 type SetActivityRequest struct {
 	State string `json:"state" enum:"active,idle,waiting_input,exited" description:"Agent activity state reported by an agent hook."`
+	Agent string `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand" description:"Agent harness that emitted the hook, when known."`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.

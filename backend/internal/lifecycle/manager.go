@@ -147,7 +147,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
-	if s.State == domain.ActivityExited && m.suppressesSwitchExitLocked(id, now) {
+	if staleSwitchExitSignal(rec, s) && m.suppressesSwitchExitLocked(id, now) {
 		m.mu.Unlock()
 		return nil
 	}
@@ -379,6 +379,10 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	rec.Metadata.AgentSessionID = metadata.AgentSessionID
 	rec.UpdatedAt = now
 	return m.store.UpdateSession(ctx, rec)
+}
+
+func staleSwitchExitSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
+	return s.State == domain.ActivityExited && s.Harness != "" && s.Harness != rec.Harness
 }
 
 // sameActivity reports whether two activity signals describe the same state.

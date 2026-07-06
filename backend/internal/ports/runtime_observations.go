@@ -29,5 +29,6 @@ type RuntimeFacts struct {
 type ActivitySignal struct {
 	Valid     bool
 	State     domain.ActivityState
+	Harness   domain.AgentHarness
 	Timestamp time.Time
 }

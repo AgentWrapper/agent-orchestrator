@@ -2606,6 +2606,33 @@ components:
       type: object
     SetActivityRequest:
       properties:
+        agent:
+          description: Agent harness that emitted the hook, when known.
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          type: string
         state:
           description: Agent activity state reported by an agent hook.
           enum:

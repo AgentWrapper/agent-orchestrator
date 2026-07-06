@@ -37,6 +37,7 @@ const (
 // not import httpd.
 type setActivityAPIRequest struct {
 	State string `json:"state"`
+	Agent string `json:"agent,omitempty"`
 }
 
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
@@ -82,7 +83,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state)}, nil); err != nil {
+	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Agent: agent}, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)

@@ -196,18 +196,33 @@ func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-1"]; got.IsTerminated {
 		t.Fatalf("stale exit hook terminated switched session: %+v", got)
 	}
 
-	now = now.Add(31 * time.Second)
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessCodex}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("current harness exit during suppression window was ignored: %+v", got)
+	}
+
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Harness: domain.HarnessCodex,
+		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "newer", Prompt: "p", Branch: "b", WorkspacePath: "/ws2"},
+	}
+	if err := m.MarkSwitched(ctx, "mer-2", domain.HarnessCodex, switched); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(31 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-2", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-2"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("real exit after suppression window was ignored: %+v", got)
 	}
 }

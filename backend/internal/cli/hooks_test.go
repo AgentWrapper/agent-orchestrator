@@ -55,6 +55,17 @@ func capturedState(t *testing.T, capture *activityCapture) string {
 	return req.State
 }
 
+func capturedAgent(t *testing.T, capture *activityCapture) string {
+	t.Helper()
+	var req struct {
+		Agent string `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	return req.Agent
+}
+
 func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
@@ -73,6 +84,9 @@ func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	}
 	if got := capturedState(t, capture); got != "waiting_input" {
 		t.Errorf("state = %q, want waiting_input", got)
+	}
+	if got := capturedAgent(t, capture); got != "claude-code" {
+		t.Errorf("agent = %q, want claude-code", got)
 	}
 }
 

@@ -946,6 +946,11 @@ export interface components {
         };
         SetActivityRequest: {
             /**
+             * @description Agent harness that emitted the hook, when known.
+             * @enum {string}
+             */
+            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            /**
              * @description Agent activity state reported by an agent hook.
              * @enum {string}
              */
