@@ -1239,6 +1239,29 @@ func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 	}
 }
 
+func TestSCMMergeabilityUnstableNotDowngradedByBlockers(t *testing.T) {
+	// UNSTABLE = mergeable with a failing/pending NON-required check (a required
+	// failure yields BLOCKED). Per doc.go rule (3) before (5)/(6) and the sibling
+	// mergeabilityFromGraphQL, it must stay Unstable even when CI is failing or
+	// changes are requested — otherwise a mergeable PR is wrongly reported blocked.
+	cases := []struct {
+		name   string
+		ci     string
+		review string
+	}{
+		{name: "failing CI", ci: string(domain.CIFailing), review: string(domain.ReviewApproved)},
+		{name: "changes requested", ci: string(domain.CIPassing), review: string(domain.ReviewChangesRequest)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeabilityObservation("MERGEABLE", "UNSTABLE", tc.ci, tc.review, false)
+			if got.State != string(domain.MergeUnstable) {
+				t.Fatalf("mergeability = %+v, want unstable (UNSTABLE must outrank CI/review blockers)", got)
+			}
+		})
+	}
+}
+
 func TestFetchPullRequestsDoesNotFallbackWhenContextPageComplete(t *testing.T) {
 	fake := newFakeGH(t)
 	fx := basePRFixture()
