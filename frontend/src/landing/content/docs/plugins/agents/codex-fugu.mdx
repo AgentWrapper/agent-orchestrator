@@ -34,7 +34,7 @@ No plugin-level config.
 
 ## How it works
 
-- **Launch:** `codex-fugu` runs inside the worktree with AO's Codex-family launch flags and session hooks.
+- **Launch:** `codex-fugu` runs inside the worktree with AO's Codex-family launch flags, update-suppression flags, and session hooks.
 - **Activity tracking:** AO derives activity from Codex session events and uses the `codex-fugu` hook token for session metadata.
 - **PR + git tracking:** AO installs wrappers at `~/.ao/bin/gh` and `~/.ao/bin/git`. When Codex Fugu runs `gh pr create`, the wrapper records the PR number in the session metadata.
 - **Session resume:** `codex-fugu resume <threadId>` — AO stores the thread id in session metadata and replays it.
@@ -47,7 +47,6 @@ No plugin-level config.
 | `AO_ISSUE_ID`                | ✓         | Issue identifier                                    |
 | `PATH`                       | ✓         | Prepends `~/.ao/bin` for the wrappers               |
 | `GH_PATH`                    | ✓         | Absolute path to the real `gh`, used by the wrapper |
-| `CODEX_DISABLE_UPDATE_CHECK` | ✓ (`1`)   | Skip version check                                  |
 
 Authentication comes from the same Codex credentials that the `codex-fugu` CLI reads. AO does not set API credentials.
 
