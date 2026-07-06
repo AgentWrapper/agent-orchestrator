@@ -99,31 +99,6 @@ func TestDiscoverEntryTieBreaksOnPath(t *testing.T) {
 	}
 }
 
-func TestDiscoverIndexEntryDoesNotFallBack(t *testing.T) {
-	ws := t.TempDir()
-	// Only loose files exist: the index-only discovery (used by the poller) must
-	// report nothing rather than guess at report.html.
-	writeEntryFile(t, filepath.Join(ws, "report.html"), "<main>report</main>", time.Now())
-	writeEntryFile(t, filepath.Join(ws, "notes.md"), "# notes", time.Now())
-
-	if _, ok := DiscoverIndexEntry(ws); ok {
-		t.Fatal("DiscoverIndexEntry: ok=true for loose files, want false")
-	}
-}
-
-func TestDiscoverIndexEntryFindsAnchor(t *testing.T) {
-	ws := t.TempDir()
-	writeEntryFile(t, filepath.Join(ws, "dist", "index.html"), "<main>dist</main>", time.Now())
-
-	entry, ok := DiscoverIndexEntry(ws)
-	if !ok {
-		t.Fatal("DiscoverIndexEntry: ok=false, want dist/index.html")
-	}
-	if entry.Path != "dist/index.html" {
-		t.Fatalf("entry.Path = %q, want dist/index.html", entry.Path)
-	}
-}
-
 func TestDiscoverEntryEmptyWorkspace(t *testing.T) {
 	if _, ok := DiscoverEntry(t.TempDir()); ok {
 		t.Fatal("DiscoverEntry: ok=true for empty workspace, want false")

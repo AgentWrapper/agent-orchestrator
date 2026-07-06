@@ -114,17 +114,9 @@ func (p *Poller) Poll(ctx context.Context) error {
 		if sess.Kind != domain.KindWorker {
 			continue
 		}
-		entry, ok := DiscoverIndexEntry(sess.Metadata.WorkspacePath)
+		entry, ok := DiscoverEntry(sess.Metadata.WorkspacePath)
 		if !ok {
-			// Only clear a preview the poller itself opened for an index entry
-			// that has since disappeared. A preview the agent set explicitly
-			// (via `ao preview <file>`) is the agent's to manage — the poller
-			// must never wipe it, even though it is served from the same
-			// /preview/files/ route. p.seen carries a non-empty path only for
-			// sessions whose index preview the poller set.
-			previous, seenBefore := p.seen[sess.ID]
-			pollerOpenedIndex := seenBefore && previous.path != ""
-			if pollerOpenedIndex && isWorkspacePreviewURL(sess.Metadata.PreviewURL, sess.ID) {
+			if isWorkspacePreviewURL(sess.Metadata.PreviewURL, sess.ID) {
 				if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
 					p.logger.Error("preview poller: failed to clear stale preview",
 						"session", sess.ID, "err", err)

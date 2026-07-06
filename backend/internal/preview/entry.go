@@ -35,12 +35,12 @@ type Entry struct {
 	Size    int64
 }
 
-// DiscoverIndexEntry returns a conventional static entry point (index.html or
-// its public/dist/build variants) when one exists. This is the only discovery
-// the background poller performs: it auto-opens a real app entry, but never
-// guesses at loose files, leaving the choice of what else to preview to the
-// agent via an explicit `ao preview <file>`.
-func DiscoverIndexEntry(workspacePath string) (Entry, bool) {
+// DiscoverEntry returns the entry the browser panel should preview for a
+// workspace. A conventional index.html (or its public/dist/build variants)
+// always wins; when none exists it falls back to the most-recently-modified
+// previewable file (.html/.htm/.md/.markdown) anywhere in the workspace, so a
+// freshly generated report or document shows up automatically.
+func DiscoverEntry(workspacePath string) (Entry, bool) {
 	if strings.TrimSpace(workspacePath) == "" {
 		return Entry{}, false
 	}
@@ -53,18 +53,6 @@ func DiscoverIndexEntry(workspacePath string) (Entry, bool) {
 		if err == nil && !info.IsDir() {
 			return Entry{Path: candidate, AbsPath: file, ModTime: info.ModTime(), Size: info.Size()}, true
 		}
-	}
-	return Entry{}, false
-}
-
-// DiscoverEntry resolves the entry a bare `ao preview` (no argument) should
-// open. A conventional index.html always wins; when none exists it falls back
-// to the most-recently-modified previewable file (.html/.htm/.md/.markdown) so
-// a single generated report or document shows up without naming it. This
-// convenience runs only on an explicit agent/user request, not automatically.
-func DiscoverEntry(workspacePath string) (Entry, bool) {
-	if entry, ok := DiscoverIndexEntry(workspacePath); ok {
-		return entry, true
 	}
 	return mostRecentPreviewable(workspacePath)
 }

@@ -87,45 +87,6 @@ func TestPollerPreservesEntrypointPriority(t *testing.T) {
 	})
 }
 
-func TestPollerIgnoresLooseNonIndexFiles(t *testing.T) {
-	workspace := t.TempDir()
-	// A loose report/document is the agent's to preview explicitly; the poller
-	// must not auto-open it just because it is the newest previewable file.
-	writeFile(t, filepath.Join(workspace, "report.html"), "<main>report</main>")
-	writeFile(t, filepath.Join(workspace, "NOTES.md"), "# notes")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("Poll: %v", err)
-	}
-
-	if len(svc.sets) != 0 {
-		t.Fatalf("sets = %#v, want no auto-preview for loose non-index files", svc.sets)
-	}
-}
-
-func TestPollerPreservesExplicitNonIndexPreview(t *testing.T) {
-	workspace := t.TempDir()
-	// A workspace with no index.html, where the agent has explicitly previewed a
-	// generated file. The poller must not treat that as a stale entry and clear
-	// it, or `ao preview <file>` would be wiped within a poll cycle.
-	writeFile(t, filepath.Join(workspace, "report.html"), "<main>report</main>")
-	explicit := "http://127.0.0.1:3001/api/v1/sessions/ao-1/preview/files/report.html"
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, explicit)}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	for i := 0; i < 3; i++ {
-		if err := poller.Poll(context.Background()); err != nil {
-			t.Fatalf("Poll %d: %v", i, err)
-		}
-	}
-
-	if len(svc.sets) != 0 {
-		t.Fatalf("sets = %#v, want poller to leave the agent's explicit preview untouched", svc.sets)
-	}
-}
-
 func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 	workspace := t.TempDir()
 	entry := filepath.Join(workspace, "index.html")
