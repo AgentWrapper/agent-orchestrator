@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Clipboard, X } from "lucide-react";
+import { ChevronDown, GitPullRequest, Mail, MessageSquare, Send, X } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import {
 	collectReportProblemDiagnostics,
@@ -11,6 +11,7 @@ import {
 } from "../lib/report-problem";
 import { aoBridge } from "../lib/bridge";
 import { Button } from "./ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
 
 type ReportProblemDialogProps = {
@@ -139,19 +140,30 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						)}
 					</div>
 
-					<div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4">
-						<Button type="button" variant="secondary" onClick={() => void copyDraft("github")}>
-							<Clipboard className="size-3.5" aria-hidden="true" />
-							Raise GitHub issue
-						</Button>
-						<Button type="button" variant="secondary" onClick={() => void copyDraft("discord")}>
-							<Clipboard className="size-3.5" aria-hidden="true" />
-							Report on Discord
-						</Button>
-						<Button type="button" onClick={() => void copyDraft("email")}>
-							<Clipboard className="size-3.5" aria-hidden="true" />
-							Email support
-						</Button>
+					<div className="flex items-center justify-end border-t border-border px-5 py-4">
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button type="button">
+									<Send className="size-3.5" aria-hidden="true" />
+									Send report
+									<ChevronDown className="size-3.5" aria-hidden="true" />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end" side="top" className="w-52">
+								<DropdownMenuItem onSelect={() => void copyDraft("github")}>
+									<GitPullRequest aria-hidden="true" />
+									Raise GitHub issue
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => void copyDraft("discord")}>
+									<MessageSquare aria-hidden="true" />
+									Report on Discord
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => void copyDraft("email")}>
+									<Mail aria-hidden="true" />
+									Email support
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
 					</div>
 				</Dialog.Content>
 			</Dialog.Portal>
