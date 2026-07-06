@@ -13,8 +13,48 @@ jobs:
   latest-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write is required to delete a hijacking junk release + its tag. The
+      # remediation step below only ever deletes a release that cannot be a real
+      # one (non-prerelease, non-semver tag, and shipping zero updater feed
+      # assets), so this permission cannot touch a legitimate stable release.
+      contents: write
     steps:
+      - name: Remediate hijacking junk release
+        # Only self-heal on the schedule / manual runs, never on a `release`
+        # event: a real release-in-progress fires `published` before its assets
+        # finish uploading, and we must not race-delete it. Scheduled runs only
+        # ever see the settled state.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_json="$(gh release view --repo "$REPO" --json tagName,isPrerelease,isDraft,assets)"
+          tag="$(jq -r '.tagName' <<<"$release_json")"
+          prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
+          draft="$(jq -r '.isDraft' <<<"$release_json")"
+          feed_assets="$(jq -r '[.assets[].name] | map(select(. == "latest.yml" or . == "latest-mac.yml" or . == "latest-linux.yml")) | length' <<<"$release_json")"
+
+          # A hijack is a *published, non-prerelease* release whose tag is not a
+          # stable vX.Y.Z AND that ships none of the electron-updater feed files
+          # (issue #2462: `gh-attach-assets`). A real stable release always has a
+          # semver tag and the feed assets, so this signature cannot match one;
+          # an in-progress real release carries a semver tag, so it is excluded
+          # even before its assets finish uploading. Anything outside this exact
+          # signature is left for the verify step below to flag for a human.
+          if [[ "$draft" == "false" && "$prerelease" == "false" ]] \
+            && [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            && [[ "$feed_assets" == "0" ]]; then
+            echo "::warning::Latest release '$tag' is a non-stable hijack with no updater feed; deleting it and its tag so GitHub re-points latest to the newest stable release."
+            gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag
+            echo "Deleted hijacking release and tag '$tag'."
+          else
+            echo "Latest release '$tag' is not a hijack; nothing to remediate."
+          fi
+
       - name: Verify latest stable release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,3 +95,5 @@ jobs:
               exit 1
             fi
           done
+
+          echo "Latest stable release '$tag' is valid and serves the updater feed."
