@@ -12,18 +12,16 @@ const {
 	setApiBaseUrlMock,
 	getApiBaseUrlMock,
 	fetchMock,
-} = vi.hoisted(
-	() => ({
-		getStatusMock: vi.fn(),
-		onStatusMock: vi.fn(),
-		removeStatusMock: vi.fn(),
-		connectMock: vi.fn(),
-		stopTransportMock: vi.fn(),
-		setApiBaseUrlMock: vi.fn(),
-		getApiBaseUrlMock: vi.fn(),
-		fetchMock: vi.fn(),
-	}),
-);
+} = vi.hoisted(() => ({
+	getStatusMock: vi.fn(),
+	onStatusMock: vi.fn(),
+	removeStatusMock: vi.fn(),
+	connectMock: vi.fn(),
+	stopTransportMock: vi.fn(),
+	setApiBaseUrlMock: vi.fn(),
+	getApiBaseUrlMock: vi.fn(),
+	fetchMock: vi.fn(),
+}));
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: { daemon: { getStatus: getStatusMock, onStatus: onStatusMock } },

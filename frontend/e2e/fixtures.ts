@@ -58,10 +58,18 @@ const projects = [
 	{ id: "api-gateway", kind: "git", name: "api-gateway", path: "/Users/me/api-gateway", sessionPrefix: "api" },
 	{ id: "webgl-preview", kind: "git", name: "webgl-preview", path: "/Users/me/webgl-preview", sessionPrefix: "webgl" },
 	{ id: "mobile-shell", kind: "git", name: "mobile-shell", path: "/Users/me/mobile-shell", sessionPrefix: "mobile" },
-	{ id: "billing-portal", kind: "git", name: "billing-portal", path: "/Users/me/billing-portal", sessionPrefix: "billing" },
+	{
+		id: "billing-portal",
+		kind: "git",
+		name: "billing-portal",
+		path: "/Users/me/billing-portal",
+		sessionPrefix: "billing",
+	},
 ];
 
-const session = (input: Omit<Session, "activity" | "createdAt" | "isTerminated" | "updatedAt"> & { ageHours: number }): Session => ({
+const session = (
+	input: Omit<Session, "activity" | "createdAt" | "isTerminated" | "updatedAt"> & { ageHours: number },
+): Session => ({
 	...input,
 	activity: { state: input.status === "needs_input" ? "waiting_input" : "idle", lastActivityAt: hoursAgo(0.5) },
 	createdAt: hoursAgo(input.ageHours),
@@ -222,13 +230,21 @@ export async function mockAoApi(page: Page) {
 			const project = projects.find((item) => item.id === projectMatch[1]);
 			return fulfill(route, {
 				status: "ok",
-				project: { ...project, repo: project?.name ?? "", defaultBranch: "main", config: { reviewers: [{ harness: "codex" }] } },
+				project: {
+					...project,
+					repo: project?.name ?? "",
+					defaultBranch: "main",
+					config: { reviewers: [{ harness: "codex" }] },
+				},
 			});
 		}
 		const prMatch = path.match(/^\/api\/v1\/sessions\/([^/]+)\/pr$/);
 		if (prMatch) {
 			const owner = sessions.find((item) => item.id === prMatch[1]);
-			return fulfill(route, { sessionId: prMatch[1], prs: owner?.prs.map((facts) => prSummary(owner.id, facts)) ?? [] });
+			return fulfill(route, {
+				sessionId: prMatch[1],
+				prs: owner?.prs.map((facts) => prSummary(owner.id, facts)) ?? [],
+			});
 		}
 		const reviewsMatch = path.match(/^\/api\/v1\/sessions\/([^/]+)\/reviews$/);
 		if (reviewsMatch) {

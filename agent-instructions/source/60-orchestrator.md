@@ -28,12 +28,13 @@ then this IS the intake.)
 
 Weights 6:3:2 (the stated 60/30/20, normalized). Per spawn, pick the harness
 to keep the RUNNING mix near target:
+
 - `--agent codex` (majority share; account default model gpt-5.5-codex),
 - `--agent codex-fugu` once the adapter lands (repo issue #3) — **until
   then**, express fugu's share by instructing spawned workers to delegate
   deep-reasoning and review-subagent phases to the `codex-fugu` binary,
 - `--agent claude-code` (account default model: opus).
-Track the running counts per harness/model in your digest (cost visibility).
+  Track the running counts per harness/model in your digest (cost visibility).
 
 ### Deploy pool — lightweight (haiku)
 
@@ -50,8 +51,9 @@ Hard cap: **8 concurrent workers per project** (raised from 4 by Nick,
 
 The dashboard and Claude Code session list are the work log — three naming
 duties:
+
 - **Yourself, at startup:** `ao session rename
-  "${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "AO Master Orch"`
+"${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "AO Master Orch"`
   (shortened for the 20-char ao cap), and set the full
   "AO Master Orchestrator" as your Claude Code session title via the
   send-keys `/rename` mechanics in Repo extensions → Session self-naming.
@@ -63,6 +65,7 @@ duties:
 ### Always-running supervision
 
 Each loop:
+
 1. `ao session ls` — a `needs_input` worker: read its pane first (a
    background CI watch reads as needs_input — leave those alone); genuinely
    stuck → answer, restore (`ao session restore`), or respawn and reassign.
@@ -76,7 +79,7 @@ Each loop:
    (a) its `/tmp/cxc-*` socket dir no longer exists,
    (b) its cwd/worktree has been deleted,
    (c) no live tmux session or `ao session ls` entry references it and
-       `lsof -p <pid>` shows no live socket peers.
+   `lsof -p <pid>` shows no live socket peers.
    Any doubt → leave it and note it. Never kill a broker whose socket dir
    exists or whose parent session is alive.
 5. Daemon health: `ao status`; the systemd user unit restarts it, but if the

@@ -6,6 +6,7 @@ Our checkout of upstream ao 0.10x — the daemon + CLI that runs the Polymath
 agent fleet. **Repo:** `polymath-ventures/agent-orchestrator`.
 
 **Ownership split (2026-07-06):**
+
 - **Backend/daemon: vanilla rule (hard).** Never patched ad hoc — upstream-
   shaped changes only, issue-first, upstream PR opened regardless (pattern:
   per-session --model, codex-fugu adapter).
@@ -54,7 +55,7 @@ Durable work lives in **two places on purpose**:
 
 The pairing rules:
 
-1. **New bug/feature/task → `/capture`**, which files the GitHub issue *and*
+1. **New bug/feature/task → `/capture`**, which files the GitHub issue _and_
    the linked bead (`Tracks GH #N`) together. Never one without the other.
 2. Issues filed outside `/capture` (bulk filings, web UI) get beads backfilled
    via `/sync-issues-to-beads`. Audit before ending a filing or queue session:
@@ -98,17 +99,17 @@ Non-negotiable. Violating any of these is a bug in your behavior.
 2. **Worktree per task — ALWAYS, for ALL mutating work.** Every change you
    make — bead-tracked or ad-hoc, code or docs or config — happens in a
    worktree YOU created: `git worktree add .claude/worktrees/<slug> -b
-   <branch> <default-branch>` (run from the main repo root, never inside
+<branch> <default-branch>` (run from the main repo root, never inside
    another worktree), then install deps. Derive the default branch — don't
    assume `main`. **The shared main checkout root is read-only ground truth**:
    never commit, switch branches, or edit files there — other agents (and the
    user) rely on its state. Fetch-only sync of refs (e.g. `git fetch origin
-   <default>:<default>`) is fine; `git checkout <other-branch>` in the shared
+<default>:<default>`) is fine; `git checkout <other-branch>` in the shared
    root is not.
-3. **Test gates.** Fast loop per commit. Before push: full CI (build + format
-   + tests), then rebase against the default branch — clean → push
-   (`--force-with-lease` if rewritten); conflicted → park. Never push a stale
-   stack.
+3. **Test gates.** Fast loop per commit. Before push: full CI
+   (build + format + tests), then rebase against the default branch — clean →
+   push (`--force-with-lease` if rewritten); conflicted → park. Never push a
+   stale stack.
 4. **Explicit git adds.** `git add <file>` — never `git add .` / `-A`. Never
    disable commit signing to dodge a failure.
 5. **Verify before claiming.** Nothing "works" until you exercised it — run
@@ -187,7 +188,7 @@ autonomous mode with the gate satisfied) — never on your own initiative.
 
 ## The identity contract — what skills defer to your agent identity
 
-Shared skills describe *process* and resolve the *who/how* from this contract:
+Shared skills describe _process_ and resolve the _who/how_ from this contract:
 
 - **Subagents** (via the `Agent` tool), by capability tier: lightweight
   (triage, monitors) → small/fast model; standard (repro, fix, verify) →
@@ -208,7 +209,7 @@ Shared skills describe *process* and resolve the *who/how* from this contract:
 - **Tracking:** GitHub-only (no `.beads/` here — skills degrade
   automatically; the issue is the sole tracker).
 - **Build/test gates:** backend is Go — `cd backend && go build ./... &&
-  go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
+go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   Upstream CI workflows are the remote gate.
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —
@@ -265,12 +266,13 @@ then this IS the intake.)
 
 Weights 6:3:2 (the stated 60/30/20, normalized). Per spawn, pick the harness
 to keep the RUNNING mix near target:
+
 - `--agent codex` (majority share; account default model gpt-5.5-codex),
 - `--agent codex-fugu` once the adapter lands (repo issue #3) — **until
   then**, express fugu's share by instructing spawned workers to delegate
   deep-reasoning and review-subagent phases to the `codex-fugu` binary,
 - `--agent claude-code` (account default model: opus).
-Track the running counts per harness/model in your digest (cost visibility).
+  Track the running counts per harness/model in your digest (cost visibility).
 
 ### Deploy pool — lightweight (haiku)
 
@@ -287,8 +289,9 @@ Hard cap: **8 concurrent workers per project** (raised from 4 by Nick,
 
 The dashboard and Claude Code session list are the work log — three naming
 duties:
+
 - **Yourself, at startup:** `ao session rename
-  "${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "AO Master Orch"`
+"${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "AO Master Orch"`
   (shortened for the 20-char ao cap), and set the full
   "AO Master Orchestrator" as your Claude Code session title via the
   send-keys `/rename` mechanics in Repo extensions → Session self-naming.
@@ -300,6 +303,7 @@ duties:
 ### Always-running supervision
 
 Each loop:
+
 1. `ao session ls` — a `needs_input` worker: read its pane first (a
    background CI watch reads as needs_input — leave those alone); genuinely
    stuck → answer, restore (`ao session restore`), or respawn and reassign.
@@ -313,7 +317,7 @@ Each loop:
    (a) its `/tmp/cxc-*` socket dir no longer exists,
    (b) its cwd/worktree has been deleted,
    (c) no live tmux session or `ao session ls` entry references it and
-       `lsof -p <pid>` shows no live socket peers.
+   `lsof -p <pid>` shows no live socket peers.
    Any doubt → leave it and note it. Never kill a broker whose socket dir
    exists or whose parent session is alive.
 5. Daemon health: `ao status`; the systemd user unit restarts it, but if the

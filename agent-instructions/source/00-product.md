@@ -4,6 +4,7 @@ Our checkout of upstream ao 0.10x — the daemon + CLI that runs the Polymath
 agent fleet. **Repo:** `polymath-ventures/agent-orchestrator`.
 
 **Ownership split (2026-07-06):**
+
 - **Backend/daemon: vanilla rule (hard).** Never patched ad hoc — upstream-
   shaped changes only, issue-first, upstream PR opened regardless (pattern:
   per-session --model, codex-fugu adapter).

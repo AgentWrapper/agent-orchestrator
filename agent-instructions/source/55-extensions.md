@@ -3,7 +3,7 @@
 - **Tracking:** GitHub-only (no `.beads/` here — skills degrade
   automatically; the issue is the sole tracker).
 - **Build/test gates:** backend is Go — `cd backend && go build ./... &&
-  go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
+go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   Upstream CI workflows are the remote gate.
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —

@@ -1,0 +1,31 @@
+name: Agent instructions
+
+# Drift gate for the assembled agent instruction files: rebuilds them to a
+# temp dir and diffs against the committed AGENTS.md / AGENTS.shared.md /
+# CLAUDE.md / GEMINI.md (scripts/polyscribe.sh --check). Fails with the diff
+# when a PR edits agent-instructions/ sources without regenerating
+# (npm run agents) or hand-edits a generated file.
+
+on:
+  pull_request:
+    paths:
+      - "agent-instructions/**"
+      - "AGENTS.md"
+      - "AGENTS.shared.md"
+      - "CLAUDE.md"
+      - "GEMINI.md"
+      - "scripts/polyscribe.sh"
+      - "package.json"
+      - ".github/workflows/agents-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check agent-instructions drift
+        run: npm run agents:check
