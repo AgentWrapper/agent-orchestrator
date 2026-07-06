@@ -754,7 +754,7 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 
 	// The switch guard is already held by SwitchHarness (which defers EndSwitch),
 	// so the reaper ignores the runtime gap opened by the destroy/create below.
-	if err := m.prepareWorkspace(ctx, agent, id, meta.WorkspacePath); err != nil {
+	if err := m.prepareWorkspace(ctx, agent, id, meta.WorkspacePath, systemPrompt, agentConfig); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
 	// Same worktree means the two agents must never run at once: stop the old
@@ -808,7 +808,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: workspace: %w", id, err)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
 	argv, err := m.switchAgentArgv(ctx, id, ws.Path, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume)
