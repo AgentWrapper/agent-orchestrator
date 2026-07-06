@@ -4,6 +4,7 @@ export const aoBridge: AoBridge =
 	window.ao ??
 	({
 		app: {
+			canChooseDirectory: false,
 			getVersion: async () => "0.0.0-preview",
 			chooseDirectory: async () => null,
 		},

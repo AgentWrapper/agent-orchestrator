@@ -28,3 +28,11 @@ test("drilling into a worker opens its Git review rail", async ({ page }) => {
 	await expect(page.getByRole("button", { name: /Commit & Push/ })).toBeVisible();
 	await expect(page.getByText("internal/mux/terminal_mux.go")).toBeVisible();
 });
+
+test("web mode opens an in-app project path prompt from the New project button", async ({ page }) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "New project" }).click();
+
+	await expect(page.getByRole("dialog", { name: "Project path" })).toBeVisible();
+	await expect(page.getByRole("textbox", { name: "Project path" })).toBeFocused();
+});
