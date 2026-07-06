@@ -1,10 +1,33 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { app } from "electron";
 
-// GitHub repo the app updates from. Matches the provider in app-update.yml /
-// forge.config.ts. Hardcoded here to avoid a runtime read of the bundled yml.
-const GITHUB_OWNER = "AgentWrapper";
-const GITHUB_REPO = "agent-orchestrator";
 const GITHUB_API = "https://api.github.com";
+
+// Default when the baked app-update.yml cannot be read (dev, or a malformed
+// bundle). Matches forge.config.ts DEFAULT_RELEASE_REPO.
+const DEFAULT_REPO = { owner: "AgentWrapper", repo: "agent-orchestrator" } as const;
+
+// Resolve the GitHub repo the app updates from by reading the same bundled
+// app-update.yml that electron-updater uses. Both are baked from AO_RELEASE_REPO
+// at build time, so this keeps the feature list and the updater on the SAME repo
+// (a fork build lists that fork's feature releases, not AgentWrapper's).
+let cachedRepo: { owner: string; repo: string } | undefined;
+function resolveRepo(): { owner: string; repo: string } {
+	if (cachedRepo) return cachedRepo;
+	cachedRepo = { ...DEFAULT_REPO };
+	try {
+		if (app.isPackaged) {
+			const yml = readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8");
+			const owner = /^owner:\s*(.+)$/m.exec(yml)?.[1]?.trim();
+			const repo = /^repo:\s*(.+)$/m.exec(yml)?.[1]?.trim();
+			if (owner && repo) cachedRepo = { owner, repo };
+		}
+	} catch {
+		// Keep the default on any read/parse failure.
+	}
+	return cachedRepo;
+}
 
 // Marker embedded in feature-build release bodies by the CI workflow.
 const FEATURE_BUILD_MARKER = "<!-- ao-feature-build:";
@@ -86,7 +109,8 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 async function isPrOpen(pr: number): Promise<boolean> {
 	try {
-		const data = await fetchJson<{ state: string }>(`${GITHUB_API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/pulls/${pr}`);
+		const { owner, repo } = resolveRepo();
+		const data = await fetchJson<{ state: string }>(`${GITHUB_API}/repos/${owner}/${repo}/pulls/${pr}`);
 		return data.state === "open";
 	} catch {
 		// ponytail: unauthenticated GitHub API hits the 60 req/hr limit; per-PR-state
@@ -110,10 +134,9 @@ async function isPrOpen(pr: number): Promise<boolean> {
 export async function listFeatureBuilds(): Promise<FeatureBuild[]> {
 	let releases: GitHubRelease[];
 	try {
+		const { owner, repo } = resolveRepo();
 		// Fetch up to 100 releases; feature builds are always recent so this is plenty.
-		releases = await fetchJson<GitHubRelease[]>(
-			`${GITHUB_API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=100`,
-		);
+		releases = await fetchJson<GitHubRelease[]>(`${GITHUB_API}/repos/${owner}/${repo}/releases?per_page=100`);
 	} catch (err) {
 		console.warn("[feature-builds] failed to fetch releases:", err);
 		return [];
