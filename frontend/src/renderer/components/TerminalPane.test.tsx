@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
@@ -86,27 +86,29 @@ function renderPane(session: WorkspaceSession) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<TerminalPane session={session} theme="dark" daemonReady fontSize={13} />
+			<TerminalPane session={session} theme="dark" daemonReady fontSize={13} scrollback={5000} />
 		</QueryClientProvider>,
 	);
 }
 
 describe("TerminalPane message composer", () => {
-	it("renders live mux transcript output in browser mode without the Electron bridge", async () => {
+	it("renders the live xterm terminal in browser mode without the Electron bridge", async () => {
+		// Browser mode must use the real cursor-addressed xterm surface, not an
+		// ANSI-stripped <pre> transcript: stripping the escapes from a full-screen
+		// TUI destroys spatial layout (spinner soup, lost word spacing — GH #60).
 		const bridge = window.ao;
-		muxState.open.mockClear();
-		muxState.dataListener = undefined;
-		muxState.openedListener = undefined;
+		terminalState.attach.mockClear();
 		delete window.ao;
 		try {
 			renderPane({ ...baseSession, kind: "orchestrator", title: "my-app Orchestrator" });
 
-			await waitFor(() => expect(muxState.open).toHaveBeenCalledWith("sess-a/terminal_0", 120, 40));
-			act(() => muxState.openedListener?.());
-			act(() => muxState.dataListener?.(new TextEncoder().encode("\x1b[32mhello orchestrator\x1b[0m\r")));
-
-			expect(screen.getByText(/hello orchestrator/)).toBeInTheDocument();
-			expect(screen.queryByText("terminal")).not.toBeInTheDocument();
+			// The mocked XtermTerminal renders the marker "terminal"; the retired
+			// transcript never did. `attach` (the useTerminalSession hook is mocked)
+			// firing confirms the live AttachedTerminal → PTY-attach path is wired up
+			// in browser mode, not the passive transcript reader. This asserts the
+			// component routing, not the mux transport itself (covered elsewhere).
+			expect(await screen.findByText("terminal")).toBeInTheDocument();
+			await waitFor(() => expect(terminalState.attach).toHaveBeenCalled());
 		} finally {
 			window.ao = bridge;
 		}
@@ -121,7 +123,7 @@ describe("TerminalPane message composer", () => {
 		const nextSession = { ...baseSession, id: "sess-b", terminalHandleId: "sess-b/terminal_0", title: "Session B" };
 		rerender(
 			<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-				<TerminalPane session={nextSession} theme="dark" daemonReady fontSize={13} />
+				<TerminalPane session={nextSession} theme="dark" daemonReady fontSize={13} scrollback={5000} />
 			</QueryClientProvider>,
 		);
 

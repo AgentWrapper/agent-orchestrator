@@ -198,6 +198,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.attempts = 0;
 				setError(undefined);
 				transition("attached");
+				// Geometry parity check (GH #60): open + resize below drive the PTY to
+				// the live xterm grid, so a legible redraw requires the pane to end up
+				// at exactly these dimensions. Logged so a permanent mismatch (e.g.
+				// tmux negotiating down to another attached client) is observable.
+				console.debug(`[terminal] attached ${handle} at ${terminal.cols}x${terminal.rows} (xterm grid → PTY)`);
 			}),
 			mux.onExit(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;

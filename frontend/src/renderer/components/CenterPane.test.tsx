@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
 
@@ -40,5 +41,40 @@ describe("CenterPane toolbar session label", () => {
 	it("shows 'No session' when there is no session", () => {
 		render(<CenterPane theme="dark" daemonReady />);
 		expect(screen.getByText("No session")).toBeInTheDocument();
+	});
+});
+
+describe("CenterPane scrollback control", () => {
+	let bridge: typeof window.ao;
+
+	beforeEach(() => {
+		window.localStorage.clear();
+	});
+
+	afterEach(() => {
+		if (bridge !== undefined) window.ao = bridge;
+		bridge = undefined;
+	});
+
+	it("exposes a configurable scrollback control in browser mode and persists changes", async () => {
+		bridge = window.ao;
+		delete window.ao;
+		const user = userEvent.setup();
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		// Default cap surfaced in the toolbar.
+		expect(screen.getByText(/5,000 sb/)).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Increase terminal scrollback" }));
+		expect(screen.getByText(/6,000 sb/)).toBeInTheDocument();
+		expect(window.localStorage.getItem("ao.terminal.scrollback")).toBe("6000");
+	});
+
+	it("hides the scrollback control in Electron mode (scrollback is fixed at 0 there)", () => {
+		// window.ao is present in the jsdom test bridge — Electron mode.
+		expect(window.ao).toBeDefined();
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+		expect(screen.queryByRole("button", { name: "Increase terminal scrollback" })).not.toBeInTheDocument();
+		expect(screen.queryByText(/sb$/)).not.toBeInTheDocument();
 	});
 });

@@ -36,6 +36,13 @@ export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
 	fontSize?: number;
+	/**
+	 * Scrollback line cap for browser mode (Electron keeps 0 — the pane runs a
+	 * full-screen alt-buffer app whose history tmux owns). Bounded and user-
+	 * configurable so a long-running agent's transcript stays legible without
+	 * xterm accumulating an unbounded normal-buffer ring.
+	 */
+	scrollback?: number;
 	theme: Theme;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
@@ -72,6 +79,10 @@ function loadRenderer(term: Terminal): void {
 // styles.css). The PTY content is still the agent's own ANSI output.
 const terminalThemes = buildTerminalThemes();
 const SUPPRESS_NATIVE_PASTE_MS = 100;
+// Fallback browser-mode scrollback cap when no configured value is passed. The
+// live default and the user control live in CenterPane; this only guards a
+// missing prop.
+const DEFAULT_BROWSER_SCROLLBACK = 5000;
 
 // Erase scrollback (3J) + display (2J) and home the cursor. Deliberately NOT
 // term.reset(): every pane PTY is a fresh per-client attach whose handshake
@@ -165,13 +176,15 @@ type XtermInternal = Terminal & {
 	};
 };
 
-// We never scroll locally (scrollback:0). Instead we synthesize SGR mouse-wheel
-// reports and write them to the pane; tmux (with `mouse on`, set by the runtime
-// adapter) acts on them and scrolls its scrollback via copy-mode. With
-// scrollback:0 xterm would otherwise convert the wheel into cursor-arrow keys
-// (its alt-buffer fallback), which move the agent's cursor rather than scrolling.
-// SGR button 64 = wheel up, 65 = down; reports are 1-based and a single cell is
-// enough for a borderless single pane.
+// The pane's agent runs a full-screen alt-buffer TUI, which never feeds xterm's
+// scrollback regardless of the cap (Electron 0, browser bounded) — so wheeling
+// must scroll tmux's history, not xterm's local buffer. We synthesize SGR
+// mouse-wheel reports and write them to the pane; tmux (with `mouse on`, set by
+// the runtime adapter) acts on them and scrolls its scrollback via copy-mode.
+// On the alt screen xterm would otherwise convert the wheel into cursor-arrow
+// keys (its alt-buffer fallback), which move the agent's cursor rather than
+// scrolling. SGR button 64 = wheel up, 65 = down; reports are 1-based and a
+// single cell is enough for a borderless single pane.
 const SGR_WHEEL_UP = 64;
 const SGR_WHEEL_DOWN = 65;
 
@@ -218,6 +231,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	}, [props.fontSize]);
 
 	useEffect(() => {
+		const term = termRef.current;
+		// Electron keeps scrollback 0 (alt-buffer; tmux owns history) — the setting
+		// is a browser-mode concern. Changing the cap only resizes the normal-buffer
+		// ring; it never changes the grid, so no re-fit is needed.
+		if (!term || window.ao) return;
+		term.options.scrollback = props.scrollback ?? DEFAULT_BROWSER_SCROLLBACK;
+	}, [props.scrollback]);
+
+	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
 
@@ -250,8 +272,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// are forwarded as mouse reports instead of scrolling locally. 0 also
 				// stops FitAddon reserving ~14px on the right for a scrollbar that can
 				// never appear. Browser mode uses xterm's DOM renderer, whose viewport
-				// setup in headless Chromium can race when scrollback is 0.
-				scrollback: window.ao ? 0 : 1000,
+				// setup in headless Chromium can race when scrollback is 0, and takes a
+				// bounded, user-configurable cap (see CenterPane) so a busy agent's
+				// transcript stays legible without an unbounded ring.
+				scrollback: window.ao ? 0 : (props.scrollback ?? DEFAULT_BROWSER_SCROLLBACK),
 				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
 			});
 		} catch (error) {

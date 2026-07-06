@@ -20,6 +20,16 @@ const MAX_TERMINAL_FONT_SIZE = 20;
 const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
 
+// Browser-mode scrollback cap: how many lines of history the xterm normal buffer
+// keeps. Bounded so a long-running agent's transcript stays legible, and user-
+// configurable per the GH #60 scope note (default ~5000). Electron ignores it
+// (alt-buffer; tmux owns history), so the control is browser-mode only.
+const terminalScrollbackStorageKey = "ao.terminal.scrollback";
+const DEFAULT_TERMINAL_SCROLLBACK = 5000;
+const MIN_TERMINAL_SCROLLBACK = 1000;
+const MAX_TERMINAL_SCROLLBACK = 100000;
+const TERMINAL_SCROLLBACK_STEP = 1000;
+
 function clampTerminalFontSize(size: number): number {
 	return Math.min(MAX_TERMINAL_FONT_SIZE, Math.max(MIN_TERMINAL_FONT_SIZE, size));
 }
@@ -32,13 +42,31 @@ function initialTerminalFontSize(): number {
 	return clampTerminalFontSize(parsed);
 }
 
+function clampTerminalScrollback(lines: number): number {
+	// Snap to the step so the readout stays tidy and the stored value round-trips.
+	const stepped = Math.round(lines / TERMINAL_SCROLLBACK_STEP) * TERMINAL_SCROLLBACK_STEP;
+	return Math.min(MAX_TERMINAL_SCROLLBACK, Math.max(MIN_TERMINAL_SCROLLBACK, stepped));
+}
+
+function initialTerminalScrollback(): number {
+	if (typeof window === "undefined") return DEFAULT_TERMINAL_SCROLLBACK;
+	const raw = window.localStorage?.getItem(terminalScrollbackStorageKey);
+	const parsed = raw === null ? Number.NaN : Number(raw);
+	if (!Number.isFinite(parsed)) return DEFAULT_TERMINAL_SCROLLBACK;
+	return clampTerminalScrollback(parsed);
+}
+
 export function CenterPane({ session, theme, daemonReady, terminalTarget, onSelectWorkerTerminal }: CenterPaneProps) {
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
+	const [scrollback, setScrollback] = useState(initialTerminalScrollback);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const target = terminalTarget ?? { kind: "worker" };
+	// Electron pins scrollback to 0 (tmux owns history), so only expose the
+	// control where it has an effect — browser mode.
+	const showScrollbackControl = typeof window !== "undefined" && !window.ao;
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
@@ -50,6 +78,14 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 		setFontSize((current) => {
 			const next = clampTerminalFontSize(current + delta);
 			window.localStorage?.setItem(terminalFontSizeStorageKey, String(next));
+			return next;
+		});
+	}, []);
+
+	const updateScrollback = useCallback((delta: number) => {
+		setScrollback((current) => {
+			const next = clampTerminalScrollback(current + delta);
+			window.localStorage?.setItem(terminalScrollbackStorageKey, String(next));
 			return next;
 		});
 	}, []);
@@ -123,6 +159,33 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 					>
 						+
 					</button>
+					{showScrollbackControl && (
+						<>
+							<button
+								aria-label="Decrease terminal scrollback"
+								className="terminal-toolbar__control"
+								disabled={scrollback <= MIN_TERMINAL_SCROLLBACK}
+								onClick={() => updateScrollback(-TERMINAL_SCROLLBACK_STEP)}
+								title="Decrease terminal scrollback"
+								type="button"
+							>
+								-
+							</button>
+							<span className="terminal-toolbar__font-size" title="Terminal scrollback (history lines kept)">
+								{scrollback.toLocaleString()} sb
+							</span>
+							<button
+								aria-label="Increase terminal scrollback"
+								className="terminal-toolbar__control"
+								disabled={scrollback >= MAX_TERMINAL_SCROLLBACK}
+								onClick={() => updateScrollback(TERMINAL_SCROLLBACK_STEP)}
+								title="Increase terminal scrollback"
+								type="button"
+							>
+								+
+							</button>
+						</>
+					)}
 					<button
 						aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}
 						aria-pressed={isFullscreen}
@@ -161,6 +224,7 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					scrollback={scrollback}
 					session={session}
 					terminalTarget={target}
 					theme={theme}

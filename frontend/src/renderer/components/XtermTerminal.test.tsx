@@ -1,5 +1,5 @@
 import { render } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
@@ -512,5 +512,48 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!._core._selectionService.enable).toHaveBeenCalled();
 		expect(state.lastTerminal!._core.element.classList.remove).toHaveBeenCalledWith("enable-mouse-events");
 		expect(state.lastTerminal!._core._selectionService.shouldForceSelection({} as MouseEvent)).toBe(true);
+	});
+
+	it("keeps scrollback at 0 in Electron mode (alt-buffer; tmux owns history)", () => {
+		render(<XtermTerminal theme="dark" scrollback={8000} />);
+		// window.ao is set by beforeEach, so this is the Electron path.
+		expect(state.lastTerminal!.options.scrollback).toBe(0);
+	});
+});
+
+// Browser mode (no Electron bridge) is where scrollback is a live, bounded,
+// user-configurable cap — the GH #60 legibility fix. These cases must run
+// without window.ao, so they own a dedicated describe that removes it.
+describe("XtermTerminal browser-mode scrollback", () => {
+	let bridge: typeof window.ao;
+
+	beforeEach(() => {
+		state.lastTerminal = null;
+		setNavigatorPlatform("Linux x86_64");
+		bridge = window.ao;
+		delete window.ao;
+	});
+
+	afterEach(() => {
+		window.ao = bridge;
+	});
+
+	it("caps xterm scrollback at the configured value", () => {
+		render(<XtermTerminal theme="dark" scrollback={2500} />);
+		expect(state.lastTerminal!.options.scrollback).toBe(2500);
+	});
+
+	it("falls back to a bounded default when no cap is passed", () => {
+		render(<XtermTerminal theme="dark" />);
+		expect(state.lastTerminal!.options.scrollback).toBe(5000);
+	});
+
+	it("applies a changed cap to the live terminal without recreating it", () => {
+		const { rerender } = render(<XtermTerminal theme="dark" scrollback={2000} />);
+		const created = state.lastTerminal;
+		rerender(<XtermTerminal theme="dark" scrollback={9000} />);
+		// Same instance (dependency-free mount effect), option updated in place.
+		expect(state.lastTerminal).toBe(created);
+		expect(state.lastTerminal!.options.scrollback).toBe(9000);
 	});
 });

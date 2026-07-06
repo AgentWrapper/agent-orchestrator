@@ -6,8 +6,7 @@ import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { apiClient, apiErrorMessage, getApiBaseUrl } from "../lib/api-client";
-import { createTerminalMux, muxUrlFromApiBase } from "../lib/terminal-mux";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
@@ -18,24 +17,22 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	scrollback: number;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+// Both Electron and browser mode render the same live, cursor-addressed xterm
+// surface. Browser mode used to fall back to an ANSI-stripped <pre> transcript,
+// but stripping the escapes from a full-screen TUI destroys its spatial layout
+// (spinner soup, collapsed word spacing — GH #60). XtermTerminal already carries
+// the browser-mode code paths (DOM renderer, bounded scrollback), so the only
+// difference that remains is the renderer backend it picks internally.
+export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, scrollback }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
 	const messageComposer =
 		session && terminalTarget?.kind !== "reviewer" && sessionIsActive(session) ? (
 			<SessionMessageComposer key={session.id} session={session} />
 		) : null;
-
-	if (!window.ao) {
-		return (
-			<div className="flex h-full min-h-0 flex-col bg-terminal">
-				<BrowserTerminalTranscript session={session} fontSize={fontSize} />
-				{messageComposer}
-			</div>
-		);
-	}
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-terminal">
@@ -46,6 +43,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 					theme={theme}
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					scrollback={scrollback}
 					terminalTarget={terminalTarget}
 				/>
 			</div>
@@ -54,84 +52,13 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 	);
 }
 
-function BrowserTerminalTranscript({ session, fontSize }: { session?: WorkspaceSession; fontSize: number }) {
-	const [lines, setLines] = useState<string[]>([]);
-	const [status, setStatus] = useState("Connecting to session transcript...");
-	const decoderRef = useRef(new TextDecoder());
-	const handleId = session?.terminalHandleId;
-
-	useEffect(() => {
-		setLines([]);
-		decoderRef.current = new TextDecoder();
-		if (!handleId) {
-			setStatus("No terminal transcript is available for this session.");
-			return undefined;
-		}
-
-		setStatus("Connecting to session transcript...");
-		const mux = createTerminalMux(muxUrlFromApiBase(getApiBaseUrl()));
-		const disposers = [
-			mux.onOpened(handleId, () => setStatus("")),
-			mux.onData(handleId, (bytes) => {
-				const chunk = decoderRef.current.decode(bytes, { stream: true });
-				if (!chunk) return;
-				setLines((current) => [...current, stripAnsi(chunk)].slice(-200));
-			}),
-			mux.onExit(handleId, () => setStatus("Session terminal exited.")),
-			mux.onError(handleId, (message) => setStatus(`Terminal error: ${message}`)),
-			mux.onConnectionChange((state) => {
-				if (state === "closed") setStatus("Transcript disconnected. Retrying when the page refreshes.");
-			}),
-		];
-		mux.open(handleId, 120, 40);
-
-		return () => {
-			disposers.forEach((dispose) => dispose());
-			mux.close(handleId);
-			mux.dispose();
-		};
-	}, [handleId]);
-
-	return (
-		<pre
-			className="min-h-0 flex-1 overflow-auto bg-terminal p-4 font-mono leading-relaxed text-[var(--term-fg)]"
-			style={{ fontSize }}
-		>
-			{session ? (
-				<>
-					<span className="text-[var(--term-dim)]">~/{session.workspaceName}</span>{" "}
-					<span className="text-[var(--term-blue)]">{session.branch || "main"}</span>
-					{"\n"}
-					<span className="text-[var(--term-green)]">{session.title}</span>
-					{"\n\n"}
-				</>
-			) : null}
-			{lines.join("")}
-			{status ? (
-				<>
-					{lines.length > 0 ? "\n" : ""}
-					<span className="text-[var(--term-dim)]">{status}</span>
-				</>
-			) : null}
-		</pre>
-	);
-}
-
-function stripAnsi(value: string): string {
-	return value
-		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-		.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-		.replace(/\x1b[()][A-Za-z0-9]/g, "")
-		.replace(/\r(?!\n)/g, "\n");
-}
-
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
 	if (state === "reattaching") return "Terminal disconnected — reattaching…";
 	if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, scrollback }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -225,6 +152,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				<XtermTerminal
 					ariaLabel="Session terminal"
 					fontSize={fontSize}
+					scrollback={scrollback}
 					onError={handleInitError}
 					onReady={handleReady}
 					theme={theme}
