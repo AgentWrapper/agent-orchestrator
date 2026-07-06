@@ -2787,9 +2787,9 @@ type blockAfterFirstReadStore struct {
 func (s *blockAfterFirstReadStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	s.reads++
 	if s.reads >= 4 {
-		if rec, ok := s.fakeStore.sessions[s.id]; ok {
+		if rec, ok := s.sessions[s.id]; ok {
 			rec.Activity.State = domain.ActivityBlocked
-			s.fakeStore.sessions[s.id] = rec
+			s.sessions[s.id] = rec
 		}
 	}
 	return s.fakeStore.GetSession(ctx, id)

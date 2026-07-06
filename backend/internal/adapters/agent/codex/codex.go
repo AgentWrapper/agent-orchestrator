@@ -57,8 +57,9 @@ func NewFugu() *Plugin {
 // launch. See ports.ActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
-// EmitsBlockedActivity signals Codex fires blocked/permission-request activity
-// hooks under AO's launch. See ports.ActivitySignaler.
+// EmitsBlockedActivity reports that this harness signals a permission/
+// approval pause (blocked), so AO can tell a pending decision from an
+// unsubmitted draft. See ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
 var _ adapters.Adapter = (*Plugin)(nil)

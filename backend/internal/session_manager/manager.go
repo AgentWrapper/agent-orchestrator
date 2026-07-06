@@ -1295,8 +1295,11 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 	// delegate hooks (grok/continueagent/devin → claude-code) satisfy both via
 	// their adapter; copilot is excluded (its -p mode never fires); goose,
 	// opencode, and agy submit but install no permission hook, so they opt out.
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
+	// Best-effort: the message is already delivered, so a failed/absent state
+	// read only means we skip the optional nudge — never that the send failed.
+	// The read error is deliberately not propagated (a nil `ok` covers it too).
+	rec, ok, _ := m.store.GetSession(ctx, id)
+	if !ok {
 		return nil
 	}
 	if m.harnessNudgeSafe(rec.Harness) {

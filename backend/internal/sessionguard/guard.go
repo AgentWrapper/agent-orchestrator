@@ -30,19 +30,19 @@ type SessionReader interface {
 type Outcome int
 
 const (
-	// SuppressedUnknown: the pre-write session read failed, so the state is
-	// unknown and the guard failed closed. Deliberately the zero value — a
+	// SuppressedUnknown means the pre-write session read failed, so the state
+	// is unknown and the guard failed closed. Deliberately the zero value — a
 	// forgotten assignment must never read as a successful send.
 	SuppressedUnknown Outcome = iota
-	// Sent: the message was written to the session's pane (a messenger failure
-	// surfaces as Sent plus a non-nil error: the write was attempted).
+	// Sent means the message was written to the session's pane (a messenger
+	// failure surfaces as Sent plus a non-nil error: the write was attempted).
 	Sent
-	// SuppressedNotFound: no session row exists for the id.
+	// SuppressedNotFound means no session row exists for the id.
 	SuppressedNotFound
-	// SuppressedTerminated: the session is terminated; its pane is gone or
+	// SuppressedTerminated means the session is terminated; its pane is gone or
 	// about to be reaped.
 	SuppressedTerminated
-	// SuppressedAwaitingUser: the session awaits the human — blocked on a
+	// SuppressedAwaitingUser means the session awaits the human — blocked on a
 	// permission decision (Deliver and Nudge), or waiting at the prompt for
 	// the next instruction (Nudge only).
 	SuppressedAwaitingUser
