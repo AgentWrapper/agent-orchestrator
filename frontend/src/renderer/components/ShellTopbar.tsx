@@ -112,7 +112,7 @@ export function ShellTopbar() {
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId);
+			const sessionId = await spawnOrchestrator(projectId, "topbar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -252,16 +252,21 @@ export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
 
 	const kill = useMutation({
 		mutationFn: async () => {
+			void captureRendererEvent("ao.renderer.session_kill_requested", { project_id: session.workspaceId });
 			const { error: apiError } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError));
 		},
 		onSuccess: () => {
+			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
 			setConfirming(false);
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
-		onError: (e) => setError(e instanceof Error ? e.message : "Kill failed"),
+		onError: (e) => {
+			void captureRendererEvent("ao.renderer.session_kill_failed", { project_id: session.workspaceId });
+			setError(e instanceof Error ? e.message : "Kill failed");
+		},
 	});
 
 	if (confirming) {

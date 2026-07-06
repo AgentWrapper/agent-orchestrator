@@ -112,7 +112,7 @@ function ShellLayout() {
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			try {
-				const sessionId = await spawnOrchestrator(workspace.id);
+				const sessionId = await spawnOrchestrator(workspace.id, "project_add");
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 				void navigate({
 					to: "/projects/$projectId/sessions/$sessionId",

@@ -36,7 +36,7 @@ export async function restartProjectOrchestrator({
 	setProjectRestarting(projectId, true);
 	setOrchestratorReplacementError(projectId, null);
 	try {
-		const sessionId = await spawnOrchestrator(projectId, true);
+		const sessionId = await spawnOrchestrator(projectId, "restart", true);
 		await refreshWorkspaceState(queryClient);
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
@@ -44,7 +44,10 @@ export async function restartProjectOrchestrator({
 		});
 	} catch (error) {
 		await refreshWorkspaceState(queryClient);
-		setOrchestratorReplacementError(projectId, error instanceof Error ? error.message : "Could not replace orchestrator");
+		setOrchestratorReplacementError(
+			projectId,
+			error instanceof Error ? error.message : "Could not replace orchestrator",
+		);
 		onError?.(error);
 	} finally {
 		setProjectRestarting(projectId, false);

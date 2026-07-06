@@ -239,7 +239,8 @@ describe("orchestratorHealth", () => {
 			}),
 		).toEqual({
 			state: "duplicates",
-			message: "Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
+			message:
+				"Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
 		});
 
 		expect(

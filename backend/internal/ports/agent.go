@@ -130,6 +130,7 @@ const (
 type LaunchConfig struct {
 	Config      AgentConfig
 	IssueID     string
+	Kind        domain.SessionKind
 	Permissions PermissionMode
 	Prompt      string
 	SessionID   string
@@ -151,12 +152,14 @@ type WorkspaceHookConfig struct {
 	Config        AgentConfig
 	DataDir       string
 	SessionID     string
+	SystemPrompt  string
 	WorkspacePath string
 }
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
 	Config      AgentConfig
+	Kind        domain.SessionKind
 	Permissions PermissionMode
 	Session     SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the
@@ -217,6 +220,7 @@ type PromptDeliveryStrategy string
 
 // How the orchestrator hands the initial prompt to a freshly launched agent.
 const (
-	PromptDeliveryInCommand  PromptDeliveryStrategy = "in_command"
-	PromptDeliveryAfterStart PromptDeliveryStrategy = "after_start"
+	PromptDeliveryInCommand   PromptDeliveryStrategy = "in_command"
+	PromptDeliveryAfterStart  PromptDeliveryStrategy = "after_start"
+	PromptDeliveryCustomAgent PromptDeliveryStrategy = "custom_agent"
 )

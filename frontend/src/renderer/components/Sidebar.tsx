@@ -445,7 +445,7 @@ function ProjectItem({
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(workspace.id);
+			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			selection.goSession(workspace.id, sessionId);
 		} catch (err) {
@@ -557,7 +557,13 @@ function ProjectItem({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>
-						{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
+						{isProjectRestarting
+							? "Restarting…"
+							: isSpawning
+								? "Spawning…"
+								: orchestrator
+									? "Orchestrator"
+									: "Spawn orchestrator"}
 					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>
@@ -748,7 +754,7 @@ function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreate
 								<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
 							</button>
 						</TooltipTrigger>
-						<TooltipContent>{label}</TooltipContent>
+						<TooltipContent side="right">{label}</TooltipContent>
 					</Tooltip>
 				</SidebarMenuItem>
 			)}

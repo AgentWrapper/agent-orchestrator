@@ -4,6 +4,7 @@ import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -120,6 +121,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 	const mutation = useMutation({
 		mutationFn: async () => {
+			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			// PUT replaces the whole config; merge the edited fields over what loaded
 			// so we don't drop env/symlinks/postCreate the form doesn't expose.
 			const next: ProjectConfig = {
@@ -146,7 +148,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
 			) {
 				try {
-					await spawnOrchestrator(projectId, true);
+					await spawnOrchestrator(projectId, "settings", true);
 				} catch (error) {
 					return {
 						replacementError: error instanceof Error ? error.message : "Could not replace orchestrator",
@@ -156,11 +158,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			return { replacementError: null };
 		},
 		onSuccess: (result) => {
+			void captureRendererEvent("ao.renderer.settings_save_succeeded", { project_id: projectId });
 			setSavedAt(Date.now());
 			setReplacementError(result.replacementError);
 			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
+		},
+		onError: () => {
+			void captureRendererEvent("ao.renderer.settings_save_failed", { project_id: projectId });
 		},
 	});
 

@@ -101,7 +101,12 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		const [workspace] = result.current.data ?? [];
-		expect(workspace).toMatchObject({ id: "proj-1", name: "my-app", path: "/home/me/my-app", orchestratorAgent: "codex" });
+		expect(workspace).toMatchObject({
+			id: "proj-1",
+			name: "my-app",
+			path: "/home/me/my-app",
+			orchestratorAgent: "codex",
+		});
 		expect(workspace.sessions).toHaveLength(2);
 		expect(workspace.sessions[0]).toMatchObject({
 			id: "sess-1",

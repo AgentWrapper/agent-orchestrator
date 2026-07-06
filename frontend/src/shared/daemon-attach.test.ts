@@ -174,6 +174,7 @@ describe("resolveDaemonFromRunFile", () => {
 			executablePath: undefined,
 			workingDirectory: undefined,
 			message: "An AO daemon is already running, but it is not ready yet.",
+			code: "not_ready",
 		});
 	});
 
@@ -271,6 +272,7 @@ describe("resolveDaemonFromPort", () => {
 			executablePath: undefined,
 			workingDirectory: undefined,
 			message: "An AO daemon is already running, but it is not ready yet.",
+			code: "not_ready",
 		});
 	});
 

@@ -1,12 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	apiClient,
 	apiErrorMessage,
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
+	normalizeApiOperation,
 	setApiBaseUrl,
 	subscribeApiBaseUrl,
 } from "./api-client";
+import { captureRendererEvent } from "./telemetry";
+
+vi.mock("./telemetry", () => ({
+	captureRendererEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+const captureMock = vi.mocked(captureRendererEvent);
 
 describe("apiClient runtime base URL", () => {
 	afterEach(() => {
@@ -159,6 +167,123 @@ describe("subscribeApiBaseUrl", () => {
 		setApiBaseUrl("http://127.0.0.1:4555");
 
 		expect(listener).not.toHaveBeenCalled();
+	});
+});
+
+describe("normalizeApiOperation", () => {
+	it("replaces identifier segments after resource collections", () => {
+		expect(normalizeApiOperation("get", "/api/v1/projects/my project id")).toBe("GET /api/v1/projects/:id");
+		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/kill")).toBe("POST /api/v1/sessions/:id/kill");
+		expect(normalizeApiOperation("PUT", "/api/v1/projects/p1/config")).toBe("PUT /api/v1/projects/:id/config");
+	});
+
+	it("leaves collection and non-resource paths untouched", () => {
+		expect(normalizeApiOperation("GET", "/api/v1/projects")).toBe("GET /api/v1/projects");
+		expect(normalizeApiOperation("POST", "/api/v1/orchestrators")).toBe("POST /api/v1/orchestrators");
+	});
+
+	it("keeps static child routes instead of treating them as ids", () => {
+		// These match an exact OpenAPI template, so the trailing segment must not
+		// be collapsed to :id (which would break aggregation and hide the route).
+		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
+		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
+	});
+
+	it("normalizes ids for resources a collection heuristic would miss", () => {
+		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
+		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");
+	});
+});
+
+describe("api error telemetry", () => {
+	// The dedupe window keys off Date.now(); jump the clock far past any
+	// earlier test's reports so each test starts with a clean window.
+	let clock = Date.UTC(2100, 0, 1);
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		clock += 10 * 60_000;
+		vi.setSystemTime(clock);
+		captureMock.mockClear();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+		setApiBaseUrl("http://127.0.0.1:3001");
+	});
+
+	it("reports http_5xx with a normalized operation", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("oops", { status: 500 }));
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await apiClient.GET("/api/v1/projects");
+
+		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
+			operation: "GET /api/v1/projects",
+			error_category: "http_5xx",
+			status: 500,
+		});
+	});
+
+	it("reports http_4xx with ids stripped from the operation", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 404 }));
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
+			params: { path: { sessionId: "ao-raw-id" } },
+		});
+
+		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
+			operation: "POST /api/v1/sessions/:id/kill",
+			error_category: "http_4xx",
+			status: 404,
+		});
+	});
+
+	it("reports network_error and rethrows", async () => {
+		vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await expect(apiClient.GET("/api/v1/projects")).rejects.toThrow("Failed to fetch");
+
+		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
+			operation: "GET /api/v1/projects",
+			error_category: "network_error",
+			status: undefined,
+		});
+	});
+
+	it("does not report caller-initiated aborts", async () => {
+		vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("Aborted", "AbortError"));
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await expect(apiClient.GET("/api/v1/projects")).rejects.toThrow("Aborted");
+
+		expect(captureMock).not.toHaveBeenCalled();
+	});
+
+	it("reports daemon_unavailable when the base URL is untrusted", async () => {
+		setApiBaseUrl(null);
+
+		await apiClient.GET("/api/v1/projects");
+
+		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
+			operation: "GET /api/v1/projects",
+			error_category: "daemon_unavailable",
+			status: 503,
+		});
+	});
+
+	it("dedupes repeated identical failures within the 30s window", async () => {
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("oops", { status: 502 }));
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/projects");
+		expect(captureMock).toHaveBeenCalledTimes(1);
+
+		vi.setSystemTime(clock + 31_000);
+		await apiClient.GET("/api/v1/projects");
+		expect(captureMock).toHaveBeenCalledTimes(2);
 	});
 });
 

@@ -386,7 +386,8 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 	if (active.length > 1) {
 		return {
 			state: "duplicates",
-			message: "Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
+			message:
+				"Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
 		};
 	}
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);

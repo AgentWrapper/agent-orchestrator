@@ -36,7 +36,7 @@ describe("restartProjectOrchestrator", () => {
 			onError,
 		});
 
-		expect(spawnMock).toHaveBeenCalledWith("proj-1", true);
+		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(1, "proj-1", null);
 		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, "proj-1", "missing goose binary");
