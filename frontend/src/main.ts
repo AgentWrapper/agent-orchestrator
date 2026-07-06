@@ -98,6 +98,12 @@ let supervisorLink: SupervisorLinkHandle | null = null;
 
 const isDev = !app.isPackaged;
 
+// Dev mode uses a separate port and state subdirectory so it never collides with
+// a concurrently running installed-app daemon. The subdir also isolates supervise.sock
+// (backend derives it as dir(RunFilePath)/supervise.sock) and the SQLite data dir.
+const DEV_DAEMON_PORT = 3002;
+const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
+
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
@@ -257,6 +263,7 @@ const DAEMON_PROBE_TIMEOUT_MS = 2_000;
 
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
+	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "running.json");
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
@@ -341,11 +348,19 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// supervisor on attach (headless `ao start` daemons get no AO_OWNER and stay
 	// unlinked, preserving their persistence across app quit).
 	const ownerTag = { AO_OWNER: "app" };
+	// In dev mode, inject isolation defaults so the dev daemon never collides with
+	// the installed app. User-set env vars take priority (checked first).
+	const devExtras: Record<string, string> = {};
+	if (isDev) {
+		if (!process.env.AO_PORT) devExtras.AO_PORT = String(DEV_DAEMON_PORT);
+		if (!process.env.AO_RUN_FILE) devExtras.AO_RUN_FILE = runFilePath() ?? "";
+		if (!process.env.AO_DATA_DIR) devExtras.AO_DATA_DIR = path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+	}
 	// Windows keeps the old behavior exactly: no shell probe, no unix PATH floor.
 	if (process.platform === "win32") {
-		return { ...process.env, ...telemetryOverrides(), ...ownerTag };
+		return { ...process.env, ...devExtras, ...telemetryOverrides(), ...ownerTag };
 	}
-	return buildDaemonEnv(process.env, cachedShellEnv, { ...telemetryOverrides(), ...ownerTag });
+	return buildDaemonEnv(process.env, cachedShellEnv, { ...devExtras, ...telemetryOverrides(), ...ownerTag });
 }
 
 function pathKey(value: string): string {
@@ -506,6 +521,13 @@ async function startDaemon(): Promise<DaemonStatus> {
 	return daemonStartPromise;
 }
 
+// The port this Electron instance expects the daemon to bind. In dev mode a
+// separate port isolates the dev daemon from the installed-app daemon.
+// AO_PORT always wins if set explicitly.
+function resolvedDaemonPort(): number {
+	return isDev && !process.env.AO_PORT ? DEV_DAEMON_PORT : expectedDaemonPort(process.env);
+}
+
 async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
@@ -556,7 +578,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// port the Go child would bind and collide on — probing a hardcoded 3001 would
 	// miss an AO_PORT override.
 	const directDaemon = await resolveDaemonFromPort({
-		expectedPort: expectedDaemonPort(process.env),
+		expectedPort: resolvedDaemonPort(),
 		probe: readDaemonProbe,
 		identityError: (probe) => daemonIdentityError(launch, probe),
 	});
@@ -596,7 +618,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// killed here), and a foreign non-AO process holding the port with a dead
 	// run-file PID is not replaced (out of scope). When no holder is detectable,
 	// skip straight to spawn.
-	const orphanProbe = await readDaemonProbe(expectedDaemonPort(process.env), "healthz");
+	const orphanProbe = await readDaemonProbe(resolvedDaemonPort(), "healthz");
 	const runFilePath_ = runFilePath();
 	let runFilePid: number | null = null;
 	if (runFilePath_) {
@@ -636,7 +658,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		const TAKEOVER_POLL_MS = 200;
 		const deadline = Date.now() + TAKEOVER_TIMEOUT_MS;
 		while (Date.now() < deadline) {
-			const still = await readDaemonProbe(expectedDaemonPort(process.env), "healthz");
+			const still = await readDaemonProbe(resolvedDaemonPort(), "healthz");
 			if (!still) break;
 			await new Promise<void>((r) => setTimeout(r, TAKEOVER_POLL_MS));
 		}
@@ -746,7 +768,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		stopDiscovery();
 		setDaemonStatus({
 			state: "ready",
-			port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
+			port: resolvedDaemonPort(),
 			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
 			code: "port_unconfirmed",
 		});
