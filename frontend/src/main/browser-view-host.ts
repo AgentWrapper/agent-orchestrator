@@ -87,7 +87,7 @@ type BrowserEntry = {
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
 // ponytail: file:// allowed unsanitized; preview targets are agent-trusted for now
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:", "app:"]);
 
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
@@ -106,6 +106,8 @@ export function isAllowedBrowserURL(input: string, rendererOrigin?: string): boo
 	try {
 		const url = normalizeBrowserURL(input);
 		if (rendererOrigin && url.origin === rendererOrigin) return false;
+		// Only app://md-preview/* is allowed; block any other app:// origin.
+		if (url.protocol === "app:" && url.host !== "md-preview") return false;
 		return true;
 	} catch {
 		return false;

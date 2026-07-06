@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -154,21 +156,16 @@ func TestPreview_MissingSessionIDIsUsageError(t *testing.T) {
 	}
 }
 
-func TestPreview_HelpIncludesExamples(t *testing.T) {
+func TestPreviewHelp_IncludesExamples(t *testing.T) {
 	out, _, err := executeCLI(t, Deps{}, "preview", "--help")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Examples section present.
 	if !strings.Contains(out, "EXAMPLES") && !strings.Contains(out, "Examples") {
 		t.Errorf("help output missing Examples section:\n%s", out)
 	}
-	// file:// URL example (not a relative path).
-	if !strings.Contains(out, "file://$(pwd)/index.html") {
-		t.Errorf("help output missing file:// example:\n%s", out)
-	}
-	if strings.Contains(out, "./dist/index.html") {
-		t.Errorf("help output still references relative ./dist/index.html:\n%s", out)
+	if !strings.Contains(out, "path/to/readme.md") {
+		t.Errorf("help output missing markdown path example:\n%s", out)
 	}
 }
 
@@ -189,5 +186,130 @@ func TestPreview_BlankSessionIDIsUsageError(t *testing.T) {
 	}
 	if capture.called {
 		t.Fatal("daemon should not be contacted when AO_SESSION_ID is blank")
+	}
+}
+
+func TestPreview_MarkdownAbsolutePathExists(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	mdFile := filepath.Join(t.TempDir(), "test.md")
+	if err := os.WriteFile(mdFile, []byte("# Hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", mdFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !capture.called {
+		t.Fatal("daemon should be contacted for an existing .md file")
+	}
+	var req struct {
+		Url string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	expected := "file://" + mdFile
+	if req.Url != expected {
+		t.Errorf("captured url = %q, want %q", req.Url, expected)
+	}
+}
+
+func TestPreview_MarkdownRelativePathExists(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	// Create a temp dir, cd there, and resolve a relative .md file path.
+	tmpDir := t.TempDir()
+	mdFile := filepath.Join(tmpDir, "readme.md")
+	if err := os.WriteFile(mdFile, []byte("# Readme"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origCWD, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origCWD) }()
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "readme.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !capture.called {
+		t.Fatal("daemon should be contacted for an existing relative .md file")
+	}
+	var req struct {
+		Url string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	expected := "file://" + mdFile
+	if req.Url != expected {
+		t.Errorf("captured url = %q, want %q", req.Url, expected)
+	}
+}
+
+func TestPreview_FileNotFoundIsError(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	// Even though a server is set up, the file-not-found error should be
+	// surfaced BEFORE any daemon call.
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "/nonexistent/file.md")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+	if capture.called {
+		t.Fatal("daemon should NOT be contacted when file is not found")
+	}
+	if !strings.Contains(err.Error(), "file not found") {
+		t.Errorf("error message should mention 'file not found', got: %v", err)
+	}
+}
+
+func TestPreview_NonMarkdownAbsolutePath(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	htmlFile := filepath.Join(t.TempDir(), "index.html")
+	if err := os.WriteFile(htmlFile, []byte("<h1>Hello</h1>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", htmlFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !capture.called {
+		t.Fatal("daemon should be contacted")
+	}
+	var req struct {
+		Url string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	// Non-.md files should be passed as absolute paths (not file://-prefixed).
+	if req.Url != htmlFile {
+		t.Errorf("captured url = %q, want %q (absolute path)", req.Url, htmlFile)
 	}
 }

@@ -85,8 +85,10 @@ describe("normalizeBrowserURL", () => {
 		expect(normalizeBrowserURL("/tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
 	});
 
-	it("rejects privileged or unsupported schemes", () => {
-		expect(() => normalizeBrowserURL("app://renderer/index.html")).toThrow(/unsupported/i);
+	it("rejects unsupported schemes while allowing app:// for markdown preview", () => {
+		// app: is now an allowed protocol for markdown preview (the
+		// isAllowedBrowserURL gate blocks app://renderer at navigation time).
+		expect(normalizeBrowserURL("app://md-preview/current").href).toBe("app://md-preview/current");
 		expect(() => normalizeBrowserURL("javascript:alert(1)")).toThrow(/unsupported/i);
 	});
 });
@@ -98,6 +100,14 @@ describe("isAllowedBrowserURL", () => {
 
 	it("still blocks the renderer's own http origin", () => {
 		expect(isAllowedBrowserURL("http://localhost:5173/", "http://localhost:5173")).toBe(false);
+	});
+
+	it("allows app://md-preview/current for markdown rendering", () => {
+		expect(isAllowedBrowserURL("app://md-preview/current", "app://renderer")).toBe(true);
+	});
+
+	it("blocks app:// origins other than md-preview", () => {
+		expect(isAllowedBrowserURL("app://renderer/index.html", "app://renderer")).toBe(false);
 	});
 });
 

@@ -132,6 +132,8 @@ if (typeof window !== "undefined") {
 			}),
 			destroy: () => undefined,
 			onNavState: () => () => undefined,
+			renderMarkdown: async (_filePath: string, _sessionId: string) => undefined,
+			onMarkdownFileChanged: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
+import { MARKDOWN_FILE_RE } from "../../shared/markdown-types";
 
 export type { BrowserNavState };
 
@@ -32,6 +33,7 @@ export type BrowserViewModel = {
 	navState: BrowserNavState;
 	slotRef: (node: HTMLDivElement | null) => void;
 	navigate: (url: string) => Promise<void>;
+	renderMarkdown: (filePath: string) => Promise<void>;
 	goBack: () => Promise<void>;
 	goForward: () => Promise<void>;
 	reload: () => Promise<void>;
@@ -49,6 +51,8 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 };
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
+
+const MD_PREVIEW_URL = "app://md-preview/current";
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -233,6 +237,14 @@ export function useBrowserView({
 		[withView],
 	);
 
+	const renderMarkdown = useCallback(
+		async (filePath: string) => {
+			await window.ao?.browser.renderMarkdown(filePath, sessionId);
+			await navigate(MD_PREVIEW_URL);
+		},
+		[navigate, sessionId],
+	);
+
 	const clear = useCallback(() => withView((id) => window.ao!.browser.clear(id)), [withView]);
 
 	// When the session is terminated, clear the view and stop reacting to
@@ -245,6 +257,8 @@ export function useBrowserView({
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
+	// Markdown file URLs are rendered via markdown-host instead of navigating the
+	// native WebContentsView to the raw file:// URL.
 	useEffect(() => {
 		if (!viewId || terminated) return;
 		const target = previewUrl?.trim() ?? "";
@@ -253,12 +267,25 @@ export function useBrowserView({
 		if (previous?.revision === revision && previous.target === target) return;
 		if (revision !== null && previous?.revision === revision) return;
 		previewTriggerRef.current = { revision, target };
-		if (target) {
+
+		if (MARKDOWN_FILE_RE.test(target)) {
+			void renderMarkdown(target);
+		} else if (target) {
 			void navigate(target);
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, navigate, previewRevision, previewUrl, viewId]);
+	}, [clear, navigate, previewRevision, previewUrl, renderMarkdown, viewId]);
+
+	// Auto-refresh the view when the markdown file changes on disk.
+	useEffect(() => {
+		return window.ao?.browser.onMarkdownFileChanged(() => {
+			const id = viewIdRef.current;
+			if (id) {
+				void window.ao?.browser.reload(id);
+			}
+		});
+	}, []);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -273,6 +300,7 @@ export function useBrowserView({
 		navState,
 		slotRef,
 		navigate,
+		renderMarkdown,
 		goBack: () => withView((id) => window.ao!.browser.goBack(id)),
 		goForward: () => withView((id) => window.ao!.browser.goForward(id)),
 		reload: () => withView((id) => window.ao!.browser.reload(id)),
