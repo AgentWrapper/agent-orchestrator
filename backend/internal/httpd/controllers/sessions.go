@@ -462,7 +462,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	state := domain.ActivityState(in.State)
 	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityExited:
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
 	default:
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
 		return
@@ -472,7 +472,21 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_AGENT", "Unknown agent harness", nil)
 		return
 	}
-	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), ports.ActivitySignal{Valid: true, State: state, Harness: harness, RuntimeToken: strings.TrimSpace(in.RuntimeToken)}); err != nil {
+	// The correlation fields ride the same lenient decode: absent on old CLIs.
+	// They are externally-supplied strings headed for logs and in-memory maps,
+	// so sanitize control chars and cap their length (a truncated id could
+	// never match its pre/post counterpart, so overlong values are dropped by
+	// the CLI; the cap here is defense against non-AO callers).
+	sig := ports.ActivitySignal{
+		Valid:        true,
+		State:        state,
+		Harness:      harness,
+		RuntimeToken: strings.TrimSpace(in.RuntimeToken),
+		Event:        capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:     capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:    capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+	}
+	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {
 			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
 			return
@@ -481,6 +495,16 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
+}
+
+// capActivityMeta bounds an optional activity correlation string; overlong
+// values are dropped, not truncated (see the comment at its call site).
+func capActivityMeta(v string) string {
+	const maxLen = 256
+	if len(v) > maxLen {
+		return ""
+	}
+	return v
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {

@@ -56,7 +56,7 @@ type kiroHookSpec struct {
 //
 //	agentSpawn       -> session-start       (ActivityActive)
 //	userPromptSubmit -> user-prompt-submit  (ActivityActive)
-//	preToolUse       -> permission-request  (ActivityWaitingInput)
+//	preToolUse       -> permission-request  (ActivityBlocked)
 //	stop             -> stop                (ActivityIdle)
 var kiroManagedHooks = []kiroHookSpec{
 	{Event: "agentSpawn", Command: kiroHookCommandPrefix + "session-start"},

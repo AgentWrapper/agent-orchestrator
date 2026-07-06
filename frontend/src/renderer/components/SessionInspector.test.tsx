@@ -179,6 +179,7 @@ describe("SessionInspector Activity section", () => {
 		["idle", "Idle"],
 		["active", "Working"],
 		["waiting_input", "Input Needed"],
+		["blocked", "Decision Needed"],
 		["exited", "Exited"],
 	] as const)("renders %s from raw session activity", (state, label) => {
 		renderWithQuery(

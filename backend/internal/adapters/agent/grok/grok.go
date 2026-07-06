@@ -51,6 +51,15 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// EmitsSubmitActivity reports that Grok delegates hooks to claude-code, which fires
+// user-prompt-submit. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity reports that this harness signals a permission/
+// approval pause (blocked), so AO can tell a pending decision from an
+// unsubmitted draft. See ports.ActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 

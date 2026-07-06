@@ -20,18 +20,21 @@ import (
 // Droid's payload shapes differ from Claude Code's in one way that matters here:
 // the Notification payload carries no notification_type discriminator (it only
 // has a free-form message), but Droid only fires Notification when it needs a
-// permission decision or has been idle awaiting input for 60s — both mean the
-// agent is blocked on the user — so every Notification maps to waiting_input.
+// permission decision or has been idle awaiting input for 60s. AO cannot tell
+// which, so every Notification maps to the conservative blocked (never
+// waiting_input): a false "blocked" only costs droid the send-confirm nudge (a
+// stalled draft the user can recover), while a false "waiting_input" would let
+// an automated Enter answer a pending permission decision.
 func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
 	case "stop":
 		// End of a turn: the agent is idle but alive (not exited). A following
-		// Notification upgrades this to the sticky waiting_input.
+		// Notification upgrades this to the sticky blocked.
 		return domain.ActivityIdle, true
 	case "notification":
-		return domain.ActivityWaitingInput, true
+		return domain.ActivityBlocked, true
 	case "session-end":
 		return sessionEndState(payload)
 	default:

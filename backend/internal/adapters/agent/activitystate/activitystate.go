@@ -15,7 +15,12 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 //
 //   - session-start / user-prompt-submit → active
 //   - stop                               → idle
-//   - permission-request                 → waiting_input
+//   - permission-request                 → blocked
+//
+// permission-request maps to the sticky blocked (not waiting_input): these
+// adapters fire it only for a pending permission/approval decision, where a
+// stray automated Enter could answer the dialog on the user's behalf, so
+// automated senders must never inject input. See domain.ActivityState.NeedsInput.
 func StandardDeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "session-start":
@@ -25,7 +30,7 @@ func StandardDeriveActivityState(event string, _ []byte) (domain.ActivityState, 
 	case "stop":
 		return domain.ActivityIdle, true
 	case "permission-request":
-		return domain.ActivityWaitingInput, true
+		return domain.ActivityBlocked, true
 	default:
 		return "", false
 	}

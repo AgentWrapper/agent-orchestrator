@@ -53,6 +53,15 @@ func NewFugu() *Plugin {
 	}
 }
 
+// EmitsSubmitActivity signals Codex fires a user-prompt-submit hook under AO's
+// launch. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity reports that this harness signals a permission/
+// approval pause (blocked), so AO can tell a pending decision from an
+// unsubmitted draft. See ports.ActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -285,8 +294,8 @@ func ResolveAgentBinary(ctx context.Context, binaryName string) (string, error) 
 	}
 
 	candidates := []string{
-		filepath.Join(string(os.PathSeparator), "usr", "local", "bin", binaryName),
-		filepath.Join(string(os.PathSeparator), "opt", "homebrew", "bin", binaryName),
+		filepath.Join(string(filepath.Separator), "usr", "local", "bin", binaryName),
+		filepath.Join(string(filepath.Separator), "opt", "homebrew", "bin", binaryName),
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,

@@ -62,6 +62,16 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// EmitsSubmitActivity signals that Claude Code fires a user-prompt-submit hook
+// under AO's launch, so Activity.State can flip to active after a prompt is
+// accepted. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity reports that this harness signals a permission/
+// approval pause (blocked), so AO can tell a pending decision from an
+// unsubmitted draft. See ports.ActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
