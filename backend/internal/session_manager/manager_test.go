@@ -1964,6 +1964,76 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 }
 
+func TestRetireForReplacementWorkspaceProjectCapturesAndReleasesEveryRepo(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{
+			SessionID:    "mer-orch",
+			RepoName:     domain.RootWorkspaceRepoName,
+			Branch:       "ao/mer-orchestrator",
+			WorktreePath: "/ws/mer-orch",
+			PreservedRef: "refs/ao/preserved/old-root",
+			State:        "active",
+		},
+		{
+			SessionID:    "mer-orch",
+			RepoName:     "api",
+			Branch:       "ao/mer-orchestrator",
+			WorktreePath: "/ws/mer-orch/api",
+			PreservedRef: "refs/ao/preserved/old-api",
+			State:        "active",
+		},
+	}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	if rows := st.worktrees["mer-orch"]; len(rows) != 0 {
+		t.Fatalf("replacement retirement must not write restore markers, got %#v", rows)
+	}
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("retired orchestrator must be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+
+	wantOrder := []string{
+		"StashUncommitted:__root__",
+		"StashUncommitted:api",
+		"DeleteSessionWorktrees:mer-orch",
+		"ForceDestroy:api",
+		"ForceDestroy:__root__",
+	}
+	next := 0
+	for _, call := range sharedLog {
+		if next < len(wantOrder) && call == wantOrder[next] {
+			next++
+		}
+	}
+	if next != len(wantOrder) {
+		t.Fatalf("workspace project retirement order missing %v in log %v", wantOrder, sharedLog)
+	}
+}
+
 func TestRetireForReplacementForceDestroyFailureLeavesSessionActive(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	ws.forceDestroyErr = errors.New("worktree still registered")

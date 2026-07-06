@@ -854,7 +854,7 @@ async function chooseDirectory(title: string): Promise<string | null> {
 }
 
 async function gitOutput(cwd: string, args: string[]): Promise<string> {
-	const { stdout } = await execFileAsync("git", args, { cwd, timeout: 5000 });
+	const { stdout } = await execFileAsync("git", args, { cwd, env: daemonEnv(), timeout: 5000 });
 	return String(stdout).trim();
 }
 
@@ -925,6 +925,7 @@ ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
 });
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
+	await ensureShellEnv();
 	return scanImportFolder(input.path, input.mode);
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {

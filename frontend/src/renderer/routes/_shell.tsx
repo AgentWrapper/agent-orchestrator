@@ -129,7 +129,6 @@ function ShellLayout() {
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
 				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
 				setOrchestratorStartupError(workspace.id, startupMessage);
-				throw new Error(startupMessage);
 			}
 		},
 		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],

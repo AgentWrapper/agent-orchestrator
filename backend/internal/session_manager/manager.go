@@ -583,6 +583,11 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		}
 		return nil
 	}
+	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		return fmt.Errorf("retire replacement %s: workspace rows: %w", id, rowErr)
+	} else if ok {
+		return m.retireWorkspaceProjectForReplacement(ctx, rec, rows)
+	}
 
 	ws := workspaceInfo(rec)
 	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
@@ -602,6 +607,32 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+	}
+	return nil
+}
+
+func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
+	for _, row := range rows {
+		if _, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row)); err != nil {
+			return fmt.Errorf("retire replacement %s repo %s: stash: %w", rec.ID, row.RepoName, err)
+		}
+	}
+	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: clear restore markers: %w", rec.ID, err)
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			return fmt.Errorf("retire replacement %s: runtime: %w", rec.ID, err)
+		}
+	}
+	for i := len(rows) - 1; i >= 0; i-- {
+		if err := m.workspace.ForceDestroy(ctx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
+			return fmt.Errorf("retire replacement %s repo %s: force destroy: %w", rec.ID, rows[i].RepoName, err)
+		}
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: mark terminated: %w", rec.ID, err)
 	}
 	return nil
 }
