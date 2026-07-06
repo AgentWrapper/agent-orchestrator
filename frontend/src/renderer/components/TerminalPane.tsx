@@ -1,7 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { SendHorizonal } from "lucide-react";
+import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
-import type { WorkspaceSession } from "../types/workspace";
+import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -20,35 +22,47 @@ type TerminalPaneProps = {
 export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
+	const messageComposer =
+		session && terminalTarget?.kind !== "reviewer" && sessionIsActive(session) ? (
+			<SessionMessageComposer key={session.id} session={session} />
+		) : null;
 
 	if (!window.ao) {
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		return (
-			<pre
-				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-[var(--term-fg)]"
-				style={{ fontSize }}
-			>
-				<span className="text-[var(--term-dim)]">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
-				<span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {provider}
-				{"\n"}
-				<span className="text-[var(--term-green)]">✻ Welcome to the agent CLI</span>
-				{"\n\n"}
-				<span className="text-[var(--term-dim)]">
-					Browser preview renders a static terminal surface. Electron attaches the live PTY.
-				</span>
-			</pre>
+			<div className="flex h-full min-h-0 flex-col bg-terminal">
+				<pre
+					className="min-h-0 flex-1 overflow-auto bg-terminal p-4 font-mono leading-relaxed text-[var(--term-fg)]"
+					style={{ fontSize }}
+				>
+					<span className="text-[var(--term-dim)]">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
+					<span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {provider}
+					{"\n"}
+					<span className="text-[var(--term-green)]">{session?.title ?? "Agent Orchestrator"}</span>
+					{"\n\n"}
+					<span className="text-[var(--term-dim)]">
+						Browser mode sends messages through AO. Electron attaches the live PTY.
+					</span>
+				</pre>
+				{messageComposer}
+			</div>
 		);
 	}
 
 	return (
-		<AttachedTerminal
-			key={terminalKey}
-			session={session}
-			theme={theme}
-			daemonReady={daemonReady}
-			fontSize={fontSize}
-			terminalTarget={terminalTarget}
-		/>
+		<div className="flex h-full min-h-0 flex-col bg-terminal">
+			<div className="min-h-0 flex-1">
+				<AttachedTerminal
+					key={terminalKey}
+					session={session}
+					theme={theme}
+					daemonReady={daemonReady}
+					fontSize={fontSize}
+					terminalTarget={terminalTarget}
+				/>
+			</div>
+			{messageComposer}
+		</div>
 	);
 }
 
@@ -183,6 +197,74 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				/>
 			)}
 		</div>
+	);
+}
+
+function SessionMessageComposer({ session }: { session: WorkspaceSession }) {
+	const [message, setMessage] = useState("");
+	const [error, setError] = useState<string | undefined>();
+	const [sent, setSent] = useState(false);
+	const [isSending, setIsSending] = useState(false);
+	const queryClient = useQueryClient();
+	const canSend = message.trim().length > 0 && !isSending && session.status !== "terminated";
+
+	const submit = useCallback(
+		async (event: FormEvent<HTMLFormElement>) => {
+			event.preventDefault();
+			const trimmed = message.trim();
+			if (!trimmed || isSending || session.status === "terminated") return;
+			setIsSending(true);
+			setError(undefined);
+			setSent(false);
+			try {
+				const { error: sendError } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+					params: { path: { sessionId: session.id } },
+					body: { message: trimmed },
+				});
+				if (sendError) throw new Error(apiErrorMessage(sendError, "Unable to send message"));
+				setMessage("");
+				setSent(true);
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Unable to send message");
+			} finally {
+				setIsSending(false);
+			}
+		},
+		[isSending, message, queryClient, session.id, session.status],
+	);
+
+	return (
+		<form className="terminal-message-composer" onSubmit={(event) => void submit(event)}>
+			<label className="sr-only" htmlFor={`session-message-${session.id}`}>
+				Message {session.title}
+			</label>
+			<input
+				className="terminal-message-composer__input"
+				disabled={session.status === "terminated"}
+				id={`session-message-${session.id}`}
+				onChange={(event) => {
+					setMessage(event.target.value);
+					setSent(false);
+					setError(undefined);
+				}}
+				placeholder={session.status === "terminated" ? "Session is terminated" : "Send a message to this session"}
+				type="text"
+				value={message}
+			/>
+			<button
+				aria-label="Send message"
+				className="terminal-message-composer__send"
+				disabled={!canSend}
+				title="Send message"
+				type="submit"
+			>
+				<SendHorizonal className="h-3.5 w-3.5" aria-hidden="true" />
+			</button>
+			<span className="terminal-message-composer__status" role={error ? "alert" : "status"}>
+				{error ?? (sent ? "Sent" : "")}
+			</span>
+		</form>
 	);
 }
 

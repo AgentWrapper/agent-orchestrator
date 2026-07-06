@@ -17,14 +17,29 @@ test("renders the orchestrator-first workbench shell", async ({ page }) => {
 test("deep-links into a worker session", async ({ page }) => {
 	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 	await expect(page.locator(".dashboard-app-header")).toBeVisible();
-	await expect(page.getByTestId("terminal").getByText("Split terminal mux responsibilities")).toBeVisible();
+	await expect(page.locator(".terminal-toolbar__session")).toHaveText("Split terminal mux responsibilities");
 });
 
 test("drilling into a worker opens its Git review rail", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
 	await expect(page).toHaveURL(/sessions\/refactor-mux/);
-	await expect(page.getByTestId("terminal").getByText("Split terminal mux responsibilities")).toBeVisible();
+	await expect(page.locator(".terminal-toolbar__session")).toHaveText("Split terminal mux responsibilities");
+});
+
+test("project board opens and messages its orchestrator", async ({ page }) => {
+	await page.goto("/#/projects/api-gateway");
+	const main = page.getByRole("main");
+	const orchestratorCard = main.getByRole("button", { name: "Open api-gateway Orchestrator", exact: true });
+	await expect(orchestratorCard).toBeVisible();
+
+	await orchestratorCard.click();
+	await expect(page).toHaveURL(/sessions\/api-gateway-orchestrator/);
+	await expect(main.getByText("api-gateway Orchestrator", { exact: true })).toBeVisible();
+
+	await page.getByRole("textbox", { name: "Message api-gateway Orchestrator" }).fill("status?");
+	await page.getByRole("button", { name: "Send message" }).click();
+	await expect(page.getByText("Sent")).toBeVisible();
 });
 
 test("web mode opens an in-app project path prompt from the New project button", async ({ page }) => {

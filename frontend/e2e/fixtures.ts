@@ -79,6 +79,18 @@ const session = (
 
 const sessions: Session[] = [
 	session({
+		id: "api-gateway-orchestrator",
+		projectId: "api-gateway",
+		terminalHandleId: "api-gateway-orchestrator/terminal_0",
+		displayName: "api-gateway Orchestrator",
+		harness: "claude-code",
+		kind: "orchestrator",
+		branch: "main",
+		status: "idle",
+		prs: [],
+		ageHours: 1,
+	}),
+	session({
 		id: "refactor-mux",
 		projectId: "api-gateway",
 		terminalHandleId: "refactor-mux/terminal_0",
@@ -224,6 +236,11 @@ export async function mockAoApi(page: Page) {
 		}
 		if (path === "/api/v1/sessions") {
 			return fulfill(route, { sessions });
+		}
+		const sendMatch = path.match(/^\/api\/v1\/sessions\/([^/]+)\/send$/);
+		if (sendMatch) {
+			const payload = (await route.request().postDataJSON()) as { message?: string };
+			return fulfill(route, { ok: true, sessionId: sendMatch[1], message: payload.message ?? "" });
 		}
 		const projectMatch = path.match(/^\/api\/v1\/projects\/([^/]+)$/);
 		if (projectMatch) {

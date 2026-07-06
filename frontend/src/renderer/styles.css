@@ -335,6 +335,111 @@ select {
 	color: var(--fg-muted);
 }
 
+.terminal-message-composer {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 32px minmax(42px, auto);
+	gap: 8px;
+	align-items: center;
+	border-top: 1px solid var(--border);
+	background: var(--bg);
+	padding: 9px 12px;
+}
+
+.terminal-message-composer__input {
+	min-width: 0;
+	height: 32px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--surface);
+	padding: 0 10px;
+	color: var(--fg);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	outline: none;
+}
+
+.terminal-message-composer__input:focus {
+	border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.terminal-message-composer__input:disabled {
+	opacity: 0.45;
+}
+
+.terminal-message-composer__send {
+	display: inline-flex;
+	width: 32px;
+	height: 32px;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--raised);
+	color: var(--fg);
+	cursor: pointer;
+	transition:
+		background 120ms ease,
+		border-color 120ms ease,
+		opacity 120ms ease;
+}
+
+.terminal-message-composer__send:hover {
+	border-color: var(--border-strong);
+	background: var(--interactive-hover);
+}
+
+.terminal-message-composer__send:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+
+.terminal-message-composer__status {
+	min-width: 42px;
+	overflow: hidden;
+	font-family: var(--font-mono);
+	font-size: 10.5px;
+	color: var(--fg-passive);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.orchestrator-session-card {
+	display: flex;
+	min-height: 58px;
+	align-items: center;
+	gap: 12px;
+	border: 1px solid var(--border);
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--surface) 88%, var(--accent) 7%);
+	padding: 10px 13px;
+	cursor: pointer;
+	transition:
+		background 120ms ease,
+		border-color 120ms ease;
+}
+
+.orchestrator-session-card:hover {
+	border-color: var(--border-strong);
+	background: color-mix(in srgb, var(--surface) 84%, var(--accent) 11%);
+}
+
+.orchestrator-session-card:focus-visible {
+	outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+	outline-offset: 2px;
+}
+
+.orchestrator-session-card__icon {
+	display: inline-flex;
+	width: 30px;
+	height: 30px;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--raised);
+	color: var(--accent);
+}
+
 :root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
 	background: rgb(0 0 0 / 0.12);
 }

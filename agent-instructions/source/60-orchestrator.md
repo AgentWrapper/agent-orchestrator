@@ -52,11 +52,14 @@ Hard cap: **8 concurrent workers per project** (raised from 4 by Nick,
 The dashboard and Claude Code session list are the work log — three naming
 duties:
 
-- **Yourself, at startup:** `ao session rename
-"${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "AO Master Orch"`
-  (shortened for the 20-char ao cap), and set the full
-  "AO Master Orchestrator" as your Claude Code session title via the
-  send-keys `/rename` mechanics in Repo extensions → Session self-naming.
+- **Yourself, at startup:** derive `<projectname>` from the ao project name
+  when available, otherwise from the checkout directory basename. Run
+  `ao session rename "${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "<projectname> Orch"`
+  (shortened as needed for the 20-char ao cap), and for claude-code
+  orchestrators set the full `<projectname> Orchestrator` as the Claude Code
+  session title via the send-keys `/rename` mechanics in Repo extensions →
+  Session self-naming. Never use a fixed cross-project title like "AO Master
+  Orchestrator"; two projects' orchestrators must be distinguishable.
 - **Every spawn** gets `--name "#<issue> <slug>"` (≤20 chars).
 - **Every spawn prompt** instructs the worker to self-rename per Session
   self-naming (Repo extensions): on claiming its work item, and again on

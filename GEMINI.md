@@ -216,23 +216,26 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   a bad change here takes down the whole fleet; a human reviews those merges.
 - **Env:** sessions run with `POLYPOWERS_AUTOMERGE=1` and
   `POLYPOWERS_REPO=polymath-ventures/agent-orchestrator` (project config).
-- **Session self-naming (ao-hosted sessions):** keep your session's name in
-  sync with your current work item so the dashboard and the Claude Code
-  session list read like a live work log. Workers set both surfaces on
-  claiming a work item and again on every queue item transition. Your ao
-  session id is `SID="${AO_SESSION_ID:-$(tmux display-message -p '#S')}"`
-  (ao injects the env var; tmux is the fallback). Derive `<slug>` from the
-  issue title: lowercase `[a-z0-9-]` only, everything else stripped — never
-  interpolate a raw title into a shell command.
+- **Session self-naming (ao-hosted sessions):** keep your session's names in
+  sync with the current work item so the dashboard and the Claude Code session
+  list read like a live work log. Workers set both surfaces on claiming a work
+  item and again on every queue item transition. Your ao session id is
+  `SID="${AO_SESSION_ID:-$(tmux display-message -p '#S')}"` (ao injects the
+  env var; tmux is the fallback). Derive `<slug>` from the issue title:
+  lowercase `[a-z0-9-]` only, everything else stripped — never interpolate a
+  raw title into a shell command.
   - ao display name: `ao session rename "$SID" "#<issue> <slug>"` — 20-char
     cap (enforced at spawn/API; the CLI rename path currently skips the
     check, so never rely on a longer name sticking). Visible in the
     dashboard and `ao session get`; the `ao session ls` table doesn't show
     it yet (gap tracked in GH #28).
   - Claude Code session title (claude-code harness only):
-    `tmux send-keys -t "$SID" -l '/rename #<issue> <slug>'` then
-    `tmux send-keys -t "$SID" Enter` — verified safe mid-turn. Other
-    harnesses have no title surface; ao display name only.
+    `tmux send-keys -t "$SID" -l '/rename #<issue> <short-desc>'` then
+    `tmux send-keys -t "$SID" Enter` — verified safe mid-turn. This title is
+    intentionally uncapped and should use the descriptive work-item text, not
+    only ao's 20-char display name. Other harnesses have no Claude Code title
+    surface; ao display name is their only naming surface and must not be
+    faked.
   - Never rename the tmux session itself — its name IS the ao session id and
     ao addresses the pane by it.
 
@@ -290,11 +293,14 @@ Hard cap: **8 concurrent workers per project** (raised from 4 by Nick,
 The dashboard and Claude Code session list are the work log — three naming
 duties:
 
-- **Yourself, at startup:** `ao session rename
-"${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "AO Master Orch"`
-  (shortened for the 20-char ao cap), and set the full
-  "AO Master Orchestrator" as your Claude Code session title via the
-  send-keys `/rename` mechanics in Repo extensions → Session self-naming.
+- **Yourself, at startup:** derive `<projectname>` from the ao project name
+  when available, otherwise from the checkout directory basename. Run
+  `ao session rename "${AO_SESSION_ID:-$(tmux display-message -p '#S')}" "<projectname> Orch"`
+  (shortened as needed for the 20-char ao cap), and for claude-code
+  orchestrators set the full `<projectname> Orchestrator` as the Claude Code
+  session title via the send-keys `/rename` mechanics in Repo extensions →
+  Session self-naming. Never use a fixed cross-project title like "AO Master
+  Orchestrator"; two projects' orchestrators must be distinguishable.
 - **Every spawn** gets `--name "#<issue> <slug>"` (≤20 chars).
 - **Every spawn prompt** instructs the worker to self-rename per Session
   self-naming (Repo extensions): on claiming its work item, and again on

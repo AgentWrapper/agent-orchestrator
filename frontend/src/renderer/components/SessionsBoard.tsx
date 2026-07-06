@@ -1,7 +1,7 @@
 import { type KeyboardEvent, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Plus, RotateCw } from "lucide-react";
+import { AlertTriangle, Plus, RotateCw, Shield } from "lucide-react";
 import { DashboardSubhead } from "./DashboardSubhead";
 import {
 	type AttentionZone,
@@ -208,10 +208,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
 				) : (
-					<div className="grid h-full grid-cols-4 gap-2">
-						{COLUMNS.map((col) => (
-							<ZoneColumn key={col.level} col={col} sessions={byZone.get(col.level) ?? []} onOpen={openSession} />
-						))}
+					<div className="flex h-full min-h-0 flex-col gap-3">
+						{projectId && orchestrator ? (
+							<OrchestratorSessionCard session={orchestrator} onOpen={() => openSession(orchestrator)} />
+						) : null}
+						<div className="grid min-h-0 flex-1 grid-cols-4 gap-2">
+							{COLUMNS.map((col) => (
+								<ZoneColumn key={col.level} col={col} sessions={byZone.get(col.level) ?? []} onOpen={openSession} />
+							))}
+						</div>
 					</div>
 				)}
 			</div>
@@ -266,6 +271,41 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
 				onOpenChange={setIsNewTaskOpen}
 			/>
+		</div>
+	);
+}
+
+function OrchestratorSessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
+	const badge = sessionBadge(session);
+	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (event.currentTarget !== event.target) return;
+		if (event.key !== "Enter" && event.key !== " ") return;
+		event.preventDefault();
+		onOpen();
+	};
+
+	return (
+		<div
+			aria-label={`Open ${session.title}`}
+			className="orchestrator-session-card"
+			onClick={onOpen}
+			onKeyDown={handleKeyDown}
+			role="button"
+			tabIndex={0}
+		>
+			<div className="orchestrator-session-card__icon" aria-hidden="true">
+				<Shield className="h-3.5 w-3.5" />
+			</div>
+			<div className="min-w-0 flex-1">
+				<div className="flex min-w-0 items-center gap-2">
+					<span className="truncate text-[13px] font-semibold text-foreground">{session.title}</span>
+					<span className={cn("shrink-0 text-[11px] font-medium", badge.className)}>{badge.label}</span>
+				</div>
+				<div className="mt-0.5 truncate font-mono text-[10.5px] text-passive">{agentLabel(session.provider)}</div>
+			</div>
+			<span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+				Coordinator
+			</span>
 		</div>
 	);
 }

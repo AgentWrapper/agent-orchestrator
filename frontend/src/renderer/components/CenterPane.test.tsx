@@ -26,9 +26,15 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
 
-	it("shows 'Orchestrator' for an orchestrator session", () => {
-		render(<CenterPane session={{ ...worker, id: "sess-orch", kind: "orchestrator" }} theme="dark" daemonReady />);
-		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+	it("shows the descriptive session display name for an orchestrator session", () => {
+		render(
+			<CenterPane
+				session={{ ...worker, id: "sess-orch", kind: "orchestrator", title: "agent-orchestrator Orchestrator" }}
+				theme="dark"
+				daemonReady
+			/>,
+		);
+		expect(screen.getByText("agent-orchestrator Orchestrator")).toBeInTheDocument();
 	});
 
 	it("shows 'No session' when there is no session", () => {
