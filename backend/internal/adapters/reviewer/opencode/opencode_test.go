@@ -100,16 +100,13 @@ func TestBashAllowlistCoversPromptRequiredCommands(t *testing.T) {
 	}
 }
 
-func TestReviewMessageReturnsEmpty(t *testing.T) {
+func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	got, err := (&Reviewer{}).ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "next review"})
 	if err != nil {
 		t.Fatalf("ReviewMessage: %v", err)
 	}
-	// ReviewMessage should return empty so the prompt
-	// doesn't clutter the terminal. The reviewer already received the full
-	// prompt at launch time.
-	if got != "" {
-		t.Fatalf("ReviewMessage should return empty; got %q", got)
+	if got != "next review" {
+		t.Fatalf("message = %q", got)
 	}
 }
 

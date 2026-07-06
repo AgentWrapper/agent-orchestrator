@@ -53,7 +53,7 @@ func TestReviewCommandUsesReadOnlySandbox(t *testing.T) {
 		"-c", `shell_environment_policy.set.AO_PORT="3103"`,
 		"-c", `shell_environment_policy.set.AO_DATA_DIR="/tmp/ao data"`,
 		"-c", `shell_environment_policy.set.AO_RUN_FILE="/tmp/ao data/running.json"`,
-		"--", "review it",
+		"--", "",
 	}
 	if !slices.Equal(got.Argv, want) {
 		t.Fatalf("argv = %#v, want %#v", got.Argv, want)
@@ -61,17 +61,17 @@ func TestReviewCommandUsesReadOnlySandbox(t *testing.T) {
 	if agent.got.Permissions != ports.PermissionModeAuto {
 		t.Fatalf("permissions = %q, want auto", agent.got.Permissions)
 	}
-	if agent.got.SystemPrompt != "review only" {
+	if agent.got.SystemPrompt != "review only\n\nreview it" {
 		t.Fatalf("system prompt = %q", agent.got.SystemPrompt)
 	}
 }
 
-func TestReviewMessageReturnsEmpty(t *testing.T) {
+func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	got, err := (&Reviewer{}).ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "next review"})
 	if err != nil {
 		t.Fatalf("ReviewMessage: %v", err)
 	}
-	if got != "" {
-		t.Fatalf("ReviewMessage should return empty; got %q", got)
+	if got != "next review" {
+		t.Fatalf("message = %q", got)
 	}
 }

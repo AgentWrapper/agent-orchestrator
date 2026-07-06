@@ -124,6 +124,11 @@ func TestLauncherNotifySendsMessageToHandle(t *testing.T) {
 	if rt.sentTo != "review-mer-1" || !strings.Contains(rt.sentMsg, "run-1") {
 		t.Fatalf("sent to %q msg %q", rt.sentTo, rt.sentMsg)
 	}
+	
+	// Verify the message sent to the runtime is what the reviewer adapter returned.
+	if rt.sentTo != "review-mer-1" || rt.sentMsg != "review run run-1" {
+		t.Fatalf("sent to %q msg %q, want review run run-1", rt.sentTo, rt.sentMsg)
+	}
 }
 
 func TestLauncherAlive(t *testing.T) {

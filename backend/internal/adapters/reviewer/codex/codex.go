@@ -36,8 +36,8 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
-		Prompt:        inv.Prompt,
-		SystemPrompt:  inv.SystemPrompt,
+		Prompt:        "", // Hide the initial prompt from terminal by moving it to SystemPrompt
+		SystemPrompt:  inv.SystemPrompt + "\n\n" + inv.Prompt,
 		Permissions:   ports.PermissionModeAuto,
 	})
 	if err != nil {
@@ -62,14 +62,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 
 // ReviewMessage returns the centrally-authored task for an existing pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
-	// Do not return the prompt here. ReviewMessage is called when re-notifying an
-	// already-running reviewer pane about a new commit in the queue.
-	// The reviewer already has the full prompt (including task instructions and run IDs)
-	// from the initial launch via ReviewCommand -> GetLaunchCommand.
-	// Returning it again would just duplicate the instructions in the terminal.
-	// Instead, return empty so the terminal stays clean, the agent has all the context
-	// it needs from the original prompt at launch time.
-	return "", nil
+	return inv.Prompt, nil
 }
 
 func insertBeforePrompt(argv []string, extra ...string) []string {
