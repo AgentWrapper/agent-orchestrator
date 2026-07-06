@@ -4,6 +4,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { MarkdownFileChangedEvent } from "./shared/markdown-types";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -56,6 +57,15 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		renderMarkdown: (filePath: string, sessionId: string) =>
+			ipcRenderer.invoke("browser:renderMarkdown", filePath, sessionId) as Promise<void>,
+		onMarkdownFileChanged: (listener: (event: MarkdownFileChangedEvent) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, payload: MarkdownFileChangedEvent) => listener(payload);
+			ipcRenderer.on("md:fileChanged", wrapped);
+			return () => {
+				ipcRenderer.off("md:fileChanged", wrapped);
 			};
 		},
 	},

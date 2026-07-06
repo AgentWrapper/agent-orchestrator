@@ -47,6 +47,8 @@ import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shel
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import { MarkdownHost } from "./main/markdown-host";
+import type { MarkdownFileChangedEvent } from "./shared/markdown-types";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
@@ -85,6 +87,7 @@ let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let browserViewHost: BrowserViewHost | null = null;
+let markdownHost: MarkdownHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
@@ -93,6 +96,7 @@ const isDev = !app.isPackaged;
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
+const MD_PREVIEW_HOST = "md-preview";
 
 // The packaged renderer is served from a custom standard scheme, not file://.
 // A file:// page has the opaque "null" origin, which the daemon must never
@@ -115,6 +119,23 @@ function registerRendererProtocol(): void {
 	const distRoot = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
 	protocol.handle(RENDERER_SCHEME, async (request) => {
 		const url = new URL(request.url);
+
+		// Serve cached markdown preview at app://md-preview/current.
+		if (url.host === MD_PREVIEW_HOST) {
+			const html = markdownHost?.getCachedHtml();
+			if (!html) {
+				return new Response("", { status: 204, headers: { "Content-Type": "text/html; charset=utf-8" } });
+			}
+			return new Response(html, {
+				headers: {
+					"Content-Type": "text/html; charset=utf-8",
+					"Cache-Control": "no-cache, no-store, must-revalidate",
+					Pragma: "no-cache",
+					Expires: "0",
+				},
+			});
+		}
+
 		if (url.host !== RENDERER_HOST) {
 			return new Response("Not found", { status: 404 });
 		}
@@ -819,6 +840,27 @@ ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 });
 ipcMain.handle("clipboard:readText", () => clipboard.readText());
 
+ipcMain.handle("browser:renderMarkdown", async (_event, filePath: string, sessionId: string) => {
+	if (!markdownHost) {
+		markdownHost = new MarkdownHost();
+	}
+	markdownHost!.setOnChange((changedPath: string) => {
+		if (!markdownHost?.getCurrentFilePath()) {
+			// File was deleted — clear the daemon-side preview_url too.
+			const port = daemonStatus.port;
+			if (port) {
+				net
+					.fetch(`http://127.0.0.1:${port}/api/v1/sessions/${encodeURIComponent(sessionId)}/preview`, {
+						method: "DELETE",
+					})
+					.catch(() => undefined);
+			}
+		}
+		mainWindow?.webContents.send("md:fileChanged", { filePath: changedPath } satisfies MarkdownFileChangedEvent);
+	});
+	await markdownHost.render(filePath);
+});
+
 ipcMain.handle("appState:getMigration", async (): Promise<MigrationState> => {
 	const runFile = runFilePath();
 	if (!runFile) return { status: "pending" };
@@ -982,6 +1024,8 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
 	browserViewHost?.dispose();
 	browserViewHost = null;
+	markdownHost?.dispose();
+	markdownHost = null;
 });
 
 // Last resort: if the OS-native supervisor link is not actually connected

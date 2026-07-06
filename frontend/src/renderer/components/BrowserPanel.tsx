@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
+import { MARKDOWN_FILE_RE, type MarkdownFileChangedEvent } from "../../shared/markdown-types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -20,6 +21,33 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
 	});
+
+	const previewTriggerRef = useRef<{ url: string; revision: number | undefined } | null>(null);
+
+	// Intercept markdown URLs: render them via markdown-host instead of
+	// navigating the BrowserView to the raw file:// URL.
+	useEffect(() => {
+		const rawUrl = session.previewUrl?.trim() ?? "";
+		if (!rawUrl) return;
+		if (!MARKDOWN_FILE_RE.test(rawUrl)) return;
+		const revision = session.previewRevision;
+		const prev = previewTriggerRef.current;
+		if (prev?.url === rawUrl && prev?.revision === revision) return;
+		previewTriggerRef.current = { url: rawUrl, revision };
+		const filePath = rawUrl.startsWith("file://") ? rawUrl.slice(7) : rawUrl;
+		void browserView.renderMarkdown(filePath);
+	}, [browserView, session.previewUrl, session.previewRevision]);
+
+	// Auto-refresh markdown preview when the file changes on disk.
+	useEffect(() => {
+		return window.ao?.browser.onMarkdownFileChanged((_event: MarkdownFileChangedEvent) => {
+			const id = browserView.viewId;
+			if (id) {
+				void window.ao?.browser.reload(id);
+			}
+		});
+	}, [browserView.viewId]);
+
 	return (
 		<BrowserPanelView
 			active={active}
