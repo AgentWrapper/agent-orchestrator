@@ -170,7 +170,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return fuguSharedCodexAuthStatus(ctx)
 	}
 	if cmdErr != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnauthorized, cmdErr
 	}
 	return ports.AgentAuthStatusUnknown, nil
 }
@@ -212,7 +212,7 @@ func fuguSharedCodexAuthStatus(ctx context.Context) (ports.AgentAuthStatus, erro
 		return status, nil
 	}
 	if cmdErr != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnauthorized, cmdErr
 	}
 	return ports.AgentAuthStatusUnknown, nil
 }
@@ -285,8 +285,8 @@ func ResolveAgentBinary(ctx context.Context, binaryName string) (string, error) 
 	}
 
 	candidates := []string{
-		filepath.Join("/usr/local/bin", binaryName),
-		filepath.Join("/opt/homebrew/bin", binaryName),
+		filepath.Join(string(os.PathSeparator), "usr", "local", "bin", binaryName),
+		filepath.Join(string(os.PathSeparator), "opt", "homebrew", "bin", binaryName),
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
@@ -350,10 +350,6 @@ func (p *Plugin) agentBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
-	return p.agentBinary(ctx)
 }
 
 func (p *Plugin) adapterID() string {

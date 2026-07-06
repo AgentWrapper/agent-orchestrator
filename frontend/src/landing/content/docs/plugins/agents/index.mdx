@@ -8,21 +8,21 @@ The agent is the piece that actually writes code. Everything else in AO — work
 <Callout type="info">
 	**PR metadata is captured automatically.** Non-Claude-Code agents (Codex, Codex Fugu, Cursor, Aider, OpenCode) use
 	`~/.ao/bin/gh` and `~/.ao/bin/git` PATH wrappers that intercept commands like `gh pr create` and record the resulting
-	PR number and branch so the dashboard stays in sync. Claude Code uses PostToolUse hooks in `.claude/settings.json` instead — the
-	same metadata is written through Claude Code's native hook system. Both approaches are set up transparently by AO; you
-	don't need to configure anything.
+	PR number and branch so the dashboard stays in sync. Claude Code uses PostToolUse hooks in `.claude/settings.json`
+	instead — the same metadata is written through Claude Code's native hook system. Both approaches are set up
+	transparently by AO; you don't need to configure anything.
 </Callout>
 
 ## Supported agents
 
-| Agent                                           | Slot name     | Binary     | Session resume               |
-| ----------------------------------------------- | ------------- | ---------- | ---------------------------- |
-| [Claude Code](/docs/plugins/agents/claude-code) | `claude-code` | `claude`   | ✅ `--resume`                |
-| [Codex](/docs/plugins/agents/codex)             | `codex`       | `codex`    | ✅ `codex resume <threadId>` |
+| Agent                                           | Slot name     | Binary       | Session resume                    |
+| ----------------------------------------------- | ------------- | ------------ | --------------------------------- |
+| [Claude Code](/docs/plugins/agents/claude-code) | `claude-code` | `claude`     | ✅ `--resume`                     |
+| [Codex](/docs/plugins/agents/codex)             | `codex`       | `codex`      | ✅ `codex resume <threadId>`      |
 | [Codex Fugu](/docs/plugins/agents/codex-fugu)   | `codex-fugu`  | `codex-fugu` | ✅ `codex-fugu resume <threadId>` |
-| [Cursor](/docs/plugins/agents/cursor)           | `cursor`      | `agent`    | ❌                           |
-| [Aider](/docs/plugins/agents/aider)             | `aider`       | `aider`    | ❌                           |
-| [OpenCode](/docs/plugins/agents/opencode)       | `opencode`    | `opencode` | ✅ via OpenCode session API  |
+| [Cursor](/docs/plugins/agents/cursor)           | `cursor`      | `agent`      | ❌                                |
+| [Aider](/docs/plugins/agents/aider)             | `aider`       | `aider`      | ❌                                |
+| [OpenCode](/docs/plugins/agents/opencode)       | `opencode`    | `opencode`   | ✅ via OpenCode session API       |
 
 <PluginGrid>
 	<PluginCard

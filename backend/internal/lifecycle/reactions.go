@@ -160,26 +160,27 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		}
 		seenCIKeys := map[string]bool{}
 		for _, ch := range o.Checks {
-			if ch.Status == domain.PRCheckFailed {
-				key := ciDedupeKey(o.URL, ch, ciNameCounts[ch.Name])
-				if seenCIKeys[key] {
-					continue
-				}
-				seenCIKeys[key] = true
-				msg := "CI is failing on your PR. Review the output below and push a fix."
-				if ch.LogTail != "" {
-					// LogTail is raw CI job output; sanitize before it reaches the
-					// agent's live pane so embedded escape sequences can't drive the
-					// terminal (the dedup signature stays on the raw bytes).
-					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
-				}
-				sent, err := m.sendOnce(ctx, id, o.URL, key, ch.CommitHash+":"+ch.LogTail, msg, 0)
-				if err != nil {
-					return err
-				}
-				if sent {
-					return nil
-				}
+			if ch.Status != domain.PRCheckFailed {
+				continue
+			}
+			key := ciDedupeKey(o.URL, ch, ciNameCounts[ch.Name])
+			if seenCIKeys[key] {
+				continue
+			}
+			seenCIKeys[key] = true
+			msg := "CI is failing on your PR. Review the output below and push a fix."
+			if ch.LogTail != "" {
+				// LogTail is raw CI job output; sanitize before it reaches the
+				// agent's live pane so embedded escape sequences can't drive the
+				// terminal (the dedup signature stays on the raw bytes).
+				msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
+			}
+			sent, err := m.sendOnce(ctx, id, o.URL, key, ch.CommitHash+":"+ch.LogTail, msg, 0)
+			if err != nil {
+				return err
+			}
+			if sent {
+				return nil
 			}
 		}
 	}

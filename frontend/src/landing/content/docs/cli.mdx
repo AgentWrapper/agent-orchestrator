@@ -75,13 +75,13 @@ If AO is already running, you'll get an interactive prompt to open/restart/spawn
 
 > Spawn a single agent session
 
-| Flag                 | Default        | Purpose                                                                           |
-| -------------------- | -------------- | --------------------------------------------------------------------------------- |
-| `--open`             | —              | Open the session in a terminal tab                                                |
+| Flag                 | Default        | Purpose                                                                                         |
+| -------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| `--open`             | —              | Open the session in a terminal tab                                                              |
 | `--agent <name>`     | config default | Override the agent plugin (`claude-code`, `codex`, `codex-fugu`, `cursor`, `aider`, `opencode`) |
-| `--claim-pr <pr>`    | —              | Immediately claim an existing PR for the spawned session                          |
-| `--assign-on-github` | —              | Assign the claimed PR to the authenticated GitHub user                            |
-| `--prompt <text>`    | —              | Use an inline prompt instead of an issue (max 4096 chars, newlines stripped)      |
+| `--claim-pr <pr>`    | —              | Immediately claim an existing PR for the spawned session                                        |
+| `--assign-on-github` | —              | Assign the claimed PR to the authenticated GitHub user                                          |
+| `--prompt <text>`    | —              | Use an inline prompt instead of an issue (max 4096 chars, newlines stripped)                    |
 
 Positional `[first]` — issue identifier. The project is auto-detected from `cwd`.
 
