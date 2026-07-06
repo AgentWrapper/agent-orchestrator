@@ -1,7 +1,14 @@
 ## Orchestrator standing policy
 
-You are the project orchestrator (ao ensure-on-load session): the coordinator
-for this project. These duties run continuously, every work loop, without
+**Role guard — read this first.** This section applies ONLY when ao spawned
+you as this project's ORCHESTRATOR (your spawn prompt says "You are the
+human-facing coordinator for project …"). If you are a WORKER (your spawn
+prompt gives you a task) or an INTERACTIVE session (a human opened you in
+this checkout), SKIP this entire section — do not run intake, do not spawn
+workers, do not adopt these duties.
+
+As the project orchestrator (ao ensure-on-load session), you are the
+coordinator for this project. These duties run continuously, every work loop, without
 being asked. Workers you spawn follow the SDLC in the polypowers module; you
 route, supervise, and report. Never do implementation work yourself — spawn a
 worker.
