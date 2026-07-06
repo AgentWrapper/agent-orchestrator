@@ -11,10 +11,11 @@ import (
 )
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
-	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", "/state/running.json", map[string]string{
 		"FOO":        "bar",
 		EnvSessionID: "hacked", // a project must not override AO-internal vars
 		EnvProjectID: "hacked",
+		EnvRunFile:   "hacked",
 	})
 	if env["FOO"] != "bar" {
 		t.Fatalf("FOO = %q, want bar", env["FOO"])
@@ -24,6 +25,18 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 	if env[EnvProjectID] != "mer" {
 		t.Fatalf("AO_PROJECT_ID = %q, want mer (internal wins)", env[EnvProjectID])
+	}
+	if env[EnvRunFile] != "/state/running.json" {
+		t.Fatalf("AO_RUN_FILE = %q, want /state/running.json (internal wins; hook delivery must find THIS daemon)", env[EnvRunFile])
+	}
+}
+
+// A daemon with no resolved run-file path must not export an empty AO_RUN_FILE
+// (empty would override a useful inherited value with garbage).
+func TestSpawnEnvOmitsEmptyRunFile(t *testing.T) {
+	env := spawnEnv("mer-1", "mer", "", "/data", "", nil)
+	if _, ok := env[EnvRunFile]; ok {
+		t.Fatalf("AO_RUN_FILE exported despite empty run-file path")
 	}
 }
 
