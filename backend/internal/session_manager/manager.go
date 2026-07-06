@@ -695,10 +695,7 @@ func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHar
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: system prompt: %w", id, err)
 	}
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	if model != "" {
-		agentConfig.Model = model
-	}
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config, model)
 
 	// A harness this session has already launched has a native session on disk;
 	// relaunching it fresh would collide, so resume it. The current harness

@@ -1005,13 +1005,6 @@ export interface components {
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
         };
-        TrackerIntakeConfig: {
-            assignee?: string;
-            enabled?: boolean;
-            /** @enum {string} */
-            provider?: "github";
-            repo?: string;
-        };
         SwitchAgentRequest: {
             harness: string;
             model?: string;
@@ -1020,6 +1013,13 @@ export interface components {
             ok: boolean;
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
+        };
+        TrackerIntakeConfig: {
+            assignee?: string;
+            enabled?: boolean;
+            /** @enum {string} */
+            provider?: "github";
+            repo?: string;
         };
         TriggerReviewResponse: {
             reviewerHandleId: string;

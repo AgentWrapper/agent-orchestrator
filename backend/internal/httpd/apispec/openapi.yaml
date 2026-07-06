@@ -2750,19 +2750,6 @@ components:
       - runId
       - verdict
       type: object
-    TrackerIntakeConfig:
-      properties:
-        assignee:
-          type: string
-        enabled:
-          type: boolean
-        provider:
-          enum:
-          - github
-          type: string
-        repo:
-          type: string
-      type: object
     SwitchAgentRequest:
       properties:
         harness:
@@ -2785,6 +2772,19 @@ components:
       - ok
       - sessionId
       - session
+      type: object
+    TrackerIntakeConfig:
+      properties:
+        assignee:
+          type: string
+        enabled:
+          type: boolean
+        provider:
+          enum:
+          - github
+          type: string
+        repo:
+          type: string
       type: object
     TriggerReviewResponse:
       properties:

@@ -188,100 +188,104 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 }
 
 type sessionRow struct {
-	ID              domain.SessionID
-	ProjectID       domain.ProjectID
-	IssueID         domain.IssueID
-	Kind            domain.SessionKind
-	Harness         domain.AgentHarness
-	DisplayName     string
-	ActivityState   domain.ActivityState
-	ActivityLastAt  time.Time
-	FirstSignalAt   sql.NullTime
-	IsTerminated    bool
-	Branch          string
-	WorkspacePath   string
-	RuntimeHandleID string
-	AgentSessionID  string
-	Prompt          string
-	Model           string
-	PreviewURL      string
-	PreviewRevision int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                domain.SessionID
+	ProjectID         domain.ProjectID
+	IssueID           domain.IssueID
+	Kind              domain.SessionKind
+	Harness           domain.AgentHarness
+	DisplayName       string
+	ActivityState     domain.ActivityState
+	ActivityLastAt    time.Time
+	FirstSignalAt     sql.NullTime
+	IsTerminated      bool
+	Branch            string
+	WorkspacePath     string
+	RuntimeHandleID   string
+	AgentSessionID    string
+	Prompt            string
+	Model             string
+	PreviewURL        string
+	PreviewRevision   int64
+	LaunchedHarnesses string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 func getSessionRow(row gen.GetSessionRow) sessionRow {
 	return sessionRow{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		DisplayName:     row.DisplayName,
-		ActivityState:   row.ActivityState,
-		ActivityLastAt:  row.ActivityLastAt,
-		FirstSignalAt:   row.FirstSignalAt,
-		IsTerminated:    row.IsTerminated,
-		Branch:          row.Branch,
-		WorkspacePath:   row.WorkspacePath,
-		RuntimeHandleID: row.RuntimeHandleID,
-		AgentSessionID:  row.AgentSessionID,
-		Prompt:          row.Prompt,
-		Model:           row.Model,
-		PreviewURL:      row.PreviewURL,
-		PreviewRevision: row.PreviewRevision,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                row.ID,
+		ProjectID:         row.ProjectID,
+		IssueID:           row.IssueID,
+		Kind:              row.Kind,
+		Harness:           row.Harness,
+		DisplayName:       row.DisplayName,
+		ActivityState:     row.ActivityState,
+		ActivityLastAt:    row.ActivityLastAt,
+		FirstSignalAt:     row.FirstSignalAt,
+		IsTerminated:      row.IsTerminated,
+		Branch:            row.Branch,
+		WorkspacePath:     row.WorkspacePath,
+		RuntimeHandleID:   row.RuntimeHandleID,
+		AgentSessionID:    row.AgentSessionID,
+		Prompt:            row.Prompt,
+		Model:             row.Model,
+		PreviewURL:        row.PreviewURL,
+		PreviewRevision:   row.PreviewRevision,
+		LaunchedHarnesses: row.LaunchedHarnesses,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
 	}
 }
 
 func listSessionsByProjectRow(row gen.ListSessionsByProjectRow) sessionRow {
 	return sessionRow{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		DisplayName:     row.DisplayName,
-		ActivityState:   row.ActivityState,
-		ActivityLastAt:  row.ActivityLastAt,
-		FirstSignalAt:   row.FirstSignalAt,
-		IsTerminated:    row.IsTerminated,
-		Branch:          row.Branch,
-		WorkspacePath:   row.WorkspacePath,
-		RuntimeHandleID: row.RuntimeHandleID,
-		AgentSessionID:  row.AgentSessionID,
-		Prompt:          row.Prompt,
-		Model:           row.Model,
-		PreviewURL:      row.PreviewURL,
-		PreviewRevision: row.PreviewRevision,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                row.ID,
+		ProjectID:         row.ProjectID,
+		IssueID:           row.IssueID,
+		Kind:              row.Kind,
+		Harness:           row.Harness,
+		DisplayName:       row.DisplayName,
+		ActivityState:     row.ActivityState,
+		ActivityLastAt:    row.ActivityLastAt,
+		FirstSignalAt:     row.FirstSignalAt,
+		IsTerminated:      row.IsTerminated,
+		Branch:            row.Branch,
+		WorkspacePath:     row.WorkspacePath,
+		RuntimeHandleID:   row.RuntimeHandleID,
+		AgentSessionID:    row.AgentSessionID,
+		Prompt:            row.Prompt,
+		Model:             row.Model,
+		PreviewURL:        row.PreviewURL,
+		PreviewRevision:   row.PreviewRevision,
+		LaunchedHarnesses: row.LaunchedHarnesses,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
 	}
 }
 
 func listAllSessionsRow(row gen.ListAllSessionsRow) sessionRow {
 	return sessionRow{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		DisplayName:     row.DisplayName,
-		ActivityState:   row.ActivityState,
-		ActivityLastAt:  row.ActivityLastAt,
-		FirstSignalAt:   row.FirstSignalAt,
-		IsTerminated:    row.IsTerminated,
-		Branch:          row.Branch,
-		WorkspacePath:   row.WorkspacePath,
-		RuntimeHandleID: row.RuntimeHandleID,
-		AgentSessionID:  row.AgentSessionID,
-		Prompt:          row.Prompt,
-		Model:           row.Model,
-		PreviewURL:      row.PreviewURL,
-		PreviewRevision: row.PreviewRevision,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                row.ID,
+		ProjectID:         row.ProjectID,
+		IssueID:           row.IssueID,
+		Kind:              row.Kind,
+		Harness:           row.Harness,
+		DisplayName:       row.DisplayName,
+		ActivityState:     row.ActivityState,
+		ActivityLastAt:    row.ActivityLastAt,
+		FirstSignalAt:     row.FirstSignalAt,
+		IsTerminated:      row.IsTerminated,
+		Branch:            row.Branch,
+		WorkspacePath:     row.WorkspacePath,
+		RuntimeHandleID:   row.RuntimeHandleID,
+		AgentSessionID:    row.AgentSessionID,
+		Prompt:            row.Prompt,
+		Model:             row.Model,
+		PreviewURL:        row.PreviewURL,
+		PreviewRevision:   row.PreviewRevision,
+		LaunchedHarnesses: row.LaunchedHarnesses,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
 	}
 }
 
@@ -300,14 +304,14 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:  row.IsTerminated,
 		Metadata: domain.SessionMetadata{
-			Branch:          row.Branch,
-			WorkspacePath:   row.WorkspacePath,
-			RuntimeHandleID: row.RuntimeHandleID,
-			AgentSessionID:  row.AgentSessionID,
-			Prompt:          row.Prompt,
-			Model:           row.Model,
-			PreviewURL:      row.PreviewURL,
-			PreviewRevision: row.PreviewRevision,
+			Branch:            row.Branch,
+			WorkspacePath:     row.WorkspacePath,
+			RuntimeHandleID:   row.RuntimeHandleID,
+			AgentSessionID:    row.AgentSessionID,
+			Prompt:            row.Prompt,
+			Model:             row.Model,
+			PreviewURL:        row.PreviewURL,
+			PreviewRevision:   row.PreviewRevision,
 			LaunchedHarnesses: parseHarnessCSV(row.LaunchedHarnesses),
 		},
 		CreatedAt: row.CreatedAt,
@@ -318,25 +322,25 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:              rec.ID,
-		ProjectID:       rec.ProjectID,
-		Num:             num,
-		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
-		Harness:         rec.Harness,
-		DisplayName:     rec.DisplayName,
-		ActivityState:   activity.State,
-		ActivityLastAt:  activity.LastActivityAt,
-		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:    rec.IsTerminated,
-		Branch:          rec.Metadata.Branch,
-		WorkspacePath:   rec.Metadata.WorkspacePath,
-		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
-		AgentSessionID:  rec.Metadata.AgentSessionID,
-		Prompt:          rec.Metadata.Prompt,
-		Model:           rec.Metadata.Model,
-		PreviewURL:      rec.Metadata.PreviewURL,
-		PreviewRevision: rec.Metadata.PreviewRevision,
+		ID:                rec.ID,
+		ProjectID:         rec.ProjectID,
+		Num:               num,
+		IssueID:           rec.IssueID,
+		Kind:              rec.Kind,
+		Harness:           rec.Harness,
+		DisplayName:       rec.DisplayName,
+		ActivityState:     activity.State,
+		ActivityLastAt:    activity.LastActivityAt,
+		FirstSignalAt:     timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:      rec.IsTerminated,
+		Branch:            rec.Metadata.Branch,
+		WorkspacePath:     rec.Metadata.WorkspacePath,
+		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
+		AgentSessionID:    rec.Metadata.AgentSessionID,
+		Prompt:            rec.Metadata.Prompt,
+		Model:             rec.Metadata.Model,
+		PreviewURL:        rec.Metadata.PreviewURL,
+		PreviewRevision:   rec.Metadata.PreviewRevision,
 		LaunchedHarnesses: harnessCSV(rec.Metadata.LaunchedHarnesses),
 		CreatedAt:         rec.CreatedAt,
 		UpdatedAt:         rec.UpdatedAt,
@@ -346,23 +350,23 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:              rec.ID,
-		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
-		Harness:         rec.Harness,
-		DisplayName:     rec.DisplayName,
-		ActivityState:   activity.State,
-		ActivityLastAt:  activity.LastActivityAt,
-		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:    rec.IsTerminated,
-		Branch:          rec.Metadata.Branch,
-		WorkspacePath:   rec.Metadata.WorkspacePath,
-		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
-		AgentSessionID:  rec.Metadata.AgentSessionID,
-		Prompt:          rec.Metadata.Prompt,
-		Model:           rec.Metadata.Model,
-		PreviewURL:      rec.Metadata.PreviewURL,
-		PreviewRevision: rec.Metadata.PreviewRevision,
+		ID:                rec.ID,
+		IssueID:           rec.IssueID,
+		Kind:              rec.Kind,
+		Harness:           rec.Harness,
+		DisplayName:       rec.DisplayName,
+		ActivityState:     activity.State,
+		ActivityLastAt:    activity.LastActivityAt,
+		FirstSignalAt:     timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:      rec.IsTerminated,
+		Branch:            rec.Metadata.Branch,
+		WorkspacePath:     rec.Metadata.WorkspacePath,
+		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
+		AgentSessionID:    rec.Metadata.AgentSessionID,
+		Prompt:            rec.Metadata.Prompt,
+		Model:             rec.Metadata.Model,
+		PreviewURL:        rec.Metadata.PreviewURL,
+		PreviewRevision:   rec.Metadata.PreviewRevision,
 		LaunchedHarnesses: harnessCSV(rec.Metadata.LaunchedHarnesses),
 		UpdatedAt:         rec.UpdatedAt,
 	}
