@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
 	ChevronRight,
 	GitPullRequest,
@@ -12,8 +13,9 @@ import {
 	Settings,
 	Sun,
 	Trash2,
+	X,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
 	attentionZone,
 	newestActiveOrchestrator,
@@ -53,6 +55,8 @@ import {
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { OrchestratorIcon } from "./icons";
 import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
@@ -75,6 +79,10 @@ const HOVER_ACTION_CLASS =
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
 const MAX_DISPLAY_NAME_LEN = 20;
+
+function hasNativeDirectoryPicker() {
+	return aoBridge.app.canChooseDirectory;
+}
 
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
@@ -769,12 +777,17 @@ function CreateProjectFlow({
 	children: (state: { choosePath: () => void; disabled: boolean; label: string }) => ReactNode;
 }) {
 	const [error, setError] = useState<string | null>(null);
+	const [isPathDialogOpen, setIsPathDialogOpen] = useState(false);
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 
 	const choosePath = async () => {
 		setError(null);
+		if (!hasNativeDirectoryPicker()) {
+			setIsPathDialogOpen(true);
+			return;
+		}
 		setIsChoosingPath(true);
 		try {
 			const path = await aoBridge.app.chooseDirectory();
@@ -805,6 +818,18 @@ function CreateProjectFlow({
 	return (
 		<>
 			{children({ choosePath: () => void choosePath(), disabled: isChoosingPath || isCreating, label })}
+			<CreateProjectPathDialog
+				disabled={isChoosingPath || isCreating}
+				onOpenChange={(open) => {
+					if (!open) setError(null);
+					setIsPathDialogOpen(open);
+				}}
+				onSubmit={(path) => {
+					setSelectedPath(path);
+					setIsPathDialogOpen(false);
+				}}
+				open={isPathDialogOpen}
+			/>
 			<CreateProjectAgentSheet
 				error={error}
 				isCreating={isCreating}
@@ -824,5 +849,96 @@ function CreateProjectFlow({
 				</span>
 			)}
 		</>
+	);
+}
+
+function CreateProjectPathDialog({
+	disabled,
+	onOpenChange,
+	onSubmit,
+	open,
+}: {
+	disabled: boolean;
+	onOpenChange: (open: boolean) => void;
+	onSubmit: (path: string) => void;
+	open: boolean;
+}) {
+	const pathId = useId();
+	const [path, setPath] = useState("");
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!open) {
+			setPath("");
+			setError(null);
+		}
+	}, [open]);
+
+	const submit = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		const trimmedPath = path.trim();
+		if (!trimmedPath) {
+			setError("Project path is required.");
+			return;
+		}
+		onSubmit(trimmedPath);
+	};
+
+	return (
+		<Dialog.Root open={open} onOpenChange={(next) => !disabled && onOpenChange(next)}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+						<div className="min-w-0">
+							<Dialog.Title className="text-[15px] font-semibold text-foreground">Project path</Dialog.Title>
+							<Dialog.Description className="mt-1 text-[12px] text-muted-foreground">
+								Enter the absolute path to a local git repository.
+							</Dialog.Description>
+						</div>
+						<Dialog.Close asChild>
+							<button
+								type="button"
+								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+								aria-label="Close project path dialog"
+								disabled={disabled}
+							>
+								<X className="size-4" aria-hidden="true" />
+							</button>
+						</Dialog.Close>
+					</div>
+					<form className="space-y-4 px-5 py-4" onSubmit={submit}>
+						<div className="space-y-1.5">
+							<label className="text-[12px] font-medium text-muted-foreground" htmlFor={pathId}>
+								Project path
+							</label>
+							<Input
+								autoFocus
+								id={pathId}
+								onChange={(event) => {
+									setPath(event.target.value);
+									setError(null);
+								}}
+								placeholder="/Users/alice/src/my-project"
+								value={path}
+							/>
+						</div>
+						{error && (
+							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+								{error}
+							</div>
+						)}
+						<div className="flex items-center justify-end gap-2 pt-1">
+							<Button type="button" variant="ghost" disabled={disabled} onClick={() => onOpenChange(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" variant="primary" disabled={disabled}>
+								Continue
+							</Button>
+						</div>
+					</form>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }

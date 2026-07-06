@@ -133,6 +133,7 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	mockParams.projectId = undefined;
+	window.ao!.app.canChooseDirectory = true;
 	vi.spyOn(window, "confirm").mockReturnValue(true);
 	vi.spyOn(window, "alert").mockImplementation(() => undefined);
 });
@@ -201,6 +202,36 @@ describe("Sidebar", () => {
 		await waitFor(() =>
 			expect(onCreateProject).toHaveBeenCalledWith({
 				path: "/repo/new-project",
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+			}),
+		);
+	});
+
+	it("uses an in-app path prompt when the native directory picker is unavailable", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.canChooseDirectory = false;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue(null);
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+
+		const pathInput = await screen.findByRole("textbox", { name: "Project path" });
+		expect(screen.getByRole("dialog", { name: "Project path" })).toBeInTheDocument();
+		expect(pathInput).toHaveFocus();
+		await user.type(pathInput, "  /repo/browser-project  ");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
+		expect(await screen.findByText("/repo/browser-project")).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith({
+				path: "/repo/browser-project",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
 			}),

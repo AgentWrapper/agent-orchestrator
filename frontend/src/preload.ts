@@ -18,6 +18,7 @@ export type BrowserNavigateInput = {
 
 const api = {
 	app: {
+		canChooseDirectory: true,
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
 		chooseDirectory: () => ipcRenderer.invoke("app:chooseDirectory") as Promise<string | null>,
 	},

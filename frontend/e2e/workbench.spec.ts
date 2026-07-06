@@ -34,5 +34,5 @@ test("web mode opens an in-app project path prompt from the New project button",
 	await page.getByRole("button", { name: "New project" }).click();
 
 	await expect(page.getByRole("dialog", { name: "Project path" })).toBeVisible();
-	await expect(page.getByLabel("Project path")).toBeFocused();
+	await expect(page.getByRole("textbox", { name: "Project path" })).toBeFocused();
 });

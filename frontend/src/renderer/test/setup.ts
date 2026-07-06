@@ -56,6 +56,7 @@ if (typeof window !== "undefined") {
 
 	window.ao = {
 		app: {
+			canChooseDirectory: true,
 			getVersion: async () => "0.0.0-test",
 			chooseDirectory: async () => null,
 		},
