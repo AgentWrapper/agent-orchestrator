@@ -3,9 +3,10 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const deployScript = path.join(repoRoot, "ops", "deploy.sh");
 
 let cleanup = [];
@@ -154,8 +155,9 @@ async function run(command, args, options = {}) {
 	child.stderr.on("data", (chunk) => {
 		stderr += chunk;
 	});
-	const code = await new Promise((resolve) => {
-		child.on("close", resolve);
+	const code = await new Promise((resolve, reject) => {
+		child.once("error", reject);
+		child.once("close", resolve);
 	});
 	return { code, stdout, stderr };
 }
