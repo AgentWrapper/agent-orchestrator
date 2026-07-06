@@ -8,17 +8,12 @@ export type ReportProblemInput = {
 	type: ReportProblemType;
 	summary: string;
 	details: string;
-	expected: string;
 	includeDiagnostics: boolean;
 };
 
 export type ReportProblemFieldCopy = {
-	summaryLabel: string;
 	summaryPlaceholder: string;
-	detailsLabel: string;
 	detailsPlaceholder: string;
-	expectedLabel: string;
-	expectedPlaceholder: string;
 };
 
 export type ReportProblemDiagnostics = {
@@ -46,36 +41,20 @@ const REPORT_TYPE_LABELS: Record<ReportProblemType, string> = {
 
 const REPORT_FIELD_COPY: Record<ReportProblemType, ReportProblemFieldCopy> = {
 	bug: {
-		summaryLabel: "Bug summary",
-		summaryPlaceholder: "Short description of the bug",
-		detailsLabel: "Steps to reproduce",
-		detailsPlaceholder: "1. Open...\n2. Click...\n3. See...",
-		expectedLabel: "Expected behavior",
-		expectedPlaceholder: "What should have happened instead?",
+		summaryPlaceholder: "Brief title",
+		detailsPlaceholder: "What happened, how to reproduce it, and what you expected.",
 	},
 	feature: {
-		summaryLabel: "Feature summary",
-		summaryPlaceholder: "Short description of the idea",
-		detailsLabel: "Problem / use case",
-		detailsPlaceholder: "What problem are you trying to solve?",
-		expectedLabel: "Requested behavior",
-		expectedPlaceholder: "What should AO do?",
+		summaryPlaceholder: "Brief title",
+		detailsPlaceholder: "The problem, use case, and requested behavior.",
 	},
 	feedback: {
-		summaryLabel: "Feedback summary",
-		summaryPlaceholder: "Short summary",
-		detailsLabel: "Message",
+		summaryPlaceholder: "Brief title",
 		detailsPlaceholder: "What should the AO team know?",
-		expectedLabel: "Optional context",
-		expectedPlaceholder: "Anything else that would help?",
 	},
 	question: {
-		summaryLabel: "Question summary",
-		summaryPlaceholder: "Short description of the setup question",
-		detailsLabel: "What are you trying to do?",
-		detailsPlaceholder: "Describe the setup or workflow you are attempting.",
-		expectedLabel: "What did you try?",
-		expectedPlaceholder: "Commands, docs, or fixes you already tried.",
+		summaryPlaceholder: "Brief title",
+		detailsPlaceholder: "What you are trying to do, what you tried, and any error/output.",
 	},
 };
 
@@ -134,8 +113,7 @@ export function formatReportProblemDraft(
 		return [
 			`**AO ${fields.typeLabel}**`,
 			`Summary: ${fields.summary}`,
-			`${fields.detailsLabel}: ${fields.details}`,
-			`${fields.expectedLabel}: ${fields.expected}`,
+			`Details: ${fields.details}`,
 			"",
 			"Safe diagnostics:",
 			diagnosticsBlock,
@@ -153,11 +131,8 @@ export function formatReportProblemDraft(
 			`Type: ${fields.typeLabel}`,
 			`Summary: ${fields.summary}`,
 			"",
-			`${fields.detailsLabel}:`,
+			"Details:",
 			fields.details,
-			"",
-			`${fields.expectedLabel}:`,
-			fields.expected,
 			"",
 			"Safe diagnostics:",
 			diagnosticsBlock,
@@ -175,11 +150,8 @@ export function formatReportProblemDraft(
 		"## Summary",
 		fields.summary,
 		"",
-		`## ${fields.detailsLabel}`,
+		"## Details",
 		fields.details,
-		"",
-		`## ${fields.expectedLabel}`,
-		fields.expected,
 		"",
 		"## Safe diagnostics",
 		diagnosticsBlock,
@@ -206,14 +178,10 @@ export function reportProblemDestinationUrl(
 }
 
 function normalizeInput(input: ReportProblemInput) {
-	const fieldCopy = REPORT_FIELD_COPY[input.type];
 	return {
 		typeLabel: REPORT_TYPE_LABELS[input.type],
-		detailsLabel: fieldCopy.detailsLabel,
-		expectedLabel: fieldCopy.expectedLabel,
 		summary: valueOrPlaceholder(input.summary),
 		details: valueOrPlaceholder(input.details),
-		expected: valueOrPlaceholder(input.expected),
 	};
 }
 

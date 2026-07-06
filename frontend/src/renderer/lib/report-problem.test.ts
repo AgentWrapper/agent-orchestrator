@@ -20,8 +20,8 @@ const diagnostics: ReportProblemDiagnostics = {
 const completeInput: ReportProblemInput = {
 	type: "bug",
 	summary: "Terminal keeps reconnecting after daemon restart",
-	details: "Open /Users/alice/work/secret-app and visit http://127.0.0.1:5173/?token=secret-token.",
-	expected: "The app should reconnect without losing the current route.",
+	details:
+		"Open /Users/alice/work/secret-app and visit http://127.0.0.1:5173/?token=secret-token. The app should reconnect without losing the current route.",
 	includeDiagnostics: true,
 };
 
@@ -50,8 +50,8 @@ describe("report problem drafts", () => {
 			{
 				type: "question",
 				summary: "Setup fails with OPENAI_API_KEY=sk-proj-secret and password=hunter2",
-				details: "Repo is C:\\Users\\alice\\repo and file:///Users/alice/private/index.html?api_key=abc failed.",
-				expected: "Tell me what prerequisite is missing.",
+				details:
+					"Repo is C:\\Users\\alice\\repo and file:///Users/alice/private/index.html?api_key=abc failed. Tell me what prerequisite is missing.",
 				includeDiagnostics: true,
 			},
 			{
@@ -73,7 +73,7 @@ describe("report problem drafts", () => {
 
 	it("produces a useful draft when user input is partial", () => {
 		const draft = formatReportProblemDraft(
-			{ type: "feedback", summary: "", details: "", expected: "", includeDiagnostics: false },
+			{ type: "feedback", summary: "", details: "", includeDiagnostics: false },
 			diagnostics,
 			"email",
 		);
@@ -83,34 +83,35 @@ describe("report problem drafts", () => {
 		expect(draft).toContain("No diagnostics included");
 	});
 
-	it("uses report-type specific field labels in generated drafts", () => {
+	it("keeps generated drafts to summary and details for every report type", () => {
 		const featureDraft = formatReportProblemDraft(
 			{
 				type: "feature",
 				summary: "Make feedback reports easier to send",
-				details: "Users want fewer generic bug-report questions for non-bug reports.",
-				expected: "Show feature-specific prompts and output labels.",
+				details:
+					"Users want fewer generic bug-report questions for non-bug reports. Show fewer fields and clearer placeholder guidance.",
 				includeDiagnostics: false,
 			},
 			diagnostics,
 			"github",
 		);
-		expect(featureDraft).toContain("## Problem / use case");
-		expect(featureDraft).toContain("## Requested behavior");
+		expect(featureDraft).toContain("## Summary");
+		expect(featureDraft).toContain("## Details");
+		expect(featureDraft).not.toContain("## Expected");
+		expect(featureDraft).not.toContain("## Requested behavior");
 
 		const questionDraft = formatReportProblemDraft(
 			{
 				type: "question",
 				summary: "Need help setting up Claude Code",
-				details: "Trying to create my first project.",
-				expected: "I installed the CLI and checked PATH.",
+				details: "Trying to create my first project. I installed the CLI and checked PATH.",
 				includeDiagnostics: false,
 			},
 			diagnostics,
 			"email",
 		);
-		expect(questionDraft).toContain("What are you trying to do?:");
-		expect(questionDraft).toContain("What did you try?:");
+		expect(questionDraft).toContain("Details:");
+		expect(questionDraft).not.toContain("What did you try?:");
 	});
 
 	it("builds copy handoff destinations for GitHub and Discord while leaving email copy-only", () => {

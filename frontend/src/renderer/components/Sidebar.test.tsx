@@ -324,12 +324,12 @@ describe("Sidebar", () => {
 		await user.click(feedbackButton);
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 
-		await user.type(screen.getByLabelText("Bug summary"), "Create project fails in /Users/alice/private-repo");
+		await user.type(screen.getByLabelText("Summary"), "Create project fails in /Users/alice/private-repo");
 		await user.type(
-			screen.getByLabelText("Steps to reproduce"),
-			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create.",
+			screen.getByLabelText("Details"),
+			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create. Show a clear prerequisite error.",
 		);
-		await user.type(screen.getByLabelText("Expected behavior"), "Show a clear prerequisite error.");
+		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
 
 		expect(screen.getByLabelText("Report preview")).toHaveTextContent("[redacted-local-path]");
 		await user.click(screen.getByRole("button", { name: "Copy and open GitHub" }));
@@ -361,7 +361,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Bug summary"), "Need help with setup");
+		await user.type(screen.getByLabelText("Summary"), "Need help with setup");
 
 		await user.click(screen.getByRole("button", { name: "Copy and open Discord" }));
 		await user.click(screen.getByRole("button", { name: "Copy email draft" }));
@@ -373,36 +373,36 @@ describe("Sidebar", () => {
 		expect(open).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG", "_blank", "noopener,noreferrer");
 	});
 
-	it("shows report-type specific prompts instead of one generic questionnaire", async () => {
+	it("keeps the report form to summary and details while tailoring placeholder guidance", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
 
 		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Bug summary")).toHaveAttribute("placeholder", "Short description of the bug");
-		expect(screen.getByLabelText("Steps to reproduce")).toHaveAttribute(
+		expect(screen.getByLabelText("Summary")).toHaveAttribute("placeholder", "Brief title");
+		expect(screen.getByLabelText("Details")).toHaveAttribute(
 			"placeholder",
-			"1. Open...\n2. Click...\n3. See...",
+			"What happened, how to reproduce it, and what you expected.",
 		);
-		expect(screen.getByLabelText("Expected behavior")).toHaveAttribute(
-			"placeholder",
-			"What should have happened instead?",
-		);
+		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
 
 		await chooseOption(screen.getByRole("combobox", { name: "Report type" }), "Feature request");
-		expect(screen.getByLabelText("Feature summary")).toHaveAttribute("placeholder", "Short description of the idea");
-		expect(screen.getByLabelText("Problem / use case")).toBeInTheDocument();
-		expect(screen.getByLabelText("Requested behavior")).toBeInTheDocument();
+		expect(screen.getByLabelText("Summary")).toHaveAttribute("placeholder", "Brief title");
+		expect(screen.getByLabelText("Details")).toHaveAttribute(
+			"placeholder",
+			"The problem, use case, and requested behavior.",
+		);
 
 		await chooseOption(screen.getByRole("combobox", { name: "Report type" }), "General feedback");
-		expect(screen.getByLabelText("Feedback summary")).toBeInTheDocument();
-		expect(screen.getByLabelText("Message")).toBeInTheDocument();
-		expect(screen.getByLabelText("Optional context")).toBeInTheDocument();
+		expect(screen.getByLabelText("Summary")).toHaveAttribute("placeholder", "Brief title");
+		expect(screen.getByLabelText("Details")).toHaveAttribute("placeholder", "What should the AO team know?");
 
 		await chooseOption(screen.getByRole("combobox", { name: "Report type" }), "Setup question");
-		expect(screen.getByLabelText("Question summary")).toBeInTheDocument();
-		expect(screen.getByLabelText("What are you trying to do?")).toBeInTheDocument();
-		expect(screen.getByLabelText("What did you try?")).toBeInTheDocument();
+		expect(screen.getByLabelText("Summary")).toHaveAttribute("placeholder", "Brief title");
+		expect(screen.getByLabelText("Details")).toHaveAttribute(
+			"placeholder",
+			"What you are trying to do, what you tried, and any error/output.",
+		);
 	});
 
 	it("renames a session inline and persists via the daemon", async () => {

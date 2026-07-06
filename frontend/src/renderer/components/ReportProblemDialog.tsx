@@ -41,12 +41,10 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const typeId = useId();
 	const summaryId = useId();
 	const detailsId = useId();
-	const expectedId = useId();
 	const diagnosticsId = useId();
 	const [type, setType] = useState<ReportProblemType>("bug");
 	const [summary, setSummary] = useState("");
 	const [details, setDetails] = useState("");
-	const [expected, setExpected] = useState("");
 	const [includeDiagnostics, setIncludeDiagnostics] = useState(true);
 	const [previewOutput, setPreviewOutput] = useState<ReportProblemOutput>("github");
 	const [copiedOutput, setCopiedOutput] = useState<ReportProblemOutput | null>(null);
@@ -73,10 +71,9 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 			type,
 			summary,
 			details,
-			expected,
 			includeDiagnostics,
 		}),
-		[type, summary, details, expected, includeDiagnostics],
+		[type, summary, details, includeDiagnostics],
 	);
 
 	const preview = useMemo(
@@ -145,7 +142,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 							<div className="space-y-1.5">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={summaryId}>
-									{fieldCopy.summaryLabel}
+									Summary
 								</label>
 								<Input
 									id={summaryId}
@@ -157,27 +154,14 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 							<div className="space-y-1.5">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={detailsId}>
-									{fieldCopy.detailsLabel}
+									Details
 								</label>
 								<textarea
 									id={detailsId}
-									className="min-h-[112px] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
+									className="min-h-[156px] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
 									value={details}
 									onChange={(event) => setDetails(event.target.value)}
 									placeholder={fieldCopy.detailsPlaceholder}
-								/>
-							</div>
-
-							<div className="space-y-1.5">
-								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={expectedId}>
-									{fieldCopy.expectedLabel}
-								</label>
-								<textarea
-									id={expectedId}
-									className="min-h-[84px] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
-									value={expected}
-									onChange={(event) => setExpected(event.target.value)}
-									placeholder={fieldCopy.expectedPlaceholder}
 								/>
 							</div>
 
