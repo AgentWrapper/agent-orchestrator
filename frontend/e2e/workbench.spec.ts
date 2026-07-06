@@ -1,32 +1,30 @@
 import { expect, test } from "@playwright/test";
+import { mockAoApi } from "./fixtures";
 
-// The Playwright web server runs `dev:web` (VITE_NO_ELECTRON=1), so
-// useWorkspaceQuery serves the deterministic preview fixtures from
-// lib/mock-data.ts instead of hitting a daemon. The tests run in Chromium
-// (no window.ao), so the terminal shows its browser-preview surface.
+test.beforeEach(async ({ page }) => {
+	await mockAoApi(page);
+});
 
 test("renders the orchestrator-first workbench shell", async ({ page }) => {
 	await page.goto("/");
 	// The single pinned Orchestrator anchor + the Projects group + a name-only worker row.
-	await expect(page.getByRole("button", { name: "Orchestrator", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Orchestrator board", exact: true })).toBeVisible();
 	await expect(page.getByText("Projects")).toBeVisible();
-	await expect(page.getByRole("button", { name: "fix-webgl-fallback", exact: true })).toBeVisible();
-	// Orchestrator side rail = the quiet Workers list.
-	await expect(page.getByText("Workers", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Open fix-webgl-fallback", exact: true })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Board" })).toBeVisible();
 });
 
 test("deep-links into a worker session", async ({ page }) => {
-	await page.goto("/#/workspaces/api-gateway/sessions/refactor-mux");
-	// Worker view = emdash three-pane with the Git review rail.
-	await expect(page.getByText("Changed")).toBeVisible();
-	await expect(page.getByRole("button", { name: /Commit & Push/ })).toBeVisible();
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
+	await expect(page.locator(".dashboard-app-header")).toBeVisible();
+	await expect(page.getByTestId("terminal").getByText("Split terminal mux responsibilities")).toBeVisible();
 });
 
 test("drilling into a worker opens its Git review rail", async ({ page }) => {
 	await page.goto("/");
-	await page.getByRole("button", { name: "refactor-mux", exact: true }).click();
-	await expect(page.getByRole("button", { name: /Commit & Push/ })).toBeVisible();
-	await expect(page.getByText("internal/mux/terminal_mux.go")).toBeVisible();
+	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
+	await expect(page).toHaveURL(/sessions\/refactor-mux/);
+	await expect(page.getByTestId("terminal").getByText("Split terminal mux responsibilities")).toBeVisible();
 });
 
 test("web mode opens an in-app project path prompt from the New project button", async ({ page }) => {

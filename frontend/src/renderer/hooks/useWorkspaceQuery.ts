@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
-import { mockWorkspaces } from "../lib/mock-data";
 import {
 	type PRState,
 	type PullRequestFacts,
@@ -25,12 +24,8 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
-	if (usePreviewData) {
-		return mockWorkspaces;
-	}
 	if (!hasTrustedApiBaseUrl()) {
 		return [];
 	}

@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { mockAoApi } from "./fixtures";
 
-// dev:web (VITE_NO_ELECTRON=1) serves lib/mock-data.ts. The api-gateway
-// workspace owns a "stacked-auth" session ("auth stack") carrying three PRs:
-// #41 open, #42 draft, #40 merged — the multi-PR-per-session case this suite
-// guards across the inspector rail and the PR board.
+test.beforeEach(async ({ page }) => {
+	await mockAoApi(page);
+});
 
 test("the inspector rail stacks every PR a session owns, actionable-first", async ({ page }) => {
 	await page.goto("/");
