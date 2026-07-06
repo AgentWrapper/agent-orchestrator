@@ -285,9 +285,3 @@ away.
 - Never modify ao itself (see the vanilla rule in the product section).
 - Never merge past a failing gate — a parked item with a written reason is a
   SUCCESS state, not a failure.
-
-## Agent identity (claude)
-
-Defaults per the polypowers identity contract. Deep-reasoning and review
-subagent phases may be delegated to `codex-fugu` (installed on this account)
-per the mix policy in the orchestrator section.
