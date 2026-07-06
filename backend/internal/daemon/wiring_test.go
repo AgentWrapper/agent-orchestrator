@@ -93,6 +93,7 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	}{
 		{domain.HarnessClaudeCode, "claude-code"},
 		{domain.HarnessCodex, "codex"},
+		{domain.HarnessCodexFugu, "codex-fugu"},
 		{domain.HarnessOpenCode, "opencode"},
 		{domain.HarnessGrok, "grok"},
 		{domain.HarnessCursor, "cursor"},

@@ -1,6 +1,7 @@
 export const AGENT_OPTIONS = [
 	"claude-code",
 	"codex",
+	"codex-fugu",
 	"aider",
 	"opencode",
 	"grok",
