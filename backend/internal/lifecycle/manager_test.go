@@ -231,6 +231,34 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_ReviewNudgeNotStarvedByDedupedCI(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+
+	// First observation: CI failing on commit c1 → one CI nudge.
+	ci := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing,
+		Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ci); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge first, got %v", msg.msgs)
+	}
+
+	// Second observation: CI unchanged (same commit + output → dedup no-op) while a
+	// reviewer now leaves feedback. The deduped CI lane must not starve the
+	// independent review lane, so the review nudge is still delivered.
+	withReview := ci
+	withReview.Review = domain.ReviewChangesRequest
+	withReview.Comments = []ports.PRCommentObservation{{ID: "c9", Author: "alice", Body: "please fix"}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", withReview); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 || !strings.Contains(msg.msgs[1], "please fix") {
+		t.Fatalf("review feedback starved by deduped CI nudge, got %v", msg.msgs)
+	}
+}
+
 func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
