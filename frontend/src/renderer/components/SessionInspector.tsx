@@ -344,6 +344,7 @@ const ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string;
 	active: { label: "Working", tone: "var(--orange)", breathe: true },
 	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
 	waiting_input: { label: "Input Needed", tone: "var(--amber)", breathe: false },
+	blocked: { label: "Decision Needed", tone: "var(--amber)", breathe: false },
 	exited: { label: "Exited", tone: "var(--fg-muted)", breathe: false },
 	unknown: { label: "Activity Unavailable", tone: "var(--fg-muted)", breathe: false },
 };

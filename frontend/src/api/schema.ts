@@ -945,13 +945,13 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
         };
         SetActivityRequest: {
-            /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
-            event?: string;
             /**
              * @description Agent harness that emitted the hook, when known.
              * @enum {string}
              */
-            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            agent?: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
+            event?: string;
             /** @description Opaque runtime generation token emitted by AO-managed hooks. */
             runtimeToken?: string;
             /**

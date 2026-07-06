@@ -35,9 +35,9 @@ export function toSessionStatus(status?: string, isTerminated = false): SessionS
 	return isTerminated ? "terminated" : "unknown";
 }
 
-export type SessionActivityState = "active" | "idle" | "waiting_input" | "exited" | "unknown";
+export type SessionActivityState = "active" | "idle" | "waiting_input" | "blocked" | "exited" | "unknown";
 
-const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "exited"]);
+const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "blocked", "exited"]);
 
 export type SessionActivity = {
 	state: SessionActivityState;

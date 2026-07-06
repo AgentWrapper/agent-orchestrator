@@ -2617,6 +2617,7 @@ components:
           enum:
           - claude-code
           - codex
+          - codex-fugu
           - aider
           - opencode
           - grok
@@ -2639,11 +2640,11 @@ components:
           - pi
           - autohand
           type: string
-        runtimeToken:
-          description: Opaque runtime generation token emitted by AO-managed hooks.
-          type: string
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
+          type: string
+        runtimeToken:
+          description: Opaque runtime generation token emitted by AO-managed hooks.
           type: string
         state:
           description: Agent activity state reported by an agent hook.

@@ -431,7 +431,7 @@ type ClaimPRResponse struct {
 // state-only semantics.
 type SetActivityRequest struct {
 	State        string `json:"state" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook."`
-	Agent        string `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand" description:"Agent harness that emitted the hook, when known."`
+	Agent        string `json:"agent,omitempty" enum:"claude-code,codex,codex-fugu,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand" description:"Agent harness that emitted the hook, when known."`
 	RuntimeToken string `json:"runtimeToken,omitempty" description:"Opaque runtime generation token emitted by AO-managed hooks."`
 	Event        string `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
 	ToolName     string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
