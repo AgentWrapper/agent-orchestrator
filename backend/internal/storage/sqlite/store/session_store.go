@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -312,7 +314,8 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 			Model:             row.Model,
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
-			LaunchedHarnesses: parseHarnessCSV(row.LaunchedHarnesses),
+			LaunchedHarnesses: launchedHarnesses(row.LaunchedHarnesses),
+			AgentSessionIDs:   launchedHarnessSessionIDs(row.LaunchedHarnesses, row.Harness, row.AgentSessionID),
 		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -341,7 +344,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Model:             rec.Metadata.Model,
 		PreviewURL:        rec.Metadata.PreviewURL,
 		PreviewRevision:   rec.Metadata.PreviewRevision,
-		LaunchedHarnesses: harnessCSV(rec.Metadata.LaunchedHarnesses),
+		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),
 		CreatedAt:         rec.CreatedAt,
 		UpdatedAt:         rec.UpdatedAt,
 	}
@@ -367,27 +370,76 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Model:             rec.Metadata.Model,
 		PreviewURL:        rec.Metadata.PreviewURL,
 		PreviewRevision:   rec.Metadata.PreviewRevision,
-		LaunchedHarnesses: harnessCSV(rec.Metadata.LaunchedHarnesses),
+		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),
 		UpdatedAt:         rec.UpdatedAt,
 	}
 }
 
-// harnessCSV serialises the launched-harness set to the comma-separated form
-// stored in sessions.launched_harnesses. Harness ids never contain commas.
-func harnessCSV(hs []domain.AgentHarness) string {
-	if len(hs) == 0 {
+type launchedHarnessesPayload struct {
+	Harnesses       []domain.AgentHarness          `json:"harnesses,omitempty"`
+	AgentSessionIDs map[domain.AgentHarness]string `json:"agentSessionIds,omitempty"`
+}
+
+// launchedHarnessPayload serialises the launched harness set and optional
+// per-harness native resume ids into sessions.launched_harnesses. Older rows
+// used a comma-separated list; launchedHarnesses still accepts that legacy form.
+func launchedHarnessPayload(meta domain.SessionMetadata) string {
+	ids := normalizedAgentSessionIDs(meta.AgentSessionIDs, meta.LaunchedHarnesses, "", "")
+	if len(meta.LaunchedHarnesses) == 0 && len(ids) == 0 {
 		return ""
 	}
+	if len(ids) == 0 {
+		return harnessCSV(meta.LaunchedHarnesses)
+	}
+	data, err := json.Marshal(launchedHarnessesPayload{
+		Harnesses:       normalizedHarnesses(meta.LaunchedHarnesses),
+		AgentSessionIDs: ids,
+	})
+	if err != nil {
+		return harnessCSV(meta.LaunchedHarnesses)
+	}
+	return string(data)
+}
+
+func harnessCSV(hs []domain.AgentHarness) string {
+	hs = normalizedHarnesses(hs)
 	parts := make([]string, 0, len(hs))
 	for _, h := range hs {
-		if s := strings.TrimSpace(string(h)); s != "" {
-			parts = append(parts, s)
-		}
+		parts = append(parts, string(h))
 	}
 	return strings.Join(parts, ",")
 }
 
-// parseHarnessCSV is the inverse of harnessCSV. An empty column yields nil.
+func launchedHarnesses(s string) []domain.AgentHarness {
+	if payload, ok := parseLaunchedHarnessesPayload(s); ok {
+		return payload.Harnesses
+	}
+	return parseHarnessCSV(s)
+}
+
+func launchedHarnessSessionIDs(s string, current domain.AgentHarness, currentID string) map[domain.AgentHarness]string {
+	payload, _ := parseLaunchedHarnessesPayload(s)
+	launched := payload.Harnesses
+	if launched == nil {
+		launched = parseHarnessCSV(s)
+	}
+	return normalizedAgentSessionIDs(payload.AgentSessionIDs, launched, current, currentID)
+}
+
+func parseLaunchedHarnessesPayload(s string) (launchedHarnessesPayload, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || !strings.HasPrefix(s, "{") {
+		return launchedHarnessesPayload{}, false
+	}
+	var payload launchedHarnessesPayload
+	if err := json.Unmarshal([]byte(s), &payload); err != nil {
+		return launchedHarnessesPayload{}, false
+	}
+	payload.Harnesses = normalizedHarnesses(payload.Harnesses)
+	payload.AgentSessionIDs = normalizedAgentSessionIDs(payload.AgentSessionIDs, payload.Harnesses, "", "")
+	return payload, true
+}
+
 func parseHarnessCSV(s string) []domain.AgentHarness {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -400,7 +452,69 @@ func parseHarnessCSV(s string) []domain.AgentHarness {
 			out = append(out, domain.AgentHarness(p))
 		}
 	}
+	return normalizedHarnesses(out)
+}
+
+func normalizedHarnesses(hs []domain.AgentHarness) []domain.AgentHarness {
+	if len(hs) == 0 {
+		return nil
+	}
+	out := make([]domain.AgentHarness, 0, len(hs))
+	seen := make(map[domain.AgentHarness]struct{}, len(hs))
+	for _, h := range hs {
+		h = domain.AgentHarness(strings.TrimSpace(string(h)))
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
 	return out
+}
+
+func normalizedAgentSessionIDs(ids map[domain.AgentHarness]string, launched []domain.AgentHarness, current domain.AgentHarness, currentID string) map[domain.AgentHarness]string {
+	out := make(map[domain.AgentHarness]string, len(ids)+1)
+	for h, id := range ids {
+		h = domain.AgentHarness(strings.TrimSpace(string(h)))
+		id = strings.TrimSpace(id)
+		if h != "" && id != "" {
+			out[h] = id
+		}
+	}
+	if current != "" && strings.TrimSpace(currentID) != "" {
+		out[current] = strings.TrimSpace(currentID)
+	}
+	launchedSet := make(map[domain.AgentHarness]struct{}, len(launched)+1)
+	for _, h := range launched {
+		if h != "" {
+			launchedSet[h] = struct{}{}
+		}
+	}
+	if current != "" {
+		launchedSet[current] = struct{}{}
+	}
+	for h := range out {
+		if _, ok := launchedSet[h]; !ok {
+			delete(out, h)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(out))
+	for h := range out {
+		keys = append(keys, string(h))
+	}
+	sort.Strings(keys)
+	stable := make(map[domain.AgentHarness]string, len(out))
+	for _, k := range keys {
+		h := domain.AgentHarness(k)
+		stable[h] = out[h]
+	}
+	return stable
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column

@@ -710,6 +710,72 @@ func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	}
 }
 
+func TestSessionLaunchedHarnessMetadataRoundTripsResumeIDs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Harness = domain.HarnessCodex
+	rec.Metadata.AgentSessionID = "codex-native"
+	rec.Metadata.LaunchedHarnesses = []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode}
+	rec.Metadata.AgentSessionIDs = map[domain.AgentHarness]string{
+		domain.HarnessCodex:      "codex-native",
+		domain.HarnessClaudeCode: "claude-native",
+	}
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if !reflect.DeepEqual(got.Metadata.LaunchedHarnesses, rec.Metadata.LaunchedHarnesses) {
+		t.Fatalf("launched harnesses = %v, want %v", got.Metadata.LaunchedHarnesses, rec.Metadata.LaunchedHarnesses)
+	}
+	if !reflect.DeepEqual(got.Metadata.AgentSessionIDs, rec.Metadata.AgentSessionIDs) {
+		t.Fatalf("agent session ids = %v, want %v", got.Metadata.AgentSessionIDs, rec.Metadata.AgentSessionIDs)
+	}
+}
+
+func TestSessionSwitchFieldsFireCDCWhileIdle(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	r.Activity.State = domain.ActivityIdle
+	r.Metadata.RuntimeHandleID = "handle-1"
+	r.UpdatedAt = time.Now().UTC()
+	if err := s.UpdateSession(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	base, _ := s.LatestSeq(ctx)
+
+	r.Harness = domain.HarnessCodex
+	r.Metadata.RuntimeHandleID = "handle-2"
+	r.Metadata.Model = "switch-model"
+	r.UpdatedAt = r.UpdatedAt.Add(time.Second)
+	if err := s.UpdateSession(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || string(evs[0].Type) != "session_updated" {
+		t.Fatalf("events after idle switch = %v, want one session_updated", evs)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(evs[0].Payload), &payload); err != nil {
+		t.Fatalf("session_updated payload JSON: %v", err)
+	}
+	if payload["harness"] != string(domain.HarnessCodex) || payload["terminalHandleId"] != "handle-2" || payload["model"] != "switch-model" {
+		t.Fatalf("switch payload = %#v, want harness/runtime/model", payload)
+	}
+}
+
 func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

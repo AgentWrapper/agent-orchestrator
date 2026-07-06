@@ -7,7 +7,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const defaultRecentActivityWindow = 60 * time.Second
+const (
+	defaultRecentActivityWindow  = 60 * time.Second
+	switchExitSignalSuppressTime = 30 * time.Second
+)
 
 func hasRecentActivity(a domain.Activity, now time.Time, window time.Duration) bool {
 	switch {

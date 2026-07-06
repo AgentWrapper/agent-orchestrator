@@ -148,6 +148,7 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 		RuntimeHandleID:   "new-handle",
 		WorkspacePath:     "/ws2",
 		Branch:            "b2",
+		Model:             "switch-model",
 		LaunchedHarnesses: []domain.AgentHarness{domain.HarnessClaudeCode, domain.HarnessCodex},
 	}
 	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, switched); err != nil {
@@ -163,6 +164,9 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	if got.Metadata.RuntimeHandleID != "new-handle" {
 		t.Fatalf("RuntimeHandleID = %q, want new-handle", got.Metadata.RuntimeHandleID)
 	}
+	if got.Metadata.Model != "switch-model" {
+		t.Fatalf("Model = %q, want switch-model", got.Metadata.Model)
+	}
 	if got.Metadata.WorkspacePath != "/ws2" || got.Metadata.Branch != "b2" {
 		t.Fatalf("workspace path/branch not persisted: %+v", got.Metadata)
 	}
@@ -175,6 +179,36 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	// Prompt survives the switch.
 	if got.Metadata.Prompt != "p" {
 		t.Fatalf("preserved prompt lost: %+v", got.Metadata)
+	}
+}
+
+func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
+	m, st, _ := newManager()
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", AgentSessionID: "old-native", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+	}
+	switched := domain.SessionMetadata{RuntimeHandleID: "new-handle", WorkspacePath: "/ws", Branch: "b"}
+	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, switched); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("stale exit hook terminated switched session: %+v", got)
+	}
+
+	now = now.Add(31 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("real exit after suppression window was ignored: %+v", got)
 	}
 }
 
@@ -225,14 +259,43 @@ func TestMarkTerminated(t *testing.T) {
 func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
-	metadata := domain.SessionMetadata{Branch: "b", WorkspacePath: "/ws", RuntimeHandleID: "h1", AgentSessionID: "agent", Prompt: "prompt"}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			Model:             "spawn-model",
+			PreviewURL:        "http://localhost:5173/",
+			PreviewRevision:   2,
+			LaunchedHarnesses: []domain.AgentHarness{domain.HarnessCodex},
+		},
+	}
+	metadata := domain.SessionMetadata{
+		Branch:            "b",
+		WorkspacePath:     "/ws",
+		RuntimeHandleID:   "h1",
+		AgentSessionID:    "agent",
+		Prompt:            "prompt",
+		Model:             "restore-model",
+		PreviewURL:        "http://localhost:3000/",
+		PreviewRevision:   3,
+		LaunchedHarnesses: []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode},
+	}
 	if err := m.MarkSpawned(ctx, "mer-1", metadata); err != nil {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
 	if got.IsTerminated || got.Activity.State != domain.ActivityIdle || got.Metadata.RuntimeHandleID != "h1" {
 		t.Fatalf("spawn metadata wrong: %+v", got)
+	}
+	if got.Metadata.Model != "restore-model" {
+		t.Fatalf("model = %q, want restore-model", got.Metadata.Model)
+	}
+	if got.Metadata.PreviewURL != "http://localhost:3000/" || got.Metadata.PreviewRevision != 3 {
+		t.Fatalf("preview metadata = (%q, %d), want updated preview", got.Metadata.PreviewURL, got.Metadata.PreviewRevision)
+	}
+	if !reflect.DeepEqual(got.Metadata.LaunchedHarnesses, []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode}) {
+		t.Fatalf("launched harnesses = %v, want codex and claude-code", got.Metadata.LaunchedHarnesses)
 	}
 }
 

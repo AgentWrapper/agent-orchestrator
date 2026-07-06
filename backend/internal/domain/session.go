@@ -48,6 +48,10 @@ type SessionMetadata struct {
 	// would collide ("session id already in use") — it must resume instead. A
 	// harness absent from the set is launched fresh.
 	LaunchedHarnesses []AgentHarness `json:"launchedHarnesses,omitempty"`
+	// AgentSessionIDs preserves hook-captured native resume ids by harness. The
+	// scalar AgentSessionID is the current harness's id; switch uses this map to
+	// restore a previously-used token-based harness after another agent ran.
+	AgentSessionIDs map[AgentHarness]string `json:"agentSessionIds,omitempty"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable

@@ -127,8 +127,9 @@ type fakeLCM struct {
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
 	// switched counts MarkSwitched calls; switching tracks the in-flight guard.
-	switched  int
-	switching map[domain.SessionID]bool
+	switched      int
+	switching     map[domain.SessionID]bool
+	onBeginSwitch func()
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
@@ -164,10 +165,14 @@ func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness d
 	if metadata.Branch != "" {
 		rec.Metadata.Branch = metadata.Branch
 	}
+	rec.Metadata.Model = metadata.Model
 	if metadata.LaunchedHarnesses != nil {
 		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
 	}
-	rec.Metadata.AgentSessionID = ""
+	if metadata.AgentSessionIDs != nil {
+		rec.Metadata.AgentSessionIDs = metadata.AgentSessionIDs
+	}
+	rec.Metadata.AgentSessionID = metadata.AgentSessionID
 	l.store.sessions[id] = rec
 	return nil
 }
@@ -179,6 +184,9 @@ func (l *fakeLCM) TryBeginSwitch(id domain.SessionID) bool {
 		return false
 	}
 	l.switching[id] = true
+	if l.onBeginSwitch != nil {
+		l.onBeginSwitch()
+	}
 	return true
 }
 func (l *fakeLCM) EndSwitch(id domain.SessionID) { delete(l.switching, id) }
@@ -390,7 +398,12 @@ func mkSwitchable(id domain.SessionID) domain.SessionRecord {
 }
 
 func TestSwitchHarness_Success(t *testing.T) {
-	m, st, rt, _ := newManager()
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 	id := domain.SessionID("ao-1")
 	st.sessions[id] = mkSwitchable(id)
 
@@ -411,12 +424,51 @@ func TestSwitchHarness_Success(t *testing.T) {
 	if rec.Metadata.AgentSessionID != "" {
 		t.Fatalf("AgentSessionID = %q, want cleared", rec.Metadata.AgentSessionID)
 	}
+	if agent.lastConfig.Model != "glm-4" {
+		t.Fatalf("switch launch model = %q, want glm-4", agent.lastConfig.Model)
+	}
+	if rec.Metadata.Model != "glm-4" {
+		t.Fatalf("persisted switch model = %q, want glm-4", rec.Metadata.Model)
+	}
 	lcm := m.lcm.(*fakeLCM)
 	if lcm.switched != 1 {
 		t.Fatalf("MarkSwitched calls = %d, want 1", lcm.switched)
 	}
 	if lcm.IsSwitching(id) {
 		t.Fatal("switch guard not cleared after a successful switch")
+	}
+}
+
+func TestSwitchHarness_GuardCoversSessionSnapshot(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = mkSwitchable(id)
+	lcm := &fakeLCM{
+		store: st,
+		onBeginSwitch: func() {
+			rec := st.sessions[id]
+			rec.Harness = domain.HarnessAider
+			rec.Metadata.RuntimeHandleID = "fresh-handle"
+			st.sessions[id] = rec
+		},
+	}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: lcm,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, ""); err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	if len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "fresh-handle" {
+		t.Fatalf("destroyed handle = %v, want current guarded snapshot [fresh-handle]", rt.destroyedIDs)
 	}
 }
 
@@ -541,6 +593,71 @@ func TestSwitchHarness_ResumesPreviouslyUsedHarness(t *testing.T) {
 	}
 	if len(rt.lastCfg.Argv) == 0 || rt.lastCfg.Argv[0] != "resume" {
 		t.Fatalf("argv = %v, want a resume command (harness used before)", rt.lastCfg.Argv)
+	}
+}
+
+func TestSwitchHarness_SameHarnessPreservesNativeSessionID(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{
+			Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", RuntimeHandleID: "h1", Prompt: "do it",
+			AgentSessionID:    "codex-native-id",
+			LaunchedHarnesses: []domain.AgentHarness{domain.HarnessCodex},
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, "gpt-next"); err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	if got := agent.lastRestore.Session.Metadata[ports.MetadataKeyAgentSessionID]; got != "codex-native-id" {
+		t.Fatalf("resume agent session id = %q, want codex-native-id", got)
+	}
+	if len(rt.lastCfg.Argv) == 0 || rt.lastCfg.Argv[0] != "resume" {
+		t.Fatalf("argv = %v, want same-harness resume", rt.lastCfg.Argv)
+	}
+	if got := st.sessions[id].Metadata.AgentSessionID; got != "codex-native-id" {
+		t.Fatalf("persisted agent session id = %q, want codex-native-id", got)
+	}
+}
+
+func TestSwitchHarness_SwitchAwayAndBackPreservesNativeSessionID(t *testing.T) {
+	m, st, rt, _ := newManager()
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{
+			Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", RuntimeHandleID: "h1", Prompt: "do it",
+			AgentSessionID:    "codex-native-id",
+			LaunchedHarnesses: []domain.AgentHarness{domain.HarnessCodex},
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessClaudeCode, ""); err != nil {
+		t.Fatalf("switch away: %v", err)
+	}
+	if got := st.sessions[id].Metadata.AgentSessionIDs[domain.HarnessCodex]; got != "codex-native-id" {
+		t.Fatalf("preserved codex native id = %q, want codex-native-id", got)
+	}
+	if got := st.sessions[id].Metadata.AgentSessionID; got != "" {
+		t.Fatalf("current agent session id after switch away = %q, want empty for target harness", got)
+	}
+
+	rt.lastCfg.Argv = nil
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, ""); err != nil {
+		t.Fatalf("switch back: %v", err)
+	}
+	if len(rt.lastCfg.Argv) != 2 || rt.lastCfg.Argv[0] != "resume" || rt.lastCfg.Argv[1] != "codex-native-id" {
+		t.Fatalf("switch-back argv = %v, want resume codex-native-id", rt.lastCfg.Argv)
 	}
 }
 
