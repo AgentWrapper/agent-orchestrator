@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitystate"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -125,7 +126,7 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "autohand"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -137,7 +138,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "autohand"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -208,8 +209,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "sess-123",
-			autohandTitleMetadataKey:        "Fix login redirect",
-			autohandSummaryMetadataKey:      "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -356,9 +357,9 @@ func TestDeriveActivityState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := DeriveActivityState(tt.event, []byte(`{}`))
+			got, ok := activitystate.StandardDeriveActivityState(tt.event, []byte(`{}`))
 			if got != tt.want || ok != tt.wantOK {
-				t.Fatalf("DeriveActivityState(%q) = (%q, %v), want (%q, %v)",
+				t.Fatalf("StandardDeriveActivityState(%q) = (%q, %v), want (%q, %v)",
 					tt.event, got, ok, tt.want, tt.wantOK)
 			}
 		})

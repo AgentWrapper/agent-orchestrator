@@ -10,6 +10,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
 import type { WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
@@ -80,6 +81,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
+	const previousSessionStatusRef = useRef(session?.status);
 	const optionsRef = useRef(options);
 	optionsRef.current = options;
 	const stateRef = useRef<TerminalSessionState>(state);
@@ -212,6 +214,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
+				void captureRendererEvent("ao.renderer.terminal_attach_failed", { reason: "pane_error" });
 				invalidateWorkspaces();
 			}),
 			mux.onConnectionChange((connectionState) => {
@@ -267,6 +270,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.openTimer = setTimeout(() => {
 			if (!isCurrentAttachment(generation, handle, mux)) return;
 			r.openTimer = null;
+			// Only the first timeout of a reattach sequence is reported; the
+			// backoff loop retrying against a restarting daemon is not news.
+			if (r.attempts === 0) {
+				void captureRendererEvent("ao.renderer.terminal_attach_failed", { reason: "open_timeout" });
+			}
 			transition("reattaching");
 			teardownMux();
 			scheduleReattach();
@@ -322,6 +330,24 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.attempts = 0;
 		connect();
 	}, [daemonReady, connect]);
+
+	useEffect(() => {
+		const r = runtime.current;
+		const handle = session?.terminalHandleId ?? null;
+		const previousStatus = previousSessionStatusRef.current;
+		previousSessionStatusRef.current = session?.status;
+		if (!handle || previousStatus !== "terminated" || session?.status === "terminated" || r.detached || !r.terminal) {
+			return;
+		}
+		if (r.handle !== handle) return;
+		if (stateRef.current !== "exited" && stateRef.current !== "error") return;
+		if (optionsRef.current.daemonReady) {
+			transition("connecting");
+			connect();
+		} else {
+			transition("reattaching");
+		}
+	}, [connect, session?.status, session?.terminalHandleId, transition]);
 
 	// Belt-and-braces: never leak a socket past unmount, even if the owner
 	// forgot to call detach.

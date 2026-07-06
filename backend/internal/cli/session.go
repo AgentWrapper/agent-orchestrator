@@ -76,6 +76,11 @@ type restoreSessionResponse struct {
 	Session   sessionDTO `json:"session"`
 }
 
+type switchSessionResponse struct {
+	SessionID string     `json:"sessionId"`
+	Session   sessionDTO `json:"session"`
+}
+
 type renameSessionResponse struct {
 	SessionID   string `json:"sessionId"`
 	DisplayName string `json:"displayName"`
@@ -144,6 +149,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionGetCommand(ctx))
 	cmd.AddCommand(newSessionKillCommand(ctx))
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
+	cmd.AddCommand(newSessionSwitchCommand(ctx))
 	cmd.AddCommand(newSessionRenameCommand(ctx))
 	cmd.AddCommand(newSessionCleanupCommand(ctx))
 	cmd.AddCommand(newSessionClaimPRCommand(ctx))
@@ -220,6 +226,30 @@ func newSessionRestoreCommand(ctx *commandContext) *cobra.Command {
 			return ctx.restoreSession(cmd.Context(), cmd, id, opts)
 		},
 	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	return cmd
+}
+
+func newSessionSwitchCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	var harness, model string
+	cmd := &cobra.Command{
+		Use:   "switch <id> --harness <agent>",
+		Short: "Switch a live session's agent (keeps the worktree; starts the new agent fresh)",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(harness) == "" {
+				return usageError{errors.New("--harness is required")}
+			}
+			return ctx.switchSession(cmd.Context(), cmd, id, harness, model, opts)
+		},
+	}
+	cmd.Flags().StringVar(&harness, "harness", "", "Target agent harness (e.g. claude-code, codex, aider)")
+	cmd.Flags().StringVar(&model, "model", "", "Override the agent model for the new launch")
 	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
 	return cmd
 }
@@ -466,6 +496,27 @@ func (c *commandContext) restoreSession(ctx context.Context, cmd *cobra.Command,
 		if _, err := fmt.Fprintf(out, "  project: %s\n", res.Session.ProjectID); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (c *commandContext) switchSession(ctx context.Context, cmd *cobra.Command, id, harness, model string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	body := struct {
+		Harness string `json:"harness"`
+		Model   string `json:"model,omitempty"`
+	}{Harness: harness, Model: model}
+	var res switchSessionResponse
+	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/switch", body, &res); err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	if _, err := fmt.Fprintf(out, "session %s switched to %s\n", res.SessionID, res.Session.Harness); err != nil {
+		return err
 	}
 	return nil
 }

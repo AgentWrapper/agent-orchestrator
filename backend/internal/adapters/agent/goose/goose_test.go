@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -71,6 +72,22 @@ func TestGetLaunchCommandSystemPromptFileInlined(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandPromptlessLaunchStaysInteractive(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPrompt: "coordinate this project",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"goose", "run", "--system", "coordinate this project", "-t", "", "--interactive"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -125,7 +142,7 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "goose"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -137,7 +154,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "goose"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -145,6 +162,73 @@ func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
 	}
 	if len(spec.Fields) != 0 {
 		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	}
+}
+
+func TestAuthStatusAuthorizedFromEnv(t *testing.T) {
+	clearGooseAuthEnv(t)
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	got, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestAuthStatusAuthorizedFromGooseConfig(t *testing.T) {
+	clearGooseAuthEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	configPath := filepath.Join(home, ".config", "goose", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("providers:\n  openrouter:\n    configured: true\n    model: anthropic/claude-sonnet-4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	got, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestAuthStatusUnauthorizedFromEmptyGooseConfig(t *testing.T) {
+	clearGooseAuthEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	configPath := filepath.Join(home, ".config", "goose", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	got, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	}
+}
+
+func clearGooseAuthEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range gooseAPIKeyEnvVars {
+		t.Setenv(name, "")
 	}
 }
 
@@ -336,8 +420,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "thread-123",
-			gooseTitleMetadataKey:           "Fix login redirect",
-			gooseSummaryMetadataKey:         "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -428,7 +512,13 @@ func containsSubsequence(values []string, needle []string) bool {
 	return false
 }
 
-func countGooseHookCommand(entries []gooseMatcherGroup, command string) int {
+// gooseHookFile is the on-disk shape of the hooks file, used to decode and
+// assert on what GetAgentHooks wrote.
+type gooseHookFile struct {
+	Hooks map[string][]hooksjson.MatcherGroup `json:"hooks"`
+}
+
+func countGooseHookCommand(entries []hooksjson.MatcherGroup, command string) int {
 	count := 0
 	for _, entry := range entries {
 		for _, hook := range entry.Hooks {

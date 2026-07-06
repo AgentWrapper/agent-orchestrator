@@ -161,26 +161,27 @@ type ReviewRun struct {
 }
 
 type Session struct {
-	ID              domain.SessionID
-	ProjectID       domain.ProjectID
-	Num             int64
-	IssueID         domain.IssueID
-	Kind            domain.SessionKind
-	Harness         domain.AgentHarness
-	ActivityState   domain.ActivityState
-	ActivityLastAt  time.Time
-	IsTerminated    bool
-	Branch          string
-	WorkspacePath   string
-	RuntimeHandleID string
-	AgentSessionID  string
-	Prompt          string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	DisplayName     string
-	FirstSignalAt   sql.NullTime
-	PreviewURL      string
-	PreviewRevision int64
+	ID                domain.SessionID
+	ProjectID         domain.ProjectID
+	Num               int64
+	IssueID           domain.IssueID
+	Kind              domain.SessionKind
+	Harness           domain.AgentHarness
+	ActivityState     domain.ActivityState
+	ActivityLastAt    time.Time
+	IsTerminated      bool
+	Branch            string
+	WorkspacePath     string
+	RuntimeHandleID   string
+	AgentSessionID    string
+	Prompt            string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DisplayName       string
+	FirstSignalAt     sql.NullTime
+	PreviewURL        string
+	PreviewRevision   int64
+	LaunchedHarnesses string
 }
 
 type SessionWorktree struct {

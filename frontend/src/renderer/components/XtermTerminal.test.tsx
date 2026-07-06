@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
 		wheelHandler?: (event: WheelEvent) => boolean;
 		selection: string;
 		options: Record<string, unknown>;
-		modes: { bracketedPasteMode: boolean };
+		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
 		dataListeners: Set<(data: string) => void>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
@@ -31,7 +31,7 @@ vi.mock("@xterm/xterm", () => ({
 		selection = "";
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
-		modes = { bracketedPasteMode: false };
+		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
@@ -490,6 +490,46 @@ describe("XtermTerminal", () => {
 		onInput.mockClear();
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50, ctrlKey: true } as WheelEvent)).toBe(false);
 		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("sends PageUp/PageDown instead of SGR reports when the pane app has mouse tracking off", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		state.lastTerminal!.modes.mouseTrackingMode = "none";
+
+		// A keyboard-scroll TUI: one page key per notch regardless of line count,
+		// so 3 lines up => a single PageUp.
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
+	});
+
+	it("sends PageUp/PageDown on Windows even when the pane app tracks the mouse (conpty, no mux)", () => {
+		setNavigatorPlatform("Win32");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		// opencode enables full mouse tracking but scrolls its transcript only by
+		// keyboard; with no mux to consume SGR reports, Windows must use page keys.
+		state.lastTerminal!.modes.mouseTrackingMode = "any";
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
+	});
+
+	it("sends PageUp/PageDown for keyboard-scroll panes even under a mux (opencode on macOS/Linux)", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" paneScrollsByKeyboard onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		// Linux (beforeEach) + mouse tracking on: without the paneScrollsByKeyboard
+		// hint this would send SGR reports; the hint forces page keys.
+		state.lastTerminal!.modes.mouseTrackingMode = "any";
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 	});
 
 	it("opens terminal links via window.open so Electron routes them to the OS browser", () => {

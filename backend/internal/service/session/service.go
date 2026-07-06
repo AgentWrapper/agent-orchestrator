@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -44,7 +45,9 @@ type ListFilter struct {
 type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
+	SwitchHarness(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, model string) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
@@ -81,12 +84,14 @@ type scmProvider interface {
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
 type Service struct {
-	manager   commander
-	store     Store
-	prClaimer ports.PRClaimer
-	scm       scmProvider
-	clock     func() time.Time
-	telemetry ports.EventSink
+	manager             commander
+	store               Store
+	prClaimer           ports.PRClaimer
+	scm                 scmProvider
+	clock               func() time.Time
+	telemetry           ports.EventSink
+	orchestratorLocksMu sync.Mutex
+	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -263,6 +268,13 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 // active orchestrator already exists it is returned as-is. A business rule that
 // belongs here, not in the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	unlock := s.lockOrchestratorProject(projectID)
+	defer unlock()
+
+	project, err := s.requireProject(ctx, projectID)
+	if err != nil {
+		return domain.Session{}, err
+	}
 	active := true
 	if clean {
 		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -270,8 +282,9 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return domain.Session{}, err
 		}
 		for _, orch := range existing {
-			if _, err := s.Kill(ctx, orch.ID); err != nil {
-				return domain.Session{}, err
+			_ = s.sendRetireNotice(ctx, orch.ID)
+			if err := s.manager.RetireForReplacement(ctx, orch.ID); err != nil {
+				return domain.Session{}, toAPIError(err)
 			}
 		}
 	} else {
@@ -281,15 +294,125 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return domain.Session{}, err
 		}
 		if len(existing) > 0 {
-			return existing[0], nil
+			return newestSession(existing), nil
 		}
 	}
-	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if err := verifyOrchestratorReplacement(project, sess); err != nil {
+		return domain.Session{}, err
+	}
+	return sess, nil
+}
+
+const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over on the canonical branch."
+
+func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) error {
+	if err := s.manager.Send(ctx, id, orchestratorRetireNotice); err != nil {
+		return fmt.Errorf("send retire notice to %s: %w", id, err)
+	}
+	return nil
+}
+
+func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
+	if sess.IsTerminated {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s is terminated", sess.ID)
+	}
+	if sess.Kind != domain.KindOrchestrator {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s has kind %q", sess.ID, sess.Kind)
+	}
+	if expected := project.Config.Orchestrator.Harness; expected != "" && sess.Harness != expected {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
+	}
+	expectedBranch := "ao/" + serviceSessionPrefix(project) + "-orchestrator"
+	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
+	}
+	return nil
+}
+
+func serviceSessionPrefix(project domain.ProjectRecord) string {
+	if p := strings.TrimSpace(project.Config.SessionPrefix); p != "" {
+		return p
+	}
+	id := project.ID
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
+
+func newestSession(sessions []domain.Session) domain.Session {
+	newest := sessions[0]
+	for _, sess := range sessions[1:] {
+		if sessionNewer(sess.SessionRecord, newest.SessionRecord) {
+			newest = sess
+		}
+	}
+	return newest
+}
+
+func sessionNewer(a, b domain.SessionRecord) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
+	}
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		return a.UpdatedAt.After(b.UpdatedAt)
+	}
+	return string(a.ID) > string(b.ID)
+}
+
+func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
+	s.orchestratorLocksMu.Lock()
+	if s.orchestratorLocks == nil {
+		s.orchestratorLocks = make(map[domain.ProjectID]*sync.Mutex)
+	}
+	mu := s.orchestratorLocks[projectID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.orchestratorLocks[projectID] = mu
+	}
+	s.orchestratorLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, err := s.manager.Restore(ctx, id)
+	if err != nil {
+		return domain.Session{}, toAPIError(err)
+	}
+	return s.toSession(ctx, rec)
+}
+
+// SwitchHarness swaps a live session's agent in place and returns the updated
+// read model. model, when non-empty, overrides the agent model for the new launch.
+//
+// A merged session is locked: it must never switch. "merged" is a DERIVED
+// read-model status (from PR facts), so the internal manager — which sees only
+// durable session/workspace facts — cannot enforce it. Reject it here so direct
+// API/CLI callers are held to the same rule as the inspector UI.
+func (s *Service) SwitchHarness(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, model string) (domain.Session, error) {
+	if s.store != nil {
+		cur, ok, err := s.store.GetSession(ctx, id)
+		if err != nil {
+			return domain.Session{}, fmt.Errorf("switch %s: %w", id, err)
+		}
+		if ok {
+			sess, err := s.toSession(ctx, cur)
+			if err != nil {
+				return domain.Session{}, err
+			}
+			if sess.Status == domain.StatusMerged {
+				return domain.Session{}, apierr.Conflict("SESSION_MERGED", "A merged session cannot switch agents", nil)
+			}
+		}
+	}
+	rec, err := s.manager.SwitchHarness(ctx, id, harness, model)
 	if err != nil {
 		return domain.Session{}, toAPIError(err)
 	}
@@ -467,6 +590,8 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrNotResumable):
 		return apierr.Conflict("SESSION_NOT_RESUMABLE",
 			"This session has no saved agent session or prompt to resume from", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
+		return apierr.Conflict("SWITCH_IN_PROGRESS", "An agent switch is already in progress for this session", nil)
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo. Register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):

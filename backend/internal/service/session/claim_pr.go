@@ -47,9 +47,11 @@ type ClaimPRResult struct {
 
 // ListPRs returns all PRs currently owned by a session, ordered for display.
 func (s *Service) ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
-	if _, ok, err := s.store.GetSession(ctx, id); err != nil {
+	_, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", id, err)
-	} else if !ok {
+	}
+	if !ok {
 		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return s.listPRFacts(ctx, id)

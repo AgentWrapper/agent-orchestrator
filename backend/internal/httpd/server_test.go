@@ -96,6 +96,7 @@ func TestServerLifecycle(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	runErr := make(chan error, 1)
 	go func() { runErr <- srv.Run(ctx) }()
 
@@ -109,6 +110,7 @@ func TestServerLifecycle(t *testing.T) {
 	}
 	if info == nil {
 		t.Fatal("run-file not written while server running")
+		return
 	}
 	if info.Port == 0 {
 		t.Error("run-file recorded port 0; want the actual bound port")

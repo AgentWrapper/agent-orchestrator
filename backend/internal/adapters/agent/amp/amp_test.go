@@ -100,7 +100,7 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandAppendsSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandIgnoresInlineSystemPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPrompt: "follow repo rules",
@@ -110,13 +110,14 @@ func TestGetLaunchCommandAppendsSystemPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"amp", "--append-system-prompt", "follow repo rules", "--", "do the thing"}
+	want := []string{"amp", "--", "do the thing"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
+	assertAmpSystemPromptFlagsAbsent(t, cmd)
 }
 
-func TestGetLaunchCommandPrefersSystemPromptFileFlag(t *testing.T) {
+func TestGetLaunchCommandIgnoresSystemPromptFile(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPromptFile: "/tmp/system.md",
@@ -126,9 +127,20 @@ func TestGetLaunchCommandPrefersSystemPromptFileFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"amp", "--append-system-prompt-file", "/tmp/system.md"}
+	want := []string{"amp"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	assertAmpSystemPromptFlagsAbsent(t, cmd)
+}
+
+func assertAmpSystemPromptFlagsAbsent(t *testing.T, cmd []string) {
+	t.Helper()
+	for _, arg := range cmd {
+		switch arg {
+		case "--append-system-prompt", "--append-system-prompt-file":
+			t.Fatalf("cmd = %#v unexpectedly contains unsupported Amp system prompt flag %q", cmd, arg)
+		}
 	}
 }
 

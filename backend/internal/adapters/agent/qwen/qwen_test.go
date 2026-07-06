@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -89,7 +89,7 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "qwen"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -101,7 +101,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "qwen"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -138,6 +138,10 @@ func TestContextCancellationIsHonored(t *testing.T) {
 	if _, _, err := plugin.SessionInfo(ctx, ports.SessionRef{}); err == nil {
 		t.Fatal("SessionInfo: want error from cancelled context")
 	}
+}
+
+type qwenHookFile struct {
+	Hooks map[string][]hooksjson.MatcherGroup `json:"hooks"`
 }
 
 func TestGetAgentHooksInstallsQwenHooks(t *testing.T) {
@@ -203,7 +207,7 @@ func TestGetAgentHooksInstallsQwenHooks(t *testing.T) {
 	assertStartupMatcher(t, config.Hooks["SessionStart"])
 }
 
-func assertStartupMatcher(t *testing.T, groups []qwenMatcherGroup) {
+func assertStartupMatcher(t *testing.T, groups []hooksjson.MatcherGroup) {
 	t.Helper()
 	for _, group := range groups {
 		for _, hook := range group.Hooks {
@@ -330,8 +334,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "sess-123",
-			qwenTitleMetadataKey:            "Fix login redirect",
-			qwenSummaryMetadataKey:          "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -373,29 +377,6 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 }
 
-func TestDeriveActivityState(t *testing.T) {
-	tests := []struct {
-		event     string
-		wantState domain.ActivityState
-		wantOK    bool
-	}{
-		{"session-start", domain.ActivityActive, true},
-		{"user-prompt-submit", domain.ActivityActive, true},
-		{"stop", domain.ActivityIdle, true},
-		{"permission-request", domain.ActivityWaitingInput, true},
-		{"unknown", "", false},
-		{"", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.event, func(t *testing.T) {
-			state, ok := DeriveActivityState(tt.event, nil)
-			if state != tt.wantState || ok != tt.wantOK {
-				t.Fatalf("DeriveActivityState(%q) = (%q, %v), want (%q, %v)", tt.event, state, ok, tt.wantState, tt.wantOK)
-			}
-		})
-	}
-}
-
 func contains(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
@@ -429,7 +410,7 @@ func containsSubsequence(values []string, needle []string) bool {
 	return false
 }
 
-func countQwenHookCommand(entries []qwenMatcherGroup, command string) int {
+func countQwenHookCommand(entries []hooksjson.MatcherGroup, command string) int {
 	count := 0
 	for _, entry := range entries {
 		for _, hook := range entry.Hooks {

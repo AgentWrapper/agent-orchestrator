@@ -1,13 +1,14 @@
 // Package reviewer is the single source of truth for the code-review adapters
 // the daemon ships. It mirrors the worker agent registry but is a separate set:
-// adding a reviewer (claude-code today, greptile tomorrow) is one edit here and
-// does not widen the worker AgentHarness vocabulary.
+// adding a reviewer here does not widen the worker AgentHarness vocabulary.
 package reviewer
 
 import (
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -23,6 +24,8 @@ type Adapter interface {
 func Constructors() []Adapter {
 	return []Adapter{
 		claudecode.New(),
+		codex.New(),
+		opencode.New(),
 	}
 }
 
