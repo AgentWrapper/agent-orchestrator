@@ -45,7 +45,7 @@ func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"waiting_input","agent":"codex"}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"waiting_input","agent":"codex","runtimeToken":"runtime-1"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
@@ -66,6 +66,9 @@ func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {
 	}
 	if rec.gotSignal.Harness != domain.HarnessCodex {
 		t.Fatalf("recorder harness = %q, want codex", rec.gotSignal.Harness)
+	}
+	if rec.gotSignal.RuntimeToken != "runtime-1" {
+		t.Fatalf("recorder runtime token = %q, want runtime-1", rec.gotSignal.RuntimeToken)
 	}
 }
 

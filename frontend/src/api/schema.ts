@@ -950,6 +950,8 @@ export interface components {
              * @enum {string}
              */
             agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            /** @description Opaque runtime generation token emitted by AO-managed hooks. */
+            runtimeToken?: string;
             /**
              * @description Agent activity state reported by an agent hook.
              * @enum {string}

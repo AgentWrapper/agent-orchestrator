@@ -159,6 +159,7 @@ func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness d
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
 	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
+	rec.Metadata.RuntimeToken = metadata.RuntimeToken
 	if metadata.WorkspacePath != "" {
 		rec.Metadata.WorkspacePath = metadata.WorkspacePath
 	}
@@ -775,6 +776,9 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if rt.lastCfg.Env[EnvSessionID] == "" {
 		t.Fatal("runtime env missing AO_SESSION_ID")
+	}
+	if rt.lastCfg.Env[EnvRuntimeToken] == "" {
+		t.Fatal("runtime env missing AO_RUNTIME_TOKEN")
 	}
 
 	agent.lastConfig = ports.AgentConfig{}

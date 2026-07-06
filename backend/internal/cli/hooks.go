@@ -36,8 +36,9 @@ const (
 // POST /api/v1/sessions/{id}/activity. The CLI keeps its own copy so it need
 // not import httpd.
 type setActivityAPIRequest struct {
-	State string `json:"state"`
-	Agent string `json:"agent,omitempty"`
+	State        string `json:"state"`
+	Agent        string `json:"agent,omitempty"`
+	RuntimeToken string `json:"runtimeToken,omitempty"`
 }
 
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
@@ -83,7 +84,8 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Agent: agent}, nil); err != nil {
+	runtimeToken := strings.TrimSpace(os.Getenv("AO_RUNTIME_TOKEN"))
+	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Agent: agent, RuntimeToken: runtimeToken}, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)

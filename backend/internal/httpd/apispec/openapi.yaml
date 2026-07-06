@@ -2633,6 +2633,9 @@ components:
           - pi
           - autohand
           type: string
+        runtimeToken:
+          description: Opaque runtime generation token emitted by AO-managed hooks.
+          type: string
         state:
           description: Agent activity state reported by an agent hook.
           enum:

@@ -28,6 +28,7 @@ type SessionMetadata struct {
 	Branch          string `json:"branch,omitempty"`
 	WorkspacePath   string `json:"workspacePath,omitempty"`
 	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
+	RuntimeToken    string `json:"runtimeToken,omitempty"`
 	AgentSessionID  string `json:"agentSessionId,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	// Model is the per-session model override supplied at spawn. Empty means

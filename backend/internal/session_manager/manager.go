@@ -4,6 +4,8 @@ package sessionmanager
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -54,6 +56,9 @@ const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
 	EnvIssueID   = "AO_ISSUE_ID"
+	// EnvRuntimeToken identifies one launched runtime generation. Hooks echo it
+	// so lifecycle can ignore late callbacks from a retired same-harness runtime.
+	EnvRuntimeToken = "AO_RUNTIME_TOKEN"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 	// EnvRunFile tells a spawned agent's AO hook commands where the daemon's
@@ -311,11 +316,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime token: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -323,7 +334,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, Model: strings.TrimSpace(cfg.Model)}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt, Model: strings.TrimSpace(cfg.Model)}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -621,16 +632,20 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime token: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
@@ -771,11 +786,16 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 	if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: meta.RuntimeHandleID}); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: stop old agent: %w", id, err)
 	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		_ = m.lcm.MarkTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime token: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: meta.WorkspacePath,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
 		// No live runtime now. Mark terminated so the session stops cleanly with
@@ -783,7 +803,7 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 		_ = m.lcm.MarkTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
 	}
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.lcm.MarkTerminated(ctx, id)
@@ -834,11 +854,15 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 			return domain.SessionRecord{}, fmt.Errorf("switch %s: clear stale runtime: %w", id, err)
 		}
 	}
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime token: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
@@ -846,7 +870,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	// Persist the RESTORED worktree path/branch: a changed session prefix or
 	// managed root can restore to a different path, and a stale one would break
 	// later terminal/workspace/cleanup operations.
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, WorkspacePath: ws.Path, Branch: ws.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
@@ -1423,14 +1447,15 @@ Keep branch names within your session's branch namespace so AO can track every P
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runFile string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+5)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runFile, runtimeToken string, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+6)
 	for k, v := range projectEnv {
 		env[k] = v
 	}
 	env[EnvSessionID] = string(id)
 	env[EnvProjectID] = string(project)
 	env[EnvIssueID] = string(issue)
+	env[EnvRuntimeToken] = runtimeToken
 	env[EnvDataDir] = dataDir
 	if runFile != "" {
 		env[EnvRunFile] = runFile
@@ -1445,8 +1470,8 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // command, which fails every callback and silently kills activity tracking).
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
-func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, m.runFile, projectEnv)
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, runtimeToken string, projectEnv map[string]string) map[string]string {
+	env := spawnEnv(id, project, issue, m.dataDir, m.runFile, runtimeToken, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
@@ -1455,6 +1480,14 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
+}
+
+func newRuntimeToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon

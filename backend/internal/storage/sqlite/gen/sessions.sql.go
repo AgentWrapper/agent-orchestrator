@@ -16,7 +16,7 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
 FROM sessions WHERE id = ?
 `
 
@@ -33,6 +33,7 @@ type GetSessionRow struct {
 	Branch            string
 	WorkspacePath     string
 	RuntimeHandleID   string
+	RuntimeToken      string
 	AgentSessionID    string
 	Prompt            string
 	Model             string
@@ -61,6 +62,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.Branch,
 		&i.WorkspacePath,
 		&i.RuntimeHandleID,
+		&i.RuntimeToken,
 		&i.AgentSessionID,
 		&i.Prompt,
 		&i.Model,
@@ -79,9 +81,9 @@ const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
-    branch, workspace_path, runtime_handle_id, agent_session_id, prompt, model,
+    branch, workspace_path, runtime_handle_id, runtime_token, agent_session_id, prompt, model,
     preview_url, preview_revision, launched_harnesses, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -99,6 +101,7 @@ type InsertSessionParams struct {
 	Branch            string
 	WorkspacePath     string
 	RuntimeHandleID   string
+	RuntimeToken      string
 	AgentSessionID    string
 	Prompt            string
 	Model             string
@@ -125,6 +128,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.Branch,
 		arg.WorkspacePath,
 		arg.RuntimeHandleID,
+		arg.RuntimeToken,
 		arg.AgentSessionID,
 		arg.Prompt,
 		arg.Model,
@@ -140,7 +144,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
 FROM sessions ORDER BY project_id, num
 `
 
@@ -157,6 +161,7 @@ type ListAllSessionsRow struct {
 	Branch            string
 	WorkspacePath     string
 	RuntimeHandleID   string
+	RuntimeToken      string
 	AgentSessionID    string
 	Prompt            string
 	Model             string
@@ -191,6 +196,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
+			&i.RuntimeToken,
 			&i.AgentSessionID,
 			&i.Prompt,
 			&i.Model,
@@ -218,7 +224,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -235,6 +241,7 @@ type ListSessionsByProjectRow struct {
 	Branch            string
 	WorkspacePath     string
 	RuntimeHandleID   string
+	RuntimeToken      string
 	AgentSessionID    string
 	Prompt            string
 	Model             string
@@ -269,6 +276,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
+			&i.RuntimeToken,
 			&i.AgentSessionID,
 			&i.Prompt,
 			&i.Model,
@@ -371,7 +379,7 @@ const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
-    branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?, model = ?,
+    branch = ?, workspace_path = ?, runtime_handle_id = ?, runtime_token = ?, agent_session_id = ?, prompt = ?, model = ?,
     preview_url = ?, preview_revision = ?, launched_harnesses = ?, updated_at = ?
 WHERE id = ?
 `
@@ -388,6 +396,7 @@ type UpdateSessionParams struct {
 	Branch            string
 	WorkspacePath     string
 	RuntimeHandleID   string
+	RuntimeToken      string
 	AgentSessionID    string
 	Prompt            string
 	Model             string
@@ -411,6 +420,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.Branch,
 		arg.WorkspacePath,
 		arg.RuntimeHandleID,
+		arg.RuntimeToken,
 		arg.AgentSessionID,
 		arg.Prompt,
 		arg.Model,

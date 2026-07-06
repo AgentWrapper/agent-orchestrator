@@ -146,6 +146,7 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	// must persist them (not keep the stale ones).
 	switched := domain.SessionMetadata{
 		RuntimeHandleID:   "new-handle",
+		RuntimeToken:      "new-token",
 		WorkspacePath:     "/ws2",
 		Branch:            "b2",
 		Model:             "switch-model",
@@ -163,6 +164,9 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	}
 	if got.Metadata.RuntimeHandleID != "new-handle" {
 		t.Fatalf("RuntimeHandleID = %q, want new-handle", got.Metadata.RuntimeHandleID)
+	}
+	if got.Metadata.RuntimeToken != "new-token" {
+		t.Fatalf("RuntimeToken = %q, want new-token", got.Metadata.RuntimeToken)
 	}
 	if got.Metadata.Model != "switch-model" {
 		t.Fatalf("Model = %q, want switch-model", got.Metadata.Model)
@@ -189,21 +193,21 @@ func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
 		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
-		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", AgentSessionID: "old-native", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeToken: "old-token", AgentSessionID: "old-native", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
 	}
-	switched := domain.SessionMetadata{RuntimeHandleID: "new-handle", WorkspacePath: "/ws", Branch: "b"}
+	switched := domain.SessionMetadata{RuntimeHandleID: "new-handle", RuntimeToken: "new-token", WorkspacePath: "/ws", Branch: "b"}
 	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, switched); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode, RuntimeToken: "old-token"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-1"]; got.IsTerminated {
 		t.Fatalf("stale exit hook terminated switched session: %+v", got)
 	}
 
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessCodex}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessCodex, RuntimeToken: "new-token"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
@@ -213,17 +217,67 @@ func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
 	st.sessions["mer-2"] = domain.SessionRecord{
 		ID: "mer-2", ProjectID: "mer", Harness: domain.HarnessCodex,
 		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
-		Metadata: domain.SessionMetadata{RuntimeHandleID: "newer", Prompt: "p", Branch: "b", WorkspacePath: "/ws2"},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "newer", RuntimeToken: "older-token", Prompt: "p", Branch: "b", WorkspacePath: "/ws2"},
 	}
 	if err := m.MarkSwitched(ctx, "mer-2", domain.HarnessCodex, switched); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(31 * time.Second)
-	if err := m.ApplyActivitySignal(ctx, "mer-2", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-2", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode, RuntimeToken: "older-token"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-2"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("real exit after suppression window was ignored: %+v", got)
+	}
+}
+
+func TestActivity_SameHarnessSwitchSuppressesOnlyOldRuntimeToken(t *testing.T) {
+	m, st, _ := newManager()
+	now := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeToken: "old-token", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+	}
+	switched := domain.SessionMetadata{RuntimeHandleID: "new-handle", RuntimeToken: "new-token", WorkspacePath: "/ws", Branch: "b"}
+	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, switched); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessCodex, RuntimeToken: "old-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("old same-harness runtime exit terminated switched session: %+v", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessCodex, RuntimeToken: "new-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("new same-harness runtime exit was ignored: %+v", got)
+	}
+}
+
+func TestActivity_MissingRuntimeTokenDuringSwitchIsTreatedAsStale(t *testing.T) {
+	m, st, _ := newManager()
+	now := time.Unix(300, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeToken: "old-token", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+	}
+	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, domain.SessionMetadata{RuntimeHandleID: "new-handle", RuntimeToken: "new-token", WorkspacePath: "/ws", Branch: "b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("missing-token stale exit terminated switched session: %+v", got)
 	}
 }
 

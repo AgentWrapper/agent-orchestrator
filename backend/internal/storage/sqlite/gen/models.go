@@ -183,6 +183,7 @@ type Session struct {
 	PreviewRevision   int64
 	Model             string
 	LaunchedHarnesses string
+	RuntimeToken      string
 }
 
 type SessionWorktree struct {

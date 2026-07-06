@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -360,6 +361,7 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	rec.FirstSignalAt = time.Time{}
 	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
+	rec.Metadata.RuntimeToken = metadata.RuntimeToken
 	// Persist the launch worktree: a terminated relaunch may restore to a
 	// different path (changed session prefix / managed root), and a stale
 	// WorkspacePath/Branch would break later terminal/workspace/cleanup ops.
@@ -382,7 +384,15 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 }
 
 func staleSwitchExitSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
-	return s.State == domain.ActivityExited && s.Harness != "" && s.Harness != rec.Harness
+	if s.State != domain.ActivityExited {
+		return false
+	}
+	signalToken := strings.TrimSpace(s.RuntimeToken)
+	currentToken := strings.TrimSpace(rec.Metadata.RuntimeToken)
+	if currentToken != "" {
+		return signalToken == "" || signalToken != currentToken
+	}
+	return s.Harness != "" && s.Harness != rec.Harness
 }
 
 // sameActivity reports whether two activity signals describe the same state.
@@ -403,6 +413,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.Branch, in.Branch)
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
+	set(&base.RuntimeToken, in.RuntimeToken)
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
 	set(&base.Model, in.Model)

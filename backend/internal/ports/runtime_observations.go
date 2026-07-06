@@ -27,8 +27,9 @@ type RuntimeFacts struct {
 // ActivitySignal is pushed by the agent hooks. Only a Valid signal is
 // authoritative; a stale/absent one is ignored rather than read as idleness.
 type ActivitySignal struct {
-	Valid     bool
-	State     domain.ActivityState
-	Harness   domain.AgentHarness
-	Timestamp time.Time
+	Valid        bool
+	State        domain.ActivityState
+	Harness      domain.AgentHarness
+	RuntimeToken string
+	Timestamp    time.Time
 }

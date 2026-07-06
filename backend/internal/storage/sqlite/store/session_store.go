@@ -203,6 +203,7 @@ type sessionRow struct {
 	Branch            string
 	WorkspacePath     string
 	RuntimeHandleID   string
+	RuntimeToken      string
 	AgentSessionID    string
 	Prompt            string
 	Model             string
@@ -228,6 +229,7 @@ func getSessionRow(row gen.GetSessionRow) sessionRow {
 		Branch:            row.Branch,
 		WorkspacePath:     row.WorkspacePath,
 		RuntimeHandleID:   row.RuntimeHandleID,
+		RuntimeToken:      row.RuntimeToken,
 		AgentSessionID:    row.AgentSessionID,
 		Prompt:            row.Prompt,
 		Model:             row.Model,
@@ -254,6 +256,7 @@ func listSessionsByProjectRow(row gen.ListSessionsByProjectRow) sessionRow {
 		Branch:            row.Branch,
 		WorkspacePath:     row.WorkspacePath,
 		RuntimeHandleID:   row.RuntimeHandleID,
+		RuntimeToken:      row.RuntimeToken,
 		AgentSessionID:    row.AgentSessionID,
 		Prompt:            row.Prompt,
 		Model:             row.Model,
@@ -280,6 +283,7 @@ func listAllSessionsRow(row gen.ListAllSessionsRow) sessionRow {
 		Branch:            row.Branch,
 		WorkspacePath:     row.WorkspacePath,
 		RuntimeHandleID:   row.RuntimeHandleID,
+		RuntimeToken:      row.RuntimeToken,
 		AgentSessionID:    row.AgentSessionID,
 		Prompt:            row.Prompt,
 		Model:             row.Model,
@@ -309,6 +313,7 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 			Branch:            row.Branch,
 			WorkspacePath:     row.WorkspacePath,
 			RuntimeHandleID:   row.RuntimeHandleID,
+			RuntimeToken:      row.RuntimeToken,
 			AgentSessionID:    row.AgentSessionID,
 			Prompt:            row.Prompt,
 			Model:             row.Model,
@@ -339,6 +344,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Branch:            rec.Metadata.Branch,
 		WorkspacePath:     rec.Metadata.WorkspacePath,
 		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
+		RuntimeToken:      rec.Metadata.RuntimeToken,
 		AgentSessionID:    rec.Metadata.AgentSessionID,
 		Prompt:            rec.Metadata.Prompt,
 		Model:             rec.Metadata.Model,
@@ -365,6 +371,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Branch:            rec.Metadata.Branch,
 		WorkspacePath:     rec.Metadata.WorkspacePath,
 		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
+		RuntimeToken:      rec.Metadata.RuntimeToken,
 		AgentSessionID:    rec.Metadata.AgentSessionID,
 		Prompt:            rec.Metadata.Prompt,
 		Model:             rec.Metadata.Model,
