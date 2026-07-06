@@ -1047,6 +1047,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		} else {
 			base = workerMultiPRPrompt()
 		}
+		base += "\n\n" + workerPreviewPrompt()
 	}
 	if base == "" {
 		return "", nil
@@ -1079,6 +1080,16 @@ func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domai
 		}
 	}
 	return "", false, nil
+}
+
+// workerPreviewPrompt is a standing instruction that makes the worker surface
+// its visual output in the desktop browser panel. The daemon only auto-opens a
+// conventional index.html; everything else is the agent's to show deliberately,
+// so this tells it to run `ao preview <file>` for the artifacts a human would
+// want to look at, the way an artifact-aware coding tool opens a preview.
+func workerPreviewPrompt() string {
+	return "## Previewing your work\n\n" +
+		"When you produce something the human should look at — a standalone HTML page, a rendered report or chart, or a Markdown document — show it in the desktop browser panel by running `ao preview <file>` (a workspace-relative path works, and Markdown renders as formatted HTML). Do this proactively as soon as the artifact is ready, and re-run the same command after you regenerate the file to refresh the panel. A conventional app entry point (`index.html`) opens on its own, so you only need to preview other files."
 }
 
 // systemPromptGuard is appended to every agent system prompt. The role,

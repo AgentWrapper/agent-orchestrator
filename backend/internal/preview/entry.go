@@ -1,6 +1,7 @@
 package preview
 
 import (
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -13,6 +14,19 @@ import (
 
 var entryCandidates = []string{"index.html", "public/index.html", "dist/index.html", "build/index.html"}
 
+// previewableExts are the file extensions the browser panel can render: HTML
+// verbatim and Markdown converted to HTML by the preview/files route.
+var previewableExts = map[string]struct{}{
+	".html":     {},
+	".htm":      {},
+	".md":       {},
+	".markdown": {},
+}
+
+// maxPreviewWalkFiles bounds the most-recent fallback scan so a pathological
+// workspace cannot stall the preview poller.
+const maxPreviewWalkFiles = 5000
+
 // Entry is a workspace-local static frontend entrypoint.
 type Entry struct {
 	Path    string
@@ -21,9 +35,12 @@ type Entry struct {
 	Size    int64
 }
 
-// DiscoverEntry returns the first supported HTML entrypoint that exists inside
-// the workspace.
-func DiscoverEntry(workspacePath string) (Entry, bool) {
+// DiscoverIndexEntry returns a conventional static entry point (index.html or
+// its public/dist/build variants) when one exists. This is the only discovery
+// the background poller performs: it auto-opens a real app entry, but never
+// guesses at loose files, leaving the choice of what else to preview to the
+// agent via an explicit `ao preview <file>`.
+func DiscoverIndexEntry(workspacePath string) (Entry, bool) {
 	if strings.TrimSpace(workspacePath) == "" {
 		return Entry{}, false
 	}
@@ -38,6 +55,90 @@ func DiscoverEntry(workspacePath string) (Entry, bool) {
 		}
 	}
 	return Entry{}, false
+}
+
+// DiscoverEntry resolves the entry a bare `ao preview` (no argument) should
+// open. A conventional index.html always wins; when none exists it falls back
+// to the most-recently-modified previewable file (.html/.htm/.md/.markdown) so
+// a single generated report or document shows up without naming it. This
+// convenience runs only on an explicit agent/user request, not automatically.
+func DiscoverEntry(workspacePath string) (Entry, bool) {
+	if entry, ok := DiscoverIndexEntry(workspacePath); ok {
+		return entry, true
+	}
+	return mostRecentPreviewable(workspacePath)
+}
+
+// mostRecentPreviewable walks the workspace and returns the newest previewable
+// file. Ties (equal mod times) break on the slash path so the result is
+// deterministic. Hidden directories and node_modules are skipped, and the scan
+// is bounded by maxPreviewWalkFiles.
+func mostRecentPreviewable(workspacePath string) (Entry, bool) {
+	root, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return Entry{}, false
+	}
+	var best Entry
+	found := false
+	seen := 0
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // skip unreadable entries rather than aborting the scan
+		}
+		if d.IsDir() {
+			if p != root && skipPreviewDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if _, ok := previewableExts[strings.ToLower(filepath.Ext(d.Name()))]; !ok {
+			return nil
+		}
+		seen++
+		if seen > maxPreviewWalkFiles {
+			return filepath.SkipAll
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		if !found || newerPreviewable(info, relSlash, best) {
+			best = Entry{Path: relSlash, AbsPath: p, ModTime: info.ModTime(), Size: info.Size()}
+			found = true
+		}
+		return nil
+	})
+	return best, found
+}
+
+func newerPreviewable(info fs.FileInfo, relSlash string, best Entry) bool {
+	mod := info.ModTime()
+	if mod.After(best.ModTime) {
+		return true
+	}
+	if mod.Equal(best.ModTime) {
+		return relSlash < best.Path
+	}
+	return false
+}
+
+func skipPreviewDir(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "node_modules"
+}
+
+// IsMarkdownPath reports whether p names a Markdown file the preview/files
+// route should render to HTML rather than serve verbatim.
+func IsMarkdownPath(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".md", ".markdown":
+		return true
+	}
+	return false
 }
 
 // ConfinedPath maps an asset path into workspacePath and rejects paths that
