@@ -16,13 +16,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Build a mock GitHub releases API response entry. */
 const DEFAULT_MARKER = '<!-- ao-feature-build: {"pr":2270,"base":"main","sha":"abc1234","slug":"pr2270"} -->';
 
-function makeRelease(overrides: {
-	tag_name?: string;
-	name?: string;
-	prerelease?: boolean;
-	published_at?: string;
-	body?: string | null;
-} = {}) {
+function makeRelease(
+	overrides: {
+		tag_name?: string;
+		name?: string;
+		prerelease?: boolean;
+		published_at?: string;
+		body?: string | null;
+	} = {},
+) {
 	return {
 		tag_name: overrides.tag_name ?? "v0.2.0-pr2270.202607061200",
 		name: overrides.name ?? "Feature build pr2270",
@@ -292,9 +294,7 @@ describe("listFeatureBuilds", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 		await listFeatureBuilds();
-		const pullsCalls = (fetchMock.mock.calls as [string][]).filter(([url]) =>
-			String(url).includes("/pulls/"),
-		);
+		const pullsCalls = (fetchMock.mock.calls as [string][]).filter(([url]) => String(url).includes("/pulls/"));
 		expect(pullsCalls).toHaveLength(1);
 	});
 });

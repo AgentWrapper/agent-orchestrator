@@ -68,7 +68,8 @@ function renderForm() {
 }
 
 beforeEach(() => {
-	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate, featListBuilds, featGetActive]) m.mockReset();
+	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate, featListBuilds, featGetActive])
+		m.mockReset();
 	getMigration.mockResolvedValue({ status: "pending" });
 	getMock.mockResolvedValue({ data: { available: true, legacyRoot: "/home/u/.agent-orchestrator" }, error: undefined });
 	postMock.mockResolvedValue({ data: { report: { projectsImported: 2, projectsSkipped: 1 } }, error: undefined });

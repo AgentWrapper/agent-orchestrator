@@ -11,9 +11,7 @@ const base = "0.2.0";
 
 describe("computeFeatureVersion", () => {
 	it("formats a UTC-timestamped feature prerelease with sha build metadata", () => {
-		expect(computeFeatureVersion(base, pr, sha, nowIso)).toBe(
-			"0.2.0-pr2270.202507061200+abc1234",
-		);
+		expect(computeFeatureVersion(base, pr, sha, nowIso)).toBe("0.2.0-pr2270.202507061200+abc1234");
 	});
 
 	it("does NOT bump the patch version (base used as-is)", () => {
@@ -22,12 +20,8 @@ describe("computeFeatureVersion", () => {
 	});
 
 	it("strips a v / desktop-v tag prefix from baseVersion", () => {
-		expect(computeFeatureVersion("v0.2.0", pr, sha, nowIso)).toBe(
-			"0.2.0-pr2270.202507061200+abc1234",
-		);
-		expect(computeFeatureVersion("desktop-v0.2.0", pr, sha, nowIso)).toBe(
-			"0.2.0-pr2270.202507061200+abc1234",
-		);
+		expect(computeFeatureVersion("v0.2.0", pr, sha, nowIso)).toBe("0.2.0-pr2270.202507061200+abc1234");
+		expect(computeFeatureVersion("desktop-v0.2.0", pr, sha, nowIso)).toBe("0.2.0-pr2270.202507061200+abc1234");
 	});
 
 	it("CRITICAL: semver.prerelease(version)[0] === 'pr<N>' (update channel filter depends on this)", () => {

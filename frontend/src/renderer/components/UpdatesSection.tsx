@@ -38,7 +38,12 @@ export function UpdatesSection() {
 		queryFn: () => aoBridge.updateSettings.get(),
 	});
 
-	const [form, setForm] = useState<UpdateSettings>({ enabled: false, channel: "latest", nightlyAck: false, feature: null });
+	const [form, setForm] = useState<UpdateSettings>({
+		enabled: false,
+		channel: "latest",
+		nightlyAck: false,
+		feature: null,
+	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 
 	useEffect(() => {
@@ -141,10 +146,7 @@ export function UpdatesSection() {
 				</div>
 
 				{primaryValue === "feature" && (
-					<FeatureBuildsSelect
-						currentPr={form.feature?.pr ?? null}
-						onPin={handlePinBuild}
-					/>
+					<FeatureBuildsSelect currentPr={form.feature?.pr ?? null} onPin={handlePinBuild} />
 				)}
 
 				{form.channel === "nightly" && form.feature === null && form.enabled && (

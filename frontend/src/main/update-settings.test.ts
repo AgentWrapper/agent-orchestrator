@@ -15,17 +15,32 @@ describe("update-settings", () => {
 	});
 
 	it("returns safe defaults when no file exists", async () => {
-		expect(await readUpdateSettings(dir)).toEqual({ enabled: false, channel: "latest", nightlyAck: false, feature: null });
+		expect(await readUpdateSettings(dir)).toEqual({
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		});
 	});
 
 	it("round-trips written settings", async () => {
 		await writeUpdateSettings(dir, { enabled: true, channel: "nightly", nightlyAck: true, feature: null });
-		expect(await readUpdateSettings(dir)).toEqual({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
+		expect(await readUpdateSettings(dir)).toEqual({
+			enabled: true,
+			channel: "nightly",
+			nightlyAck: true,
+			feature: null,
+		});
 	});
 
 	it("falls back to defaults on garbage", async () => {
 		await writeFile(path.join(dir, UPDATE_SETTINGS_FILE_NAME), "{not json", "utf8");
-		expect(await readUpdateSettings(dir)).toEqual({ enabled: false, channel: "latest", nightlyAck: false, feature: null });
+		expect(await readUpdateSettings(dir)).toEqual({
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		});
 	});
 
 	it("coerces an unknown channel back to latest", async () => {
