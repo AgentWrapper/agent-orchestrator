@@ -13,6 +13,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
 const reviewMaxNudge = 3
@@ -56,10 +57,10 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	if err != nil || !ok {
 		return ReviewDeliveryNoop, err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return ReviewDeliveryNoop, nil
 	}
-	if m.messenger == nil {
+	if m.guard == nil {
 		return ReviewDeliveryNoop, nil
 	}
 	sort.Slice(results, func(i, j int) bool {
@@ -89,8 +90,15 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	anchorPR := results[0].PRURL
 	key := "review-batch:" + anchorPR + ":" + batchID
 	sig := strings.Join(sigParts, "\x01")
-	if _, err := m.sendOnce(ctx, workerID, anchorPR, key, sig, msg.String(), reviewMaxNudge); err != nil {
+	outcome, err := m.sendOnce(ctx, workerID, anchorPR, key, sig, msg.String(), reviewMaxNudge)
+	if err != nil {
 		return ReviewDeliveryNoop, err
+	}
+	if outcome == sendOnceSuppressed {
+		// The worker went terminated/needs-input between the entry guard and the
+		// paste: nothing reached it, so do NOT let the caller stamp the run
+		// delivered — it must re-fire once the session is workable again.
+		return ReviewDeliveryNoop, nil
 	}
 	return ReviewDeliverySent, nil
 }
@@ -144,7 +152,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if err != nil || !ok {
 		return err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return nil
 	}
 	// The CI-failure, review-feedback, and merge-conflict lanes are independent
@@ -179,7 +187,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			if err != nil {
 				return err
 			}
-			if sent {
+			if sent == sendOnceSent {
 				return nil
 			}
 		}
@@ -197,7 +205,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if err != nil {
 			return err
 		}
-		if sent {
+		if sent == sendOnceSent {
 			return nil
 		}
 	}
@@ -231,10 +239,10 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	if err != nil || !ok {
 		return ReviewDeliveryNoop, err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return ReviewDeliveryNoop, nil
 	}
-	if m.messenger == nil {
+	if m.guard == nil {
 		return ReviewDeliveryNoop, nil
 	}
 	msg := fmt.Sprintf("[AO reviewer] AO's internal code reviewer submitted a review.\n\nPR: %s\nVerdict: %s", domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
@@ -248,9 +256,15 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	}
 	key := "review:" + r.PRURL + ":ao:" + r.RunID
 	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
-	_, err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
+	outcome, err := m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
 	if err != nil {
 		return ReviewDeliveryNoop, err
+	}
+	if outcome == sendOnceSuppressed {
+		// Suppressed by the just-in-time guard (worker went terminated/needs-
+		// input): the review feedback did not reach the worker, so leave the run
+		// undelivered to re-fire on the next observation.
+		return ReviewDeliveryNoop, nil
 	}
 	return ReviewDeliverySent, nil
 }
@@ -356,7 +370,7 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 		base.Type = domain.NotificationPRClosedUnmerged
 		return &base
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput || !scmObservationIsReadyToMerge(o) {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() || !scmObservationIsReadyToMerge(o) {
 		return nil
 	}
 	base.Type = domain.NotificationReadyToMerge
@@ -482,7 +496,7 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 	if err != nil || !ok {
 		return err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return nil
 	}
 	if o.Changed.Assignee {
@@ -574,33 +588,63 @@ func ciDedupeKey(prURL string, ch ports.PRCheckObservation, nameCount int) strin
 	return "ci:" + prURL + ":" + key
 }
 
-// sendOnce delivers a one-shot, deduped nudge and reports whether a message was
-// actually sent. sent=false with a nil error means a dedup or attempt-cap no-op,
-// not a failure — callers use it to fall through to other independent nudge lanes
-// instead of treating a suppressed higher-priority nudge as if it had fired.
-func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) (bool, error) {
-	if m.messenger == nil {
-		return false, nil
+// sendOnceOutcome tells a caller whether a nudge was sent, skipped by dedup or
+// attempt budget, or suppressed by the just-in-time session guard.
+type sendOnceOutcome int
+
+const (
+	// sendOnceNoop means a prior identical send is already recorded, the attempt
+	// budget is spent, or no guard is configured. PR-observation callers use this
+	// to fall through to other independent nudge lanes.
+	sendOnceNoop sendOnceOutcome = iota
+	// sendOnceSent means the message reached the session pane.
+	sendOnceSent
+	// sendOnceSuppressed means the just-in-time guard skipped the paste because the
+	// session is terminated or awaiting the user (blocked/waiting_input). The
+	// message did NOT reach the worker; the caller must not mark it delivered so
+	// it re-fires on the next observation once the session is workable again.
+	sendOnceSuppressed
+)
+
+func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) (sendOnceOutcome, error) {
+	if m.guard == nil {
+		return sendOnceNoop, nil
 	}
 	m.react.mu.Lock()
 	defer m.react.mu.Unlock()
 
 	if prURL != "" && !m.react.loaded[prURL] {
 		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
-			return false, err
+			return sendOnceNoop, err
 		}
 		m.react.loaded[prURL] = true
 	}
 
 	if m.react.seen[key] == sig {
-		return false, nil
+		return sendOnceNoop, nil
 	}
 	attempts := m.react.attempts[key]
 	if maxAttempts > 0 && attempts >= maxAttempts {
-		return false, nil
+		return sendOnceNoop, nil
 	}
-	if err := m.messenger.Send(ctx, id, msg); err != nil {
-		return false, err
+	// The guard re-reads the session immediately before pasting: the caller's
+	// NeedsInput() entry check ran before this function's dedup/persist I/O, so
+	// a permission hook could have stored blocked (or the session could have
+	// terminated) in the meantime. A suppressed write returns SUPPRESSED (not
+	// accounted), so a review caller won't stamp it delivered and it re-fires
+	// once the session is workable again. A store failure inside the guard also
+	// suppresses (fail closed, nothing was written); a messenger failure means
+	// the write was attempted and stays accounted, matching the pre-guard
+	// behavior.
+	outcome, err := m.guard.Nudge(ctx, id, msg)
+	if err != nil {
+		if outcome != sessionguard.Sent {
+			return sendOnceSuppressed, err
+		}
+		return sendOnceSent, err
+	}
+	if outcome != sessionguard.Sent {
+		return sendOnceSuppressed, nil
 	}
 	// Order: Send → in-memory mutation → durable persist. Sending first means a
 	// transient persist failure does NOT swallow a real send (the agent saw the
@@ -612,10 +656,10 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 	m.react.attempts[key] = attempts + 1
 	if prURL != "" {
 		if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
-			return true, err
+			return sendOnceSent, err
 		}
 	}
-	return true, nil
+	return sendOnceSent, nil
 }
 
 // loadPRSignaturesLocked merges any previously persisted reaction-dedup state

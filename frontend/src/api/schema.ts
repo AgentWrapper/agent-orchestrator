@@ -945,6 +945,8 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
         };
         SetActivityRequest: {
+            /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
+            event?: string;
             /**
              * @description Agent harness that emitted the hook, when known.
              * @enum {string}
@@ -956,7 +958,11 @@ export interface components {
              * @description Agent activity state reported by an agent hook.
              * @enum {string}
              */
-            state: "active" | "idle" | "waiting_input" | "exited";
+            state: "active" | "idle" | "waiting_input" | "blocked" | "exited";
+            /** @description Native tool name, for tool-use hook events. */
+            toolName?: string;
+            /** @description Native tool-use id, for tool-use hook events. */
+            toolUseId?: string;
         };
         SetActivityResponse: {
             ok: boolean;
@@ -2932,6 +2938,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

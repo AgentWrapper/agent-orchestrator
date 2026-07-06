@@ -23,6 +23,10 @@ import (
 const (
 	defaultTimeout    = 5 * time.Second
 	defaultChunkBytes = 16 * 1024
+	// defaultEnterDelay mirrors conpty's ptyInputEnterDelay: a pause after pasting
+	// a non-empty message, before the trailing Enter, so a large multiline paste
+	// does not absorb the Enter and leave the prompt unsubmitted (issue #2342).
+	defaultEnterDelay = 300 * time.Millisecond
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -32,20 +36,22 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary    string        // default "tmux" (resolved via exec.LookPath)
-	Shell     string        // default $SHELL else /bin/sh
-	Timeout   time.Duration // default 5s
-	ChunkSize int           // default 16*1024
+	Binary     string        // default "tmux" (resolved via exec.LookPath)
+	Shell      string        // default $SHELL else /bin/sh
+	Timeout    time.Duration // default 5s
+	ChunkSize  int           // default 16*1024
+	EnterDelay time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
 }
 
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary    string
-	shell     string
-	timeout   time.Duration
-	chunkSize int
-	runner    runner
+	binary     string
+	shell      string
+	timeout    time.Duration
+	chunkSize  int
+	enterDelay time.Duration
+	runner     runner
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -90,12 +96,17 @@ func New(opts Options) *Runtime {
 	if chunkSize <= 0 {
 		chunkSize = defaultChunkBytes
 	}
+	enterDelay := opts.EnterDelay
+	if enterDelay <= 0 {
+		enterDelay = defaultEnterDelay
+	}
 	return &Runtime{
-		binary:    binary,
-		shell:     shellPath,
-		timeout:   timeout,
-		chunkSize: chunkSize,
-		runner:    execRunner{},
+		binary:     binary,
+		shell:      shellPath,
+		timeout:    timeout,
+		chunkSize:  chunkSize,
+		enterDelay: enterDelay,
+		runner:     execRunner{},
 	}
 }
 
@@ -190,7 +201,8 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
-// presses Enter to submit.
+// presses Enter to submit. An empty message presses Enter alone (the nudge
+// contract on ports.AgentMessenger).
 //
 // ponytail: send-keys -l chunked is simpler than load-buffer/paste-buffer; the
 // ceiling is very large messages may be slower, but chunk size defaults to 16 KB
@@ -200,12 +212,35 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	if err != nil {
 		return err
 	}
-	for _, chunk := range chunks(message, r.chunkSize) {
-		if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
-			return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
+	enterCtx := ctx
+	if message != "" {
+		for _, chunk := range chunks(message, r.chunkSize) {
+			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
+			}
+		}
+		// Give the target TUI a moment to accept the pasted text before the
+		// trailing Enter, mirroring conpty's ptyInputEnterDelay. Without it a
+		// large multiline paste can absorb the Enter and leave the prompt
+		// unsubmitted (issue #2342). Empty-message nudges skip this — there is
+		// no paste ahead of a catch-up Enter.
+		//
+		// From here on the chunks are already in the pane, so the pause and
+		// the Enter are detached from the caller's cancellation (bounded by
+		// their own timeout instead): abandoning mid-pause would strand an
+		// unsubmitted draft that a retried send would then double-paste.
+		var cancel context.CancelFunc
+		enterCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
+		defer cancel()
+		if r.enterDelay > 0 {
+			select {
+			case <-enterCtx.Done():
+				return enterCtx.Err()
+			case <-time.After(r.enterDelay):
+			}
 		}
 	}
-	if _, err := r.run(ctx, sendEnterArgs(id)...); err != nil {
+	if _, err := r.run(enterCtx, sendEnterArgs(id)...); err != nil {
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil

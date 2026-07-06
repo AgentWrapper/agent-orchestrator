@@ -53,6 +53,14 @@ func NewFugu() *Plugin {
 	}
 }
 
+// EmitsSubmitActivity signals Codex fires a user-prompt-submit hook under AO's
+// launch. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity signals Codex fires blocked/permission-request activity
+// hooks under AO's launch. See ports.ActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)

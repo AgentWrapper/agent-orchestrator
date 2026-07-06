@@ -35,7 +35,7 @@ flowchart LR
 
 The only persistent session state is:
 
-- `activity_state` — What the agent last reported (`active`, `idle`, `waiting_input`, `exited`)
+- `activity_state` — What the agent last reported (`active`, `idle`, `waiting_input`, `blocked`, `exited`). `waiting_input` is an agent at an empty prompt awaiting its next instruction; `blocked` is an agent stopped on a pending permission/approval decision — automation must never inject input into a blocked session.
 - `is_terminated` — Whether the session should be treated as over
 - PR facts — `pr`, `pr_checks`, `pr_comment` tables
 
@@ -427,7 +427,7 @@ The `service.Session` computes display status from durable facts using this prec
 flowchart TD
     CheckTerm{is_terminated?}
     CheckTerm -->|Yes| PRMerged{PR merged?}
-    CheckTerm -->|No| CheckWait{activity_state<br/>== waiting_input?}
+    CheckTerm -->|No| CheckWait{activity_state in<br/>waiting_input, blocked?}
 
     PRMerged -->|Yes| Merged[merged]
     PRMerged -->|No| Terminated[terminated]
@@ -526,7 +526,7 @@ stateDiagram-v2
     Spawning --> Active: MarkSpawned
     Active --> Idle: activity_state = idle
     Active --> Working: activity_state = active
-    Active --> Waiting: activity_state = waiting_input
+    Active --> Waiting: activity_state = waiting_input / blocked
     Active --> Exited: activity_state = exited
     Working --> Active: work completes
     Waiting --> Active: user responds
