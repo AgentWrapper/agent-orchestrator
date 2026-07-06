@@ -15,6 +15,8 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - "ops/**"
+      - "package.json"
       - ".github/workflows/frontend.yml"
 
 permissions:
@@ -39,3 +41,7 @@ jobs:
 
       - name: Run vitest suite
         run: npx vitest run
+
+      - name: Run ops server tests
+        working-directory: .
+        run: npm run test:ops

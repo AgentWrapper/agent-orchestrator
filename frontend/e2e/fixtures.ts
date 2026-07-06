@@ -200,10 +200,10 @@ async function fulfillSse(route: Route) {
 
 export async function mockAoApi(page: Page) {
 	await page.route("**/healthz", async (route) => {
-		await fulfill(route, { status: "ok", service: "agent-orchestrator", pid: 4242 });
+		await fulfill(route, { status: "ok", service: "agent-orchestrator-daemon", pid: 4242 });
 	});
 	await page.route("**/readyz", async (route) => {
-		await fulfill(route, { status: "ready", service: "agent-orchestrator", pid: 4242 });
+		await fulfill(route, { status: "ready", service: "agent-orchestrator-daemon", pid: 4242 });
 	});
 	await page.route("**/api/v1/**", async (route) => {
 		const url = new URL(route.request().url());

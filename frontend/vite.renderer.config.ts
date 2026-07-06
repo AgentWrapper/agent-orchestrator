@@ -19,17 +19,26 @@ const POSTHOG_ORIGIN = (() => {
 	}
 })();
 
-// CSP for the built renderer. The daemon is loopback-only, so network access is
-// pinned to 127.0.0.1 (REST + SSE over http, terminal mux over ws). Injected at
-// build time rather than written into index.html because the dev server needs
-// inline scripts (react-refresh preamble) that a static meta tag would block.
+const SAME_ORIGIN_BROWSER_BUILD = process.env.VITE_NO_ELECTRON === "1" && (process.env.VITE_AO_API_BASE_URL ?? "") === "";
+const CONNECT_SRC = [
+	"'self'",
+	...(SAME_ORIGIN_BROWSER_BUILD ? [] : ["http://127.0.0.1:*", "ws://127.0.0.1:*"]),
+	POSTHOG_ORIGIN,
+].filter(Boolean);
+
+// CSP for the built renderer. Electron/package builds need loopback daemon
+// access; production browser builds use same-origin proxying and should not
+// grant the tailnet page access to a viewer machine's loopback services.
+// Injected at build time rather than written into index.html because the dev
+// server needs inline scripts (react-refresh preamble) that a static meta tag
+// would block.
 const CONTENT_SECURITY_POLICY = [
 	"default-src 'self'",
 	"script-src 'self'",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data:",
 	"font-src 'self' data:",
-	["connect-src", "'self'", "http://127.0.0.1:*", "ws://127.0.0.1:*", POSTHOG_ORIGIN].filter(Boolean).join(" "),
+	["connect-src", ...CONNECT_SRC].join(" "),
 	"object-src 'none'",
 	"base-uri 'self'",
 	"frame-src 'none'",

@@ -194,6 +194,8 @@ describe("useDaemonStatus", () => {
 		fetchMock.mockResolvedValue({
 			ok: true,
 			json: async () => ({
+				status: "ok",
+				service: "agent-orchestrator-daemon",
 				pid: 1234,
 				executablePath: "/usr/local/bin/ao",
 				workingDirectory: "/repo",
@@ -213,7 +215,7 @@ describe("useDaemonStatus", () => {
 		);
 		expect(getStatusMock).not.toHaveBeenCalled();
 		expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5173/healthz", { cache: "no-store" });
-		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith("");
 		window.ao = originalAo;
 	});
 

@@ -14,6 +14,7 @@
 	},
 	"scripts": {
 		"build:daemon": "node ./scripts/build-daemon.mjs",
+		"build:web": "VITE_NO_ELECTRON=1 VITE_AO_API_BASE_URL= vite build --config vite.renderer.config.ts",
 		"dev": "electron-forge start",
 		"dev:web": "VITE_NO_ELECTRON=1 vite --config vite.renderer.config.ts",
 		"prepackage": "npm run build:daemon",

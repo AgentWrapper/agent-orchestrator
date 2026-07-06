@@ -1,0 +1,18 @@
+[Unit]
+Description=ao web renderer (production static server) for tailscale serve
+After=ao.service
+
+[Service]
+WorkingDirectory=%h/agent-orchestrator
+Environment=AO_WEB_BIND=127.0.0.1
+Environment=AO_WEB_PORT=5173
+Environment=AO_WEB_API_TARGET=http://127.0.0.1:3001
+Environment=VITE_AO_API_BASE_URL=
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStartPre=/usr/bin/npm --prefix frontend run build:web
+ExecStart=/usr/bin/node ops/ao-web-server.mjs
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -43,23 +43,33 @@ the fleet) alive without an interactive login; verified `Linger=yes`.
   `RestartSec=5`. `Environment=PATH=%h/.local/bin:…` so spawned sessions and
   the daemon's own `ao hooks` calls resolve the binary.
 - **`ao-web.service`** — `After=ao.service`;
-  `WorkingDirectory=%h/agent-orchestrator/frontend`;
-  `ExecStart=/usr/bin/npm run dev:web`; `Environment=VITE_AO_API_BASE_URL=`
-  (empty — see below). `RestartSec=10`. A drop-in
-  (`ao-web.service.d/override.conf`) adds two host-side requirements found
-  during standup — see §3.
+  `WorkingDirectory=%h/agent-orchestrator`;
+  `Environment=VITE_AO_API_BASE_URL=` makes the browser bundle use same-origin
+  API calls; `ExecStartPre=/usr/bin/npm --prefix frontend run build:web` builds
+  the browser-mode renderer; `ExecStart=/usr/bin/node ops/ao-web-server.mjs`
+  serves the built bundle on `127.0.0.1:5173` and proxies `/api`, `/healthz`,
+  `/readyz`, and `/mux` to the daemon on `127.0.0.1:3001`. `RestartSec=10`.
+  The drop-in (`ao-web.service.d/override.conf`) records the public tailnet URL
+  for logs — see §3.
 - **`ao-slack-notifier.service`** — `After=ao.service`;
   `ExecStart=/usr/bin/node %h/agent-orchestrator/ops/ao-slack-notifier.mjs`;
   `RestartSec=15`.
 
 Enable with `systemctl --user enable --now ao ao-web ao-slack-notifier`.
 
-## 3. Web UI: tailscale serve → vite dev:web
+## 3. Web UI: tailscale serve → production static server
 
 Per adoption report §4 R17 this is the 0.9x arrangement minus the loopback
-patch (loopback is now ao's hardcoded default). The vite dev server proxies
-`/api` and `/mux` to the daemon (`frontend/vite.renderer.config.ts`), and
-Tailscale fronts the vite port on the default HTTPS port:
+patch (loopback is now ao's hardcoded default). The browser renderer is built
+with `VITE_NO_ELECTRON=1` and an empty `VITE_AO_API_BASE_URL` via
+`npm --prefix frontend run build:web`, then served by `ops/ao-web-server.mjs`.
+The server is intentionally small: static files come from `frontend/dist`,
+unknown non-API paths fall back to `index.html`, and same-origin `/api`,
+`/healthz`, `/readyz`, and `/mux` requests are proxied to the daemon on
+`127.0.0.1:3001` so browser terminal WebSocket attach keeps working without
+the vite dev server.
+
+Tailscale fronts the production web port on the default HTTPS port:
 
 ```bash
 sudo tailscale serve --bg --https=443 http://127.0.0.1:5173
@@ -67,41 +77,21 @@ sudo tailscale serve --bg --https=443 http://127.0.0.1:5173
 
 Live URL: `https://mirrorborn.<tailnet>.ts.net/` → `127.0.0.1:5173`.
 
-Two host-side requirements, discovered as a live 502/403 during standup and
-now carried in the `ao-web.service.d/override.conf` drop-in:
+The live `ao-web.service.d/override.conf` drop-in contains only:
 
-- **vite must bind `127.0.0.1`, not `::1`.** Node resolves `localhost` to
-  `::1`, so plain `npm run dev:web` listens on IPv6 loopback only while
-  tailscale serve dials `127.0.0.1` — every proxied request 502s. The drop-in
-  runs `npm run dev:web -- --host 127.0.0.1`.
-- **vite must allow the tailnet Host header.** Vite's `server.allowedHosts`
-  rejects non-localhost hosts with a 403. The drop-in sets vite's
-  escape-hatch env var
-  (`__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=mirrorborn.<tailnet>.ts.net`) —
-  a host-side setting, so the tree needs no per-host hostname baked in.
-  (Since the 2026-07-06 ownership split the browser-mode frontend is ours to
-  change, so `server.allowedHosts` in the vite config is a legitimate
-  alternative if a repo-side fix is ever preferred.)
+```ini
+[Service]
+# Host-specific public URL for operator logs. Tailscale serve remains the
+# security boundary and should continue forwarding 443 to 127.0.0.1:5173.
+Environment=AO_WEB_PUBLIC_URL=https://mirrorborn.tailc1fd9.ts.net/
+```
 
-Note vite auto-increments its port when the default is busy — if the UI
-vanishes after a restart, check which port vite actually took before
-touching the tailscale config.
-
-What the browser gets is the **preview-mode renderer**: `npm run dev:web`
-itself sets `VITE_NO_ELECTRON=1` (see `frontend/package.json`), which flips
-renderer hooks to preview behavior — mock workspace data and mock
-per-session PR summaries instead of live ones. That degradation is
-deliberate and accepted for
-this deployment for now; a first-class real-data browser mode is adoption
-report §7 filing 6, and since the 2026-07-06 ownership split the browser
-experience is ours to build in-tree rather than waiting on upstream. `VITE_AO_API_BASE_URL` is set to the empty
-string in the unit — empty means same-origin, so REST goes through the vite
-proxy instead of parking on "daemon not ready".
-
-Caveats that remain by design: it is a dev-server arrangement, there is no
-auth (the tailnet is the security boundary; `/mux` skips origin checks), and
-Electron-only surfaces (daemon supervision, native notifications, updates)
-are stubbed in browser mode.
+There is no repo-side auth layer yet; the tailnet remains the security
+boundary. The production server accepts proxied API/mux requests only from
+loopback or `AO_WEB_PUBLIC_URL`, then strips the browser `Origin` header before
+forwarding to the loopback daemon. Electron-only surfaces (daemon supervision,
+native notifications, updates, and native BrowserView preview) are still
+stubbed or hidden in browser mode.
 
 ## 4. Project registration and config
 

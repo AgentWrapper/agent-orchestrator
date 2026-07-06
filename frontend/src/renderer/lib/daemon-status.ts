@@ -1,6 +1,7 @@
 import { aoBridge } from "./bridge";
 import { getApiBaseUrl, setApiBaseUrl } from "./api-client";
 import { hasElectronBridge } from "./runtime-environment";
+import { parseDaemonProbe } from "../../shared/daemon-attach";
 import type { DaemonStatus } from "../../shared/daemon-status";
 
 export type { DaemonStatus };
@@ -8,6 +9,8 @@ export type { DaemonStatus };
 export function applyDaemonStatus(nextStatus: DaemonStatus): void {
 	if (nextStatus.state === "ready" && nextStatus.port) {
 		setApiBaseUrl(`http://127.0.0.1:${nextStatus.port}`);
+	} else if (nextStatus.state === "ready" && !hasElectronBridge()) {
+		setApiBaseUrl("");
 	} else {
 		setApiBaseUrl(null);
 	}
@@ -36,16 +39,20 @@ async function readBrowserDaemonStatus(): Promise<DaemonStatus> {
 				message: `AO daemon health check returned HTTP ${response.status}.`,
 			};
 		}
-		const payload = (await response.json().catch(() => ({}))) as {
-			pid?: unknown;
-			executablePath?: unknown;
-			workingDirectory?: unknown;
-		};
+		const payload = await response.json().catch(() => null);
+		const probe = parseDaemonProbe("healthz", payload);
+		if (!probe) {
+			return {
+				state: "error",
+				code: "identity_mismatch",
+				message: "AO daemon health check returned an invalid payload.",
+			};
+		}
 		return {
 			state: "ready",
-			pid: typeof payload.pid === "number" ? payload.pid : undefined,
-			executablePath: typeof payload.executablePath === "string" ? payload.executablePath : undefined,
-			workingDirectory: typeof payload.workingDirectory === "string" ? payload.workingDirectory : undefined,
+			pid: probe.pid,
+			executablePath: probe.executablePath,
+			workingDirectory: probe.workingDirectory,
 		};
 	} catch (error) {
 		return {
