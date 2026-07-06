@@ -58,7 +58,7 @@ const (
 	EnvIssueID   = "AO_ISSUE_ID"
 	// EnvRuntimeToken identifies one launched runtime generation. Hooks echo it
 	// so lifecycle can ignore late callbacks from a retired same-harness runtime.
-	EnvRuntimeToken = "AO_RUNTIME_TOKEN"
+	EnvRuntimeToken = "AO_RUNTIME_TOKEN" // #nosec G101 -- env var name, not a credential value.
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 	// EnvRunFile tells a spawned agent's AO hook commands where the daemon's
