@@ -40,6 +40,17 @@ describe("ao web production server", () => {
 		assert.equal(missingAsset.status, 404);
 	});
 
+	it("serves the browser favicon from the built static bundle", async () => {
+		const distDir = await makeDist();
+		const server = await listen(createAoWebServer({ distDir, apiTarget: "http://127.0.0.1:9" }));
+
+		const favicon = await fetchText(`${server.url}/favicon.ico`);
+		assert.equal(favicon.status, 200);
+		assert.equal(favicon.body, "ico");
+		assert.equal(favicon.headers.get("content-type"), "image/x-icon");
+		assert.equal(favicon.headers.get("cache-control"), "public, max-age=31536000, immutable");
+	});
+
 	it("proxies daemon HTTP routes", async () => {
 		let seenOrigin;
 		const daemon = await listen(
@@ -189,6 +200,7 @@ describe("ao web production server", () => {
 async function makeDist() {
 	const dir = await mkdtemp(path.join(os.tmpdir(), "ao-web-dist-"));
 	await writeFile(path.join(dir, "index.html"), '<!doctype html><div id="root"></div>\n');
+	await writeFile(path.join(dir, "favicon.ico"), "ico");
 	await mkdir(path.join(dir, "assets"));
 	await writeFile(path.join(dir, "assets", "app.js"), "console.log('ao');\n");
 	cleanup.push(() => rm(dir, { recursive: true, force: true }));

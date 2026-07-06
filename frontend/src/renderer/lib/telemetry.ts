@@ -1,4 +1,3 @@
-import posthog from "posthog-js/dist/module.full.no-external";
 import { aoBridge } from "./bridge";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 
@@ -12,6 +11,7 @@ const EMBEDDED_LOCAL_URL_PATTERN =
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
+let posthogClient: typeof import("posthog-js/dist/module.full.no-external").default | null = null;
 
 type TelemetryProperties = Record<string, unknown>;
 
@@ -249,6 +249,8 @@ export async function initTelemetry(): Promise<boolean> {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
 		if (!bootstrap) return false;
+		const { default: posthog } = await import("posthog-js/dist/module.full.no-external");
+		posthogClient = posthog;
 		posthog.init(POSTHOG_KEY, {
 			api_host: POSTHOG_HOST,
 			defaults: RELEASE_TAG,
@@ -287,18 +289,24 @@ export async function initTelemetry(): Promise<boolean> {
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
+	const posthog = posthogClient;
+	if (!posthog) return;
 	const safeProperties = await sanitizeRendererProperties(event, properties);
 	posthog.capture(event, safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
+	const posthog = posthogClient;
+	if (!posthog) return;
 	const safeProperties = await sanitizeRendererExceptionProperties(error, properties);
 	posthog.captureException(normalizeException(error), safeProperties);
 }
 
 export async function addRendererExceptionStep(message: string, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
+	const posthog = posthogClient;
+	if (!posthog) return;
 	const safeProperties = await sanitizeRendererContextProperties(properties);
 	posthog.addExceptionStep(message, safeProperties);
 }
