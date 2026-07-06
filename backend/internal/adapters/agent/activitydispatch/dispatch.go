@@ -29,6 +29,7 @@ var Derivers = map[string]DeriveFunc{
 	// deriver; the rest share the name-only StandardDeriveActivityState.
 	"claude-code": claudecode.DeriveActivityState,
 	"codex":       codex.DeriveActivityState,
+	"codex-fugu":  codex.DeriveActivityState,
 	"droid":       droid.DeriveActivityState,
 	"agy":         agy.DeriveActivityState,
 	"opencode":    opencode.DeriveActivityState,

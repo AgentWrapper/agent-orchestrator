@@ -7,6 +7,7 @@ type AgentHarness string
 const (
 	HarnessClaudeCode AgentHarness = "claude-code"
 	HarnessCodex      AgentHarness = "codex"
+	HarnessCodexFugu  AgentHarness = "codex-fugu"
 	HarnessAider      AgentHarness = "aider"
 	HarnessOpenCode   AgentHarness = "opencode"
 	HarnessGrok       AgentHarness = "grok"
@@ -33,7 +34,7 @@ const (
 // AllHarnesses lists every supported harness. It is the canonical set used to
 // validate user-supplied harness names (e.g. per-project role overrides).
 var AllHarnesses = []AgentHarness{
-	HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessOpenCode, HarnessGrok,
+	HarnessClaudeCode, HarnessCodex, HarnessCodexFugu, HarnessAider, HarnessOpenCode, HarnessGrok,
 	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
 	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
 	HarnessCline, HarnessKimi, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,

@@ -42,6 +42,7 @@ func Constructors() []adapters.Adapter {
 	return []adapters.Adapter{
 		claudecode.New(),
 		codex.New(),
+		codex.NewFugu(),
 		opencode.New(),
 		grok.New(),
 		cursor.New(),

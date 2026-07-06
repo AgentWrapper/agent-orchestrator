@@ -76,9 +76,14 @@ var codexManagedHooks = []codexHookSpec{
 // appendSessionHookFlags adds AO's activity hooks to the argv as `-c`
 // session-flag config, one flag per managed event.
 func appendSessionHookFlags(cmd *[]string) {
+	appendSessionHookFlagsFor(cmd, "codex")
+}
+
+func appendSessionHookFlagsFor(cmd *[]string, agentToken string) {
 	for _, spec := range codexManagedHooks {
+		command := strings.Replace(spec.Command, codexHookCommandPrefix, "ao hooks "+agentToken+" ", 1)
 		flag := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=%d}]}]`,
-			spec.Event, codexTOMLBasicString(spec.Command), codexHookTimeout)
+			spec.Event, codexTOMLBasicString(command), codexHookTimeout)
 		*cmd = append(*cmd, "-c", flag)
 	}
 }

@@ -269,6 +269,7 @@ describe("workerStatusPulses", () => {
 describe("toAgentProvider", () => {
 	it("passes through a known provider", () => {
 		expect(toAgentProvider("opencode")).toBe("opencode");
+		expect(toAgentProvider("codex-fugu")).toBe("codex-fugu");
 	});
 
 	it("defaults unknown and undefined providers to codex", () => {

@@ -27,13 +27,30 @@ import (
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
 	agentbase.Base
-	binaryMu       sync.Mutex
-	resolvedBinary string
+	manifestID          string
+	manifestName        string
+	manifestDescription string
+	binaryName          string
+	hookAgentToken      string
+	binaryMu            sync.Mutex
+	resolvedBinary      string
 }
 
 // New returns a ready-to-register Codex adapter.
 func New() *Plugin {
 	return &Plugin{}
+}
+
+// NewFugu returns a Codex-compatible adapter that launches the codex-fugu
+// binary while preserving Codex's flags, hooks, auth probe, and activity model.
+func NewFugu() *Plugin {
+	return &Plugin{
+		manifestID:          "codex-fugu",
+		manifestName:        "Codex Fugu",
+		manifestDescription: "Run Codex Fugu worker sessions.",
+		binaryName:          "codex-fugu",
+		hookAgentToken:      "codex-fugu",
+	}
 }
 
 var _ adapters.Adapter = (*Plugin)(nil)
@@ -43,9 +60,9 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
-		ID:          "codex",
-		Name:        "Codex",
-		Description: "Run Codex worker sessions.",
+		ID:          p.adapterID(),
+		Name:        p.adapterName(),
+		Description: p.adapterDescription(),
 		Version:     "0.0.1",
 		Capabilities: []adapters.Capability{
 			adapters.CapabilityAgent,
@@ -59,7 +76,7 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // instructions, and the initial prompt (passed after `--` so a leading "-" is
 // not read as a flag).
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
-	binary, err := p.codexBinary(ctx)
+	binary, err := p.agentBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +86,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	appendSessionHookFlagsFor(&cmd, p.hookToken())
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 
@@ -99,7 +116,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, nil
 	}
 
-	binary, err := p.codexBinary(ctx)
+	binary, err := p.agentBinary(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -110,7 +127,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	appendSessionHookFlagsFor(&cmd, p.hookToken())
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	cmd = append(cmd, agentSessionID)
@@ -129,7 +146,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 
 // AuthStatus checks Codex's local login state without making a model call.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.codexBinary(ctx)
+	binary, err := p.agentBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -147,10 +164,26 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if strings.Contains(text, "logged in") {
 		return ports.AgentAuthStatusAuthorized, nil
 	}
+	if p.adapterID() == "codex-fugu" && err != nil && strings.Contains(text, "--profile only applies") {
+		return p.fuguRuntimeAuthStatus(ctx, binary)
+	}
 	if err != nil {
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
+}
+
+func (p *Plugin) fuguRuntimeAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStatus, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if err := exec.CommandContext(probeCtx, binary, "exec", "--help").Run(); err != nil {
+		if probeCtx.Err() != nil {
+			return ports.AgentAuthStatusUnknown, probeCtx.Err()
+		}
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	return ports.AgentAuthStatusAuthorized, nil
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,
@@ -159,15 +192,28 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 // fallback so callers see a clear "command not found" rather than an empty
 // argv.
 func ResolveCodexBinary(ctx context.Context) (string, error) {
+	return ResolveAgentBinary(ctx, "codex")
+}
+
+// ResolveAgentBinary returns the path to the requested Codex-family binary on
+// this machine, searching PATH then common install locations.
+func ResolveAgentBinary(ctx context.Context, binaryName string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	binaryName = strings.TrimSpace(binaryName)
+	if binaryName == "" {
+		binaryName = "codex"
+	}
 
 	if runtime.GOOS == "windows" {
-		for _, name := range []string{"codex.exe", "codex.cmd", "codex"} {
+		for _, name := range []string{binaryName + ".exe", binaryName + ".cmd", binaryName} {
 			path, err := exec.LookPath(name)
 			if err == nil && path != "" {
-				return resolveNativeWindowsCodex(path), nil
+				if binaryName == "codex" {
+					return resolveNativeWindowsCodex(path), nil
+				}
+				return path, nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
@@ -176,42 +222,47 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 
 		candidates := []string{}
 		if appData := os.Getenv("APPDATA"); appData != "" {
-			shim := filepath.Join(appData, "npm", "codex.cmd")
-			candidates = append(candidates, windowsNativeCodexCandidatesForShim(shim)...)
+			shim := filepath.Join(appData, "npm", binaryName+".cmd")
+			if binaryName == "codex" {
+				candidates = append(candidates, windowsNativeCodexCandidatesForShim(shim)...)
+			}
 			candidates = append(candidates,
-				filepath.Join(appData, "npm", "codex.exe"),
+				filepath.Join(appData, "npm", binaryName+".exe"),
 				shim,
 			)
 		}
 		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "codex.exe"))
+			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", binaryName+".exe"))
 		}
 		for _, candidate := range candidates {
 			if fileExists(candidate) {
-				return resolveNativeWindowsCodex(candidate), nil
+				if binaryName == "codex" {
+					return resolveNativeWindowsCodex(candidate), nil
+				}
+				return candidate, nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
 		}
 
-		return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
+		return "", fmt.Errorf("%s: %w", binaryName, ports.ErrAgentBinaryNotFound)
 	}
 
-	if path, err := exec.LookPath("codex"); err == nil && path != "" {
+	if path, err := exec.LookPath(binaryName); err == nil && path != "" {
 		return path, nil
 	}
 
 	candidates := []string{
-		"/usr/local/bin/codex",
-		"/opt/homebrew/bin/codex",
+		filepath.Join("/usr/local/bin", binaryName),
+		filepath.Join("/opt/homebrew/bin", binaryName),
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(home, ".cargo", "bin", "codex"),
-			filepath.Join(home, ".npm", "bin", "codex"),
+			filepath.Join(home, ".cargo", "bin", binaryName),
+			filepath.Join(home, ".npm", "bin", binaryName),
 		)
-		candidates = append(candidates, nvmNodeBinCandidates(home, "codex")...)
+		candidates = append(candidates, nvmNodeBinCandidates(home, binaryName)...)
 	}
 
 	for _, candidate := range candidates {
@@ -223,7 +274,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
+	return "", fmt.Errorf("%s: %w", binaryName, ports.ErrAgentBinaryNotFound)
 }
 
 func nvmNodeBinCandidates(home, binary string) []string {
@@ -254,7 +305,7 @@ func windowsNativeCodexCandidatesForShim(shim string) []string {
 	}
 }
 
-func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
+func (p *Plugin) agentBinary(ctx context.Context) (string, error) {
 	p.binaryMu.Lock()
 	defer p.binaryMu.Unlock()
 
@@ -262,12 +313,51 @@ func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
 		return p.resolvedBinary, nil
 	}
 
-	binary, err := ResolveCodexBinary(ctx)
+	binary, err := ResolveAgentBinary(ctx, p.binaryCommand())
 	if err != nil {
 		return "", err
 	}
 	p.resolvedBinary = binary
 	return binary, nil
+}
+
+func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
+	return p.agentBinary(ctx)
+}
+
+func (p *Plugin) adapterID() string {
+	if p.manifestID != "" {
+		return p.manifestID
+	}
+	return "codex"
+}
+
+func (p *Plugin) adapterName() string {
+	if p.manifestName != "" {
+		return p.manifestName
+	}
+	return "Codex"
+}
+
+func (p *Plugin) adapterDescription() string {
+	if p.manifestDescription != "" {
+		return p.manifestDescription
+	}
+	return "Run Codex worker sessions."
+}
+
+func (p *Plugin) binaryCommand() string {
+	if p.binaryName != "" {
+		return p.binaryName
+	}
+	return "codex"
+}
+
+func (p *Plugin) hookToken() string {
+	if p.hookAgentToken != "" {
+		return p.hookAgentToken
+	}
+	return "codex"
 }
 
 // DoctorLaunchProbes returns argv tails `ao doctor` runs against the installed

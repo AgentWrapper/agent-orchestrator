@@ -2620,6 +2620,7 @@ components:
           enum:
           - claude-code
           - codex
+          - codex-fugu
           - aider
           - opencode
           - grok
