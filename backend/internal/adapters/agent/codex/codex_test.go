@@ -29,11 +29,19 @@ func canonicalTempDir(t *testing.T) string {
 // asserted literally so accidental format drift fails loudly: Codex parses
 // these values as TOML.
 func sessionHookFlags() []string {
+	return sessionHookFlagsFor("codex")
+}
+
+func fuguSessionHookFlags() []string {
+	return sessionHookFlagsFor("codex-fugu")
+}
+
+func sessionHookFlagsFor(agentToken string) []string {
 	return []string{
-		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks codex session-start",timeout=5}]}]`,
-		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=5}]}]`,
-		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=5}]}]`,
-		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=5}]}]`,
+		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks ` + agentToken + ` session-start",timeout=5}]}]`,
+		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks ` + agentToken + ` user-prompt-submit",timeout=5}]}]`,
+		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks ` + agentToken + ` permission-request",timeout=5}]}]`,
+		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks ` + agentToken + ` stop",timeout=5}]}]`,
 	}
 }
 
@@ -70,6 +78,53 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	)
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestFuguManifestAndLaunchCommandMirrorCodex(t *testing.T) {
+	plugin := NewFugu()
+	plugin.resolvedBinary = "codex-fugu"
+	workspace := canonicalTempDir(t)
+
+	manifest := plugin.Manifest()
+	if manifest.ID != "codex-fugu" {
+		t.Fatalf("Manifest ID = %q, want codex-fugu", manifest.ID)
+	}
+	if manifest.Name != "Codex Fugu" {
+		t.Fatalf("Manifest Name = %q, want Codex Fugu", manifest.Name)
+	}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:      ports.PermissionModeBypassPermissions,
+		Prompt:           "-fix this",
+		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
+		WorkspacePath:    workspace,
+		Config:           ports.AgentConfig{Model: "fugu-ultra"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"codex-fugu",
+		"--no-update",
+		"-c", "check_for_update_on_startup=false",
+		"-c", "notice.hide_rate_limit_model_nudge=true",
+		"--dangerously-bypass-hook-trust",
+		"--dangerously-bypass-approvals-and-sandbox",
+	}
+	want = append(want, fuguSessionHookFlags()...)
+	if runtime.GOOS == "windows" {
+		want = append(want, "--no-alt-screen")
+	}
+	want = append(want,
+		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
+		"--model", "fugu-ultra",
+		"-c", "model_instructions_file="+filepath.Join("tmp", "prompt with spaces.md"),
+		"--", "-fix this",
+	)
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected fugu command\nwant: %#v\n got: %#v", want, cmd)
 	}
 }
 
@@ -147,6 +202,126 @@ func TestResolveCodexBinaryFindsNVMInstallWhenPathIsSparse(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("ResolveCodexBinary = %q, want %q", got, want)
+	}
+}
+
+func TestResolveAgentBinaryFindsNamedNVMInstallWhenPathIsSparse(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("NVM install discovery is Unix-specific")
+	}
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".nvm", "versions", "node", "v20.19.4", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(binDir, "codex-fugu")
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "")
+	origFileExists := fileExists
+	fileExists = func(path string) bool {
+		return strings.HasPrefix(path, home+string(os.PathSeparator)) && origFileExists(path)
+	}
+	t.Cleanup(func() {
+		fileExists = origFileExists
+	})
+
+	got, err := ResolveAgentBinary(context.Background(), "codex-fugu")
+	if err != nil {
+		t.Fatalf("ResolveAgentBinary: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolveAgentBinary = %q, want %q", got, want)
+	}
+}
+
+func TestFuguAuthStatusFallsBackWhenLoginStatusRejectsProfile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	binDir := t.TempDir()
+	fuguBin := filepath.Join(binDir, "codex-fugu")
+	fuguScript := `#!/bin/sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo 'Error: --profile only applies to runtime commands and codex mcp' >&2
+  exit 1
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
+  echo 'Run Codex non-interactively'
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(fuguBin, []byte(fuguScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := filepath.Join(binDir, "codex")
+	codexScript := `#!/bin/sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo 'Logged in as test@example.com'
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(codexBin, []byte(codexScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	plugin := NewFugu()
+	plugin.resolvedBinary = fuguBin
+	got, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("AuthStatus = %q, want authorized", got)
+	}
+}
+
+func TestFuguAuthStatusDoesNotTreatRuntimeHelpAsAuthorized(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	binDir := t.TempDir()
+	fuguBin := filepath.Join(binDir, "codex-fugu")
+	fuguScript := `#!/bin/sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo 'Error: --profile only applies to runtime commands and codex mcp' >&2
+  exit 1
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
+  echo 'Run Codex non-interactively'
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(fuguBin, []byte(fuguScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := filepath.Join(binDir, "codex")
+	codexScript := `#!/bin/sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  echo 'Not logged in'
+  exit 1
+fi
+exit 2
+`
+	if err := os.WriteFile(codexBin, []byte(codexScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	plugin := NewFugu()
+	plugin.resolvedBinary = fuguBin
+	got, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("AuthStatus = %q, want unauthorized", got)
 	}
 }
 
@@ -487,6 +662,49 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
 		"--model", "gpt-5-codex-cheap",
+		"thread-123",
+	)
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestFuguGetRestoreCommandReadsAgentSessionID(t *testing.T) {
+	plugin := NewFugu()
+	plugin.resolvedBinary = "codex-fugu"
+	workspace := canonicalTempDir(t)
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Permissions: ports.PermissionModeAuto,
+		Config:      ports.AgentConfig{Model: "fugu-ultra"},
+		Session: ports.SessionRef{
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+			WorkspacePath: workspace,
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"codex-fugu",
+		"--no-update",
+		"resume",
+		"-c", "check_for_update_on_startup=false",
+		"-c", "notice.hide_rate_limit_model_nudge=true",
+		"--dangerously-bypass-hook-trust",
+		"--ask-for-approval", "on-request",
+		"-c", `approvals_reviewer="auto_review"`,
+	}
+	want = append(want, fuguSessionHookFlags()...)
+	if runtime.GOOS == "windows" {
+		want = append(want, "--no-alt-screen")
+	}
+	want = append(want,
+		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
+		"--model", "fugu-ultra",
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {

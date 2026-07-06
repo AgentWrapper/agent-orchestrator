@@ -1,0 +1,65 @@
+---
+title: Codex Fugu
+description: Codex-compatible Fugu worker CLI. Full session resume and Codex-family hooks.
+---
+
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+	<Logo name="codex" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>agent</code> · Name: <code>codex-fugu</code> · Binary: <code>codex-fugu</code>
+	</span>
+</div>
+
+Codex Fugu is a Codex-compatible worker profile exposed through the `codex-fugu` CLI. AO launches it with the same Codex-family session hooks, permissions, workspace trust, and resume flow as the standard Codex adapter.
+
+<PlatformSupport macos="full" linux="full" windows="partial" />
+
+## Install
+
+Install the `codex-fugu` binary on the worker host and make sure it is on `PATH`.
+
+```bash
+codex-fugu --version
+```
+
+## Use
+
+```yaml title="agent-orchestrator.yaml"
+agent: codex-fugu
+```
+
+No plugin-level config.
+
+## How it works
+
+- **Launch:** `codex-fugu` runs inside the worktree with AO's Codex-family launch flags, update-suppression flags, and session hooks.
+- **Activity tracking:** AO derives activity from Codex session events and uses the `codex-fugu` hook token for session metadata.
+- **PR + git tracking:** AO installs wrappers at `~/.ao/bin/gh` and `~/.ao/bin/git`. When Codex Fugu runs `gh pr create`, the wrapper records the PR number in the session metadata.
+- **Session resume:** `codex-fugu resume <threadId>` — AO stores the thread id in session metadata and replays it.
+
+## Environment variables
+
+| Variable                     | Set by AO | Purpose                                             |
+| ---------------------------- | --------- | --------------------------------------------------- |
+| `AO_SESSION_ID`              | ✓         | AO session id                                       |
+| `AO_ISSUE_ID`                | ✓         | Issue identifier                                    |
+| `PATH`                       | ✓         | Prepends `~/.ao/bin` for the wrappers               |
+| `GH_PATH`                    | ✓         | Absolute path to the real `gh`, used by the wrapper |
+
+Authentication comes from the same Codex credentials that the `codex-fugu` CLI reads. AO does not set API credentials.
+
+## Troubleshooting
+
+<Accordions>
+  <Accordion title="`codex-fugu` not found">
+    Confirm `codex-fugu --version` works in the same shell that starts AO. If it does not, add the binary's install directory to PATH and restart the daemon.
+  </Accordion>
+  <Accordion title="Auth status looks wrong">
+    Some `codex-fugu` wrappers reject `login status` because they inject a runtime profile. AO falls back to the shared `codex login status` signal in that case, so make sure the standard Codex CLI is authenticated too.
+  </Accordion>
+  <Accordion title="PR created but dashboard doesn't know">
+    The PATH wrapper writes session metadata on `gh pr create`. If `gh` was invoked with an absolute path (bypassing the wrapper) AO won't see it. `ao session claim-pr <pr> <sessionId>` fixes this retroactively.
+  </Accordion>
+</Accordions>
