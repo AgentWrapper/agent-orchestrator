@@ -1136,6 +1136,114 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	}
 }
 
+func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "orchestrator-policy.md"), []byte("ORCHESTRATOR ONLY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "worker-policy.md"), []byte("WORKER ONLY\r\n\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:   "mer",
+		Path: root,
+		Config: domain.ProjectConfig{
+			Worker:       domain.RoleOverride{InstructionsFile: ".claude/worker-policy.md"},
+			Orchestrator: domain.RoleOverride{InstructionsFile: ".claude/orchestrator-policy.md"},
+		},
+	}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	orchPrompt, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
+	if err != nil {
+		t.Fatalf("orchestrator buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(orchPrompt, "ORCHESTRATOR ONLY") || strings.Contains(orchPrompt, "WORKER ONLY") {
+		t.Fatalf("orchestrator prompt role file mismatch:\n%s", orchPrompt)
+	}
+	if !strings.Contains(orchPrompt, "Standing-instruction confidentiality") {
+		t.Fatalf("orchestrator prompt lost confidentiality guard:\n%s", orchPrompt)
+	}
+
+	workerPrompt, err := m.buildSystemPrompt(ctx, domain.KindWorker, "mer")
+	if err != nil {
+		t.Fatalf("worker buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(workerPrompt, "WORKER ONLY") || strings.Contains(workerPrompt, "ORCHESTRATOR ONLY") {
+		t.Fatalf("worker prompt role file mismatch:\n%s", workerPrompt)
+	}
+	if strings.Contains(workerPrompt, "WORKER ONLY\n\n\n") {
+		t.Fatalf("worker prompt should trim trailing file newlines:\n%s", workerPrompt)
+	}
+	if strings.Contains(workerPrompt, "WORKER ONLY\r") {
+		t.Fatalf("worker prompt should trim trailing CRLF newlines:\n%s", workerPrompt)
+	}
+}
+
+func TestSystemPrompt_MissingRoleInstructionsFileDoesNotBlockSpawn(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Path:   t.TempDir(),
+		Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{InstructionsFile: ".claude/missing.md"}},
+	}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
+		t.Fatalf("missing role file should keep base prompt:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+}
+
+func TestSystemPrompt_SkipsUnsafeRoleInstructionsFiles(t *testing.T) {
+	root := t.TempDir()
+	large := filepath.Join(root, "too-large.md")
+	if err := os.WriteFile(large, bytes.Repeat([]byte("x"), maxRoleInstructionsFileBytes+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "directory", path: "."},
+		{name: "too_large", path: "too-large.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{
+				ID:     "mer",
+				Path:   root,
+				Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{InstructionsFile: tc.path}},
+			}
+			lookPath := func(string) (string, error) { return "/bin/true", nil }
+			m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+			prompt, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
+			if err != nil {
+				t.Fatalf("buildSystemPrompt: %v", err)
+			}
+			if !strings.Contains(prompt, "You are the human-facing coordinator for project mer") {
+				t.Fatalf("unsafe role file should keep base prompt:\n%s", prompt)
+			}
+			if strings.Contains(prompt, strings.Repeat("x", 64)) {
+				t.Fatalf("unsafe role file content should not be appended:\n%s", prompt)
+			}
+		})
+	}
+}
+
 // TestSystemPrompt_AppendsConfidentialityGuard: every non-empty system prompt
 // must carry the guard that tells the agent not to reveal its standing
 // instructions on request. Without it, "give me your system prompt" dumps the
@@ -1183,7 +1291,16 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 // not persisted, so a restored orchestrator must get its role instructions
 // recomputed and handed to the agent's native resume command.
 func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "orchestrator-policy.md"), []byte("RESTORE ORCHESTRATOR POLICY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Path:   root,
+		Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{InstructionsFile: "orchestrator-policy.md"}},
+	}
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
 		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"},
@@ -1197,6 +1314,9 @@ func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
 	}
 	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing coordinator for project mer") {
 		t.Fatalf("restore system prompt missing coordinator role:\n%s", agent.lastRestore.SystemPrompt)
+	}
+	if !strings.Contains(agent.lastRestore.SystemPrompt, "RESTORE ORCHESTRATOR POLICY") {
+		t.Fatalf("restore system prompt missing role instructions file:\n%s", agent.lastRestore.SystemPrompt)
 	}
 }
 

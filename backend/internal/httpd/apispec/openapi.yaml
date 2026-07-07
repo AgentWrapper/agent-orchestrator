@@ -2308,6 +2308,8 @@ components:
           type: string
         agentConfig:
           $ref: '#/components/schemas/AgentConfig'
+        instructionsFile:
+          type: string
       type: object
     RollbackSessionResponse:
       properties:

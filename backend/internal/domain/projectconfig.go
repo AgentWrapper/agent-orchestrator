@@ -71,6 +71,14 @@ func (c ProjectConfig) ResolveReviewerHarness(_ AgentHarness) ReviewerHarness {
 type RoleOverride struct {
 	Harness     AgentHarness `json:"agent,omitempty"`
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
+	// InstructionsFile is an optional path to a file whose contents the daemon
+	// appends to this role's built-in system prompt at spawn and restore. It
+	// lets a project carry its own standing policy per role (orchestrator vs
+	// worker) without smuggling it through the shared repo instruction context
+	// that every session loads. A relative path resolves against the project
+	// root; an absolute path is used as-is. A missing/unreadable file never
+	// blocks a spawn — the daemon logs a warning and spawns without it.
+	InstructionsFile string `json:"instructionsFile,omitempty"`
 }
 
 // DefaultBranchName is the base branch used when a project configures none.
@@ -117,6 +125,9 @@ func (c ProjectConfig) Validate() error {
 		}
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)
+		}
+		if err := validateInstructionsFile(role+".instructionsFile", ro.InstructionsFile); err != nil {
+			return err
 		}
 	}
 	for _, s := range c.Symlinks {
@@ -175,6 +186,33 @@ func validateRepoRelative(p string) error {
 	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {
 		if seg == ".." {
 			return fmt.Errorf("path must be repo-relative and must not escape the project root")
+		}
+	}
+	return nil
+}
+
+// validateInstructionsFile does light path-sanity on a role's instructions-file
+// path. Unlike symlinks, an ABSOLUTE path is allowed (an operator may point at a
+// file outside the repo). A relative path must not escape the project root via
+// "..", mirroring validateRepoRelative's traversal guard. Whitespace-only paths
+// are rejected so a stray space is not treated as a real file.
+func validateInstructionsFile(name, p string) error {
+	if p == "" {
+		return nil
+	}
+	if strings.TrimSpace(p) != p {
+		return fmt.Errorf("%s: must not have leading or trailing whitespace", name)
+	}
+	if filepath.IsAbs(p) {
+		return nil
+	}
+	clean := filepath.Clean(p)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s: relative path must not escape the project root", name)
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {
+		if seg == ".." {
+			return fmt.Errorf("%s: relative path must not escape the project root", name)
 		}
 	}
 	return nil
