@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 )
 
 // Sentinel errors returned by the Session Manager; callers match them with
@@ -42,6 +43,10 @@ var (
 	// with the system prompt only). Workers without a task and without a native
 	// session id have nothing meaningful to restore.
 	ErrNotResumable = errors.New("session: nothing to resume from")
+	// ErrSwitchInProgress means an agent switch is already running for this
+	// session. The API maps it to a 409 so a double-submit does not race two
+	// teardown/relaunch cycles over one worktree.
+	ErrSwitchInProgress = errors.New("session: switch already in progress")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -62,6 +67,16 @@ const hookBinaryName = "ao"
 type lifecycleRecorder interface {
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
+	// MarkSwitched re-points a session at a new harness and persists the launch
+	// metadata (runtime handle, workspace path/branch, launched-harnesses set),
+	// clearing the harness-specific native resume id (AgentSessionID).
+	MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error
+	// TryBeginSwitch atomically claims the switch guard for the session: false
+	// means a switch is already in flight. Rejecting a concurrent switch and
+	// suppressing the reaper during the runtime gap are the same claim. Pair a
+	// true result with EndSwitch (defer it).
+	TryBeginSwitch(id domain.SessionID) bool
+	EndSwitch(id domain.SessionID)
 }
 
 type runtimeController interface {
@@ -96,7 +111,9 @@ type Store interface {
 	// presence of any row is the marker; preserved_ref may be empty for clean
 	// worktrees.
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
-	// DeleteSessionWorktrees clears the "shutdown-saved" restore marker.
+	// DeleteSessionWorktrees consumes stale shutdown-restore markers. Explicit
+	// Kill and successful RestoreAll must remove these rows to prevent
+	// resurrecting sessions the user intentionally terminated.
 	DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error
 }
 
@@ -253,15 +270,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
+		Kind:          cfg.Kind,
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
@@ -449,11 +467,8 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
-
-	// Clear the restore marker so the next boot's RestoreAll cannot resurrect a
-	// killed session (#2319). Best-effort: teardown below still matters.
 	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
-		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+		return false, fmt.Errorf("kill %s: delete restore marker: %w", id, err)
 	}
 
 	// Only tear down what exists. A session may have lost its handle after a
@@ -474,6 +489,59 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		freed = true
 	}
 	return freed, nil
+}
+
+// RetireForReplacement terminates a live orchestrator and releases its branch
+// for a replacement session. Unlike Kill, this captures uncommitted work before
+// force-removing the worktree, so a dirty canonical orchestrator worktree does
+// not block the replacement from claiming the canonical branch.
+//
+// This deliberately does not write a session_worktrees row: those rows are
+// boot-restore markers, and a replaced orchestrator must stay terminated.
+func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("retire replacement %s: %w", id, err)
+	}
+	if !ok || rec.IsTerminated {
+		return nil
+	}
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+		}
+		handle := runtimeHandle(rec.Metadata)
+		if handle.ID != "" {
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
+			}
+		}
+		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+		}
+		return nil
+	}
+
+	ws := workspaceInfo(rec)
+	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
+		return fmt.Errorf("retire replacement %s: stash: %w", id, err)
+	}
+	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
+		}
+	}
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		return fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+	}
+	return nil
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs
@@ -522,9 +590,6 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if !ok {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
-	}
 	// The system prompt is derived, not persisted: recompute it so a restored
 	// session keeps its standing instructions across the relaunch.
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
@@ -533,7 +598,11 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, agentConfig, rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -552,6 +621,250 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
 	}
 	return m.getRecord(ctx, id)
+}
+
+// SwitchHarness re-points a session's agent to newHarness on the same worktree
+// (code and uncommitted work preserved). model, when non-empty, overrides the
+// resolved agent model for the new launch (e.g. a cheaper model on the same
+// harness).
+//
+// The launch is FRESH for a harness that has never run this session, and a
+// RESUME for one that has: an agent that pins a deterministic native session id
+// (e.g. Claude Code's --session-id) would collide ("session id already in use")
+// if relaunched fresh over its own prior session, so a previously-used harness
+// resumes instead. The set of used harnesses is tracked in session metadata.
+//
+// It handles two cases:
+//   - LIVE session: swap in place. The old agent is torn down only AFTER the
+//     new launch command validates, so a bad/unknown harness never disrupts the
+//     running session; the switch guard brackets the runtime gap so the reaper
+//     cannot terminate the session while it briefly has no live runtime.
+//   - TERMINATED session (e.g. the agent exited): relaunch-as. The worktree is
+//     restored and the agent relaunched under it.
+func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHarness domain.AgentHarness, model string) (domain.SessionRecord, error) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	if !ok {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotFound)
+	}
+	meta := rec.Metadata
+	// Both the in-place swap and the relaunch-as path reuse the session's
+	// worktree, so its path and branch must exist.
+	if meta.WorkspacePath == "" || meta.Branch == "" {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
+	}
+	// Atomically claim the guard for BOTH paths: this rejects a concurrent
+	// switch (the check-and-set is one critical section, so two requests cannot
+	// both pass) and, for a live session, tells the reaper to ignore the coming
+	// runtime gap. Released on every return via defer.
+	if !m.lcm.TryBeginSwitch(id) {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrSwitchInProgress)
+	}
+	defer m.lcm.EndSwitch(id)
+
+	// ---- validate the new agent BEFORE touching anything ----
+	if !newHarness.IsKnown() {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w: %q", id, ErrUnknownHarness, newHarness)
+	}
+	agent, ok := m.agents.Agent(newHarness)
+	if !ok {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w: %q", id, ErrUnknownHarness, newHarness)
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: system prompt: %w", id, err)
+	}
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if model != "" {
+		agentConfig.Model = model
+	}
+
+	// A harness this session has already launched has a native session on disk;
+	// relaunching it fresh would collide, so resume it. The current harness
+	// counts as used even when the tracked set predates it (older sessions).
+	resume := newHarness == rec.Harness || containsHarness(meta.LaunchedHarnesses, newHarness)
+	launched := appendHarnessUnique(meta.LaunchedHarnesses, rec.Harness, newHarness)
+
+	if rec.IsTerminated {
+		return m.relaunchTerminatedWithHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig, resume, launched)
+	}
+	return m.switchLiveHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig, resume, launched)
+}
+
+// switchAgentArgv builds and pre-flight-validates the launch command for a
+// switch/relaunch. When resume is true it uses the agent's resume command (via
+// restoreArgv, which falls back to a fresh launch when the adapter cannot
+// resume); otherwise it launches fresh. Shared by the live and terminated paths.
+func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, issue domain.IssueID, kind domain.SessionKind, systemPrompt string, cfg ports.AgentConfig, agent ports.Agent, resume bool) ([]string, error) {
+	var argv []string
+	var err error
+	if resume {
+		// The target harness's own native session id is not reliably available:
+		// MarkSwitched clears AgentSessionID on every switch, and the durable set
+		// tracks only harness names, not each harness's id. Whatever is in
+		// meta.AgentSessionID belongs to some *other* harness, so clear it before
+		// restoreArgv. Adapters that deterministically derive their session id
+		// (e.g. Claude Code) still resume; adapters that need a captured id return
+		// ok=false and cleanly fall through to a fresh launch (which never collides
+		// for them, since they mint a new id each launch) rather than resuming
+		// against a wrong/empty id.
+		resumeMeta := meta
+		resumeMeta.AgentSessionID = ""
+		argv, err = restoreArgv(ctx, agent, id, workspacePath, resumeMeta, systemPrompt, cfg, kind)
+	} else {
+		argv, err = agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+			SessionID:     string(id),
+			WorkspacePath: workspacePath,
+			Prompt:        meta.Prompt,
+			SystemPrompt:  systemPrompt,
+			IssueID:       string(issue),
+			Config:        cfg,
+			Permissions:   cfg.Permissions,
+		})
+		if err != nil {
+			err = fmt.Errorf("launch command: %w", err)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := m.validateAgentBinary(argv); err != nil {
+		return nil, err
+	}
+	return argv, nil
+}
+
+// switchLiveHarness swaps the agent of a running session in place.
+func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig, resume bool, launched []domain.AgentHarness) (domain.SessionRecord, error) {
+	id := rec.ID
+	meta := rec.Metadata
+	if meta.RuntimeHandleID == "" {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
+	}
+	argv, err := m.switchAgentArgv(ctx, id, meta.WorkspacePath, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+
+	// The switch guard is already held by SwitchHarness (which defers EndSwitch),
+	// so the reaper ignores the runtime gap opened by the destroy/create below.
+	if err := m.prepareWorkspace(ctx, agent, id, meta.WorkspacePath, systemPrompt, agentConfig); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	// Same worktree means the two agents must never run at once: stop the old
+	// one before creating the new.
+	if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: meta.RuntimeHandleID}); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: stop old agent: %w", id, err)
+	}
+	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
+		SessionID:     id,
+		WorkspacePath: meta.WorkspacePath,
+		Argv:          argv,
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
+	})
+	if err != nil {
+		// No live runtime now. Mark terminated so the session stops cleanly with
+		// its worktree intact; it can be relaunched (switch/restore) afterward.
+		_ = m.lcm.MarkTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
+	}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, LaunchedHarnesses: launched}
+	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		_ = m.lcm.MarkTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
+	}
+	return m.getRecord(ctx, id)
+}
+
+// relaunchTerminatedWithHarness brings a terminated session back to life under a
+// different agent, reusing its worktree. There is no live runtime to tear down
+// and the reaper skips terminated sessions, so no BeginSwitch guard is needed —
+// MarkSwitched flips it back to live once the new runtime is up.
+func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig, resume bool, launched []domain.AgentHarness) (domain.SessionRecord, error) {
+	id := rec.ID
+	meta := rec.Metadata
+	// Mirror restoreArgv's guard, but only for a FRESH launch: a resumed harness
+	// has a native session to continue, so it needs no saved prompt. A fresh
+	// terminated WORKER with no prompt has nothing to launch from and would
+	// blank-relaunch, which Restore deliberately refuses. Orchestrators are
+	// promptless by design.
+	if !resume && meta.Prompt == "" && rec.Kind != domain.KindOrchestrator {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotResumable)
+	}
+	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
+		ProjectID:     rec.ProjectID,
+		SessionID:     id,
+		Kind:          rec.Kind,
+		SessionPrefix: sessionPrefix(project),
+		Branch:        meta.Branch,
+	})
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: workspace: %w", id, err)
+	}
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	argv, err := m.switchAgentArgv(ctx, id, ws.Path, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	// A terminated agent's runtime can linger: the keep-alive shell outlives the
+	// agent process, so the runtime's deterministic session name may still be
+	// taken and a fresh Create would collide ("duplicate session"). Tear down any
+	// leftover handle first — Destroy is idempotent, so an already-gone session
+	// is a no-op.
+	if meta.RuntimeHandleID != "" {
+		if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: meta.RuntimeHandleID}); err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("switch %s: clear stale runtime: %w", id, err)
+		}
+	}
+	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
+		SessionID:     id,
+		WorkspacePath: ws.Path,
+		Argv:          argv,
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
+	})
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
+	}
+	// Persist the RESTORED worktree path/branch: a changed session prefix or
+	// managed root can restore to a different path, and a stale one would break
+	// later terminal/workspace/cleanup operations.
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, WorkspacePath: ws.Path, Branch: ws.Branch, LaunchedHarnesses: launched}
+	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
+	}
+	return m.getRecord(ctx, id)
+}
+
+// containsHarness reports whether h is in hs.
+func containsHarness(hs []domain.AgentHarness, h domain.AgentHarness) bool {
+	for _, x := range hs {
+		if x == h {
+			return true
+		}
+	}
+	return false
+}
+
+// appendHarnessUnique returns hs with each non-empty add appended if absent,
+// leaving the input slice untouched.
+func appendHarnessUnique(hs []domain.AgentHarness, add ...domain.AgentHarness) []domain.AgentHarness {
+	out := append([]domain.AgentHarness(nil), hs...)
+	for _, h := range add {
+		if h != "" && !containsHarness(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
@@ -848,12 +1161,10 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			} else {
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 			}
+			continue
 		}
-
-		// One-shot: drop the consumed marker so it never outlives one restart
-		// (#2319). A still-live session re-acquires it at the next quit.
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-			m.logger.Warn("restore-all: delete restore marker failed", "sessionID", rec.ID, "error", err)
+			m.logger.Error("restore-all: delete consumed worktree marker failed", "sessionID", rec.ID, "error", err)
 		}
 	}
 	return nil
@@ -1000,7 +1311,21 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
-	return base + systemPromptGuard, nil
+	return base + m.aoSkillPointer() + systemPromptGuard, nil
+}
+
+// aoSkillPointer is appended to every agent system prompt. It points the agent
+// at the using-ao skill the daemon installs under the data dir, rather than
+// inlining the whole CLI catalog. The path is absolute so it resolves from any
+// project's worktree, not just the AO repo (the only place a repo-relative
+// skills/ path would exist). The skill file carries exact flags and examples,
+// so the standing prompt stays a short pointer rather than a command dump.
+func (m *Manager) aoSkillPointer() string {
+	dir := skillassets.Dir(m.dataDir)
+	skillFile := filepath.Join(dir, "SKILL.md")
+	commandsGlob := filepath.Join(dir, "commands", "*.md")
+	return "\n\n" + "## Using the ao CLI\n\n" +
+		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
@@ -1030,10 +1355,15 @@ func orchestratorPrompt(project domain.ProjectID) string {
 You are the human-facing coordinator for project %s. Coordinate work for the human, keep the project moving, and avoid doing implementation yourself unless it is necessary.
 
 Spawn worker sessions for implementation with:
-`+"`ao spawn --project %s --prompt \"<clear worker task>\"`"+`
+`+"`ao spawn --project %s --name \"<label, max 20 chars>\" --prompt \"<clear worker task>\"`"+`
+Both --project and --name are required.
+
+To run a worker on a specific agent, add `+"`--agent <name>`"+` (an alias for `+"`--harness`"+`) — for example `+"`--agent codex`"+` or `+"`--agent claude-code`"+`. If you omit it, the project's default worker agent is used. Run `+"`ao spawn --help`"+` for the full list of agents and every flag.
 
 Message workers with `+"`ao send`"+`, for example:
 `+"`ao send --session <worker-session-id> --message \"<your message>\"`"+`
+
+To discover any other AO command, run `+"`ao --help`"+` (and `+"`ao <command> --help`"+` for details on one).
 
 Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
 }
@@ -1227,11 +1557,13 @@ type preLauncher interface {
 // starts the agent: installing the workspace-local activity hooks (so early
 // startup hooks can update the already-created session row), then any optional
 // PreLaunch step. Shared by Spawn and Restore.
-func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string) error {
+func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt string, agentConfig ports.AgentConfig) error {
 	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		DataDir:       m.dataDir,
+		SystemPrompt:  systemPrompt,
+		Config:        agentConfig,
 	}); err != nil {
 		return fmt.Errorf("install hooks: %w", err)
 	}
@@ -1256,7 +1588,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -1273,6 +1605,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
+		Kind:          kind,
 		Prompt:        meta.Prompt,
 		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,

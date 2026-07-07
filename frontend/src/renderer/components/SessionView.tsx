@@ -60,6 +60,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
 		poppedOut: browserPoppedOut,
+		terminated: session?.status === "terminated",
 		previewUrl,
 		previewRevision,
 	});

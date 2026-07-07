@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
 import { type FormEvent, useEffect, useId, useState } from "react";
 import { Button } from "./ui/button";
@@ -7,7 +7,9 @@ import { Input } from "./ui/input";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import type { AgentProvider } from "../types/workspace";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 
 type Project = components["schemas"]["Project"];
 
@@ -19,6 +21,7 @@ type NewTaskDialogProps = {
 };
 
 export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
+	const queryClient = useQueryClient();
 	const titleId = useId();
 	const promptId = useId();
 	const branchId = useId();
@@ -43,7 +46,16 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			return data.project as Project;
 		},
 	});
+	const agentsQuery = useQuery({
+		...agentsQueryOptions,
+		enabled: open,
+	});
+	const refreshAgentsMutation = useMutation({
+		mutationFn: refreshAgents,
+		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
+	});
 	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	const agentCatalog = agentsQuery.data;
 
 	useEffect(() => {
 		if (!open) {
@@ -77,6 +89,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 
 		setIsSubmitting(true);
 		setError(undefined);
+		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
 		try {
 			const { data, error: apiError } = await apiClient.POST("/api/v1/sessions", {
 				body: {
@@ -90,9 +103,12 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));
 			if (!data?.session?.id) throw new Error("Task creation returned no session");
+			void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: projectId });
 			onCreated(data.session.id);
 			onOpenChange(false);
 		} catch (err) {
+			void captureRendererEvent("ao.renderer.task_create_failed", { project_id: projectId });
+			void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
 			setError(err instanceof Error ? err.message : "Unable to start task");
 		} finally {
 			setIsSubmitting(false);
@@ -150,16 +166,30 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						</div>
 
 						<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-							<RequiredAgentField
-								id={agentId}
-								label="Agent"
-								placeholder="Project default"
-								value={agent}
-								onChange={(value) => {
-									setAgent(value);
-									setAgentTouched(true);
-								}}
-							/>
+							<div className="space-y-1.5">
+								<RequiredAgentField
+									id={agentId}
+									label="Agent"
+									placeholder="Project default"
+									value={agent}
+									authorized={agentCatalog?.authorized}
+									installed={agentCatalog?.installed}
+									supported={agentCatalog?.supported}
+									disabled={agentsQuery.isFetching && agentCatalog === undefined}
+									onChange={(value) => {
+										setAgent(value);
+										setAgentTouched(true);
+									}}
+								/>
+								<button
+									type="button"
+									className="text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
+									disabled={refreshAgentsMutation.isPending}
+									onClick={() => refreshAgentsMutation.mutate()}
+								>
+									{refreshAgentsMutation.isPending ? "Refreshing agents..." : "Refresh agents"}
+								</button>
+							</div>
 							<div className="space-y-1.5">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={branchId}>
 									Branch
@@ -176,6 +206,14 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						{error && (
 							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
 								{error}
+							</div>
+						)}
+
+						{refreshAgentsMutation.isError && (
+							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+								{refreshAgentsMutation.error instanceof Error
+									? refreshAgentsMutation.error.message
+									: "Could not refresh agent catalog."}
 							</div>
 						)}
 

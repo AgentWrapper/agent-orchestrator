@@ -51,7 +51,16 @@ describe("useWorkspaceQuery", () => {
 	it("maps projects and their sessions, applying provider/status/title fallbacks", async () => {
 		respondWith({
 			projects: {
-				data: { projects: [{ id: "proj-1", name: "my-app", path: "/home/me/my-app" }] },
+				data: {
+					projects: [
+						{
+							id: "proj-1",
+							name: "my-app",
+							path: "/home/me/my-app",
+							orchestratorAgent: "codex",
+						},
+					],
+				},
 				error: undefined,
 			},
 			sessions: {
@@ -62,10 +71,12 @@ describe("useWorkspaceQuery", () => {
 							projectId: "proj-1",
 							terminalHandleId: "term-1",
 							displayName: "fix-bug",
+							issueId: "github:acme/project-one#42",
 							harness: "claude-code",
 							branch: "qa/modal-worker",
 							status: "mergeable",
 							isTerminated: false,
+							activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
 						{
@@ -90,15 +101,22 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		const [workspace] = result.current.data ?? [];
-		expect(workspace).toMatchObject({ id: "proj-1", name: "my-app", path: "/home/me/my-app" });
+		expect(workspace).toMatchObject({
+			id: "proj-1",
+			name: "my-app",
+			path: "/home/me/my-app",
+			orchestratorAgent: "codex",
+		});
 		expect(workspace.sessions).toHaveLength(2);
 		expect(workspace.sessions[0]).toMatchObject({
 			id: "sess-1",
 			terminalHandleId: "term-1",
 			title: "fix-bug",
+			issueId: "github:acme/project-one#42",
 			provider: "claude-code",
 			branch: "qa/modal-worker",
 			status: "mergeable",
+			activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",

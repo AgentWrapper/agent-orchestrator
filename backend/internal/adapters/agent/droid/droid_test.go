@@ -178,8 +178,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	info, ok, err := plugin.SessionInfo(context.Background(), ports.SessionRef{
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "droid-ses-1",
-			droidTitleMetadataKey:           "Fix login redirect",
-			droidSummaryMetadataKey:         "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 		},
 	})
 	if err != nil {

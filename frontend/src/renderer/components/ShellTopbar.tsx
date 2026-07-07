@@ -55,6 +55,7 @@ export function ShellTopbar() {
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const all = useWorkspaceQuery().data ?? [];
@@ -74,17 +75,18 @@ export function ShellTopbar() {
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
 
 	const openNewTask = () => {
-		if (!projectId) return;
+		if (!projectId || isProjectRestarting) return;
 		setIsNewTaskOpen(true);
 	};
 
 	const handleTaskCreated = async (sessionId: string) => {
-		if (!projectId) return;
+		if (!projectId || isProjectRestarting) return;
 		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
@@ -110,7 +112,7 @@ export function ShellTopbar() {
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId);
+			const sessionId = await spawnOrchestrator(projectId, "topbar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -171,6 +173,7 @@ export function ShellTopbar() {
 								<button
 									aria-label="New task"
 									className="dashboard-app-header__primary-btn"
+									disabled={isProjectRestarting}
 									onClick={openNewTask}
 									style={noDragStyle}
 									type="button"
@@ -197,13 +200,13 @@ export function ShellTopbar() {
 							<button
 								aria-label="Open orchestrator"
 								className="dashboard-app-header__primary-btn dashboard-app-header__primary-btn--compact"
-								disabled={isSpawning}
+								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
 								type="button"
 							>
 								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-								{isSpawning ? "Spawning…" : "Orchestrator"}
+								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
 							</button>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
@@ -249,16 +252,21 @@ export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
 
 	const kill = useMutation({
 		mutationFn: async () => {
+			void captureRendererEvent("ao.renderer.session_kill_requested", { project_id: session.workspaceId });
 			const { error: apiError } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError));
 		},
 		onSuccess: () => {
+			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
 			setConfirming(false);
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
-		onError: (e) => setError(e instanceof Error ? e.message : "Kill failed"),
+		onError: (e) => {
+			void captureRendererEvent("ao.renderer.session_kill_failed", { project_id: session.workspaceId });
+			setError(e instanceof Error ? e.message : "Kill failed");
+		},
 	});
 
 	if (confirming) {

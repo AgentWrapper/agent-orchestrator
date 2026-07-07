@@ -8,9 +8,11 @@ import { queryClient } from "./lib/query-client";
 import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { initTelemetry } from "./lib/telemetry";
+import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
 
 const router = createAppRouter(queryClient);
 void initTelemetry();
+startDaemonFailureTelemetry();
 
 declare module "@tanstack/react-router" {
 	interface Register {
