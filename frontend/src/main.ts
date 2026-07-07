@@ -100,7 +100,8 @@ const isDev = !app.isPackaged;
 
 // Dev mode uses a separate port and state subdirectory so it never collides with
 // a concurrently running installed-app daemon. The subdir also isolates supervise.sock
-// (backend derives it as dir(RunFilePath)/supervise.sock) and the SQLite data dir.
+// on Unix (backend derives it as dir(RunFilePath)/supervise.sock) and the named pipe
+// on Windows (supervisorPipeFromRunFile derives it from the same dir basename).
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
@@ -438,11 +439,18 @@ function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): stri
  * headless `ao start` daemons stay unlinked so they remain persistent after
  * app quit.
  */
+function supervisorPipeFromRunFile(rfp: string | null): string {
+	if (!rfp) return "\\\\.\\pipe\\ao-supervise";
+	const dir = path.basename(path.dirname(rfp));
+	if (dir === ".ao" || dir === "." || dir === "") return "\\\\.\\pipe\\ao-supervise";
+	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
 function establishSupervisorLink(): void {
 	const rfp = runFilePath();
 	const addr =
 		process.platform === "win32"
-			? "\\\\.\\pipe\\ao-supervise"
+			? supervisorPipeFromRunFile(rfp)
 			: rfp
 				? path.join(path.dirname(rfp), "supervise.sock")
 				: null;
