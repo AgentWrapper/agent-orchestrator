@@ -489,15 +489,15 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	return m.rollbackSpawn(ctx, id)
 }
 
-// Kill records terminal intent with the LCM, then tears down the runtime and
-// workspace. A workspace teardown refused by the worktree-remove safety
-// (uncommitted work) is never forced: the session still terminates and Kill
-// succeeds with freed=false, signalling the workspace was preserved.
+// Kill tears down the runtime and workspace, then records terminal intent with
+// the LCM. A workspace teardown refused by the worktree-remove safety
+// (uncommitted work) is never forced: Kill succeeds with freed=false,
+// signalling the workspace was preserved and the session is left retryable.
 //
 // A session whose runtime handle or workspace path is missing (e.g. spawn
-// failed partway, handle lost after a crash) is still terminated — the destroy
-// steps are skipped for whatever is absent, but the session record always
-// moves to terminal state so it can be cleaned up from the dashboard.
+// failed partway, handle lost after a crash) is still terminated after the
+// available destroy steps are skipped so it can be cleaned up from the
+// dashboard.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -509,23 +509,23 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfo(rec)
 
-	// Always record terminal intent so the session is marked terminated even
-	// when the runtime/workspace handle is missing.
-	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
-		return false, fmt.Errorf("kill %s: %w", id, err)
+	var workspaceProjectRows []ports.WorkspaceRepoInfo
+	workspaceProject := false
+	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		return false, fmt.Errorf("kill %s: workspace rows: %w", id, rowErr)
+	} else if ok {
+		workspaceProjectRows = rows
+		workspaceProject = true
 	}
-	// Only tear down what exists. A session may have lost its handle after a
-	// crash or never acquired one if spawn failed partway.
+
 	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
 	freed := false
-	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
-		return false, fmt.Errorf("kill %s: workspace rows: %w", id, rowErr)
-	} else if ok {
-		cleaned, err := m.destroyWorkspaceProjectRows(ctx, rows)
+	if workspaceProject {
+		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				return false, nil
@@ -548,6 +548,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// non-restorable inventory.
 	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
 		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
 	return freed, nil
 }
@@ -616,9 +619,6 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 			return fmt.Errorf("retire replacement %s repo %s: stash: %w", rec.ID, row.RepoName, err)
 		}
 	}
-	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-		return fmt.Errorf("retire replacement %s: clear restore markers: %w", rec.ID, err)
-	}
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -629,6 +629,9 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 		if err := m.workspace.ForceDestroy(ctx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
 			return fmt.Errorf("retire replacement %s repo %s: force destroy: %w", rec.ID, rows[i].RepoName, err)
 		}
+	}
+	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: clear restore markers: %w", rec.ID, err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", rec.ID, err)
@@ -947,9 +950,11 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			continue
 		}
 		var ws ports.WorkspaceInfo
-		restoredWorkspaceProject := project.Kind.WithDefault() == domain.ProjectKindWorkspace && len(rows) > 1
+		restoredWorkspaceProject := project.Kind.WithDefault() == domain.ProjectKindWorkspace
+		var projectRows []ports.WorkspaceRepoInfo
 		if restoredWorkspaceProject {
-			projectRows, rowErr := m.sessionWorktreeRowsToRepoInfos(ctx, project, rec, rows)
+			var rowErr error
+			projectRows, rowErr = m.workspaceProjectRestoreRowsFromMarkers(ctx, project, rec, rows)
 			if rowErr != nil {
 				m.logger.Error("restore-all: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
 				continue
@@ -980,12 +985,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		}
 
 		// Step 2: replay preserve ref when one was recorded.
-		if project.Kind.WithDefault() == domain.ProjectKindWorkspace && len(rows) > 1 {
-			projectRows, rowErr := m.sessionWorktreeRowsToRepoInfos(ctx, project, rec, rows)
-			if rowErr != nil {
-				m.logger.Error("restore-all: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-				continue
-			}
+		if restoredWorkspaceProject {
 			m.applyWorkspaceProjectPreserved(ctx, projectRows)
 		} else {
 			var preserveRef string
@@ -1020,13 +1020,19 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := m.markSessionWorktreesActive(ctx, rows); err != nil {
-			m.logger.Warn("restore-all: marking worktrees active failed", "sessionID", rec.ID, "error", err)
-		}
 
 		// One-shot: drop the consumed marker so it never outlives one restart
 		// (#2319). A still-live session re-acquires it at the next quit.
-		if !restoredWorkspaceProject {
+		if restoredWorkspaceProject {
+			for _, row := range projectRows {
+				if err := m.upsertWorkspaceProjectRowState(ctx, row, "active", ""); err != nil {
+					m.logger.Warn("restore-all: marking workspace repo active failed", "sessionID", rec.ID, "repo", row.RepoName, "error", err)
+				}
+			}
+		} else {
+			if err := m.markSessionWorktreesActive(ctx, rows); err != nil {
+				m.logger.Warn("restore-all: marking worktrees active failed", "sessionID", rec.ID, "error", err)
+			}
 			if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 				m.logger.Warn("restore-all: delete restore marker failed", "sessionID", rec.ID, "error", err)
 			}
@@ -1091,6 +1097,10 @@ func (m *Manager) workspaceProjectRestoreRows(ctx context.Context, project domai
 	if err != nil {
 		return nil, err
 	}
+	return m.workspaceProjectRestoreRowsFromMarkers(ctx, project, rec, rows)
+}
+
+func (m *Manager) workspaceProjectRestoreRowsFromMarkers(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord, rows []domain.SessionWorktreeRecord) ([]ports.WorkspaceRepoInfo, error) {
 	if len(rows) > 1 {
 		return m.sessionWorktreeRowsToRepoInfos(ctx, project, rec, rows)
 	}
@@ -1098,11 +1108,20 @@ func (m *Manager) workspaceProjectRestoreRows(ctx context.Context, project domai
 	if err != nil {
 		return nil, err
 	}
+	rootPath := rec.Metadata.WorkspacePath
+	rootBranch := rec.Metadata.Branch
+	var rootBaseSHA string
+	if len(rows) == 1 && (rows[0].RepoName == "" || rows[0].RepoName == domain.RootWorkspaceRepoName) {
+		rootPath = firstNonEmptyString(rows[0].WorktreePath, rootPath)
+		rootBranch = firstNonEmptyString(rows[0].Branch, rootBranch)
+		rootBaseSHA = rows[0].BaseSHA
+	}
 	out := []ports.WorkspaceRepoInfo{{
 		RepoName:  domain.RootWorkspaceRepoName,
 		RepoPath:  project.Path,
-		Path:      rec.Metadata.WorkspacePath,
-		Branch:    rec.Metadata.Branch,
+		Path:      rootPath,
+		Branch:    rootBranch,
+		BaseSHA:   rootBaseSHA,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 	}}
@@ -1110,8 +1129,8 @@ func (m *Manager) workspaceProjectRestoreRows(ctx context.Context, project domai
 		out = append(out, ports.WorkspaceRepoInfo{
 			RepoName:     repo.Name,
 			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
-			Path:         filepath.Join(rec.Metadata.WorkspacePath, filepath.FromSlash(repo.RelativePath)),
-			Branch:       rec.Metadata.Branch,
+			Path:         filepath.Join(rootPath, filepath.FromSlash(repo.RelativePath)),
+			Branch:       rootBranch,
 			SessionID:    rec.ID,
 			ProjectID:    rec.ProjectID,
 			RelativePath: repo.RelativePath,

@@ -763,12 +763,11 @@ func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	}
 }
 
-// TestKill_DirtyWorkspaceTerminatesAndPreserves: a workspace teardown refused
-// because of uncommitted work must NOT fail the kill — the session terminates,
-// the runtime is gone, and freed=false reports the preserved worktree. This is
-// the normal path for any session with in-progress changes, so an error here
-// would turn every such kill into a 500.
-func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
+// TestKill_DirtyWorkspacePreservesAndRemainsRetryable: a workspace teardown
+// refused because of uncommitted work must NOT force-remove the worktree. Kill
+// succeeds with freed=false and leaves the session non-terminal so a later retry
+// can complete cleanup.
+func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
 	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
@@ -782,8 +781,8 @@ func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
 	if rt.destroyed != 1 {
 		t.Fatal("runtime should be destroyed")
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should be terminated")
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should remain active so cleanup can be retried")
 	}
 }
 
@@ -870,6 +869,9 @@ func TestKill_WorkspaceProjectFailsClosedOnUnregisteredChildRows(t *testing.T) {
 	if len(ws.calls) != 0 {
 		t.Fatalf("destroy calls = %v, want none", ws.calls)
 	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain active when workspace rows cannot be resolved")
+	}
 }
 
 func TestKill_WorkspaceProjectDirtyRowRefusesRemoval(t *testing.T) {
@@ -895,6 +897,29 @@ func TestKill_WorkspaceProjectDirtyRowRefusesRemoval(t *testing.T) {
 	want := []string{"Destroy:api"}
 	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", got, want)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should remain active so dirty workspace cleanup can be retried")
+	}
+}
+
+func TestKill_RuntimeDestroyFailureLeavesSessionActive(t *testing.T) {
+	m, st, rt, ws := newManager()
+	rt.destroyErr = errors.New("tmux transient")
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Fatalf("freed=%v err=%v, want runtime error", freed, err)
+	}
+	if freed {
+		t.Fatal("workspace must not be reported freed when runtime destroy fails")
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain active when runtime destroy fails")
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("workspace destroy calls = %d, want 0 after runtime failure", ws.destroyed)
 	}
 }
 
@@ -2026,9 +2051,9 @@ func TestRetireForReplacementWorkspaceProjectCapturesAndReleasesEveryRepo(t *tes
 	wantOrder := []string{
 		"StashUncommitted:__root__",
 		"StashUncommitted:api",
-		"DeleteSessionWorktrees:mer-orch",
 		"ForceDestroy:api",
 		"ForceDestroy:__root__",
+		"DeleteSessionWorktrees:mer-orch",
 	}
 	next := 0
 	for _, call := range sharedLog {
@@ -2038,6 +2063,79 @@ func TestRetireForReplacementWorkspaceProjectCapturesAndReleasesEveryRepo(t *tes
 	}
 	if next != len(wantOrder) {
 		t.Fatalf("workspace project retirement order missing %v in log %v", wantOrder, sharedLog)
+	}
+}
+
+func TestRetireForReplacementWorkspaceProjectRuntimeDestroyFailureKeepsRepoInventory(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	rt.destroyErr = errors.New("tmux transient")
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Fatalf("RetireForReplacement err = %v, want runtime failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active when runtime destroy fails")
+	}
+	if rows := st.worktrees["mer-orch"]; len(rows) != 2 {
+		t.Fatalf("workspace repo inventory after runtime failure = %v, want root and child retained", rows)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("ForceDestroy must not run after runtime destroy failure; calls=%v", ws.calls)
+		}
+	}
+}
+
+func TestRetireForReplacementWorkspaceProjectForceDestroyFailureKeepsRepoInventory(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	ws.forceDestroyErr = errors.New("worktree still registered")
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "force destroy") {
+		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active when force destroy fails")
+	}
+	if rows := st.worktrees["mer-orch"]; len(rows) != 2 {
+		t.Fatalf("workspace repo inventory after force destroy failure = %v, want root and child retained", rows)
 	}
 }
 
@@ -2623,6 +2721,61 @@ func TestRestoreAll_WorkspaceProjectRestoresAndAppliesEachRepo(t *testing.T) {
 	}
 	if states[domain.RootWorkspaceRepoName] != "active" || states["api"] != "active" {
 		t.Fatalf("workspace project row states = %v, want active inventory", states)
+	}
+}
+
+func TestRestoreAll_WorkspaceProjectRootOnlyMarkerRestoresRegisteredChildren(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-1",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-1",
+		WorktreePath: "/ws/mer-1",
+		PreservedRef: "refs/ao/preserved/root",
+		State:        "removed",
+	}}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	wantPrefix := []string{"Restore:__root__", "Restore:api"}
+	if got := ws.calls[:2]; strings.Join(got, ",") != strings.Join(wantPrefix, ",") {
+		t.Fatalf("restore prefix = %v, want %v; all calls %v", got, wantPrefix, ws.calls)
+	}
+	applied := strings.Join(ws.calls, ",")
+	if !strings.Contains(applied, "ApplyPreserved:__root__:refs/ao/preserved/root") {
+		t.Fatalf("root preserved ref was not applied; calls=%v", ws.calls)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
+	}
+	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("workspace project rows after RestoreAll = %v, want root and registered child", rows)
+	}
+	states := map[string]string{}
+	for _, row := range rows {
+		states[row.RepoName] = row.State
+		if row.PreservedRef != "" {
+			t.Fatalf("row %s preserved_ref = %q, want consumed", row.RepoName, row.PreservedRef)
+		}
+	}
+	if states[domain.RootWorkspaceRepoName] != "active" || states["api"] != "active" {
+		t.Fatalf("workspace project row states = %v, want active root and child", states)
 	}
 }
 
