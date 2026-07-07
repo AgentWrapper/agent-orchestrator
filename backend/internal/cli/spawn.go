@@ -302,7 +302,7 @@ func resolveSpawnHarness(explicit string, explicitSet bool, model string, projec
 	if explicitSet {
 		harness := strings.TrimSpace(explicit)
 		if harness == "" {
-			return "", usageError{fmt.Errorf("agent could not be resolved; pass a non-empty --agent")}
+			return "", usageError{fmt.Errorf("agent could not be resolved; pass a non-empty --agent/--harness")}
 		}
 		return harness, nil
 	}
@@ -314,7 +314,7 @@ func resolveSpawnHarness(explicit string, explicitSet bool, model string, projec
 			return harness, nil
 		}
 	}
-	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>` or workerMix", project.ID)}
+	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent, configure `ao project set-config %s --worker-agent <agent>`, or set workerMix with `ao project set-config %s --config-json <json>`", project.ID, project.ID)}
 }
 
 func projectHasWorkerMix(project projectDetails) bool {
