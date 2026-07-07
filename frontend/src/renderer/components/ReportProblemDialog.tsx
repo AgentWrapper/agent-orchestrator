@@ -35,8 +35,14 @@ const OUTPUT_LABELS: Record<ReportProblemOutput, string> = {
 };
 
 const OUTPUT_ACTION_LABELS: Record<ReportProblemOutput, string> = {
-	github: "Raise GitHub issue",
-	discord: "Report on Discord",
+	github: "Copy and raise GitHub issue",
+	discord: "Copy and open Discord",
+	email: "Copy and open email",
+};
+
+const OUTPUT_DESTINATION_LABELS: Record<ReportProblemOutput, string> = {
+	github: "GitHub issue",
+	discord: "Discord",
 	email: "Email support",
 };
 
@@ -149,33 +155,48 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 							/>
 						</div>
 
+						<div className="space-y-1.5">
+							<p className="text-[12px] font-medium text-muted-foreground">Report to</p>
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<Button
+										type="button"
+										variant="secondary"
+										className="w-full justify-between"
+										aria-label="Report destination"
+									>
+										<span className="inline-flex min-w-0 items-center gap-2">
+											{previewOutput === "github" && <GitPullRequest className="size-3.5" aria-hidden="true" />}
+											{previewOutput === "discord" && <MessageSquare className="size-3.5" aria-hidden="true" />}
+											{previewOutput === "email" && <Mail className="size-3.5" aria-hidden="true" />}
+											<span className="truncate">{OUTPUT_DESTINATION_LABELS[previewOutput]}</span>
+										</span>
+										<ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
+									</Button>
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="start" className="w-52">
+									<DropdownMenuItem onSelect={() => setPreviewOutput("github")}>
+										<GitPullRequest aria-hidden="true" />
+										GitHub issue
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={() => setPreviewOutput("discord")}>
+										<MessageSquare aria-hidden="true" />
+										Discord
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={() => setPreviewOutput("email")}>
+										<Mail aria-hidden="true" />
+										Email support
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						</div>
+
 						<div className="space-y-2">
 							<div className="flex items-center justify-between gap-3">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor="report-preview">
 									Preview
 								</label>
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<Button type="button" variant="secondary" aria-label="Report destination">
-											{OUTPUT_ACTION_LABELS[previewOutput]}
-											<ChevronDown className="size-3.5" aria-hidden="true" />
-										</Button>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end" className="w-52">
-										<DropdownMenuItem onSelect={() => setPreviewOutput("github")}>
-											<GitPullRequest aria-hidden="true" />
-											Raise GitHub issue
-										</DropdownMenuItem>
-										<DropdownMenuItem onSelect={() => setPreviewOutput("discord")}>
-											<MessageSquare aria-hidden="true" />
-											Report on Discord
-										</DropdownMenuItem>
-										<DropdownMenuItem onSelect={() => setPreviewOutput("email")}>
-											<Mail aria-hidden="true" />
-											Email support
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
+								<p className="text-[12px] text-muted-foreground">{OUTPUT_DESTINATION_LABELS[previewOutput]}</p>
 							</div>
 							<pre
 								id="report-preview"

@@ -334,12 +334,17 @@ describe("Sidebar", () => {
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
+		const destinationButton = screen.getByRole("button", { name: "Report destination" });
+		expect(destinationButton).toHaveTextContent("GitHub issue");
 		const preview = screen.getByLabelText("Report preview");
+		expect(destinationButton.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(preview).toHaveTextContent("[redacted-local-path]");
 		expect(preview).toHaveTextContent("[redacted-local-url]");
 		const reviewedDraft = preview.textContent;
 
-		await user.click(screen.getByRole("button", { name: "Raise GitHub issue" }));
+		expect(screen.getByRole("button", { name: "Copy and raise GitHub issue" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy and open email" })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Copy and raise GitHub issue" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		const copied = writeText.mock.calls[0][0] as string;
@@ -377,13 +382,17 @@ describe("Sidebar", () => {
 		await user.type(screen.getByLabelText("Summary"), "Need help with setup");
 
 		await user.click(screen.getByRole("button", { name: "Report destination" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Report on Discord" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Discord" }));
 		expect(screen.getByLabelText("Report preview")).toHaveTextContent("**AO feedback**");
-		await user.click(screen.getByRole("button", { name: "Report on Discord" }));
+		expect(screen.getByRole("button", { name: "Copy and open Discord" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy and open email" })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Copy and open Discord" }));
 		await user.click(screen.getByRole("button", { name: "Report destination" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Email support" }));
 		expect(screen.getByLabelText("Report preview")).toHaveTextContent("To: support@aoagents.dev");
-		await user.click(screen.getByRole("button", { name: "Email support" }));
+		expect(screen.getByRole("button", { name: "Copy and open email" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy and open Discord" })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Copy and open email" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
