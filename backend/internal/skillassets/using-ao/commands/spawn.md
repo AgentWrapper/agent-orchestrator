@@ -14,8 +14,9 @@ ao spawn [flags]
 |---|---|---|
 | `--branch string` | Branch for the session worktree | `ao/<session-id>/root` |
 | `--claim-pr string` | Immediately claim an existing PR for the spawned session | - |
-| `--harness string` | Agent harness to use (see list below) | Project `worker.agent`; required if the project has none |
+| `--harness string` | Agent harness to use (see list below) | Daemon `workerMix` selection when configured; otherwise project `worker.agent`; required if neither is configured |
 | `--issue string` | Issue id to associate with the session | - |
+| `--model string` | Model override for this session | Project/role agent config or agent default; when set without `--harness`, uses project `worker.agent` instead of `workerMix` selection |
 | `--name string` | Display name shown in the sidebar (max 20 characters) | Required |
 | `--no-takeover` | Refuse if another active session owns the claimed PR (requires `--claim-pr`) | - |
 | `--project string` | Project id to spawn the session in | Required |
