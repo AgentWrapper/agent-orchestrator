@@ -457,6 +457,12 @@ func roleConfigName(kind domain.SessionKind) string {
 //  5. explicit per-spawn model — wins, but a cross-provider model is a loud
 //     ErrModelHarnessMismatch, never silently passed
 //
+// Then a final default guard (6): if nothing above pinned a model, substitute
+// the harness default (domain.DefaultModelForHarness) so a claude-code spawn
+// never falls through to the account CLI default (Fable here — the priciest
+// model). A *default* must never land on the most expensive model; an explicit
+// choice at any level above, including "fable", set model and is left untouched.
+//
 // Effort mirrors 1–4 (there is no per-spawn effort override today). A harness
 // whose provider is unknown is unguarded: every model is compatible, preserving
 // behavior for the many harnesses AO has not mapped.
@@ -516,6 +522,17 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spa
 			return ports.AgentConfig{}, fmt.Errorf("%w: %q is not a %s model (harness %q)", ErrModelHarnessMismatch, sm, hp, harness)
 		}
 		model = sm
+	}
+
+	// 6: default guard. Nothing above pinned a model, so this spawn would emit no
+	// model override and inherit the harness's account/CLI default. For
+	// claude-code that default is Fable — the most expensive model — which a
+	// *default* must never be. Substitute the harness default (opus for
+	// claude-code; empty, i.e. no change, for every other harness). This never
+	// overrides an explicit choice: any selection above already set model, so the
+	// guard only fills the empty, unintended default.
+	if model == "" {
+		model = domain.DefaultModelForHarness(harness)
 	}
 
 	resolved.Model = model

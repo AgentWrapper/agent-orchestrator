@@ -84,3 +84,20 @@ func TestAgentConfigIsZero(t *testing.T) {
 		t.Fatal("AgentConfig with effort should not be zero")
 	}
 }
+
+func TestDefaultModelForHarness(t *testing.T) {
+	// claude-code substitutes opus so a default never inherits the account CLI
+	// default (Fable — the priciest model); see issue #61.
+	if got := DefaultModelForHarness(HarnessClaudeCode); got != DefaultClaudeCodeModel {
+		t.Fatalf("claude-code default = %q, want %q", got, DefaultClaudeCodeModel)
+	}
+	if DefaultClaudeCodeModel != "opus" {
+		t.Fatalf("DefaultClaudeCodeModel = %q, want opus", DefaultClaudeCodeModel)
+	}
+	// Every other harness keeps its own default (no substitution).
+	for _, h := range []AgentHarness{HarnessCodex, HarnessCodexFugu, HarnessAider, ""} {
+		if got := DefaultModelForHarness(h); got != "" {
+			t.Fatalf("%q default = %q, want empty", h, got)
+		}
+	}
+}

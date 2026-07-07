@@ -45,6 +45,29 @@ func (e Effort) Valid() bool {
 	}
 }
 
+// DefaultClaudeCodeModel is the model AO pins for a claude-code spawn that
+// resolves to no explicit model at any level (project/role/per-harness/
+// per-spawn). Without it, the claude-code adapter emits no `--model` flag and
+// the CLI inherits the account's default model — which in this deployment is
+// Fable, the most expensive model. A *default* must never land on the priciest
+// model, so model resolution substitutes this instead. This constant is the
+// single place the claude-code default is decided; change it here to change the
+// default. An explicit selection (including an explicit "fable") is honored
+// untouched — the substitution only fills the empty, unintended default.
+const DefaultClaudeCodeModel = "opus"
+
+// DefaultModelForHarness returns the model AO substitutes when a spawn of the
+// given harness resolves to no explicit model. Only claude-code has a
+// substitute today (see DefaultClaudeCodeModel), because only its account
+// default is known to be an undesirable/expensive fallback; every other harness
+// returns "" and keeps its own runtime/account default unchanged.
+func DefaultModelForHarness(h AgentHarness) string {
+	if h == HarnessClaudeCode {
+		return DefaultClaudeCodeModel
+	}
+	return ""
+}
+
 // HarnessModel is the model + reasoning effort AO applies when a spawn resolves
 // to a specific harness. It is the per-harness half of AgentConfig: because a
 // model name is provider-specific, one scalar Model cannot be correct for every
