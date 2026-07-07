@@ -1144,7 +1144,7 @@ func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".claude", "orchestrator-policy.md"), []byte("ORCHESTRATOR ONLY\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "worker-policy.md"), []byte("WORKER ONLY\n\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".claude", "worker-policy.md"), []byte("WORKER ONLY\r\n\r\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1181,6 +1181,9 @@ func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 	if strings.Contains(workerPrompt, "WORKER ONLY\n\n\n") {
 		t.Fatalf("worker prompt should trim trailing file newlines:\n%s", workerPrompt)
 	}
+	if strings.Contains(workerPrompt, "WORKER ONLY\r") {
+		t.Fatalf("worker prompt should trim trailing CRLF newlines:\n%s", workerPrompt)
+	}
 }
 
 func TestSystemPrompt_MissingRoleInstructionsFileDoesNotBlockSpawn(t *testing.T) {
@@ -1199,6 +1202,45 @@ func TestSystemPrompt_MissingRoleInstructionsFileDoesNotBlockSpawn(t *testing.T)
 	}
 	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
 		t.Fatalf("missing role file should keep base prompt:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+}
+
+func TestSystemPrompt_SkipsUnsafeRoleInstructionsFiles(t *testing.T) {
+	root := t.TempDir()
+	large := filepath.Join(root, "too-large.md")
+	if err := os.WriteFile(large, bytes.Repeat([]byte("x"), maxRoleInstructionsFileBytes+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "directory", path: "."},
+		{name: "too_large", path: "too-large.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{
+				ID:     "mer",
+				Path:   root,
+				Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{InstructionsFile: tc.path}},
+			}
+			lookPath := func(string) (string, error) { return "/bin/true", nil }
+			m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+			prompt, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
+			if err != nil {
+				t.Fatalf("buildSystemPrompt: %v", err)
+			}
+			if !strings.Contains(prompt, "You are the human-facing coordinator for project mer") {
+				t.Fatalf("unsafe role file should keep base prompt:\n%s", prompt)
+			}
+			if strings.Contains(prompt, strings.Repeat("x", 64)) {
+				t.Fatalf("unsafe role file content should not be appended:\n%s", prompt)
+			}
+		})
 	}
 }
 
