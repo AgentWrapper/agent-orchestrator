@@ -233,6 +233,19 @@ select {
 	height: 100%;
 }
 
+/* Normal-buffer panes (codex, a plain shell) now keep scrollback (scrollback:5000
+   in XtermTerminal), so the viewport becomes scrollable. Hide the scrollbar so it
+   doesn't reserve width and shift the cell grid; the wheel still scrolls via the
+   terminal's wheel handler. */
+.xterm .xterm-viewport {
+	scrollbar-width: none;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
 .terminal-pane-frame:fullscreen {
 	background: var(--bg);
 }
@@ -333,14 +346,6 @@ select {
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--fg-muted);
-}
-
-:root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.12);
-}
-
-:root[data-theme="light"] .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.2);
 }
 
 @keyframes status-pulse {
