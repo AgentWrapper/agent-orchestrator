@@ -84,7 +84,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			opts.project = project.ID
 
-			harness, err := resolveSpawnHarness(opts.harness, cmd.Flags().Changed("harness"), project)
+			harness, err := resolveSpawnHarness(opts.harness, cmd.Flags().Changed("harness"), opts.model, project)
 			if err != nil {
 				return err
 			}
@@ -298,7 +298,7 @@ func pathContains(root, child string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func resolveSpawnHarness(explicit string, explicitSet bool, project projectDetails) (string, error) {
+func resolveSpawnHarness(explicit string, explicitSet bool, model string, project projectDetails) (string, error) {
 	if explicitSet {
 		harness := strings.TrimSpace(explicit)
 		if harness == "" {
@@ -306,7 +306,7 @@ func resolveSpawnHarness(explicit string, explicitSet bool, project projectDetai
 		}
 		return harness, nil
 	}
-	if projectHasWorkerMix(project) {
+	if projectHasWorkerMix(project) && strings.TrimSpace(model) == "" {
 		return "", nil
 	}
 	if project.Config != nil {
