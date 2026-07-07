@@ -2,7 +2,7 @@ import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerAppImage from "./makers/maker-appimage";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 
 // Default GitHub release target (production). aoagents was the temporary rewrite
 // home; releases land on AgentWrapper (spec §1.1).
@@ -31,7 +31,15 @@ const config: ForgeConfig = {
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
-		extraResource: ["daemon", "assets/icon.png", "app-update.yml"],
+		// tmux-dist holds the static tmux fallback fetched by fetch-tmux.mjs in
+		// the prepackage/premake hooks; conditional because Windows (ConPTY)
+		// and AO_SKIP_TMUX_FETCH builds have no such directory.
+		extraResource: [
+			"daemon",
+			...(existsSync("tmux-dist") ? ["tmux-dist"] : []),
+			"assets/icon.png",
+			"app-update.yml",
+		],
 		// Notarization. Two paths:
 		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8
 		//    (the workflow decodes APPLE_API_KEY_BASE64 to a temp file), plus the
@@ -112,6 +120,9 @@ const config: ForgeConfig = {
 					icon: "assets/icon.png",
 					maintainer: "Agent Orchestrator",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					// Complement to the bundled fallback: a system tmux always
+					// wins over the bundle when present (issue #2443).
+					depends: ["tmux"],
 				},
 			},
 		},
@@ -123,6 +134,9 @@ const config: ForgeConfig = {
 					// rpmbuild rejects a spec with an empty License field.
 					license: "MIT",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					// Complement to the bundled fallback: a system tmux always
+					// wins over the bundle when present (issue #2443).
+					requires: ["tmux"],
 				},
 			},
 		},
