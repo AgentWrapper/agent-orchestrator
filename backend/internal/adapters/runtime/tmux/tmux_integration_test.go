@@ -139,7 +139,7 @@ func TestRuntimeIntegrationPinsWindowSizeLatest(t *testing.T) {
 	}
 	socket := "ao65-" + strings.ReplaceAll(t.Name(), "/", "-")
 	wrapperPath := filepath.Join(tmp, "tmux-wrapper")
-	wrapper := fmt.Sprintf("#!/bin/sh\nexec %s -L %s -f %s \"$@\"\n", tmuxPath, socket, confPath)
+	wrapper := fmt.Sprintf("#!/bin/sh\nexec %s -L %s -f %s \"$@\"\n", shellQuote(tmuxPath), shellQuote(socket), shellQuote(confPath))
 	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
 		t.Fatalf("write tmux wrapper: %v", err)
 	}
