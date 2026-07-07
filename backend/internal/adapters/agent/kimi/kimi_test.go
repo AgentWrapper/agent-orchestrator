@@ -44,80 +44,46 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if s != ports.PromptDeliveryInCommand {
-		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryInCommand)
+	if s != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryAfterStart)
 	}
 }
 
-// Kimi docs: `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`
-// — non-interactive mode already runs under the `auto` permission policy. The
-// adapter must not emit approval flags on the `-p` launch path regardless of
-// the requested AO PermissionMode.
-func TestGetLaunchCommandWithPromptOmitsApprovalFlags(t *testing.T) {
-	modes := []ports.PermissionMode{
-		ports.PermissionModeDefault,
-		"",
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions,
-	}
-
-	for _, mode := range modes {
-		t.Run(string(mode), func(t *testing.T) {
-			p := &Plugin{resolvedBinary: "kimi"}
-			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-				Permissions: mode,
-				Prompt:      "-add a health check",
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			want := []string{"kimi", "-p", "-add a health check"}
-			if !reflect.DeepEqual(cmd, want) {
-				t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
-			}
-			for _, arg := range cmd {
-				switch arg {
-				case "--auto", "-y", "--yolo", "--yes", "--auto-approve", "--plan":
-					t.Fatalf("cmd = %#v unexpectedly contains approval/plan flag %q", cmd, arg)
-				}
-			}
-		})
-	}
-}
-
-// Without a prompt the launch is interactive, so approval flags are valid and
-// the AO PermissionMode mapping applies.
+// Kimi prompt mode is non-interactive, so AO launches the TUI and lets the
+// session manager inject the task after startup. Because the prompt is not
+// carried with `-p`, approval flags remain valid for prompted workers.
 func TestGetLaunchCommandInteractiveMapsPermissionModes(t *testing.T) {
 	tests := []struct {
 		name       string
 		mode       ports.PermissionMode
+		prompt     string
 		want       []string
 		wantAbsent string
 	}{
-		{"default omits flag", ports.PermissionModeDefault, []string{"kimi"}, "--auto"},
-		{"empty omits flag", "", []string{"kimi"}, "--auto"},
-		{"accept edits", ports.PermissionModeAcceptEdits, []string{"kimi", "--auto"}, "-y"},
-		{"auto", ports.PermissionModeAuto, []string{"kimi", "--auto"}, "-y"},
-		{"bypass", ports.PermissionModeBypassPermissions, []string{"kimi", "-y"}, "--auto"},
+		{"default omits flag", ports.PermissionModeDefault, "fix it", []string{"kimi"}, "--auto"},
+		{"empty omits flag", "", "fix it", []string{"kimi"}, "--auto"},
+		{"accept edits", ports.PermissionModeAcceptEdits, "-add a health check", []string{"kimi", "--auto"}, "-y"},
+		{"auto", ports.PermissionModeAuto, "fix it", []string{"kimi", "--auto"}, "-y"},
+		{"bypass", ports.PermissionModeBypassPermissions, "fix it", []string{"kimi", "-y"}, "--auto"},
+		{"promptless interactive", ports.PermissionModeAuto, "", []string{"kimi", "--auto"}, "-p"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &Plugin{resolvedBinary: "kimi"}
-			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: tt.mode})
+			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: tt.mode, Prompt: tt.prompt})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(cmd, tt.want) {
 				t.Fatalf("cmd = %#v, want %#v", cmd, tt.want)
 			}
-			if tt.wantAbsent != "" {
-				for _, arg := range cmd {
-					if arg == tt.wantAbsent {
-						t.Fatalf("cmd = %#v unexpectedly contains %q", cmd, tt.wantAbsent)
-					}
+			for _, arg := range cmd {
+				if arg == "-p" || arg == "--prompt" {
+					t.Fatalf("cmd = %#v unexpectedly uses non-interactive prompt mode", cmd)
+				}
+				if tt.wantAbsent != "" && arg == tt.wantAbsent {
+					t.Fatalf("cmd = %#v unexpectedly contains %q", cmd, tt.wantAbsent)
 				}
 			}
 		})
@@ -135,8 +101,9 @@ func TestGetLaunchCommandIgnoresSystemPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Kimi has no documented system-prompt flag, so neither is injected.
-	want := []string{"kimi", "-p", "do the thing"}
+	// Kimi has no documented system-prompt flag, and prompted tasks are injected
+	// after startup rather than through non-interactive `-p`.
+	want := []string{"kimi"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

@@ -270,6 +270,14 @@ func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreC
 	return []string{"resume"}, true, nil
 }
 
+type afterStartAgent struct {
+	*recordingAgent
+}
+
+func (a afterStartAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	return ports.PromptDeliveryAfterStart, nil
+}
+
 type singleAgent struct{ agent ports.Agent }
 
 func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
@@ -350,11 +358,14 @@ func (w *fakeWorkspace) ApplyPreserved(_ context.Context, info ports.WorkspaceIn
 	return w.applyErr
 }
 
-type fakeMessenger struct{ msgs []string }
+type fakeMessenger struct {
+	msgs []string
+	err  error
+}
 
 func (m *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
 	m.msgs = append(m.msgs, msg)
-	return nil
+	return m.err
 }
 
 func newManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
@@ -725,6 +736,79 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.RuntimeHandleID != "h1" {
 		t.Fatal("handle not folded")
+	}
+}
+
+func TestSpawn_DeliversPromptAfterStartWhenAgentRequestsIt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	msg := &fakeMessenger{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: afterStartAgent{recordingAgent: agent}},
+		Workspace: ws,
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastLaunch.Prompt != "" {
+		t.Fatalf("launch prompt = %q, want empty for after-start delivery", agent.lastLaunch.Prompt)
+	}
+	if len(msg.msgs) != 1 || msg.msgs[0] != "fix the button" {
+		t.Fatalf("delivered prompts = %#v, want one original prompt", msg.msgs)
+	}
+	if st.sessions["mer-1"].Metadata.Prompt != "fix the button" {
+		t.Fatalf("stored prompt = %q, want original prompt", st.sessions["mer-1"].Metadata.Prompt)
+	}
+}
+
+func TestSpawn_AfterStartPromptFailureCleansUpSpawn(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	msg := &fakeMessenger{err: errors.New("pane unavailable")}
+	agent := &recordingAgent{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: afterStartAgent{recordingAgent: agent}},
+		Workspace: ws,
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: lcm,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want prompt delivery error")
+	}
+	if !strings.Contains(err.Error(), "deliver prompt") {
+		t.Fatalf("Spawn err = %v, want deliver prompt context", err)
+	}
+	if rt.created != 1 || rt.destroyed != 1 {
+		t.Fatalf("runtime created=%d destroyed=%d, want 1/1", rt.created, rt.destroyed)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroyed=%d, want 1", ws.destroyed)
+	}
+	if got := lcm.terminated["mer-1"]; got != 1 {
+		t.Fatalf("MarkTerminated calls = %d, want 1", got)
+	}
+	if rec := st.sessions["mer-1"]; !rec.IsTerminated || rec.Activity.State != domain.ActivityExited {
+		t.Fatalf("session after failed prompt delivery = %#v, want terminated/exited", rec)
+	}
+	if rec := st.sessions["mer-1"]; rec.Metadata.WorkspacePath != "" || rec.Metadata.Branch != "" || rec.Metadata.RuntimeHandleID != "" {
+		t.Fatalf("failed prompt delivery kept stale launch metadata: %#v", rec.Metadata)
 	}
 }
 
@@ -1221,6 +1305,40 @@ func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
 	}
 	if agent.lastLaunch.Prompt != "kick off" {
 		t.Fatalf("fallback launch prompt = %q, want persisted task prompt", agent.lastLaunch.Prompt)
+	}
+}
+
+func TestRestore_FallbackLaunchDeliversPromptAfterStartWhenAgentRequestsIt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	msg := &fakeMessenger{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: afterStartAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastLaunch.Prompt != "" {
+		t.Fatalf("fallback launch prompt = %q, want empty for after-start delivery", agent.lastLaunch.Prompt)
+	}
+	if len(msg.msgs) != 1 || msg.msgs[0] != "continue the task" {
+		t.Fatalf("delivered prompts = %#v, want saved prompt", msg.msgs)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
 	}
 }
 
