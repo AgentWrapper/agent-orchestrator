@@ -91,6 +91,20 @@ type TrackerIntakeConfig struct {
 	// Assignee narrows eligible issues to one assignee. Provider-specific values
 	// such as "*" are passed through unchanged.
 	Assignee string `json:"assignee,omitempty"`
+	// Labels, when non-empty, narrows eligible issues to those carrying at least
+	// one of the listed labels (case-insensitive). An empty list imposes no
+	// label requirement. Applied client-side alongside the assignee rule.
+	Labels []string `json:"labels,omitempty"`
+	// ExcludeLabels rejects any issue carrying at least one of the listed labels
+	// (case-insensitive), even if it satisfies the assignee and Labels rules.
+	// This expresses opt-outs like "agent:noauto". Exclusion wins over inclusion.
+	ExcludeLabels []string `json:"excludeLabels,omitempty"`
+	// MaxConcurrent caps the number of live intake-spawned worker sessions the
+	// loop will keep running for this project at once. Zero means no cap. When at
+	// the cap the loop defers remaining eligible issues to a later tick (they are
+	// never permanently dropped) so a bulk assignment burst cannot spawn an
+	// unbounded number of workers.
+	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 }
 
 // WithDefaults fills the provider only when intake is enabled. Disabled intake
@@ -119,6 +133,25 @@ func (c TrackerIntakeConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.Assignee) == "" {
 		return fmt.Errorf("trackerIntake: assignee is required when enabled")
+	}
+	for i, label := range c.Labels {
+		if err := validateNoWhitespaceField(fmt.Sprintf("trackerIntake.labels[%d]", i), label); err != nil {
+			return err
+		}
+		if strings.TrimSpace(label) == "" {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not be empty", i)
+		}
+	}
+	for i, label := range c.ExcludeLabels {
+		if err := validateNoWhitespaceField(fmt.Sprintf("trackerIntake.excludeLabels[%d]", i), label); err != nil {
+			return err
+		}
+		if strings.TrimSpace(label) == "" {
+			return fmt.Errorf("trackerIntake.excludeLabels[%d]: must not be empty", i)
+		}
+	}
+	if c.MaxConcurrent < 0 {
+		return fmt.Errorf("trackerIntake.maxConcurrent: must not be negative")
 	}
 	return nil
 }

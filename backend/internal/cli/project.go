@@ -98,10 +98,13 @@ type roleOverride struct {
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
 type trackerIntakeConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	Assignee string `json:"assignee,omitempty"`
+	Enabled       bool     `json:"enabled,omitempty"`
+	Provider      string   `json:"provider,omitempty"`
+	Repo          string   `json:"repo,omitempty"`
+	Assignee      string   `json:"assignee,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	ExcludeLabels []string `json:"excludeLabels,omitempty"`
+	MaxConcurrent int      `json:"maxConcurrent,omitempty"`
 }
 
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
@@ -126,21 +129,24 @@ type setConfigRequest struct {
 }
 
 type projectSetConfigOptions struct {
-	defaultBranch     string
-	sessionPrefix     string
-	model             string
-	permission        string
-	workerAgent       string
-	orchestratorAgent string
-	env               []string
-	symlink           []string
-	postCreate        []string
-	trackerIntake     bool
-	trackerRepo       string
-	trackerAssignee   string
-	configJSON        string
-	clear             bool
-	json              bool
+	defaultBranch        string
+	sessionPrefix        string
+	model                string
+	permission           string
+	workerAgent          string
+	orchestratorAgent    string
+	env                  []string
+	symlink              []string
+	postCreate           []string
+	trackerIntake        bool
+	trackerRepo          string
+	trackerAssignee      string
+	trackerLabels        []string
+	trackerExcludeLabels []string
+	trackerMaxConcurrent int
+	configJSON           string
+	clear                bool
+	json                 bool
 }
 
 type projectListResult struct {
@@ -326,6 +332,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
 	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
 	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.StringArrayVar(&opts.trackerLabels, "tracker-label", nil, "Only intake issues carrying this label (repeatable; any-match)")
+	f.StringArrayVar(&opts.trackerExcludeLabels, "tracker-exclude-label", nil, "Never intake issues carrying this label (repeatable; wins over --tracker-label)")
+	f.IntVar(&opts.trackerMaxConcurrent, "tracker-max-concurrent", 0, "Cap live intake-spawned workers per project (0 = no cap)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -362,10 +371,13 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		Worker:        roleOverride{Agent: opts.workerAgent},
 		Orchestrator:  roleOverride{Agent: opts.orchestratorAgent},
 		TrackerIntake: trackerIntakeConfig{
-			Enabled:  opts.trackerIntake,
-			Provider: trackerProviderForFlags(opts),
-			Repo:     opts.trackerRepo,
-			Assignee: opts.trackerAssignee,
+			Enabled:       opts.trackerIntake,
+			Provider:      trackerProviderForFlags(opts),
+			Repo:          opts.trackerRepo,
+			Assignee:      opts.trackerAssignee,
+			Labels:        opts.trackerLabels,
+			ExcludeLabels: opts.trackerExcludeLabels,
+			MaxConcurrent: opts.trackerMaxConcurrent,
 		},
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
@@ -375,7 +387,8 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 }
 
 func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
+	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" ||
+		len(opts.trackerLabels) > 0 || len(opts.trackerExcludeLabels) > 0 || opts.trackerMaxConcurrent != 0 {
 		return "github"
 	}
 	return ""
