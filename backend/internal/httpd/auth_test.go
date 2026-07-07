@@ -27,6 +27,15 @@ func req(auth string) *http.Request {
 	return r
 }
 
+func reqFrom(remoteAddr, auth string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	r.RemoteAddr = remoteAddr
+	if auth != "" {
+		r.Header.Set("Authorization", auth)
+	}
+	return r
+}
+
 func TestAuthRejectsMissingAndWrong(t *testing.T) {
 	h, _ := newAuthUnderTest("secret12", time.Now)
 	for _, tc := range []struct{ name, auth string; want int }{
@@ -57,5 +66,42 @@ func TestAuthLockoutAfterFive(t *testing.T) {
 	h.ServeHTTP(w, req("Bearer secret12"))
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("locked attempt: got %d want 429", w.Code)
+	}
+}
+
+func TestAuthLockoutIsPerSource(t *testing.T) {
+	now := time.Now()
+	h, _ := newAuthUnderTest("secret12", func() time.Time { return now })
+
+	// Source A: lock with 5 failed attempts from 192.168.1.50
+	sourceA := "192.168.1.50:5555"
+	for i := 0; i < 5; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, reqFrom(sourceA, "Bearer wrong"))
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("source A attempt %d: got %d want 401", i, w.Code)
+		}
+	}
+	// Verify source A is now locked
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqFrom(sourceA, "Bearer secret12"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("source A locked check: got %d want 429", w.Code)
+	}
+
+	// Source B: should NOT be locked despite source A being locked
+	sourceB := "192.168.1.99:6666"
+	// B with correct password should be 200, not 429
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqFrom(sourceB, "Bearer secret12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("source B with correct password: got %d want 200", w.Code)
+	}
+
+	// B with wrong password should be 401, not 429
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqFrom(sourceB, "Bearer wrong"))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("source B with wrong password: got %d want 401", w.Code)
 	}
 }
