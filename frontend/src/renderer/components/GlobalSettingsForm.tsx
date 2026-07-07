@@ -1,10 +1,12 @@
+import { ConnectMobileButton } from "./ConnectMobileButton";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { MigrationSection } from "./MigrationSection";
 import { UpdatesSection } from "./UpdatesSection";
 
 // App-wide settings, shown from the sidebar when no project is selected. Each
-// section is a self-contained card: Updates (auto-update channel, #2207) and
-// Migration (re-run the legacy-AO import, #2205).
+// section is a self-contained card: Updates (auto-update channel, #2207),
+// Migration (re-run the legacy-AO import, #2205), and Connect Mobile (pair the
+// mobile app over the LAN bridge).
 export function GlobalSettingsForm() {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
@@ -13,6 +15,7 @@ export function GlobalSettingsForm() {
 				<div className="mx-auto flex max-w-2xl flex-col gap-4">
 					<UpdatesSection />
 					<MigrationSection />
+					<ConnectMobileButton />
 				</div>
 			</div>
 		</div>
