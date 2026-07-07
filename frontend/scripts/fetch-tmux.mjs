@@ -14,72 +14,146 @@ import { fileURLToPath } from "node:url";
 
 const TMUX_DIST_TAG = "tmux-artifacts-v3.5a-1";
 const TMUX_DIST_REPO = "AgentWrapper/agent-orchestrator";
-// sha256 of the built binaries, from the release's checksums.txt. Bumping
-// TMUX_DIST_TAG requires refreshing every hash here.
+// Optional sha256 pins for in-repo provenance. After dispatching
+// tmux-artifacts, copy each asset hash from the release's checksums.txt
+// here; when set, the pin must match checksums.txt or packaging fails.
+// Bumping TMUX_DIST_TAG requires refreshing every pin.
 const TMUX_DIST = {
 	"darwin-arm64": {
 		asset: "tmux-darwin-arm64",
-		sha256: "0000000000000000000000000000000000000000000000000000000000000000",
 	},
 	"darwin-x64": {
 		asset: "tmux-darwin-x64",
-		sha256: "0000000000000000000000000000000000000000000000000000000000000000",
 	},
 	"linux-x64": {
 		asset: "tmux-linux-x64",
-		sha256: "0000000000000000000000000000000000000000000000000000000000000000",
 	},
 };
+
+export const PLACEHOLDER_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/** @param {string} text */
+export function parseChecksumsFile(text) {
+	/** @type {Map<string, string>} */
+	const map = new Map();
+	for (const line of text.trim().split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		const match = trimmed.match(/^([a-f0-9]{64})\s+(.+)$/);
+		if (!match) continue;
+		map.set(match[2], match[1]);
+	}
+	return map;
+}
+
+/** @param {string | undefined} hash */
+export function isPlaceholderSha256(hash) {
+	return !hash || hash === PLACEHOLDER_SHA256;
+}
+
+/**
+ * @param {string | undefined} pinnedSha256
+ * @param {Map<string, string>} checksums
+ * @param {string} asset
+ */
+export function resolveExpectedHash(pinnedSha256, checksums, asset) {
+	const fromRelease = checksums.get(asset);
+	if (!fromRelease) {
+		throw new Error(`asset ${asset} not found in release checksums.txt`);
+	}
+	if (!isPlaceholderSha256(pinnedSha256)) {
+		if (pinnedSha256 !== fromRelease) {
+			throw new Error(`pinned sha256 for ${asset} does not match release checksums.txt`);
+		}
+		return pinnedSha256;
+	}
+	return fromRelease;
+}
+
+/** @param {string} tag @param {string} repo */
+export function releaseAssetUrl(tag, repo, asset) {
+	return `https://github.com/${repo}/releases/download/${tag}/${asset}`;
+}
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(scriptsDir, "..");
 const outDir = join(frontendRoot, "tmux-dist");
 const outPath = join(outDir, "tmux");
 
-if (process.platform === "win32") {
-	console.log("fetch-tmux: Windows uses the built-in ConPTY runtime; nothing to bundle.");
-	process.exit(0);
-}
-
-const key = `${process.platform}-${process.arch}`;
-const dist = TMUX_DIST[key];
-if (!dist) {
-	// e.g. linux-arm64: not a published desktop target yet. The app still
-	// works wherever a system tmux exists.
-	console.warn(`fetch-tmux: no pinned tmux artifact for ${key}; skipping bundle.`);
-	process.exit(0);
-}
-
-if (process.env.AO_SKIP_TMUX_FETCH === "1") {
-	console.warn("fetch-tmux: AO_SKIP_TMUX_FETCH=1, skipping; the package will have no bundled tmux fallback.");
-	process.exit(0);
-}
-
 function sha256(buf) {
 	return createHash("sha256").update(buf).digest("hex");
 }
 
-if (existsSync(outPath) && sha256(readFileSync(outPath)) === dist.sha256) {
-	console.log(`fetch-tmux: cached ${key} binary matches pin; skipping download.`);
-	process.exit(0);
+async function main() {
+	if (process.platform === "win32") {
+		console.log("fetch-tmux: Windows uses the built-in ConPTY runtime; nothing to bundle.");
+		return;
+	}
+
+	const key = `${process.platform}-${process.arch}`;
+	const dist = TMUX_DIST[key];
+	if (!dist) {
+		// e.g. linux-arm64: not a published desktop target yet. The app still
+		// works wherever a system tmux exists.
+		console.warn(`fetch-tmux: no pinned tmux artifact for ${key}; skipping bundle.`);
+		return;
+	}
+
+	if (process.env.AO_SKIP_TMUX_FETCH === "1") {
+		console.warn("fetch-tmux: AO_SKIP_TMUX_FETCH=1, skipping; the package will have no bundled tmux fallback.");
+		return;
+	}
+
+	const checksumsUrl = releaseAssetUrl(TMUX_DIST_TAG, TMUX_DIST_REPO, "checksums.txt");
+	console.log(`fetch-tmux: fetching ${checksumsUrl}`);
+	const checksumsRes = await fetch(checksumsUrl, { redirect: "follow" });
+	if (!checksumsRes.ok) {
+		console.error(`fetch-tmux: checksums.txt download failed: HTTP ${checksumsRes.status} ${checksumsRes.statusText}`);
+		console.error(`fetch-tmux: dispatch .github/workflows/tmux-artifacts.yml to publish ${TMUX_DIST_TAG}, or set AO_SKIP_TMUX_FETCH=1 for dev packaging.`);
+		process.exit(1);
+	}
+
+	let expectedHash;
+	try {
+		expectedHash = resolveExpectedHash(dist.sha256, parseChecksumsFile(await checksumsRes.text()), dist.asset);
+	} catch (err) {
+		console.error(`fetch-tmux: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+
+	if (isPlaceholderSha256(dist.sha256)) {
+		console.warn(
+			`fetch-tmux: no sha256 pin for ${dist.asset}; using release checksums.txt (pin it in fetch-tmux.mjs after verifying provenance).`,
+		);
+	}
+
+	if (existsSync(outPath) && sha256(readFileSync(outPath)) === expectedHash) {
+		console.log(`fetch-tmux: cached ${key} binary matches pin; skipping download.`);
+		return;
+	}
+
+	const url = releaseAssetUrl(TMUX_DIST_TAG, TMUX_DIST_REPO, dist.asset);
+	console.log(`fetch-tmux: downloading ${url}`);
+	const res = await fetch(url, { redirect: "follow" });
+	if (!res.ok) {
+		console.error(`fetch-tmux: download failed: HTTP ${res.status} ${res.statusText}`);
+		console.error("fetch-tmux: set AO_SKIP_TMUX_FETCH=1 to package without the bundled fallback (dev only).");
+		process.exit(1);
+	}
+	const body = Buffer.from(await res.arrayBuffer());
+	const got = sha256(body);
+	if (got !== expectedHash) {
+		console.error(`fetch-tmux: checksum mismatch for ${dist.asset}: got ${got}, want ${expectedHash}`);
+		process.exit(1);
+	}
+
+	mkdirSync(outDir, { recursive: true });
+	writeFileSync(outPath, body);
+	chmodSync(outPath, 0o755);
+	console.log(`fetch-tmux: wrote ${outPath} (${body.length} bytes, sha256 verified).`);
 }
 
-const url = `https://github.com/${TMUX_DIST_REPO}/releases/download/${TMUX_DIST_TAG}/${dist.asset}`;
-console.log(`fetch-tmux: downloading ${url}`);
-const res = await fetch(url, { redirect: "follow" });
-if (!res.ok) {
-	console.error(`fetch-tmux: download failed: HTTP ${res.status} ${res.statusText}`);
-	console.error("fetch-tmux: set AO_SKIP_TMUX_FETCH=1 to package without the bundled fallback (dev only).");
-	process.exit(1);
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+	await main();
 }
-const body = Buffer.from(await res.arrayBuffer());
-const got = sha256(body);
-if (got !== dist.sha256) {
-	console.error(`fetch-tmux: checksum mismatch for ${dist.asset}: got ${got}, want ${dist.sha256}`);
-	process.exit(1);
-}
-
-mkdirSync(outDir, { recursive: true });
-writeFileSync(outPath, body);
-chmodSync(outPath, 0o755);
-console.log(`fetch-tmux: wrote ${outPath} (${body.length} bytes, sha256 verified).`);
