@@ -37,6 +37,14 @@ func NewLANManager(handler http.Handler, state *authState, defaultPort int, log 
 	}
 }
 
+// NewMobileLAN constructs a LANManager with its own private authState. Callers
+// outside this package (the daemon) cannot construct an authState directly
+// since it is unexported; this gives them a LANManager that owns one, and the
+// daemon rotates the connection password exclusively via SetPasswordHash.
+func NewMobileLAN(handler http.Handler, defaultPort int, log *slog.Logger) *LANManager {
+	return NewLANManager(handler, &authState{}, defaultPort, log)
+}
+
 // SetPasswordHash stores the current connection password hash on the shared
 // authState so the auth middleware (already wrapping handler) validates
 // against it. Satisfies controllers.LANController.

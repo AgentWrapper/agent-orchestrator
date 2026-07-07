@@ -14,6 +14,11 @@ import (
 	"path/filepath"
 )
 
+// DefaultPort is the LAN listener's default port for the Connect Mobile
+// bridge. Distinct from config.DefaultPort (the loopback API port) since the
+// two listeners can run concurrently.
+const DefaultPort = 3011
+
 type State struct {
 	Enabled      bool   `json:"enabled"`
 	PasswordHash string `json:"passwordHash"`
