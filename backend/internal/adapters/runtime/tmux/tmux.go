@@ -136,6 +136,15 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set mouse %s: %w", id, err)
 	}
 
+	// Pin geometry policy for ao-owned sessions instead of inheriting the host
+	// tmux default. Browser and Electron attaches resize their PTY before tmux
+	// starts; "latest" ensures the most recent live client, not the smallest
+	// stale/mirrored client, drives the shared window size.
+	if _, err := r.run(ctx, setWindowSizeLatestArgs(id)...); err != nil {
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set window size %s: %w", id, err)
+	}
+
 	handle := ports.RuntimeHandle{ID: id}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {

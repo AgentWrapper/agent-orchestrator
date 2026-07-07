@@ -81,6 +81,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := setMouseOnArgs("sess-1"), []string{"set-option", "-t", "sess-1", "mouse", "on"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setMouseOnArgs = %#v, want %#v", got, want)
 	}
+	if got, want := setWindowSizeLatestArgs("sess-1"), []string{"set-window-option", "-t", "sess-1", "window-size", "latest"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("setWindowSizeLatestArgs = %#v, want %#v", got, want)
+	}
 	// kill-session and has-session use exact-match prefix =.
 	if got, want := killSessionArgs("sess-1"), []string{"kill-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("killSessionArgs = %#v, want %#v", got, want)
@@ -208,7 +211,7 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 
 	// Call 3: window-size latest so the most recent browser/Electron attach,
 	// not the smallest stale client, drives the shared tmux window geometry.
-	if got, want := fr.calls[3].args, []string{"set-window-option", "-t", "sess-1", "window-size", "latest"}; !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[3].args, setWindowSizeLatestArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[3] = %#v, want %#v", got, want)
 	}
 

@@ -2,7 +2,10 @@ package tmux
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +123,51 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 	if prefixAlive {
 		_ = r.Destroy(ctx, h)
 		t.Fatal("prefix handle reported alive; tmux session matching is not exact")
+	}
+}
+
+func TestRuntimeIntegrationPinsWindowSizeLatest(t *testing.T) {
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	tmp := t.TempDir()
+	confPath := filepath.Join(tmp, "tmux.conf")
+	if err := os.WriteFile(confPath, []byte("set-window-option -g window-size smallest\n"), 0o644); err != nil {
+		t.Fatalf("write tmux config: %v", err)
+	}
+	socket := "ao65-" + strings.ReplaceAll(t.Name(), "/", "-")
+	wrapperPath := filepath.Join(tmp, "tmux-wrapper")
+	wrapper := fmt.Sprintf("#!/bin/sh\nexec %s -L %s -f %s \"$@\"\n", tmuxPath, socket, confPath)
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
+		t.Fatalf("write tmux wrapper: %v", err)
+	}
+
+	ctx := context.Background()
+	id := strings.ReplaceAll(t.Name(), "/", "_")
+	r := New(Options{Binary: wrapperPath, Timeout: 5 * time.Second})
+
+	t.Cleanup(func() {
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		_ = exec.Command(tmuxPath, "-L", socket, "-f", confPath, "kill-server").Run()
+	})
+
+	h, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: tmp,
+		Argv:          []string{"sh", "-c", "echo ready"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	out, err := exec.Command(tmuxPath, "-L", socket, "-f", confPath, "show-options", "-Awv", "-t", h.ID, "window-size").CombinedOutput()
+	if err != nil {
+		t.Fatalf("show window-size: %v: %s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "latest" {
+		t.Fatalf("window-size = %q, want latest", got)
 	}
 }
 
