@@ -39,13 +39,13 @@ function run(env) {
 	});
 }
 
-describe("install-attention.sh (acceptance #4 — config in nickify/deploy layer)", () => {
+describe("install-attention.sh (reply listener wiring; outbound notifier retired)", () => {
 	it("is valid bash", async () => {
 		const r = await run({ AO_ATTENTION_DRY_RUN: "1" });
 		assert.equal(r.code, 0, r.err);
 	});
 
-	it("installs both attention units into the units dir", async () => {
+	it("installs the reply unit and does not install the retired outbound notifier", async () => {
 		const units = await tmp("ao-units-");
 		const home = await tmp("ao-home-");
 		const envFile = path.join(home, ".env");
@@ -60,10 +60,14 @@ describe("install-attention.sh (acceptance #4 — config in nickify/deploy layer
 		}).catch(() => ({ code: 1, out: "", err: "spawn" }));
 		// The cp step is real; the systemctl step may warn but the units must land.
 		const listed = await readdir(units).catch(() => []);
-		assert.ok(listed.includes("ao-attention-notifier.service"), r.err || r.out);
-		assert.ok(listed.includes("ao-attention-reply.service"));
-		const body = await readFile(path.join(units, "ao-attention-notifier.service"), "utf8");
-		assert.match(body, /attention-notifier\.mjs/);
+		assert.ok(listed.includes("ao-attention-reply.service"), r.err || r.out);
+		assert.equal(
+			listed.includes("ao-attention-notifier.service"),
+			false,
+			"retired outbound notifier must not be installed",
+		);
+		const body = await readFile(path.join(units, "ao-attention-reply.service"), "utf8");
+		assert.match(body, /attention-reply-listener\.mjs/);
 	});
 
 	it("warns (does not fail) when required config keys are missing", async () => {

@@ -51,9 +51,10 @@ describe("ao self-deploy script", () => {
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
 		assert.match(result.stdout, /ops\/ changed; restarting ao-slack-notifier\.service/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-slack-notifier\.service/);
-		assert.match(result.stdout, /installing \+ restarting attention units/);
+		assert.match(result.stdout, /installing \+ restarting attention reply unit/);
+		assert.match(result.stdout, /outbound attention notifier is retired/);
 		assert.match(result.stdout, /DRY-RUN: cd .* && bash ops\/install-attention\.sh/);
-		assert.match(result.stdout, /DRY-RUN: systemctl --user is-active --quiet ao-attention-notifier\.service/);
+		assert.doesNotMatch(result.stdout, /is-active --quiet ao-attention-notifier\.service/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user is-active --quiet ao-attention-reply\.service/);
 		assert.match(result.stdout, /DRY-RUN: ao status/);
 		assert.match(result.stdout, /DRY-RUN: ao doctor/);
@@ -78,6 +79,10 @@ describe("ao self-deploy script", () => {
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(result.stdout, /frontend\/ unchanged; leaving ao-web\.service running/);
 		assert.match(result.stdout, /ops\/ unchanged; leaving ao-slack-notifier\.service running/);
+		assert.match(
+			result.stdout,
+			/leaving ao-attention-reply\.service running; outbound attention notifier remains retired/,
+		);
 		assert.doesNotMatch(result.stdout, /restart ao-web\.service/);
 		assert.doesNotMatch(result.stdout, /restart ao-slack-notifier\.service/);
 	});

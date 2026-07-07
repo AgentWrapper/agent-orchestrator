@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# install-attention.sh — nickify/deploy-layer wiring for the two-way attention
-# system (issue #82). Idempotently installs the systemd user units for the
-# outbound notifier and the inbound reply listener, verifies the required Slack
-# config keys are present, and (re)starts the services.
+# install-attention.sh — nickify/deploy-layer wiring for the inbound half of
+# the two-way attention system (issue #82). Idempotently installs the Slack
+# reply listener, verifies the required Slack config keys are present, and
+# (re)starts the listener.
 #
 # This is the "config lives in nickify/deploy, not a hand-patched unit + .env"
-# half of acceptance #4: a fresh host runs this once and the attention system
-# is wired — SLACK_MEMBER_ID, SLACK_SIGNING_SECRET, and a Slack sink are read
-# from the env layer, not baked into a bespoke unit.
+# half of acceptance #4: a fresh host runs this once and the reply path is
+# wired — SLACK_MEMBER_ID, SLACK_SIGNING_SECRET, and a Slack sink are read from
+# the env layer, not baked into a bespoke unit.
 #
 # Vanilla rule: this only manages ops-layer units + env; it never touches ao.
 
@@ -36,7 +36,7 @@ run_soft() {
     return 0
   fi
   if ! "$@"; then
-    log "WARN: '$*' failed (no user systemd bus?); unit files are installed — once a user bus is available, run: systemctl --user daemon-reload && systemctl --user enable --now ao-attention-notifier.service ao-attention-reply.service"
+    log "WARN: '$*' failed (no user systemd bus?); unit files are installed — once a user bus is available, run: systemctl --user daemon-reload && systemctl --user enable --now ao-attention-reply.service"
     return 0
   fi
 }
@@ -64,29 +64,24 @@ if ((${#missing[@]})); then
   log "The services will start and self-report the gap rather than silently no-op."
 fi
 
-# 2. Install the units (idempotent copy).
+# 2. Install the inbound reply unit (idempotent copy). The outbound #82
+# session-poll notifier is intentionally retired here: #87 makes
+# ao-slack-notifier.service the single outbound notifier, now backed by
+# /api/v1/notifications, so running both would duplicate pages.
 run mkdir -p "${units_dir}"
-for unit in ao-attention-notifier.service ao-attention-reply.service; do
-  log "Installing ${unit} -> ${units_dir}/${unit}"
-  run cp "${repo_root}/ops/${unit}" "${units_dir}/${unit}"
-done
+unit="ao-attention-reply.service"
+log "Installing ${unit} -> ${units_dir}/${unit}"
+run cp "${repo_root}/ops/${unit}" "${units_dir}/${unit}"
 
-# 3. Reload + (re)start.
+# 3. Reload + (re)start the reply listener, and best-effort disable any stale
+# outbound attention notifier unit left from a previous #82 install.
 run_soft systemctl --user daemon-reload
-
-# Division of responsibility (not supersession): the two-way attention notifier
-# owns session-derived attention (needs_input/blocked/no_signal); the legacy
-# ao-slack-notifier keeps owning PR/merge EVENTS (ready_to_merge incl. parked
-# sensitive merges, pr_merged, park notes) that a session poll cannot see. The
-# legacy notifier no longer mentions needs_input, so the two run side by side
-# without double-paging. We therefore leave ao-slack-notifier.service running.
+run_soft systemctl --user disable --now ao-attention-notifier.service
 
 if [[ "${do_start}" == "1" ]]; then
-  for unit in ao-attention-notifier.service ao-attention-reply.service; do
-    run_soft systemctl --user enable "${unit}"
-    run_soft systemctl --user restart "${unit}"
-  done
-  log "Attention services installed and (re)started."
+  run_soft systemctl --user enable "${unit}"
+  run_soft systemctl --user restart "${unit}"
+  log "Attention reply service installed and (re)started; outbound attention notifier retired."
 else
-  log "Attention units installed (start skipped: AO_ATTENTION_START=0)."
+  log "Attention reply unit installed (start skipped: AO_ATTENTION_START=0); outbound attention notifier retired."
 fi

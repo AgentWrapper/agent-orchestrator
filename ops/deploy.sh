@@ -28,7 +28,6 @@ state_file="${AO_DEPLOY_STATE_FILE:-${state_dir}/agent-orchestrator.last-deploye
 ao_unit="${AO_DEPLOY_AO_UNIT:-ao.service}"
 web_unit="${AO_DEPLOY_WEB_UNIT:-ao-web.service}"
 notifier_unit="${AO_DEPLOY_NOTIFIER_UNIT:-ao-slack-notifier.service}"
-attention_notifier_unit="${AO_DEPLOY_ATTENTION_NOTIFIER_UNIT:-ao-attention-notifier.service}"
 attention_reply_unit="${AO_DEPLOY_ATTENTION_REPLY_UNIT:-ao-attention-reply.service}"
 wait_seconds="${AO_DEPLOY_WAIT_SECONDS:-30}"
 ao_port="${AO_PORT:-3001}"
@@ -351,20 +350,20 @@ deploy() {
     restart_unit "${notifier_unit}"
     verify_unit_active "${notifier_unit}" "Slack notifier"
 
-    # Two-way attention system (issue #82): install/refresh its units from the
-    # deploy/nickify layer, then (re)start them. Config (SLACK_MEMBER_ID,
-    # SLACK_SIGNING_SECRET, sink) lives in the env layer, not a bespoke unit.
-    log "ops/ changed; installing + restarting attention units (${attention_notifier_unit}, ${attention_reply_unit})."
+    # Reconcile #82/#87: ao-slack-notifier.service is the single outbound
+    # notifier. It now reads the durable notifications API, so the session-poll
+    # ao-attention-notifier.service must not also run and duplicate pages. Keep
+    # only the inbound reply listener wiring from the two-way attention system.
+    log "ops/ changed; installing + restarting attention reply unit (${attention_reply_unit}); outbound attention notifier is retired."
     run_in "${repo_root}" bash ops/install-attention.sh
 
     # install-attention.sh is best-effort (run_soft) so it can run on hosts
     # without a user bus; in a real deploy we must not finish green with the
-    # attention services down, so verify both are active here.
-    verify_unit_active "${attention_notifier_unit}" "attention notifier"
+    # reply listener down.
     verify_unit_active "${attention_reply_unit}" "attention reply listener"
   else
     log "ops/ unchanged; leaving ${notifier_unit} running."
-    log "ops/ unchanged; leaving attention units running."
+    log "ops/ unchanged; leaving ${attention_reply_unit} running; outbound attention notifier remains retired."
   fi
 
   if [[ "${dry_run}" != "1" ]]; then
