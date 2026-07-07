@@ -154,6 +154,46 @@ func TestPreview_MissingSessionIDIsUsageError(t *testing.T) {
 	}
 }
 
+func TestPreview_TooManyArgsIsUsageError(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "http://a", "http://b")
+	if err == nil {
+		t.Fatal("expected too-many-args to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+	if capture.called {
+		t.Fatal("daemon should not be contacted on arg-count misuse")
+	}
+}
+
+func TestPreviewClear_TooManyArgsIsUsageError(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "clear", "extra")
+	if err == nil {
+		t.Fatal("expected too-many-args to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+	if capture.called {
+		t.Fatal("daemon should not be contacted on arg-count misuse")
+	}
+}
+
 func TestPreview_HelpIncludesExamples(t *testing.T) {
 	out, _, err := executeCLI(t, Deps{}, "preview", "--help")
 	if err != nil {
