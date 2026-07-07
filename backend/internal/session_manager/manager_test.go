@@ -1180,6 +1180,38 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 }
 
+// TestCleanup_SkipsWorkspaceStillReferencedByLiveSession: a terminated
+// session's workspace must NOT be reclaimed while a live (non-terminated)
+// session references the same path. Persistent/shared worktrees (the
+// orchestrator's) are reused across respawn, so a terminated predecessor and
+// a live successor can share one path — reclaiming it deletes the live
+// session's cwd out from under it.
+func TestCleanup_SkipsWorkspaceStillReferencedByLiveSession(t *testing.T) {
+	m, st, _, ws := newManager()
+	// Terminated predecessor and live successor share one persistent worktree.
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/shared"})
+	live := mkLive("mer-2")
+	live.Metadata.WorkspacePath = "/ws/shared"
+	st.sessions["mer-2"] = live
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none (path still in use by live session)", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "workspace in use by a live session" {
+		t.Fatalf("reason = %q", res.Skipped[0].Reason)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("destroyed = %d, want 0 — shared live workspace must not be torn down", ws.destroyed)
+	}
+}
+
 // TestCleanup_ReportsSkippedWorkspaces: a refused teardown must be visible in
 // the result with a reason — a silent skip leaves users staring at
 // "Would clean N … 0 sessions cleaned" with no explanation.
