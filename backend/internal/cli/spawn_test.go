@@ -252,6 +252,44 @@ func TestSpawnWithWorkerMixSendsEmptyHarness(t *testing.T) {
 	}
 }
 
+func TestSpawnExplicitAgentOverridesWorkerMix(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"claude-code"},"workerMix":[{"agent":"codex","weight":55},{"agent":"codex-fugu","weight":27},{"agent":"claude-code","weight":18}]}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("droid"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-17","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+	t.Setenv("AO_PROJECT_ID", "demo")
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "droid", "--model", "haiku", "--prompt", "Deploy")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.ProjectID != "demo" || req.Harness != "droid" || req.Model != "haiku" {
+		t.Fatalf("spawn request = %#v, want explicit agent/model to override worker mix", req)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
 func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 	cfg := setConfigEnv(t)
 	t.Setenv("AO_PROJECT_ID", "")

@@ -84,14 +84,14 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			opts.project = project.ID
 
-			harness, err := resolveSpawnHarness(opts.harness, project)
+			harness, err := resolveSpawnHarness(opts.harness, cmd.Flags().Changed("harness"), project)
 			if err != nil {
 				return err
 			}
 			opts.harness = harness
 
 			name := resolveSpawnDisplayName(opts.name, opts.prompt)
-			if !opts.skipAgentCheck {
+			if !opts.skipAgentCheck && opts.harness != "" {
 				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
 					return err
 				}
@@ -160,7 +160,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: daemon workerMix selection, else project worker.agent; required if neither is configured)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.model, "model", "", "Model override for this session (default: project/role agentConfig.model or agent default)")
@@ -298,16 +298,27 @@ func pathContains(root, child string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func resolveSpawnHarness(explicit string, project projectDetails) (string, error) {
-	if harness := strings.TrimSpace(explicit); harness != "" {
+func resolveSpawnHarness(explicit string, explicitSet bool, project projectDetails) (string, error) {
+	if explicitSet {
+		harness := strings.TrimSpace(explicit)
+		if harness == "" {
+			return "", usageError{fmt.Errorf("agent could not be resolved; pass a non-empty --agent")}
+		}
 		return harness, nil
+	}
+	if projectHasWorkerMix(project) {
+		return "", nil
 	}
 	if project.Config != nil {
 		if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
 			return harness, nil
 		}
 	}
-	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>`", project.ID)}
+	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>` or workerMix", project.ID)}
+}
+
+func projectHasWorkerMix(project projectDetails) bool {
+	return project.Config != nil && len(project.Config.WorkerMix) > 0
 }
 
 func resolveSpawnDisplayName(explicit, prompt string) string {
