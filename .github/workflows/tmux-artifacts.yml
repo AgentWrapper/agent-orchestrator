@@ -1,0 +1,209 @@
+# Builds pinned static tmux binaries for the desktop app's bundled fallback
+# (issue #2443) and publishes them as a GitHub release the packaging step
+# (frontend/scripts/fetch-tmux.mjs) downloads at build time.
+#
+# Run manually and rarely: only when bumping the pinned tmux/libevent/ncurses
+# versions. After a run, update TMUX_DIST_TAG and the sha256 map in
+# fetch-tmux.mjs from the checksums.txt asset (provenance is documented in
+# frontend/docs/desktop-release.md).
+#
+# Targets mirror the desktop release matrix (native builds, no cross-compile,
+# same convention as frontend-release.yml): macOS arm64 + x64, Linux x64.
+# Linux arm64 is deferred until the app publishes that target.
+name: tmux-artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      tmux_version:
+        description: "tmux version (release tag on tmux/tmux)"
+        default: "3.5a"
+        required: true
+      libevent_version:
+        description: "libevent version (release-<v> tag on libevent/libevent)"
+        default: "2.1.12-stable"
+        required: true
+      ncurses_version:
+        description: "ncurses version (invisible-island.net archive)"
+        default: "6.5"
+        required: true
+      rev:
+        description: "artifact revision suffix (bump to rebuild the same versions)"
+        default: "1"
+        required: true
+
+# Pinned sha256 of the SOURCE tarballs. Bumping a version input requires
+# updating the matching hash here, keeping provenance auditable in-repo.
+env:
+  TMUX_SHA256: "16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951"
+  LIBEVENT_SHA256: "92e6de1be9ec176428fd2367677e61ceffc2ee1cb119035037a27d346b0403bb"
+  NCURSES_SHA256: "136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6"
+
+jobs:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Fetch and verify sources
+        run: |
+          set -euo pipefail
+          curl -sSLo tmux.tar.gz "https://github.com/tmux/tmux/releases/download/${{ inputs.tmux_version }}/tmux-${{ inputs.tmux_version }}.tar.gz"
+          curl -sSLo libevent.tar.gz "https://github.com/libevent/libevent/releases/download/release-${{ inputs.libevent_version }}/libevent-${{ inputs.libevent_version }}.tar.gz"
+          curl -sSLo ncurses.tar.gz "https://invisible-island.net/archives/ncurses/ncurses-${{ inputs.ncurses_version }}.tar.gz"
+          echo "$TMUX_SHA256  tmux.tar.gz" | shasum -a 256 -c -
+          echo "$LIBEVENT_SHA256  libevent.tar.gz" | shasum -a 256 -c -
+          echo "$NCURSES_SHA256  ncurses.tar.gz" | shasum -a 256 -c -
+          tar xzf libevent.tar.gz && tar xzf ncurses.tar.gz && tar xzf tmux.tar.gz
+
+      # Static libevent + ncurses archives; only /usr/lib/libSystem stays
+      # dynamic (fully static binaries are not possible on macOS).
+      - name: Build static deps
+        run: |
+          set -euo pipefail
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          DEPS="$PWD/deps"
+          cd "libevent-${{ inputs.libevent_version }}"
+          ./configure --prefix="$DEPS" --enable-static --disable-shared --disable-openssl --disable-libevent-regress --disable-samples
+          make -j"$(sysctl -n hw.ncpu)" && make install
+          cd "../ncurses-${{ inputs.ncurses_version }}"
+          ./configure --prefix="$DEPS" --without-shared --without-debug --without-ada --without-manpages --without-progs --without-tests --enable-termcap \
+            --with-terminfo-dirs="/usr/share/terminfo" \
+            --with-fallbacks="xterm,xterm-256color,screen,screen-256color,tmux,tmux-256color"
+          make -j"$(sysctl -n hw.ncpu)" && make install
+
+      - name: Build tmux
+        run: |
+          set -euo pipefail
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          DEPS="$PWD/deps"
+          cd "tmux-${{ inputs.tmux_version }}"
+          ./configure --prefix="$PWD/out" \
+            CPPFLAGS="-I$DEPS/include -I$DEPS/include/ncurses" \
+            LDFLAGS="-L$DEPS/lib" \
+            LIBEVENT_CFLAGS="-I$DEPS/include" LIBEVENT_LIBS="$DEPS/lib/libevent_core.a" \
+            LIBNCURSES_CFLAGS="-I$DEPS/include -I$DEPS/include/ncurses" LIBNCURSES_LIBS="$DEPS/lib/libncurses.a"
+          make -j"$(sysctl -n hw.ncpu)"
+          cp tmux "../tmux-darwin-${{ matrix.arch }}"
+
+      - name: Verify binary
+        run: |
+          set -euo pipefail
+          # Only libSystem may remain dynamic; a stray Homebrew dylib here
+          # would break clean machines.
+          otool -L "tmux-darwin-${{ matrix.arch }}"
+          if otool -L "tmux-darwin-${{ matrix.arch }}" | tail -n +2 | grep -v "libSystem"; then
+            echo "unexpected dynamic dependency" >&2; exit 1
+          fi
+          ./"tmux-darwin-${{ matrix.arch }}" -V
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmux-darwin-${{ matrix.arch }}
+          path: tmux-darwin-${{ matrix.arch }}
+          if-no-files-found: error
+
+  build-linux-x64:
+    runs-on: ubuntu-latest
+    # musl-static: genuinely portable (old glibc distros, minimal containers),
+    # unlike glibc -static which still dlopens NSS at runtime.
+    container: alpine:3.20
+    steps:
+      - name: Install toolchain
+        run: apk add --no-cache build-base bison pkgconf linux-headers curl
+
+      - name: Fetch and verify sources
+        run: |
+          set -eu
+          curl -sSLo tmux.tar.gz "https://github.com/tmux/tmux/releases/download/${{ inputs.tmux_version }}/tmux-${{ inputs.tmux_version }}.tar.gz"
+          curl -sSLo libevent.tar.gz "https://github.com/libevent/libevent/releases/download/release-${{ inputs.libevent_version }}/libevent-${{ inputs.libevent_version }}.tar.gz"
+          curl -sSLo ncurses.tar.gz "https://invisible-island.net/archives/ncurses/ncurses-${{ inputs.ncurses_version }}.tar.gz"
+          echo "$TMUX_SHA256  tmux.tar.gz" | sha256sum -c -
+          echo "$LIBEVENT_SHA256  libevent.tar.gz" | sha256sum -c -
+          echo "$NCURSES_SHA256  ncurses.tar.gz" | sha256sum -c -
+          tar xzf libevent.tar.gz && tar xzf ncurses.tar.gz && tar xzf tmux.tar.gz
+
+      - name: Build static deps
+        run: |
+          set -eu
+          DEPS="$PWD/deps"
+          cd "libevent-${{ inputs.libevent_version }}"
+          ./configure --prefix="$DEPS" --enable-static --disable-shared --disable-openssl --disable-libevent-regress --disable-samples
+          make -j"$(nproc)" && make install
+          cd "../ncurses-${{ inputs.ncurses_version }}"
+          # A static ncurses cannot rely on its compiled-in terminfo location
+          # existing on the host: search the common distro dirs and compile in
+          # fallback entries so tmux works even on terminfo-less systems.
+          ./configure --prefix="$DEPS" --without-shared --without-debug --without-ada --without-manpages --without-progs --without-tests --enable-termcap \
+            --with-terminfo-dirs="/etc/terminfo:/lib/terminfo:/usr/share/terminfo" \
+            --with-default-terminfo-dir="/usr/share/terminfo" \
+            --with-fallbacks="xterm,xterm-256color,screen,screen-256color,tmux,tmux-256color"
+          make -j"$(nproc)" && make install
+
+      - name: Build tmux
+        run: |
+          set -eu
+          DEPS="$PWD/deps"
+          cd "tmux-${{ inputs.tmux_version }}"
+          ./configure --prefix="$PWD/out" --enable-static \
+            CPPFLAGS="-I$DEPS/include -I$DEPS/include/ncurses" \
+            LDFLAGS="-L$DEPS/lib -static" \
+            LIBEVENT_CFLAGS="-I$DEPS/include" LIBEVENT_LIBS="$DEPS/lib/libevent_core.a" \
+            LIBNCURSES_CFLAGS="-I$DEPS/include -I$DEPS/include/ncurses" LIBNCURSES_LIBS="$DEPS/lib/libncurses.a"
+          make -j"$(nproc)"
+          cp tmux ../tmux-linux-x64
+
+      - name: Verify binary
+        run: |
+          set -eu
+          file tmux-linux-x64 | grep -q "statically linked"
+          ./tmux-linux-x64 -V
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmux-linux-x64
+          path: tmux-linux-x64
+          if-no-files-found: error
+
+  publish:
+    needs: [build-macos, build-linux-x64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: tmux-artifacts-v${{ inputs.tmux_version }}-${{ inputs.rev }}
+        run: |
+          set -euo pipefail
+          sha256sum tmux-darwin-arm64 tmux-darwin-x64 tmux-linux-x64 > checksums.txt
+          cat checksums.txt
+          {
+            echo "Static tmux binaries bundled into the desktop installers as a private"
+            echo "fallback when no system tmux is on PATH (issue #2443)."
+            echo
+            echo "| component | version | source | sha256 |"
+            echo "| --- | --- | --- | --- |"
+            echo "| tmux | ${{ inputs.tmux_version }} | https://github.com/tmux/tmux/releases/download/${{ inputs.tmux_version }}/tmux-${{ inputs.tmux_version }}.tar.gz | \`$TMUX_SHA256\` |"
+            echo "| libevent | ${{ inputs.libevent_version }} | https://github.com/libevent/libevent/releases/download/release-${{ inputs.libevent_version }}/libevent-${{ inputs.libevent_version }}.tar.gz | \`$LIBEVENT_SHA256\` |"
+            echo "| ncurses | ${{ inputs.ncurses_version }} | https://invisible-island.net/archives/ncurses/ncurses-${{ inputs.ncurses_version }}.tar.gz | \`$NCURSES_SHA256\` |"
+            echo
+            echo "macOS: static libevent/ncurses, dynamic only against libSystem, deployment target 11.0."
+            echo "Linux: musl fully-static (alpine:3.20), terminfo search dirs /etc/terminfo:/lib/terminfo:/usr/share/terminfo with compiled-in xterm/screen/tmux fallbacks."
+            echo
+            echo "Licenses: tmux ISC, libevent BSD-3-Clause, ncurses MIT-X11 — all redistribution-compatible."
+            echo
+            echo "Built by the tmux-artifacts workflow, run ${{ github.run_id }}."
+          } > notes.md
+          gh release create "$TAG" tmux-darwin-arm64 tmux-darwin-x64 tmux-linux-x64 checksums.txt \
+            --repo "${{ github.repository }}" --title "$TAG" --notes-file notes.md
