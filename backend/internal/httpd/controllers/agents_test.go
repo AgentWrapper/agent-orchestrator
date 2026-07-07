@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
 )
 
 type fakeAgentCatalog struct {
@@ -127,5 +129,47 @@ func TestProbeAgent(t *testing.T) {
 	}
 	if catalog.probeCalls != 1 || catalog.probeAgent != "codex" {
 		t.Fatalf("probe calls=%d agent=%q, want one codex probe", catalog.probeCalls, catalog.probeAgent)
+	}
+}
+
+type fakeAgentHealth struct {
+	snap agenthealth.Snapshot
+}
+
+func (f fakeAgentHealth) Snapshot() agenthealth.Snapshot { return f.snap }
+
+func TestGetAgentHealth(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	health := fakeAgentHealth{snap: agenthealth.Snapshot{
+		CheckedAt: now,
+		Harnesses: []agenthealth.HarnessHealth{
+			{ID: "codex", Label: "Codex", Health: agenthealth.HealthUnauthorized, Reason: "not authenticated (login expired or logged out)", Remedy: "run `codex login`", ChangedAt: now, CheckedAt: now},
+		},
+	}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		AgentHealth: health,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/health", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /agents/health = %d, body=%s", status, body)
+	}
+	for _, want := range []string{`"harnesses"`, `"id":"codex"`, `"health":"unauthorized"`, `codex login`, `"checkedAt"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestGetAgentHealthNotImplementedWhenUnset(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	_, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/health", "")
+	if status != http.StatusNotImplemented {
+		t.Fatalf("GET /agents/health with no provider = %d, want 501", status)
 	}
 }

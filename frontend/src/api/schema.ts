@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the latest periodic per-harness health snapshot */
+        get: operations["getAgentHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/refresh": {
         parameters: {
             query?: never;
@@ -583,6 +600,23 @@ export interface components {
                 [key: string]: components["schemas"]["DomainHarnessModel"];
             };
             permissions?: string;
+        };
+        AgentHarnessHealth: {
+            authStatus?: string;
+            /** Format: date-time */
+            changedAt: string;
+            /** Format: date-time */
+            checkedAt: string;
+            health: string;
+            id: string;
+            label: string;
+            reason?: string;
+            remedy?: string;
+        };
+        AgentHealthResponse: {
+            /** Format: date-time */
+            checkedAt: string;
+            harnesses: components["schemas"]["AgentHarnessHealth"][];
         };
         AgentInfo: {
             /**
@@ -1137,6 +1171,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgentHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentHealthResponse"];
                 };
             };
             /** @description Internal Server Error */

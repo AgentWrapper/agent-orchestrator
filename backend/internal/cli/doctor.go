@@ -175,8 +175,124 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	for _, harness := range doctorHarnesses {
 		checks = append(checks, c.checkHarness(ctx, harness))
 	}
+	checks = append(checks, c.checkAgentAuthHealth(ctx, st)...)
 	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
 	return checks
+}
+
+// doctorAgentHealth mirrors GET /api/v1/agents/health (see service/agenthealth).
+// Kept as a local struct so the CLI decode path never imports a service package.
+type doctorAgentHealth struct {
+	Harnesses []doctorHarnessHealth `json:"harnesses"`
+}
+
+type doctorHarnessHealth struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Health string `json:"health"`
+	Reason string `json:"reason"`
+	Remedy string `json:"remedy"`
+}
+
+// checkAgentAuthHealth surfaces the daemon's periodic per-harness auth/health
+// snapshot. Unlike checkHarness (a static PATH+version probe that runs whether
+// or not the daemon is up), this reads the live monitor, so it can report
+// "unauthorized (login expired) — run `codex login`" for a harness whose binary
+// is present but whose session token has lapsed. When the daemon is not ready it
+// degrades to a single advisory line rather than a failure: the static harness
+// checks above already cover the daemon-down case.
+func (c *commandContext) checkAgentAuthHealth(ctx context.Context, st daemonStatus) []doctorCheck {
+	const name = "agent-auth"
+	if st.State != stateReady || st.Port == 0 {
+		return []doctorCheck{{
+			Level: doctorPass, Section: doctorSectionAgents, Name: name,
+			Message: "skipped: daemon not ready; start `ao` for live per-harness auth health",
+		}}
+	}
+	snap, err := c.readAgentHealth(ctx, st.Port)
+	if errors.Is(err, errAgentHealthUnavailable) {
+		// 501: the daemon is up but the health monitor isn't wired
+		// (AO_AGENT_HEALTH_INTERVAL=0 or an older build). Match how the web UI
+		// and ops notifier treat 501 — an expected "off" state, not a failure.
+		return []doctorCheck{{
+			Level: doctorPass, Section: doctorSectionAgents, Name: name,
+			Message: "skipped: agent-health monitor is not enabled on the daemon",
+		}}
+	}
+	if err != nil {
+		return []doctorCheck{{
+			Level: doctorWarn, Section: doctorSectionAgents, Name: name,
+			Message: fmt.Sprintf("could not read agent-health endpoint: %v", err),
+		}}
+	}
+	if len(snap.Harnesses) == 0 {
+		return []doctorCheck{{
+			Level: doctorPass, Section: doctorSectionAgents, Name: name,
+			Message: "no harnesses configured for health monitoring yet",
+		}}
+	}
+	checks := make([]doctorCheck, 0, len(snap.Harnesses))
+	for _, h := range snap.Harnesses {
+		label := h.Label
+		if label == "" {
+			label = h.ID
+		}
+		checks = append(checks, agentHealthCheck(name+":"+h.ID, label, h))
+	}
+	return checks
+}
+
+func agentHealthCheck(name, label string, h doctorHarnessHealth) doctorCheck {
+	switch h.Health {
+	case "healthy":
+		return doctorCheck{Level: doctorPass, Section: doctorSectionAgents, Name: name, Message: fmt.Sprintf("%s authenticated", label)}
+	case "unauthorized", "missing":
+		msg := fmt.Sprintf("%s %s", label, h.Health)
+		if h.Reason != "" {
+			msg += ": " + h.Reason
+		}
+		if h.Remedy != "" {
+			msg += " — " + h.Remedy
+		}
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionAgents, Name: name, Message: msg}
+	default:
+		msg := fmt.Sprintf("%s auth status unknown", label)
+		if h.Reason != "" {
+			msg += ": " + h.Reason
+		}
+		return doctorCheck{Level: doctorPass, Section: doctorSectionAgents, Name: name, Message: msg}
+	}
+}
+
+// errAgentHealthUnavailable marks a 501 from the health endpoint: the daemon is
+// reachable but the monitor is not wired (disabled or an older build). It is an
+// expected "off" state, not a failure — matching the web UI and ops notifier.
+var errAgentHealthUnavailable = errors.New("agent-health monitor not enabled")
+
+func (c *commandContext) readAgentHealth(ctx context.Context, port int) (doctorAgentHealth, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	url := fmt.Sprintf("http://%s:%d/api/v1/agents/health", config.LoopbackHost, port)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return doctorAgentHealth{}, err
+	}
+	resp, err := c.deps.HTTPClient.Do(req)
+	if err != nil {
+		return doctorAgentHealth{}, err
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotImplemented {
+		return doctorAgentHealth{}, errAgentHealthUnavailable
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return doctorAgentHealth{}, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var out doctorAgentHealth
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return doctorAgentHealth{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
 }
 
 // checkStore inspects the SQLite store WITHOUT opening or migrating it. The

@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
 		t.Setenv(k, "")
 	}
 
@@ -50,6 +50,30 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Telemetry.Remote != TelemetryRemoteOff || cfg.Telemetry.PostHogHost != DefaultTelemetryPostHogHost {
 		t.Fatalf("Telemetry defaults = %+v", cfg.Telemetry)
+	}
+	if cfg.AgentHealthInterval != DefaultAgentHealthInterval {
+		t.Errorf("AgentHealthInterval = %s, want %s", cfg.AgentHealthInterval, DefaultAgentHealthInterval)
+	}
+}
+
+func TestLoadAgentHealthInterval(t *testing.T) {
+	t.Setenv("AO_AGENT_HEALTH_INTERVAL", "90s")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AgentHealthInterval != 90*time.Second {
+		t.Errorf("AgentHealthInterval = %s, want 90s", cfg.AgentHealthInterval)
+	}
+
+	// Zero is a valid "disable" sentinel, not an error.
+	t.Setenv("AO_AGENT_HEALTH_INTERVAL", "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load zero: %v", err)
+	}
+	if cfg.AgentHealthInterval != 0 {
+		t.Errorf("AgentHealthInterval = %s, want 0 (disabled)", cfg.AgentHealthInterval)
 	}
 }
 
@@ -105,6 +129,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"negative request timeout", map[string]string{"AO_REQUEST_TIMEOUT": "-1s"}},
 		{"zero shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "0s"}},
 		{"negative shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "-5s"}},
+		{"bad agent-health interval", map[string]string{"AO_AGENT_HEALTH_INTERVAL": "soon"}},
+		{"negative agent-health interval", map[string]string{"AO_AGENT_HEALTH_INTERVAL": "-1m"}},
 		{"null origin", map[string]string{"AO_ALLOWED_ORIGINS": "app://renderer,null"}},
 		{"wildcard origin", map[string]string{"AO_ALLOWED_ORIGINS": "*"}},
 		{"bad telemetry events", map[string]string{"AO_TELEMETRY_EVENTS": "maybe"}},

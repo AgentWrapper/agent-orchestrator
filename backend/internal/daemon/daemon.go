@@ -139,9 +139,19 @@ func Run() error {
 		}
 	}()
 
+	// The projects service is shared between the API surface and the agent-health
+	// monitor (which reads project configs to discover the harness set to probe).
+	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
+
+	// Background agent-health monitor: periodically probes each configured
+	// harness for install+auth readiness and tracks transitions so operators can
+	// be alerted when a login expires. Async + bounded — never gates readiness.
+	agentHealth, agentHealthDone := startAgentHealth(ctx, agentHealthConfig{Interval: cfg.AgentHealthInterval, DefaultAgent: cfg.Agent}, agentSvc, projectSvc, log)
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink}),
+		Projects:           projectSvc,
 		Agents:             agentSvc,
+		AgentHealth:        agentHealth,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
@@ -155,6 +165,7 @@ func Run() error {
 	if err != nil {
 		stop()
 		<-previewDone
+		<-agentHealthDone
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
@@ -201,6 +212,7 @@ func Run() error {
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
+	<-agentHealthDone
 	lcStack.Stop()
 	if err := cdcPipe.Stop(); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)

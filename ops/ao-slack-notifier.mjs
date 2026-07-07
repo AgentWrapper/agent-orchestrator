@@ -9,12 +9,18 @@
 //   SLACK_MEMBER_ID                   -> user id to @mention for attention
 //   AO_PORT (default 3001)
 //   AO_SLACK_NOTIFIER_STATE           -> persisted dedup cursor
+//   AO_AGENT_HEALTH_POLL_MS           -> agent-health poll period (0 disables)
+//   AO_AGENT_HEALTH_NOTIFIER_STATE    -> persisted per-harness health cursor
 //
 // Notifications forwarded:
 //   needs_input    -> @mention
 //   ready_to_merge -> @mention
 //   pr_merged      -> plain post
 //   pr_closed_unmerged -> plain post
+//
+// It also polls GET /api/v1/agents/health and @mentions on a harness going
+// unhealthy (login expired / binary missing), with a recovery post — see
+// agent-health-core.mjs.
 //
 // Reliability model: the live SSE stream has no durable sequence id today, so
 // the notifier pairs it with a replay-safe catch-up poll of persisted unread
@@ -24,9 +30,11 @@
 // API page without re-paging Nick.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { AgentHealthNotifier } from "./agent-health-core.mjs";
 import { resolveMentionUserId } from "./attention-core.mjs";
 
 const ENV_FILE = process.env.AO_ENV_FILE || "/home/orchestrator/agent-orchestrator/.env";
@@ -351,8 +359,28 @@ export class SlackNotificationNotifier {
 
 if (isMain()) {
 	const notifier = new SlackNotificationNotifier();
-	notifier.run().catch((e) => {
-		console.error("ao-slack-notifier fatal:", e.message);
-		process.exit(1);
-	});
+	const loops = [
+		notifier.run().catch((e) => {
+			console.error("ao-slack-notifier fatal:", e.message);
+			process.exit(1);
+		}),
+	];
+	// Agent-health alerting shares this process (and the same Slack sink) so a
+	// deploy that restarts ao-slack-notifier.service picks it up. Disabled with
+	// AO_AGENT_HEALTH_POLL_MS=0 for hosts that don't want it.
+	const healthPollMs = Number(process.env.AO_AGENT_HEALTH_POLL_MS || 60_000);
+	if (healthPollMs > 0) {
+		const health = new AgentHealthNotifier({
+			mentionUserId: MENTION_USER_ID,
+			host: hostname(),
+			postMessage: post,
+			pollMs: healthPollMs,
+		});
+		loops.push(
+			health.run().catch((e) => {
+				console.error("ao-agent-health fatal:", e.message);
+			}),
+		);
+	}
+	Promise.all(loops);
 }

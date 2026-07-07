@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -538,5 +540,89 @@ func writeHooksLogLines(t *testing.T, dataDir string, lines ...string) {
 	content := strings.Join(lines, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dataDir, hooksLogName), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAgentHealthCheckMapping(t *testing.T) {
+	healthy := agentHealthCheck("agent-auth:codex", "Codex", doctorHarnessHealth{ID: "codex", Health: "healthy"})
+	if healthy.Level != doctorPass {
+		t.Errorf("healthy = %+v, want PASS", healthy)
+	}
+	unauth := agentHealthCheck("agent-auth:codex", "Codex", doctorHarnessHealth{ID: "codex", Health: "unauthorized", Reason: "login expired", Remedy: "run `codex login`"})
+	if unauth.Level != doctorWarn || !strings.Contains(unauth.Message, "run `codex login`") || !strings.Contains(unauth.Message, "login expired") {
+		t.Errorf("unauthorized = %+v, want WARN with reason+remedy", unauth)
+	}
+	missing := agentHealthCheck("agent-auth:x", "X", doctorHarnessHealth{ID: "x", Health: "missing", Remedy: "install X"})
+	if missing.Level != doctorWarn || !strings.Contains(missing.Message, "install X") {
+		t.Errorf("missing = %+v, want WARN with remedy", missing)
+	}
+	unknown := agentHealthCheck("agent-auth:y", "Y", doctorHarnessHealth{ID: "y", Health: "unknown"})
+	if unknown.Level != doctorPass {
+		t.Errorf("unknown = %+v, want PASS", unknown)
+	}
+}
+
+func TestCheckAgentAuthHealthDaemonNotReady(t *testing.T) {
+	setConfigEnv(t)
+	c := doctorContext(t, map[string]string{}, func(context.Context, string, ...string) ([]byte, error) { return nil, nil })
+	checks := c.checkAgentAuthHealth(context.Background(), daemonStatus{State: stateStopped})
+	if len(checks) != 1 || checks[0].Level != doctorPass || !strings.Contains(checks[0].Message, "daemon not ready") {
+		t.Fatalf("checks = %+v, want single PASS skip", checks)
+	}
+}
+
+func TestCheckAgentAuthHealthReportsPerHarness(t *testing.T) {
+	setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/agents/health" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"harnesses":[
+			{"id":"claude-code","label":"Claude Code","health":"healthy"},
+			{"id":"codex","label":"Codex","health":"unauthorized","reason":"login expired","remedy":"run ` + "`codex login`" + `"}
+		],"checkedAt":"2026-07-07T12:00:00Z"}`))
+	}))
+	defer srv.Close()
+	port := testServerPort(t, srv)
+
+	c := doctorContext(t, map[string]string{}, func(context.Context, string, ...string) ([]byte, error) { return nil, nil })
+	c.deps.HTTPClient = srv.Client()
+	checks := c.checkAgentAuthHealth(context.Background(), daemonStatus{State: stateReady, Port: port})
+
+	claude := findDoctorCheck(t, checks, "agent-auth:claude-code")
+	if claude.Level != doctorPass {
+		t.Errorf("claude-code = %+v, want PASS", claude)
+	}
+	codex := findDoctorCheck(t, checks, "agent-auth:codex")
+	if codex.Level != doctorWarn || !strings.Contains(codex.Message, "codex login") {
+		t.Errorf("codex = %+v, want WARN with remedy", codex)
+	}
+}
+
+func testServerPort(t *testing.T, srv *httptest.Server) int {
+	t.Helper()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse srv url: %v", err)
+	}
+	p, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+	return p
+}
+
+func TestCheckAgentAuthHealth501IsAdvisory(t *testing.T) {
+	setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotImplemented)
+		_, _ = w.Write([]byte(`{"code":"NOT_IMPLEMENTED"}`))
+	}))
+	defer srv.Close()
+	c := doctorContext(t, map[string]string{}, func(context.Context, string, ...string) ([]byte, error) { return nil, nil })
+	c.deps.HTTPClient = srv.Client()
+	checks := c.checkAgentAuthHealth(context.Background(), daemonStatus{State: stateReady, Port: testServerPort(t, srv)})
+	if len(checks) != 1 || checks[0].Level != doctorPass || !strings.Contains(checks[0].Message, "not enabled") {
+		t.Fatalf("501 should be a PASS advisory, got %+v", checks)
 	}
 }

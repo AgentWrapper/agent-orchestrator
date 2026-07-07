@@ -8,6 +8,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
@@ -476,6 +477,10 @@ type RefreshAgentsResponse = agentsvc.Inventory
 
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
+
+// AgentHealthResponse is the body of GET /api/v1/agents/health — the last
+// periodic per-harness health snapshot from the agent-health monitor.
+type AgentHealthResponse = agenthealth.Snapshot
 
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info

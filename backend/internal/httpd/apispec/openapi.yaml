@@ -72,6 +72,31 @@ paths:
       summary: Run a fresh local readiness probe for one agent adapter
       tags:
       - agents
+  /api/v1/agents/health:
+    get:
+      operationId: getAgentHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentHealthResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the latest periodic per-harness health snapshot
+      tags:
+      - agents
   /api/v1/agents/refresh:
     post:
       operationId: refreshAgents
@@ -1637,6 +1662,46 @@ components:
           type: object
         permissions:
           type: string
+      type: object
+    AgentHarnessHealth:
+      properties:
+        authStatus:
+          type: string
+        changedAt:
+          format: date-time
+          type: string
+        checkedAt:
+          format: date-time
+          type: string
+        health:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        remedy:
+          type: string
+      required:
+      - id
+      - label
+      - health
+      - changedAt
+      - checkedAt
+      type: object
+    AgentHealthResponse:
+      properties:
+        checkedAt:
+          format: date-time
+          type: string
+        harnesses:
+          items:
+            $ref: '#/components/schemas/AgentHarnessHealth'
+          type: array
+      required:
+      - harnesses
+      - checkedAt
       type: object
     AgentInfo:
       properties:

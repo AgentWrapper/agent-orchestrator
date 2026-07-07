@@ -29,6 +29,11 @@ const (
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second
+	// DefaultAgentHealthInterval is how often the background agent-health monitor
+	// re-probes each configured harness for install+auth readiness. It is a slow
+	// loop by design: a login expiring is a human-timescale event, so a few
+	// minutes of detection latency is fine and keeps agent-CLI probes cheap.
+	DefaultAgentHealthInterval = 5 * time.Minute
 	// DefaultAgent is the compatibility value used when AO_AGENT is unset. The
 	// daemon validates it at startup, but worker/orchestrator spawns resolve from
 	// explicit requests or project role config instead of falling back to it.
@@ -89,6 +94,9 @@ type Config struct {
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
+	// AgentHealthInterval is the period of the background agent-health monitor.
+	// Zero disables the monitor entirely (no periodic probing, no alerts).
+	AgentHealthInterval time.Duration
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -114,6 +122,7 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_AGENT_HEALTH_INTERVAL agent-health probe period (Go duration >= 0, 0 disables, default 5m)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -124,12 +133,13 @@ func (c Config) Addr() string {
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
 	cfg := Config{
-		Host:            LoopbackHost,
-		Port:            DefaultPort,
-		RequestTimeout:  DefaultRequestTimeout,
-		ShutdownTimeout: DefaultShutdownTimeout,
-		Agent:           DefaultAgent,
-		AllowedOrigins:  DefaultAllowedOrigins,
+		Host:                LoopbackHost,
+		Port:                DefaultPort,
+		RequestTimeout:      DefaultRequestTimeout,
+		ShutdownTimeout:     DefaultShutdownTimeout,
+		Agent:               DefaultAgent,
+		AgentHealthInterval: DefaultAgentHealthInterval,
+		AllowedOrigins:      DefaultAllowedOrigins,
 		Telemetry: TelemetryConfig{
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
@@ -165,6 +175,14 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	if raw := os.Getenv("AO_AGENT_HEALTH_INTERVAL"); raw != "" {
+		d, err := parseNonNegativeDuration("AO_AGENT_HEALTH_INTERVAL", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.AgentHealthInterval = d
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {
@@ -261,6 +279,20 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 	}
 	if d <= 0 {
 		return 0, fmt.Errorf("invalid %s %q: must be > 0", name, raw)
+	}
+	return d, nil
+}
+
+// parseNonNegativeDuration accepts zero (a documented "disable" sentinel, e.g.
+// AO_AGENT_HEALTH_INTERVAL=0 turns the monitor off) but rejects negatives and
+// malformed values.
+func parseNonNegativeDuration(name, raw string) (time.Duration, error) {
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid %s %q: must be >= 0", name, raw)
 	}
 	return d, nil
 }

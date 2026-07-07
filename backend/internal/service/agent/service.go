@@ -147,6 +147,62 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	return next, nil
 }
 
+// HarnessProbe is a fresh install/auth probe for one harness, produced for the
+// periodic agent-health monitor. Unlike Inventory it is keyed by the requested
+// harness id and reports the raw install+auth facts for exactly that harness.
+type HarnessProbe struct {
+	ID         string                `json:"id"`
+	Label      string                `json:"label"`
+	Installed  bool                  `json:"installed"`
+	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty"`
+}
+
+// HarnessHealth runs fresh bounded binary/auth probes for the named harnesses,
+// bypassing the catalog refresh rate limit, and returns one result per id in
+// the requested order. Probes run concurrently and each carries the same
+// bounded install/auth timeouts as Refresh, so a slow or hung harness CLI never
+// stalls the caller past those bounds. An unknown id yields a not-installed
+// probe so the monitor can flag a configured-but-unsupported harness rather than
+// silently dropping it.
+func (s *Service) HarnessHealth(ctx context.Context, ids []string) ([]HarnessProbe, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]agentregistry.HarnessAgent, len(s.agents))
+	for _, item := range s.agents {
+		byID[string(item.Harness)] = item
+	}
+	out := make([]HarnessProbe, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		item, ok := byID[id]
+		if !ok {
+			out[i] = HarnessProbe{ID: id, Label: id}
+			continue
+		}
+		wg.Add(1)
+		go func(i int, id string, item agentregistry.HarnessAgent) {
+			defer wg.Done()
+			res := probeAgent(ctx, item)
+			label := res.info.Label
+			if label == "" {
+				label = id
+			}
+			out[i] = HarnessProbe{
+				ID:         id,
+				Label:      label,
+				Installed:  res.installed,
+				AuthStatus: res.info.AuthStatus,
+			}
+		}(i, id, item)
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Probe runs a fresh bounded binary/auth probe for one agent, bypassing the
 // catalog refresh rate limit. It is intended for user-initiated preflight paths
 // where a cached negative catalog result may be stale.
