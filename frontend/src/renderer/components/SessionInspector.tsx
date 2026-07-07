@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Check, ChevronDown, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, GitPullRequest, Play, Shield, Terminal, TriangleAlert } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -9,7 +9,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
-import { useAgentsQuery } from "../hooks/useAgentsQuery";
+import { useAgentsQuery, type AgentCatalog } from "../hooks/useAgentsQuery";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { BrowserPanelView } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
@@ -791,15 +791,43 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 // Selecting a new harness fires POST /sessions/{id}/switch; the worktree and
 // its work are preserved and the new agent starts fresh. The workspace query is
 // invalidated so the terminal re-attaches to the new runtime handle over CDC.
+type AgentSwitchOption = { id: string; disabled: boolean; reason: string; warning: boolean; rank: number };
+
+// Rank every supported agent by install/auth status for the switch dropdown,
+// mirroring the onboarding picker (RequiredAgentField): authorized (no reason)
+// and auth-unknown are selectable; needs-auth and needs-install are shown but
+// disabled since they can't launch as-is. Sorted selectable-first.
+function buildAgentSwitchOptions(catalog: AgentCatalog | undefined): AgentSwitchOption[] {
+	const supported = catalog?.supported ?? [];
+	const authorizedIds = new Set((catalog?.authorized ?? []).map((a) => a.id));
+	const installedById = new Map((catalog?.installed ?? []).map((a) => [a.id, a]));
+	return supported
+		.map((agent): AgentSwitchOption => {
+			const installedAgent = installedById.get(agent.id);
+			const authStatus = installedAgent?.authStatus;
+			const isAuthorized = authorizedIds.has(agent.id) || authStatus === "authorized";
+			const isAuthUnknown = Boolean(installedAgent) && !isAuthorized && authStatus !== "unauthorized";
+			return {
+				id: agent.id,
+				disabled: !(isAuthorized || isAuthUnknown),
+				reason: !installedAgent ? "Needs install" : isAuthUnknown ? "Auth unknown" : !isAuthorized ? "Needs auth" : "",
+				warning: isAuthUnknown,
+				rank: isAuthorized ? 0 : isAuthUnknown ? 1 : installedAgent ? 2 : 3,
+			};
+		})
+		.sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id));
+}
+
 function AgentRow({ session }: { session: WorkspaceSession }) {
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
 	const current = session.provider;
-	// Only offer agents whose local auth probe recently passed — switching to an
-	// un-authenticated agent just fails at launch. Advisory (spawn stays the
-	// authoritative check), but it keeps the menu to agents that can actually run.
+	// List every SUPPORTED agent with a status reason, mirroring the onboarding
+	// picker (RequiredAgentField): authorized and auth-unknown are selectable;
+	// needs-auth and needs-install are shown but disabled (they can't launch as-is).
+	// The daemon stays the authoritative auth check at spawn.
 	const agentsQuery = useAgentsQuery();
-	const authorized = agentsQuery.data?.authorized ?? [];
+	const agentOptions = buildAgentSwitchOptions(agentsQuery.data);
 
 	const switchAgent = useMutation({
 		mutationFn: async (harness: string) => {
@@ -841,18 +869,18 @@ function AgentRow({ session }: { session: WorkspaceSession }) {
 							strokeWidth={2}
 						/>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
-						{authorized.length === 0 ? (
+					<DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+						{agentOptions.length === 0 ? (
 							<DropdownMenuItem disabled>
 								<span className="text-[12px] text-passive">
-									{agentsQuery.isLoading ? "Loading agents…" : "No authenticated agents"}
+									{agentsQuery.isLoading ? "Loading agents…" : "No agents available"}
 								</span>
 							</DropdownMenuItem>
 						) : (
-							authorized.map((agent) => (
+							agentOptions.map((agent) => (
 								<DropdownMenuItem
 									key={agent.id}
-									disabled={switchAgent.isPending}
+									disabled={switchAgent.isPending || agent.disabled}
 									onSelect={() => {
 										if (agent.id !== current) switchAgent.mutate(agent.id);
 									}}
@@ -862,6 +890,12 @@ function AgentRow({ session }: { session: WorkspaceSession }) {
 										aria-hidden="true"
 									/>
 									<span className="font-mono text-[12px]">{agent.id}</span>
+									{agent.reason ? (
+										<span className="ml-auto inline-flex shrink-0 items-center gap-1 pl-3 text-[10.5px] text-muted-foreground">
+											{agent.warning ? <TriangleAlert className="size-3 !text-warning" aria-hidden="true" /> : null}
+											{agent.reason}
+										</span>
+									) : null}
 								</DropdownMenuItem>
 							))
 						)}
