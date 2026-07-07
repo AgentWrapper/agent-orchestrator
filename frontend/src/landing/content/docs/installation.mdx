@@ -152,7 +152,9 @@ Use Slack, Discord, webhook, or another network notifier for alerts. Desktop not
 		authenticated.
 	</Accordion>
 	<Accordion title="tmux is missing">
-		Install tmux on macOS or Linux, or set `defaults.runtime: process` if you are on Windows or running in a container.
+		The desktop app falls back to its bundled tmux automatically, so this only affects CLI-only setups: install tmux
+		on macOS or Linux (a system tmux always takes precedence over the bundled copy), or set `defaults.runtime:
+		process` if you are on Windows or running in a container.
 	</Accordion>
 	<Accordion title="No agent runtime is detected">
 		Install one supported agent CLI and run it once outside AO so it can complete its own sign-in flow.
