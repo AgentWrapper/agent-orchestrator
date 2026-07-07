@@ -488,6 +488,15 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 		out.State = string(domain.MergeBlocked)
 		addBlocker("blocked_by_provider")
 	}
+	if state == "UNSTABLE" {
+		// UNSTABLE means the PR is mergeable but has a failing/pending NON-required
+		// check (a required failure yields BLOCKED instead). Per the documented
+		// priority (rule 3 before rules 5 and 6) and the sibling
+		// mergeabilityFromGraphQL, UNSTABLE outranks the changes-requested/CI-failing
+		// blockers below, which would otherwise mask a mergeable PR as blocked.
+		out.State = string(domain.MergeUnstable)
+		return out
+	}
 	if draft {
 		out.State = string(domain.MergeBlocked)
 		addBlocker("draft")
@@ -505,10 +514,6 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 		addBlocker("review_required")
 	}
 	if out.State == string(domain.MergeBlocked) {
-		return out
-	}
-	if state == "UNSTABLE" {
-		out.State = string(domain.MergeUnstable)
 		return out
 	}
 	if mergeable == "MERGEABLE" && (state == "CLEAN" || state == "HAS_HOOKS" || state == "") &&
