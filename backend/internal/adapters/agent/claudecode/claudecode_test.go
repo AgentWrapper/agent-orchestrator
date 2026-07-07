@@ -197,6 +197,55 @@ func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandUsesLaunchTitleAsRenameCommand(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		LaunchTitle: "#53 launch-time\nClaude\tCode\x1b title",
+		Prompt:      "do the real task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"claude", "--", "/rename #53 launch-time Claude Code title"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetPromptDeliveryStrategyUsesAfterStartForTitledClaudePrompt(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	got, err := p.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+		LaunchTitle: "#53 title-sync",
+		Prompt:      "do the real task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want %q", got, ports.PromptDeliveryAfterStart)
+	}
+
+	got, err = p.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+		LaunchTitle: "#53 title-sync",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryInCommand {
+		t.Fatalf("promptless titled launch strategy = %q, want %q", got, ports.PromptDeliveryInCommand)
+	}
+
+	got, err = p.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{Prompt: "do the real task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryInCommand {
+		t.Fatalf("untitled launch strategy = %q, want %q", got, ports.PromptDeliveryInCommand)
+	}
+}
+
 func TestClaudeSessionUUIDDeterministicAndUnique(t *testing.T) {
 	a1 := claudeSessionUUID("alpha")
 	a2 := claudeSessionUUID("alpha")

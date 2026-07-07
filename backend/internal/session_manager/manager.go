@@ -115,6 +115,7 @@ type runtimeController interface {
 	// IsAlive reports whether the handle's runtime session still exists. Used by
 	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
 
 // Store is the persistence surface needed by the internal session Manager.
@@ -378,6 +379,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
+		LaunchTitle:   launchTitle(project, cfg),
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
@@ -414,6 +416,22 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
+	}
+
+	if err := m.deliverInitialPrompt(ctx, agent, handle, ports.LaunchConfig{
+		SessionID:     string(id),
+		WorkspacePath: ws.Path,
+		LaunchTitle:   launchTitle(project, cfg),
+		Prompt:        prompt,
+		SystemPrompt:  systemPrompt,
+		IssueID:       string(cfg.IssueID),
+		Config:        agentConfig,
+		Permissions:   agentConfig.Permissions,
+	}); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		_ = m.workspace.Destroy(ctx, ws)
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 	}
 
 	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt, Model: strings.TrimSpace(cfg.Model)}
@@ -1700,6 +1718,23 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	return cfg.Prompt
 }
 
+func launchTitle(project domain.ProjectRecord, cfg ports.SpawnConfig) string {
+	if title := strings.TrimSpace(cfg.DisplayName); title != "" {
+		return title
+	}
+	if cfg.Kind == domain.KindOrchestrator {
+		name := strings.TrimSpace(project.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(project.ID)
+		}
+		if name == "" {
+			name = string(cfg.ProjectID)
+		}
+		return name + " Orchestrator"
+	}
+	return ""
+}
+
 // buildSpawnTexts returns the user-facing prompt and the system prompt to
 // deliver separately to the agent. Orchestrator role instructions and worker
 // coordination hints are placed in the system prompt so they are treated as
@@ -1926,6 +1961,20 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 		env[EnvRunFile] = runFile
 	}
 	return env
+}
+
+func (m *Manager) deliverInitialPrompt(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, cfg ports.LaunchConfig) error {
+	if cfg.Prompt == "" {
+		return nil
+	}
+	strategy, err := agent.GetPromptDeliveryStrategy(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if strategy != ports.PromptDeliveryAfterStart {
+		return nil
+	}
+	return m.runtime.SendMessage(ctx, handle, domain.SanitizeControlChars(cfg.Prompt))
 }
 
 // runtimeEnv is spawnEnv plus the hook PATH pin: the session's PATH puts the
