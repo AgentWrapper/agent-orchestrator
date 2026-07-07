@@ -1212,6 +1212,58 @@ func TestCleanup_SkipsWorkspaceStillReferencedByLiveSession(t *testing.T) {
 	}
 }
 
+// TestCleanup_LiveWorkspaceGuardNormalizesPaths: the shared-path guard must
+// compare canonicalized paths, so a trailing slash or "." segment on one
+// record doesn't let a live session's worktree slip through as "not shared".
+func TestCleanup_LiveWorkspaceGuardNormalizesPaths(t *testing.T) {
+	m, st, _, ws := newManager()
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/shared/"})
+	live := mkLive("mer-2")
+	live.Metadata.WorkspacePath = "/ws/./shared"
+	st.sessions["mer-2"] = live
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 || len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("cleaned = %v, skipped = %v; want mer-1 skipped, none cleaned", res.Cleaned, res.Skipped)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("destroyed = %d, want 0", ws.destroyed)
+	}
+}
+
+// TestCleanup_ReclaimsUnsharedWhileSkippingShared: a shared-path skip must not
+// stop cleanup from reclaiming an adjacent terminated workspace that no live
+// session references. The orchestrator's persistent worktree (shared across
+// respawn) is the motivating case for the skip.
+func TestCleanup_ReclaimsUnsharedWhileSkippingShared(t *testing.T) {
+	m, st, _, ws := newManager()
+	// Terminated orchestrator predecessor shares its persistent worktree with
+	// the live orchestrator successor.
+	orchTerm := domain.SessionRecord{ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator, Metadata: domain.SessionMetadata{WorkspacePath: "/ws/orchestrator"}, IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
+	st.sessions["mer-orch-1"] = orchTerm
+	orchLive := domain.SessionRecord{ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator, Metadata: domain.SessionMetadata{WorkspacePath: "/ws/orchestrator"}, Activity: domain.Activity{State: domain.ActivityActive}}
+	st.sessions["mer-orch-2"] = orchLive
+	// An unrelated terminated worker whose workspace nobody else uses.
+	seedTerminal(st, "mer-3", domain.SessionMetadata{WorkspacePath: "/ws/mer-3"})
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-3" {
+		t.Fatalf("cleaned = %v, want [mer-3]", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-orch-1" {
+		t.Fatalf("skipped = %v, want mer-orch-1", res.Skipped)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("destroyed = %d, want 1 (only the unshared worker workspace)", ws.destroyed)
+	}
+}
+
 // TestCleanup_ReportsSkippedWorkspaces: a refused teardown must be visible in
 // the result with a reason — a silent skip leaves users staring at
 // "Would clean N … 0 sessions cleaned" with no explanation.
