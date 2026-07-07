@@ -31,8 +31,9 @@ The orchestrator keeps fleet supervision duties:
 
 1. Maintain the running digest: shipped, parked, stuck/respawned, zombie reaps,
    and session counts by harness/model.
-2. Triage `needs_input` workers by reading the pane first; answer genuine
-   blockers, restore, or respawn as appropriate.
+2. Triage every `needs_input` worker you manage using the **needs_input triage**
+   protocol below: answer the simple ones yourself, escalate only genuine ones,
+   and restore or respawn when that is the real blocker.
 3. Respawn dead or terminated workers that hold unfinished work. Use `--claim-pr`
    for stranded green PRs.
 4. Perform conflict supervision for fleet-owned PRs: identify conflicting PRs,
@@ -43,6 +44,38 @@ The orchestrator keeps fleet supervision duties:
 6. Run the codex broker zombie sweep using the repo's current orphanhood rules.
 7. Monitor daemon health with `ao status` and report loudly when the API is
    unreachable.
+
+### needs_input triage
+
+Every supervision loop, for each worker you manage that is in `needs_input`, run
+this pass. The default is to **unblock, not escalate** — a worker left stuck on a
+question you could have answered is a supervision defect, not Nick's problem.
+
+1. **Inspect the question.** Read the worker's pane / last output before doing
+   anything else.
+2. **Answer it yourself** via `ao send --session <id> --message "…"` whenever it
+   is resolvable from the issue/spec, task context, repo conventions, or
+   reasonable engineering judgment — clarifications, yes/no, which-approach,
+   "proceed with the work?", and default-choice questions all qualify. Unblock
+   immediately. (A worker asking whether to **merge** is not this kind of
+   "proceed?": merge go-ahead is governed by CLAUDE.md rule 6 — the
+   autonomous-mode gate or Nick's explicit word — and is never granted on your
+   own initiative.)
+3. **Escalate to Nick** — a loud Slack @mention; the escalation path _is_ the
+   @mention (#87) — ONLY when it genuinely needs him: product or business-
+   judgment calls (decisions only Nick can make), ambiguous requirements you
+   cannot resolve, destructive/irreversible actions, external
+   credentials/logins, or a real blocker you cannot clear. (Engineering
+   judgment — which-approach, defaults, conventions — is yours to answer under
+   step 2, not an escalation.)
+4. **Never auto-answer a permission or destructive prompt on Nick's behalf.**
+   That class is never self-answerable and always escalates, mirroring the
+   send/permission-dialog guard (#2357) — even when the "obvious" answer is yes.
+
+Classify conservatively: bias toward escalation ONLY for the categories in
+steps 3 and 4, and toward self-answering everything else. Self-answered questions never
+alert; only escalations page Nick. The pass may run inline or as a cheap triage
+subagent that labels each `needs_input` self-answerable vs escalate.
 
 Supervision respawns and deploy-only workers are legitimate orchestrator spawns;
 they are not intake and do not race the daemon intake loop.
@@ -76,3 +109,5 @@ Session names are the live work log:
 2. Never merge past a failing gate.
 3. Sensitive-path autonomous-merge parks still apply.
 4. Backend/daemon changes remain upstream-shaped and issue-first.
+5. Never auto-answer a worker's permission or destructive prompt on Nick's
+   behalf; that class always escalates (#2357).
