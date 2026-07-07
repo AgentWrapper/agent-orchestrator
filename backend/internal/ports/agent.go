@@ -156,8 +156,11 @@ const (
 
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
-	Config      AgentConfig
-	IssueID     string
+	Config  AgentConfig
+	IssueID string
+	// LaunchTitle is AO's desired native session title at process start. Agent
+	// adapters that cannot set one ignore it.
+	LaunchTitle string
 	Permissions PermissionMode
 	Prompt      string
 	SessionID   string

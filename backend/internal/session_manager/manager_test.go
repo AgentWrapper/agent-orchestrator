@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -198,8 +199,10 @@ func (l *fakeLCM) IsSwitching(id domain.SessionID) bool {
 type fakeRuntime struct {
 	createErr          error
 	destroyErr         error
+	sendErr            error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
+	sent               []string
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
 	aliveByHandle map[string]bool
 	aliveErr      error
@@ -224,6 +227,13 @@ func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bo
 		return false, r.aliveErr
 	}
 	return r.aliveByHandle[handle.ID], nil
+}
+func (r *fakeRuntime) SendMessage(_ context.Context, _ ports.RuntimeHandle, msg string) error {
+	if r.sendErr != nil {
+		return r.sendErr
+	}
+	r.sent = append(r.sent, msg)
+	return nil
 }
 
 type fakeAgent struct{}
@@ -277,6 +287,17 @@ func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreC
 		return nil, false, nil
 	}
 	return []string{"resume"}, true, nil
+}
+
+type launchTitleAgent struct {
+	recordingAgent
+}
+
+func (a *launchTitleAgent) GetPromptDeliveryStrategy(_ context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if strings.TrimSpace(cfg.LaunchTitle) != "" && cfg.Prompt != "" {
+		return ports.PromptDeliveryAfterStart, nil
+	}
+	return ports.PromptDeliveryInCommand, nil
 }
 
 type singleAgent struct{ agent ports.Agent }
@@ -945,6 +966,85 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.RuntimeHandleID != "h1" {
 		t.Fatal("handle not folded")
+	}
+}
+
+func TestSpawn_ForwardsDisplayNameAsLaunchTitleAndDeliversPromptAfterStart(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		DisplayName: "#53 title-sync",
+		Prompt:      "implement\x1b issue 53",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := agent.lastLaunch.LaunchTitle; got != "#53 title-sync" {
+		t.Fatalf("LaunchTitle = %q, want display name", got)
+	}
+	if got := agent.lastLaunch.Prompt; got != "implement\x1b issue 53" {
+		t.Fatalf("launch prompt = %q, want preserved task prompt in config", got)
+	}
+	if got, want := rt.sent, []string{"implement issue 53"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start prompt delivery = %#v, want %#v", got, want)
+	}
+	if got := st.sessions["mer-1"].Metadata.Prompt; got != "implement\x1b issue 53" {
+		t.Fatalf("metadata prompt = %q, want original task prompt", got)
+	}
+}
+
+func TestSpawn_DerivesOrchestratorLaunchTitleFromProject(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", DisplayName: "Mercury", Config: testRoleAgents()}
+	agent := &launchTitleAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+	if got := agent.lastLaunch.LaunchTitle; got != "Mercury Orchestrator" {
+		t.Fatalf("orchestrator LaunchTitle = %q, want project display name", got)
+	}
+}
+
+func TestSpawn_InCommandHarnessDoesNotPostStartPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		DisplayName: "#53 title-sync",
+		Prompt:      "implement issue 53",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rt.sent) != 0 {
+		t.Fatalf("in-command harness received post-start prompt: %#v", rt.sent)
+	}
+	if got := agent.lastLaunch.Prompt; got != "implement issue 53" {
+		t.Fatalf("launch prompt = %q, want in-command prompt preserved", got)
 	}
 }
 

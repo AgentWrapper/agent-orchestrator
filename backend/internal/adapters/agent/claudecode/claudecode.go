@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -191,11 +192,27 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
 
-	if cfg.Prompt != "" {
+	if title := claudeLaunchTitle(cfg.LaunchTitle); title != "" {
+		cmd = append(cmd, "--", "/rename "+title)
+	} else if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
 
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports how AO should deliver the initial task.
+// When AO asks Claude Code to set a launch title, the launch command consumes
+// Claude's one startup slash-command slot with `/rename <title>`, so any real
+// task prompt must be pasted after the TUI starts.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if claudeLaunchTitle(cfg.LaunchTitle) != "" && cfg.Prompt != "" {
+		return ports.PromptDeliveryAfterStart, nil
+	}
+	return ports.PromptDeliveryInCommand, nil
 }
 
 // PreLaunch is an optional capability the spawn engine invokes (via type
@@ -405,6 +422,19 @@ func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {
 		return strings.TrimRight(string(data), "\n"), nil
 	}
 	return cfg.SystemPrompt, nil
+}
+
+func claudeLaunchTitle(title string) string {
+	withoutControls := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, title)
+	return strings.Join(strings.Fields(withoutControls), " ")
 }
 
 // appendPermissionFlags maps AO's permission modes onto Claude Code's

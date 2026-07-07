@@ -18,6 +18,7 @@ import (
 type stubRuntime struct {
 	created   int
 	destroyed int
+	sent      []string
 	// aliveByHandle scripts IsAlive per handle ID. If a handle ID is absent,
 	// IsAlive returns true (default: alive), matching the pre-existing behavior
 	// that all other tests relied on.
@@ -41,6 +42,10 @@ func (s *stubRuntime) IsAlive(_ context.Context, h ports.RuntimeHandle) (bool, e
 		}
 	}
 	return true, nil
+}
+func (s *stubRuntime) SendMessage(_ context.Context, _ ports.RuntimeHandle, msg string) error {
+	s.sent = append(s.sent, msg)
+	return nil
 }
 
 // wasDestroyed reports whether Destroy was called with the given handle ID.
