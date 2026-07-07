@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 )
 
 // TestRouteSpecParity asserts the mounted /api/v1 routes and the OpenAPI
@@ -20,7 +21,12 @@ import (
 // spec coverage, and the spec can't describe a route that isn't served.
 func TestRouteSpecParity(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	router := httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{})
+	// Mobile carries a non-nil MobileController so mountMobile (which, like
+	// mountControl, skips mounting entirely on a nil controller) registers its
+	// routes here — otherwise the mobile spec operations below would have no
+	// mounted route to match.
+	deps := httpd.APIDeps{Mobile: &controllers.MobileController{}}
+	router := httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{})
 
 	mounted := map[string]bool{}
 	err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {

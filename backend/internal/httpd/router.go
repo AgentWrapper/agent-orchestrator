@@ -15,6 +15,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
@@ -62,6 +63,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
 	mountTelemetry(r, deps.Telemetry)
+	mountMobile(r, deps.Mobile)
 	NewAPI(cfg, deps).Register(r)
 
 	return r
@@ -97,6 +99,33 @@ func mountControl(r chi.Router, deps ControlDeps) {
 		})
 		deps.RequestShutdown()
 	})
+}
+
+// mountMobile registers the Connect Mobile control routes: status, enable,
+// disable, and regenerate. These toggle the LAN bridge that lets a phone reach
+// the daemon, so — like mountControl — every handler is gated by
+// localControlRequest: only the desktop/CLI (a loopback caller) may flip the
+// phone's access on or off; the phone itself must never be able to.
+func mountMobile(r chi.Router, c *controllers.MobileController) {
+	if c == nil {
+		return
+	}
+	guard := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, req *http.Request) {
+			if !localControlRequest(req) {
+				envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
+					"status":  "forbidden",
+					"service": daemonmeta.ServiceName,
+				})
+				return
+			}
+			h(w, req)
+		}
+	}
+	r.Get("/api/v1/mobile/status", guard(c.Status))
+	r.Post("/api/v1/mobile/enable", guard(c.Enable))
+	r.Post("/api/v1/mobile/disable", guard(c.Disable))
+	r.Post("/api/v1/mobile/regenerate", guard(c.Regenerate))
 }
 
 type cliInvokedRequest struct {
