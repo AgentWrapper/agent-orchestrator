@@ -77,7 +77,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "submit [worker-session-id]",
 		Short: "Record a reviewer's result for a worker's PR",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ctx.submitReview(cmd, args, opts)
 		},

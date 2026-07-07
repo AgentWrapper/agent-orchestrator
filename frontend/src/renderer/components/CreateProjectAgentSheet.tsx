@@ -6,6 +6,7 @@ import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
+import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -25,6 +26,7 @@ const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;
+	kind: ProjectKind;
 	onOpenChange: (open: boolean) => void;
 	onSubmit: (selection: CreateProjectAgentSelection) => Promise<void>;
 	open: boolean;
@@ -34,6 +36,7 @@ type CreateProjectAgentSheetProps = {
 export function CreateProjectAgentSheet({
 	error,
 	isCreating,
+	kind,
 	onOpenChange,
 	onSubmit,
 	open,
@@ -85,7 +88,9 @@ export function CreateProjectAgentSheet({
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
-							<Dialog.Title className="text-[15px] font-semibold text-foreground">Project agents</Dialog.Title>
+							<Dialog.Title className="text-[15px] font-semibold text-foreground">
+								{kind === "workspace" ? "Workspace agents" : "Project agents"}
+							</Dialog.Title>
 							<Dialog.Description className="mt-1 break-all text-[12px] text-muted-foreground">
 								{path ?? ""}
 							</Dialog.Description>
@@ -177,7 +182,7 @@ export function CreateProjectAgentSheet({
 								Cancel
 							</Button>
 							<Button type="submit" variant="primary" disabled={!canSubmit}>
-								{isCreating ? "Creating..." : "Create and start"}
+								{isCreating ? "Creating..." : kind === "workspace" ? "Create workspace and start" : "Create and start"}
 							</Button>
 						</div>
 					</form>

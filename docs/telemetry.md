@@ -8,6 +8,7 @@ The Electron renderer sends anonymous usage events to PostHog automatically. The
 - Route views (home, project board, session detail, etc.)
 - Project add / remove actions (project path is SHA-256 hashed before transmission)
 - Unhandled renderer exceptions (error name and surface only)
+- AO app version context (`app_version` / `ao_version`, platform, build mode)
 
 PostHog session recording is also enabled. Network request names are masked before recording.
 

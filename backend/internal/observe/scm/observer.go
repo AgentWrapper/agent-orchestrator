@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,7 @@ type Store interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
+	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
@@ -466,23 +468,35 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 				scanRepos[sess.ProjectID] = o.resolveScanRepos(p, origin)
 			}
 		}
-		origin, ok := originRepos[sess.ProjectID]
-		if !ok {
-			o.logger.Debug("scm observer: project has no supported SCM origin", "project", proj.ID, "origin", proj.RepoOriginURL)
-			continue
+		repos := make([]ports.SCMRepo, 0, len(scanRepos[sess.ProjectID]))
+		if origin, ok := originRepos[sess.ProjectID]; ok {
+			for _, repo := range scanRepos[sess.ProjectID] {
+				sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: origin, branch: branch})
+				repos = append(repos, repo)
+			}
 		}
-		for _, repo := range scanRepos[sess.ProjectID] {
-			sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: origin, branch: branch})
+		childRepos, err := o.workspaceSCMSessionRepos(ctx, proj, sess, branch)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, child := range childRepos {
+			sessionRepos = append(sessionRepos, child)
+			repos = append(repos, child.repo)
+		}
+		if len(repos) == 0 {
+			o.logger.Debug("scm observer: project has no supported SCM origins", "project", proj.ID)
+			continue
 		}
 		prs, err := o.store.ListPRsBySession(ctx, sess.ID)
 		if err != nil {
 			return nil, nil, err
 		}
 		for _, pr := range openTrackedPRs(prs) {
-			// A tracked PR may live on an upstream repo (cross-fork), so its
-			// refresh subject is keyed by the PR's own recorded repo, not the
-			// push origin, or the GraphQL refetch would target the wrong repo.
-			prRepo := subjectRepoForPR(pr, origin)
+			prRepo, ok := repoForTrackedPR(pr, repos)
+			if !ok {
+				o.logger.Warn("scm observer: tracked PR repo no longer belongs to project", "session", sess.ID, "pr", pr.URL, "repo", pr.Repo)
+				continue
+			}
 			key := prKey(prRepo, pr.Number)
 			if existing, ok := out[key]; ok {
 				o.logger.Warn("scm observer: duplicate tracked PR ownership skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
@@ -510,7 +524,7 @@ func (o *Observer) resolveScanRepos(proj domain.ProjectRecord, origin ports.SCMR
 		return repos
 	}
 	seen := map[string]bool{prKey(origin, 0): true}
-	for _, url := range gitRemoteURLs(proj.Path) {
+	for _, url := range gitRemoteURLsFunc(proj.Path) {
 		repo, ok := o.provider.ParseRepository(url)
 		if !ok {
 			continue
@@ -525,21 +539,72 @@ func (o *Observer) resolveScanRepos(proj domain.ProjectRecord, origin ports.SCMR
 	return repos
 }
 
-// subjectRepoForPR resolves the repo that owns a tracked PR's number for refresh.
-// A cross-fork PR lives on the base/upstream repo recorded in pr.Repo rather than
-// the push origin, so the refresh/GraphQL fetch must target pr.Repo. Legacy rows
-// written before pr.Repo was populated fall back to the origin.
-func subjectRepoForPR(pr domain.PullRequest, origin ports.SCMRepo) ports.SCMRepo {
-	if strings.TrimSpace(pr.Repo) == "" {
-		return origin
+func (o *Observer) workspaceSCMSessionRepos(ctx context.Context, proj domain.ProjectRecord, sess domain.SessionRecord, branch string) ([]sessionRepo, error) {
+	if proj.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		return nil, nil
 	}
-	return ports.SCMRepo{
-		Provider: firstNonEmpty(pr.Provider, origin.Provider),
-		Host:     firstNonEmpty(pr.Host, origin.Host),
-		Repo:     pr.Repo,
-		Owner:    ownerOf(pr.Repo),
-		Name:     nameOf(pr.Repo),
+	childRepos, err := o.store.ListWorkspaceRepos(ctx, proj.ID)
+	if err != nil {
+		return nil, err
 	}
+	repos := make([]sessionRepo, 0, len(childRepos))
+	seen := map[string]bool{}
+	for _, child := range childRepos {
+		if strings.TrimSpace(child.RepoOriginURL) == "" {
+			continue
+		}
+		repo, ok := o.provider.ParseRepository(child.RepoOriginURL)
+		if !ok {
+			o.logger.Debug("scm observer: unsupported SCM origin", "project", proj.ID, "repo", child.Name, "origin", child.RepoOriginURL)
+			continue
+		}
+		childPath := filepath.Join(proj.Path, filepath.FromSlash(child.RelativePath))
+		for _, scanRepo := range o.resolveScanRepos(domain.ProjectRecord{Path: childPath}, repo) {
+			key := prKey(scanRepo, 0)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			repos = append(repos, sessionRepo{session: sess, repo: scanRepo, headRepo: repo, branch: branch})
+		}
+	}
+	return repos, nil
+}
+
+func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRepo, bool) {
+	if pr.Provider != "" && pr.Host != "" && pr.Repo != "" {
+		return ports.SCMRepo{Provider: pr.Provider, Host: pr.Host, Repo: pr.Repo}, true
+	}
+	if pr.Repo != "" {
+		for _, repo := range repos {
+			if matchesTrackedPRRepo(pr, repo) {
+				return repo, true
+			}
+		}
+		return ports.SCMRepo{}, false
+	}
+	if len(repos) == 1 {
+		return repos[0], true
+	}
+	for _, repo := range repos {
+		if strings.EqualFold(repo.Repo, repos[0].Repo) {
+			return repo, true
+		}
+	}
+	return repos[0], len(repos) > 0
+}
+
+func matchesTrackedPRRepo(pr domain.PullRequest, repo ports.SCMRepo) bool {
+	if pr.Provider != "" && !strings.EqualFold(pr.Provider, repo.Provider) {
+		return false
+	}
+	if pr.Host != "" && !strings.EqualFold(pr.Host, repo.Host) {
+		return false
+	}
+	if pr.Repo != "" && !strings.EqualFold(pr.Repo, repoFullName(repo)) {
+		return false
+	}
+	return true
 }
 
 func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {
@@ -1335,6 +1400,8 @@ func gitRemoteURLs(path string) []string {
 	}
 	return urls
 }
+
+var gitRemoteURLsFunc = gitRemoteURLs
 
 func scrubLine(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
