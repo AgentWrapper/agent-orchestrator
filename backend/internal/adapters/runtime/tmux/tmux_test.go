@@ -156,9 +156,10 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 // -- Create tests --
 
 func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
-	// new-session, set-option status, set-option mouse, has-session (exit 0 = alive)
+	// new-session, set-option status, set-option mouse, window-size latest,
+	// has-session (exit 0 = alive)
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil, nil}
+	fr.outputs = [][]byte{nil, nil, nil, nil, nil}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -172,9 +173,10 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	// Expect 4 calls: new-session, set-option status, set-option mouse, has-session.
-	if len(fr.calls) != 4 {
-		t.Fatalf("calls = %d, want 4", len(fr.calls))
+	// Expect 5 calls: new-session, set-option status, set-option mouse,
+	// window-size latest, has-session.
+	if len(fr.calls) != 5 {
+		t.Fatalf("calls = %d, want 5", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -204,9 +206,15 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 		t.Fatalf("call[2] = %#v, want %#v", got, want)
 	}
 
-	// Call 3: has-session (IsAlive, uses exact-match target =sess-1).
-	if got, want := fr.calls[3].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 3: window-size latest so the most recent browser/Electron attach,
+	// not the smallest stale client, drives the shared tmux window geometry.
+	if got, want := fr.calls[3].args, []string{"set-window-option", "-t", "sess-1", "window-size", "latest"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[3] = %#v, want %#v", got, want)
+	}
+
+	// Call 4: has-session (IsAlive, uses exact-match target =sess-1).
+	if got, want := fr.calls[4].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[4] = %#v, want %#v", got, want)
 	}
 }
 
