@@ -230,7 +230,9 @@ func Run() error {
 	stop()
 	<-previewDone
 	lcStack.Stop()
-	if err := lan.Stop(context.Background()); err != nil {
+	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer lanCancel()
+	if err := lan.Stop(lanStopCtx); err != nil {
 		log.Error("mobile LAN listener shutdown", "err", err)
 	}
 	if err := cdcPipe.Stop(); err != nil {

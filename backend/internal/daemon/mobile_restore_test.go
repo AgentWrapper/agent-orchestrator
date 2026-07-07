@@ -32,7 +32,9 @@ func TestRestoreEnabledStartsListener(t *testing.T) {
 		t.Fatalf("save state: %v", err)
 	}
 	lan := &fakeLAN{}
-	restoreMobileOnBoot(path, lan)
+	if err := restoreMobileOnBoot(path, lan); err != nil {
+		t.Fatalf("restoreMobileOnBoot: %v", err)
+	}
 	if !lan.started {
 		t.Fatal("expected LAN listener started from persisted enabled state")
 	}
@@ -51,7 +53,9 @@ func TestRestoreDisabledDoesNotStart(t *testing.T) {
 		t.Fatalf("save state: %v", err)
 	}
 	lan := &fakeLAN{}
-	restoreMobileOnBoot(path, lan)
+	if err := restoreMobileOnBoot(path, lan); err != nil {
+		t.Fatalf("restoreMobileOnBoot: %v", err)
+	}
 	if lan.started {
 		t.Fatal("expected LAN listener NOT started when persisted state is disabled")
 	}
