@@ -24,6 +24,8 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 const isLinux =
 	typeof navigator !== "undefined" &&
@@ -39,9 +41,12 @@ type SessionsBoardProps = {
 // The four kanban columns, left→right by flow (work → review → merge), ported
 // verbatim from agent-orchestrator (SIMPLE_KANBAN_LEVELS + AttentionZone +
 // mc-board.css). "done" is archived, not a column.
+// NOTE: no `label` field here — the display label is translated at render
+// time in ZoneColumn via `t(\`board.columns.${col.level}\`)`, so there is no
+// second, unused copy of the string to drift out of sync (see the
+// TOPBAR_ACTIVITY_PILL lesson in ShellTopbar.tsx).
 type Column = {
 	level: AttentionZone;
-	label: string;
 	glow: string;
 	dot: string;
 	dotGlow: boolean;
@@ -50,7 +55,6 @@ type Column = {
 const COLUMNS: Column[] = [
 	{
 		level: "working",
-		label: "Working",
 		glow: "color-mix(in srgb, var(--color-working) 7%, transparent)",
 		dot: "var(--color-working)",
 		dotGlow: true,
@@ -58,7 +62,6 @@ const COLUMNS: Column[] = [
 	},
 	{
 		level: "action",
-		label: "Needs you",
 		glow: "color-mix(in srgb, var(--color-warning) 6%, transparent)",
 		dot: "var(--color-warning)",
 		dotGlow: true,
@@ -66,7 +69,6 @@ const COLUMNS: Column[] = [
 	},
 	{
 		level: "pending",
-		label: "In review",
 		glow: "var(--color-overlay-faint)",
 		dot: "var(--color-text-muted)",
 		dotGlow: false,
@@ -74,7 +76,6 @@ const COLUMNS: Column[] = [
 	},
 	{
 		level: "merge",
-		label: "Ready to merge",
 		glow: "color-mix(in srgb, var(--color-success) 7%, transparent)",
 		dot: "var(--color-success)",
 		dotGlow: true,
@@ -83,6 +84,7 @@ const COLUMNS: Column[] = [
 ];
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
@@ -168,7 +170,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
-			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
+			setSpawnError(err instanceof Error ? err.message : t("board.errors.spawnFailed"));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -203,28 +205,28 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</TopbarKillError>
 			)}
 			<TopbarButton
-				aria-label="New task"
+				aria-label={t("board.actions.newTask")}
 				disabled={isProjectRestarting}
 				onClick={() => setIsNewTaskOpen(true)}
 				variant="accent"
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
-				New task
+				{t("board.actions.newTask")}
 			</TopbarButton>
 			<TopbarButton
-				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				aria-label={orchestrator ? t("board.actions.orchestrator") : t("board.actions.spawnOrchestrator")}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{isProjectRestarting
-					? "Restarting..."
+					? t("board.actions.restarting")
 					: isSpawning
-						? "Spawning..."
+						? t("board.actions.spawning")
 						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
+							? t("board.actions.orchestrator")
+							: t("board.actions.spawnOrchestrator")}
 			</TopbarButton>
 		</>
 	) : isLinux ? (
@@ -238,8 +240,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    (review feedback on #2432). */}
 			{!showWelcome && (
 				<DashboardSubhead
-					title="Board"
-					subtitle="Live agent sessions flowing from work → review → merge."
+					title={t("board.title")}
+					subtitle={t("board.subtitle")}
 					actions={actions}
 				/>
 			)}
@@ -252,13 +254,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
 							<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
 								<RotateCw className="size-3.5" aria-hidden="true" />
-								Restart
+								{t("board.actions.restart")}
 							</TopbarButton>
 						) : null}
 					</div>
 				) : null}
 				{workspaceQuery.isError ? (
-					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
+					<p className="py-10 text-center text-xs text-passive">{t("board.errors.loadSessions")}</p>
 				) : showWelcome ? (
 					<BoardWelcome />
 				) : showProjectEmpty ? (
@@ -304,7 +306,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						>
 							<path d="m9 18 6-6-6-6" />
 						</svg>
-						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Done / Terminated</span>
+						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">{t("board.done")}</span>
 						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{done.length}</span>
 					</button>
 					{doneExpanded && (
@@ -342,6 +344,7 @@ function ZoneColumn({
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 }) {
+	const { t } = useTranslation();
 	return (
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
@@ -357,7 +360,9 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClass)}>{col.label}</span>
+				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClass)}>
+					{t(`board.columns.${col.level}`)}
+				</span>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
@@ -372,7 +377,8 @@ function ZoneColumn({
 }
 
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
-	const badge = sessionBadge(session);
+	const { t } = useTranslation();
+	const badge = sessionBadge(session, t);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -394,7 +400,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					{issueId && (
 						<span
 							className="inline-flex max-w-branch-chip items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-							title={`Intake issue: ${issueId}`}
+							title={t("board.intakeIssue", { id: issueId })}
 						>
 							{issueId}
 						</span>
@@ -419,11 +425,11 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 				onClick={(event) => event.stopPropagation()}
 			>
 				{prSummaries.length === 0 ? (
-					"no PR yet"
+					t("board.noPR")
 				) : (
 					<div className="flex flex-col gap-1">
-						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} />
+						{groupPRsByLifecycle(prSummaries, t).map((group) => (
+							<BoardPRGroup group={group} key={group.status.key} />
 						))}
 					</div>
 				)}
@@ -432,7 +438,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	);
 }
 
-type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
+type BoardPRLifecycleStatus = { key: "closed" | "open" | "draft" | "merged"; label: string; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group }: { group: BoardPRGroup }) {
@@ -460,25 +466,25 @@ function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 	);
 }
 
-function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
-	const groups = new Map<BoardPRLifecycleStatus["label"], BoardPRGroup>();
+function groupPRsByLifecycle(prs: SessionPRSummary[], t: TFunction): BoardPRGroup[] {
+	const groups = new Map<BoardPRLifecycleStatus["key"], BoardPRGroup>();
 	for (const pr of prs) {
-		const status = prLifecycleStatus(pr);
-		const group = groups.get(status.label);
+		const status = prLifecycleStatus(pr, t);
+		const group = groups.get(status.key);
 		if (group) {
 			group.prs.push(pr);
 		} else {
-			groups.set(status.label, { status, prs: [pr] });
+			groups.set(status.key, { status, prs: [pr] });
 		}
 	}
 	return Array.from(groups.values());
 }
 
-function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
-	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
-	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
-	if (pr.state === "closed") return { label: "closed", className: "text-error" };
-	return { label: "open", className: "text-success" };
+function prLifecycleStatus(pr: SessionPRSummary, t: TFunction): BoardPRLifecycleStatus {
+	if (pr.state === "draft") return { key: "draft", label: t("board.lifecycle.draft"), className: "text-passive" };
+	if (pr.state === "merged") return { key: "merged", label: t("board.lifecycle.merged"), className: "text-accent" };
+	if (pr.state === "closed") return { key: "closed", label: t("board.lifecycle.closed"), className: "text-error" };
+	return { key: "open", label: t("board.lifecycle.open"), className: "text-success" };
 }
 
 function sameLabel(a: string, b: string): boolean {
@@ -501,33 +507,33 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 	}
 }
 
-function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
+function sessionBadge(session: WorkspaceSession, t: TFunction): { label: string; className: string } {
 	switch (session.status) {
 		case "needs_input":
-			return { label: "Input needed", className: "text-warning" };
+			return { label: t("board.status.inputNeeded"), className: "text-warning" };
 		case "no_signal":
-			return { label: "No signal", className: "text-passive" };
+			return { label: t("board.status.noSignal"), className: "text-passive" };
 		case "ci_failed":
-			return { label: "CI failed", className: "text-error" };
+			return { label: t("board.status.ciFailed"), className: "text-error" };
 		case "changes_requested":
-			return { label: "Changes requested", className: "text-warning" };
+			return { label: t("board.status.changesRequested"), className: "text-warning" };
 		case "review_pending":
-			return { label: "Review pending", className: "text-muted-foreground" };
+			return { label: t("board.status.reviewPending"), className: "text-muted-foreground" };
 		case "draft":
-			return { label: "Draft PR", className: "text-muted-foreground" };
+			return { label: t("board.status.draftPR"), className: "text-muted-foreground" };
 		case "pr_open":
-			return { label: "PR open", className: "text-muted-foreground" };
+			return { label: t("board.status.prOpen"), className: "text-muted-foreground" };
 		case "approved":
-			return { label: "Approved", className: "text-success" };
+			return { label: t("board.status.approved"), className: "text-success" };
 		case "mergeable":
-			return { label: "Ready", className: "text-success" };
+			return { label: t("board.status.ready"), className: "text-success" };
 		case "merged":
-			return { label: "Merged", className: "text-passive" };
+			return { label: t("board.status.merged"), className: "text-passive" };
 		case "terminated":
-			return { label: "Terminated", className: "text-passive" };
+			return { label: t("board.status.terminated"), className: "text-passive" };
 		case "idle":
-			return { label: "Idle", className: "text-passive" };
+			return { label: t("board.status.idle"), className: "text-passive" };
 		default:
-			return { label: "Working", className: "text-working" };
+			return { label: t("board.status.working"), className: "text-working" };
 	}
 }

@@ -1,0 +1,31 @@
+{
+  "board": {
+    "title": "看板",
+    "subtitle": "实时查看代理会话从开发 → 审查 → 合并的流程。",
+
+    "columns": {
+      "working": "开发中",
+      "action": "需要处理",
+      "pending": "审核中",
+      "merge": "准备合并"
+    },
+
+    "actions": {
+      "newTask": "新建任务",
+      "orchestrator": "编排器",
+      "spawnOrchestrator": "启动编排器",
+      "restart": "重启",
+      "restarting": "正在重启...",
+      "spawning": "正在启动..."
+    },
+
+    "errors": {
+      "spawnFailed": "无法启动编排器",
+      "loadSessions": "无法加载会话。"
+    },
+
+    "done": "已完成 / 已终止",
+
+    "noPR": "暂无 PR"
+  }
+}

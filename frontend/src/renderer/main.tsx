@@ -10,6 +10,7 @@ import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { initTelemetry } from "./lib/telemetry";
 import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
+import { initialiseI18n } from "./i18n";
 
 const router = createAppRouter(queryClient);
 void initTelemetry();
@@ -20,6 +21,8 @@ declare module "@tanstack/react-router" {
 		router: typeof router;
 	}
 }
+
+void initialiseI18n();
 
 createRoot(document.getElementById("root") as HTMLElement).render(
 	<React.StrictMode>

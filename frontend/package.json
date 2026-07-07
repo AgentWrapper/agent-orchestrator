@@ -71,6 +71,7 @@
 		"clsx": "^2.1.1",
 		"electron-updater": "^6.8.9",
 		"gsap": "^3.15.0",
+		"i18next": "^26.3.4",
 		"lucide-react": "^1.17.0",
 		"openapi-fetch": "^0.17.0",
 		"posthog-js": "^1.390.2",
@@ -78,6 +79,7 @@
 		"radix-ui": "^1.5.0",
 		"react": "^19.2.7",
 		"react-dom": "^19.2.7",
+		"react-i18next": "^17.0.8",
 		"react-resizable-panels": "^4.11.2",
 		"tailwind-merge": "^3.6.0",
 		"zustand": "^5.0.14"

@@ -1,0 +1,31 @@
+{
+  "board": {
+    "title": "Board",
+    "subtitle": "Live agent sessions flowing from work → review → merge.",
+
+    "columns": {
+      "working": "Working",
+      "action": "Needs you",
+      "pending": "In review",
+      "merge": "Ready to merge"
+    },
+
+    "actions": {
+      "newTask": "New Task",
+      "orchestrator": "Orchestrator",
+      "spawnOrchestrator": "Spawn Orchestrator",
+      "restart": "Restart",
+      "restarting": "Restarting...",
+      "spawning": "Spawning..."
+    },
+
+    "errors": {
+      "spawnFailed": "Could not spawn orchestrator",
+      "loadSessions": "Could not load sessions."
+    },
+
+    "done": "Done / Terminated",
+
+    "noPR": "No PR yet"
+  }
+}
