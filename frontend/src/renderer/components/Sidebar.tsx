@@ -896,7 +896,8 @@ function CreateProjectFlow({
 }
 
 function shouldScanCreateFailure(message: string): boolean {
-	if (/daemon|server|conflict|already exists|not ready|start|orchestrator|permission denied/i.test(message)) return false;
+	if (/daemon|server|conflict|already exists|not ready|start|orchestrator|permission denied/i.test(message))
+		return false;
 	return /workspace|repo|repository|git|path|folder|worktree|bare|branch|commit|remote/i.test(message);
 }
 
