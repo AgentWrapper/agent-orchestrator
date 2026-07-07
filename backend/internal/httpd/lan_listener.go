@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,11 +31,58 @@ type LANManager struct {
 func NewLANManager(handler http.Handler, state *authState, defaultPort int, log *slog.Logger) *LANManager {
 	lock := newLockout(5, time.Minute, time.Now)
 	return &LANManager{
-		handler:     authMiddleware(state, lock)(handler),
+		handler:     lanControlBlock(authMiddleware(state, lock)(handler)),
 		defaultPort: defaultPort,
 		log:         loggerOrDefault(log),
 		state:       state,
 	}
+}
+
+// lanControlBlockedPrefixes are the loopback-only daemon-control route
+// prefixes that must never be reachable through the LAN listener: /shutdown,
+// the telemetry routes under /internal/, and the Connect Mobile control
+// surface under /api/v1/mobile. These routes are gated in the shared router
+// by localControlRequest, which trusts the client-supplied Host header (and
+// RealIP, which trusts X-Forwarded-For/X-Real-IP) — both spoofable by any LAN
+// client. The LAN listener is the one thing a caller cannot spoof: it is the
+// physical socket the request arrived on. So the block below is applied only
+// to the LAN-served handler, outermost (wrapping authMiddleware), independent
+// of any header.
+var lanControlBlockedPrefixes = []string{
+	"/shutdown",
+	"/internal/",
+	"/api/v1/mobile",
+}
+
+// lanControlBlock returns 404 for any request whose path is, or is nested
+// under, a loopback-only control-route prefix, before it ever reaches auth or
+// the shared router. It answers as if the route were never mounted at all —
+// no 403/401 that would confirm the path exists.
+func lanControlBlock(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isLANControlBlockedPath(r.URL.Path) {
+			notFoundJSON(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isLANControlBlockedPath reports whether path matches a blocked prefix on an
+// exact segment boundary: "/api/v1/mobile" blocks itself and everything
+// beneath it ("/api/v1/mobile/status") but must not catch unrelated siblings
+// such as "/api/v1/mobileapp".
+func isLANControlBlockedPath(path string) bool {
+	for _, prefix := range lanControlBlockedPrefixes {
+		trimmed := prefix
+		if len(trimmed) > 1 && trimmed[len(trimmed)-1] == '/' {
+			trimmed = trimmed[:len(trimmed)-1]
+		}
+		if path == trimmed || strings.HasPrefix(path, trimmed+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // NewMobileLAN constructs a LANManager with its own private authState. Callers
