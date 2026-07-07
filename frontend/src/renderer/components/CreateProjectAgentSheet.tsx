@@ -5,7 +5,7 @@ import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
-import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
+import { buildIntake, type IntakeForm, IntakeFields } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -64,7 +64,10 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
+// The create sheet is compact and does not render the opt-out label editor, so
+// optOutLabels stays empty here — a new project's ExcludeLabels is left unset and
+// the daemon materializes the default opt-out taxonomy (domain.WithDefaults).
+const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "", optOutLabels: [] };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
@@ -112,9 +115,7 @@ export function CreateProjectAgentSheet({
 	const [permissions, setPermissions] = useState<string>(NEW_PROJECT_DEFAULTS.permissions);
 	const [model, setModel] = useState<string>(NEW_PROJECT_DEFAULTS.model);
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
-	const intakeIncomplete = intakeNeedsRule(intake);
-	const canSubmit =
-		workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isCreating && !isLoadingAgents;
+	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isCreating && !isLoadingAgents;
 
 	useEffect(() => {
 		if (!open) {

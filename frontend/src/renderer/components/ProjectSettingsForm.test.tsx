@@ -306,14 +306,17 @@ describe("ProjectSettingsForm", () => {
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		const body = putMock.mock.calls[0]?.[1]?.body;
+		// An unconfigured project shows the default opt-out taxonomy pre-filled, so
+		// saving persists it explicitly (issue #80).
 		expect(body.config.trackerIntake).toEqual({
 			enabled: true,
 			provider: "github",
 			assignee: "octocat",
+			excludeLabels: ["no-ao", "deferred", "charter", "charter-audit", "human-review"],
 		});
 	});
 
-	it("blocks save when intake is enabled with no assignee", async () => {
+	it("saves intake with no assignee (opt-out-by-default) and honors opt-out label edits", async () => {
 		getMock.mockResolvedValue({
 			data: {
 				status: "ok",
@@ -336,10 +339,107 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		// No assignee is required anymore. Remove one default and add a custom one
+		// to prove the tag list is editable and round-trips.
+		await userEvent.click(screen.getByRole("button", { name: "Remove deferred" }));
+		await userEvent.type(screen.getByLabelText("Add opt-out label"), "wontfix{Enter}");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-		expect(await screen.findAllByText("Enabling intake requires an assignee.")).toHaveLength(2);
-		expect(putMock).not.toHaveBeenCalled();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			excludeLabels: ["no-ao", "charter", "charter-audit", "human-review", "wontfix"],
+		});
+	});
+
+	it("clearing every opt-out label omits excludeLabels so the daemon restores defaults", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+						trackerIntake: {
+							enabled: true,
+							provider: "github",
+							assignee: "octocat",
+							excludeLabels: ["no-ao", "deferred"],
+						},
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Remove no-ao" }));
+		await userEvent.click(screen.getByRole("button", { name: "Remove deferred" }));
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		// excludeLabels omitted → persisted as unset → daemon re-materializes the
+		// default taxonomy (clearing restores default opt-out protection).
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			assignee: "octocat",
+		});
+	});
+
+	it("preserves intake fields the form does not expose (maxConcurrent) across a save", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+						trackerIntake: {
+							enabled: true,
+							provider: "github",
+							assignee: "octocat",
+							maxConcurrent: 3,
+							excludeLabels: ["no-ao"],
+						},
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		// Touch an unrelated field and save; the CLI-set maxConcurrent + the loaded
+		// excludeLabels must survive rather than being wiped by the settings PUT.
+		await userEvent.type(await screen.findByLabelText("Session prefix"), "ao");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			assignee: "octocat",
+			maxConcurrent: 3,
+			excludeLabels: ["no-ao"],
+		});
 	});
 
 	it("restarts when the saved orchestrator agent already differs from the running orchestrator", async () => {

@@ -1,18 +1,30 @@
-import { Info } from "lucide-react";
+import { Info, X } from "lucide-react";
+import { useState } from "react";
 import type { components } from "../../api/schema";
 import { Label } from "./ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
+// DEFAULT_OPT_OUT_LABELS mirrors the backend domain.DefaultOptOutLabels
+// taxonomy (issue #80). The daemon materializes these into ExcludeLabels when a
+// project enables intake without configuring the list, so the settings form
+// shows them pre-filled for an unconfigured project. "charter" prefix-matches
+// the whole charter:* family server-side (see observer.go). Keep this in sync
+// with the Go constant; ProjectSettingsForm.test.tsx guards the pairing.
+export const DEFAULT_OPT_OUT_LABELS = ["no-ao", "deferred", "charter", "charter-audit", "human-review"] as const;
+
 // IntakeForm is the flat, string-backed shape both the create sheet and the
 // project settings form edit. repo has no input today (it's derived from the
 // git origin server-side) but is plumbed so a value set via the CLI
-// (--tracker-repo) survives a UI save instead of being wiped.
+// (--tracker-repo) survives a UI save instead of being wiped. optOutLabels is
+// the editable opt-out work gate: intake works every open issue that carries
+// none of these labels.
 export type IntakeForm = {
 	enabled: boolean;
 	repo: string;
 	assignee: string;
+	optOutLabels: string[];
 };
 
 // Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
@@ -20,24 +32,25 @@ export type IntakeForm = {
 // grows, IntakeFields gains a provider <Select> + per-provider scope fields,
 // and buildIntake switches the scope field it emits.
 
-// intakeNeedsRule mirrors the backend guard (TrackerIntakeConfig.Validate):
-// enabling intake requires an assignee so it cannot drain an entire issue
-// backlog. v1 intake is assignee-only.
-export function intakeNeedsRule(form: IntakeForm): boolean {
-	return form.enabled && form.assignee.trim() === "";
-}
-
-// buildIntake produces the payload field, scrubbing empties so a disabled or
-// blank intake serializes to `undefined` (omit) rather than an empty object the
-// daemon would persist.
-export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
+// buildIntake produces the payload field. Disabled intake serializes to
+// `undefined` (omit) — the whole config is dropped, so no base field (labels,
+// maxConcurrent) leaks into a persisted-but-disabled intake. When enabled it
+// spreads `base` (the config that loaded) first so fields the form does NOT own
+// — labels, maxConcurrent — survive the save instead of being silently dropped;
+// the form-owned fields then override. An empty optOutLabels list is omitted so
+// the daemon falls back to the default taxonomy.
+export function buildIntake(form: IntakeForm, base?: TrackerIntakeConfig): TrackerIntakeConfig | undefined {
+	if (!form.enabled) return undefined;
+	const excludeLabels = form.optOutLabels.map((l) => l.trim()).filter((l) => l !== "");
 	const next: TrackerIntakeConfig = {
-		enabled: form.enabled || undefined,
-		provider: form.enabled ? "github" : undefined,
+		...base,
+		enabled: true,
+		provider: "github",
 		repo: form.repo.trim() || undefined,
 		assignee: form.assignee.trim() || undefined,
+		excludeLabels: excludeLabels.length > 0 ? excludeLabels : undefined,
 	};
-	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
+	return next;
 }
 
 // deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (observer.go):
@@ -74,9 +87,9 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 // however they like.
 //
 // repoPreview is only meaningful once a project exists and its git origin is
-// known: pass `{ show: true, value }` from settings to render the repo link
-// row, and omit it from the create sheet (the origin URL isn't available there,
-// and the daemon derives the repo regardless).
+// known: pass `{ value }` from settings to render the repo link row, and omit
+// it from the create sheet (the origin URL isn't available there, and the
+// daemon derives the repo regardless).
 export function IntakeFields({
 	form,
 	onChange,
@@ -86,11 +99,12 @@ export function IntakeFields({
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
 	repoPreview?: { value?: string };
-	// compact drops the descriptive/help prose and folds the explanation into an
-	// info-icon tooltip — used by the create-project sheet, which stays minimal.
+	// compact drops the descriptive/help prose and the opt-out label editor,
+	// folding the explanation into an info-icon tooltip — used by the
+	// create-project sheet, which stays minimal. The daemon still applies the
+	// default opt-out taxonomy to a project created without an explicit list.
 	compact?: boolean;
 }) {
-	const needsRule = intakeNeedsRule(form);
 	return (
 		<div className="flex flex-col gap-4">
 			{!compact && (
@@ -151,14 +165,86 @@ export function IntakeFields({
 							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.assignee}
 							onChange={(e) => onChange({ assignee: e.target.value })}
-							placeholder="type username or * for any"
+							placeholder="optional — blank works any assignee, * requires one"
 						/>
 					</IntakeField>
-					{!compact && needsRule && (
-						<p className="text-[12px] leading-5 text-error">Enabling intake requires an assignee.</p>
+					{!compact && (
+						<IntakeField label="Opt-out labels">
+							<OptOutLabelsEditor labels={form.optOutLabels} onChange={(optOutLabels) => onChange({ optOutLabels })} />
+						</IntakeField>
 					)}
 				</>
 			)}
+		</div>
+	);
+}
+
+// OptOutLabelsEditor is the add/remove tag list for the opt-out work gate.
+// Intake works every open issue that carries NONE of these labels. "charter"
+// also opts out the charter:* family (server-side prefix match).
+function OptOutLabelsEditor({ labels, onChange }: { labels: string[]; onChange: (next: string[]) => void }) {
+	const [draft, setDraft] = useState("");
+
+	const add = () => {
+		const value = draft.trim();
+		if (value === "") return;
+		if (labels.some((l) => l.toLowerCase() === value.toLowerCase())) {
+			setDraft("");
+			return;
+		}
+		onChange([...labels, value]);
+		setDraft("");
+	};
+
+	const remove = (label: string) => onChange(labels.filter((l) => l !== label));
+
+	return (
+		<div className="flex flex-col gap-2">
+			<p className="text-[12px] leading-5 text-muted-foreground">
+				Intake works every open issue that carries none of these labels.{" "}
+				<code className="text-foreground">charter</code> also opts out the{" "}
+				<code className="text-foreground">charter:*</code> family.
+			</p>
+			{labels.length > 0 ? (
+				<ul className="flex flex-wrap gap-1.5" aria-label="Opt-out labels">
+					{labels.map((label) => (
+						<li
+							key={label}
+							className="flex items-center gap-1 rounded-md border border-input bg-transparent py-0.5 pl-2 pr-1 text-[12px] text-foreground"
+						>
+							<span className="font-mono">{label}</span>
+							<button
+								type="button"
+								className="grid size-4 place-items-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-none"
+								aria-label={`Remove ${label}`}
+								onClick={() => remove(label)}
+							>
+								<X className="size-3" aria-hidden="true" />
+							</button>
+						</li>
+					))}
+				</ul>
+			) : (
+				// Empty ≠ "work everything": the daemon re-materializes the default
+				// taxonomy when the list is unset, so say so rather than let the prose
+				// above imply an empty list disables opt-out protection.
+				<p className="text-[12px] leading-5 text-muted-foreground">
+					None set — the default opt-out labels ({DEFAULT_OPT_OUT_LABELS.join(", ")}) apply.
+				</p>
+			)}
+			<input
+				aria-label="Add opt-out label"
+				className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+				value={draft}
+				onChange={(e) => setDraft(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") {
+						e.preventDefault();
+						add();
+					}
+				}}
+				placeholder="add a label, press Enter"
+			/>
 		</div>
 	);
 }

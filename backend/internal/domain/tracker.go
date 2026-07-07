@@ -11,6 +11,17 @@ type TrackerProvider string
 // TrackerProviderGitHub is the only supported issue-tracker provider.
 const TrackerProviderGitHub TrackerProvider = "github"
 
+// DefaultOptOutLabels is the opt-out taxonomy every ao-native repo carries by
+// default (issue #80): intake works every open issue EXCEPT those bearing one of
+// these labels. It is materialized into TrackerIntakeConfig.ExcludeLabels by
+// WithDefaults when intake is enabled and the project left ExcludeLabels unset.
+//
+// "charter" is a scoped-label prefix: the intake filter treats it as excluding
+// both the bare "charter" label and the whole "charter:*" family (e.g.
+// charter:C03), so charter sub-labels never need enumerating. "charter-audit"
+// is a distinct label (hyphen, not a "charter:" scope) and is listed on its own.
+var DefaultOptOutLabels = []string{"no-ao", "deferred", "charter", "charter-audit", "human-review"}
+
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub) and is parsed by the adapter.
 type TrackerID struct {
@@ -79,8 +90,11 @@ type ListFilter struct {
 }
 
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
-// Enabled requires an explicit assignee eligibility rule so turning intake on
-// cannot accidentally drain an entire issue backlog.
+// Intake is opt-out-by-default (issue #80): once enabled it works every open
+// issue that carries none of the ExcludeLabels (which default to
+// DefaultOptOutLabels). An assignee is an optional additional narrowing filter,
+// not a requirement; the MaxConcurrent cap plus the opt-out labels are what keep
+// enabling intake from draining an entire backlog.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
@@ -97,7 +111,15 @@ type TrackerIntakeConfig struct {
 	Labels []string `json:"labels,omitempty"`
 	// ExcludeLabels rejects any issue carrying at least one of the listed labels
 	// (case-insensitive), even if it satisfies the assignee and Labels rules.
-	// This expresses opt-outs like "agent:noauto". Exclusion wins over inclusion.
+	// Each entry matches a label exactly OR as a scoped-label prefix ("charter"
+	// excludes "charter:C03"; see observer.go). Exclusion wins over inclusion.
+	//
+	// This is the opt-out work gate (issue #80). A nil slice (never set) is
+	// materialized to the DefaultOptOutLabels taxonomy by WithDefaults; a
+	// non-nil slice — including an explicit empty one, in memory — is honored
+	// verbatim. (omitempty is retained so the OpenAPI request field stays
+	// optional; JSON persistence therefore collapses an empty slice back to the
+	// defaults, i.e. clearing the list restores the default opt-out protection.)
 	ExcludeLabels []string `json:"excludeLabels,omitempty"`
 	// MaxConcurrent caps the number of live intake-spawned worker sessions the
 	// loop will keep running for this project at once. Zero means no cap. When at
@@ -107,11 +129,17 @@ type TrackerIntakeConfig struct {
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 }
 
-// WithDefaults fills the provider only when intake is enabled. Disabled intake
-// leaves the zero value untouched so empty project configs still store as NULL.
+// WithDefaults fills the provider and the opt-out taxonomy only when intake is
+// enabled. Disabled intake leaves the zero value untouched so empty project
+// configs still store as NULL. An unset ExcludeLabels (nil) is materialized to
+// DefaultOptOutLabels — opt-out-by-default; a non-nil slice (including an
+// explicit empty one) is honored verbatim.
 func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
 	if c.Enabled && c.Provider == "" {
 		c.Provider = TrackerProviderGitHub
+	}
+	if c.Enabled && c.ExcludeLabels == nil {
+		c.ExcludeLabels = append([]string(nil), DefaultOptOutLabels...)
 	}
 	return c
 }
@@ -131,9 +159,11 @@ func (c TrackerIntakeConfig) Validate() error {
 	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.Assignee) == "" {
-		return fmt.Errorf("trackerIntake: assignee is required when enabled")
-	}
+	// Issue #80: intake is opt-out-by-default, so an assignee is no longer
+	// required to enable it — the work gate is the opt-out labels (materialized
+	// by WithDefaults) plus the MaxConcurrent cap, which together replace the
+	// backlog-drain protection the assignee requirement used to provide. Assignee
+	// remains an optional additional narrowing filter when set.
 	for i, label := range c.Labels {
 		if err := validateNoWhitespaceField(fmt.Sprintf("trackerIntake.labels[%d]", i), label); err != nil {
 			return err

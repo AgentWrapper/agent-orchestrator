@@ -331,7 +331,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
 	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
 	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
-	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Optional GitHub issue assignee filter for intake eligibility (empty = any; intake is opt-out-by-default)")
 	f.StringArrayVar(&opts.trackerLabels, "tracker-label", nil, "Only intake issues carrying this label (repeatable; any-match)")
 	f.StringArrayVar(&opts.trackerExcludeLabels, "tracker-exclude-label", nil, "Never intake issues carrying this label (repeatable; wins over --tracker-label)")
 	f.IntVar(&opts.trackerMaxConcurrent, "tracker-max-concurrent", 0, "Cap live intake-spawned workers per project (0 = no cap)")

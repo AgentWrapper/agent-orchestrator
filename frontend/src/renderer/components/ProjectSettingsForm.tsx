@@ -9,7 +9,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import { buildIntake, DEFAULT_OPT_OUT_LABELS, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -87,6 +87,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
+		// Unconfigured projects show the default opt-out taxonomy the daemon would
+		// apply anyway, so the list is visible and editable rather than implicit.
+		intakeOptOutLabels: intake.excludeLabels ?? [...DEFAULT_OPT_OUT_LABELS],
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -108,6 +111,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		enabled: form.intakeEnabled,
 		repo: form.intakeRepo,
 		assignee: form.intakeAssignee,
+		optOutLabels: form.intakeOptOutLabels,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
@@ -115,9 +119,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
 			intakeRepo: patch.repo ?? f.intakeRepo,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+			intakeOptOutLabels: patch.optOutLabels ?? f.intakeOptOutLabels,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
-	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -136,7 +140,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
-				trackerIntake: buildIntake(intakeForm),
+				// Pass the loaded intake as base so fields the form doesn't expose
+				// (labels, maxConcurrent) survive the save instead of being wiped.
+				trackerIntake: buildIntake(intakeForm, intake),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -179,10 +185,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setReplacementError(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
-					return;
-				}
-				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
 					return;
 				}
 				setValidationError(null);

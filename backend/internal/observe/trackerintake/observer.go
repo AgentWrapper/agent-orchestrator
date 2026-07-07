@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
@@ -251,7 +252,7 @@ func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool
 // included one. An empty include list imposes no positive requirement.
 func issueMatchesLabels(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
 	for _, excluded := range cfg.ExcludeLabels {
-		if containsFold(issue.Labels, strings.TrimSpace(excluded)) {
+		if issueHasExcludedLabel(issue.Labels, strings.TrimSpace(excluded)) {
 			return false
 		}
 	}
@@ -264,6 +265,52 @@ func issueMatchesLabels(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool
 		}
 	}
 	return false
+}
+
+// issueHasExcludedLabel reports whether any of the issue's labels is opted out by
+// the excluded entry. An entry matches a label exactly (case-insensitive) OR as a
+// scoped-label prefix: entry "charter" excludes both "charter" and the whole
+// "charter:*" family (e.g. "charter:C03"), so charter sub-labels never need
+// enumerating (issue #80). The ":" boundary is required — "charter" does not
+// match "chartering". An empty entry matches nothing.
+func issueHasExcludedLabel(labels []string, excluded string) bool {
+	if excluded == "" {
+		return false
+	}
+	// The scope boundary is the excluded text followed by ":", so excluding
+	// "charter" catches "charter:C03" but not "chartering", and multi-segment
+	// entries keep their full scope ("agent:noauto" still catches
+	// "agent:noauto:beta"). foldHasPrefix folds identically to the EqualFold
+	// exact match above, so both case-insensitive paths agree.
+	prefix := excluded + ":"
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if strings.EqualFold(label, excluded) {
+			return true
+		}
+		if foldHasPrefix(label, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// foldHasPrefix reports whether s begins with prefix under Unicode case folding.
+// It walks rune-by-rune (never slicing mid-rune) and folds via strings.EqualFold,
+// so a scoped-prefix match is case-insensitive the same way the exact-label match
+// is — the two paths can't disagree on non-ASCII simple-fold pairs.
+func foldHasPrefix(s, prefix string) bool {
+	for _, pr := range prefix {
+		if s == "" {
+			return false
+		}
+		sr, size := utf8.DecodeRuneInString(s)
+		if sr != pr && !strings.EqualFold(string(sr), string(pr)) {
+			return false
+		}
+		s = s[size:]
+	}
+	return true
 }
 
 func containsFold(values []string, needle string) bool {

@@ -99,7 +99,9 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{
 			{ID: "off", RepoOriginURL: "https://github.com/acme/off.git"},
-			{ID: "broad", RepoOriginURL: "https://github.com/acme/broad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}}},
+			// A "broad" project (enabled, no assignee) is no longer ineligible —
+			// issue #80 made that a valid opt-out-by-default config. Its pickup
+			// behavior is covered by TestPollAppliesDefaultOptOutLabels.
 			{ID: "missing-origin", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
 		},
 	}
@@ -487,4 +489,109 @@ func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Se
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// TestIssueMatchesConfigExcludePrefix covers the scoped-label prefix rule from
+// issue #80: an exclude entry "charter" opts out the whole charter:* family
+// (charter, charter:C03) without enumerating each one, while a distinct label
+// like charter-audit (hyphen, not colon) is NOT swept up by the "charter"
+// prefix — it must be listed separately.
+func TestIssueMatchesConfigExcludePrefix(t *testing.T) {
+	withLabels := func(labels ...string) domain.Issue {
+		return domain.Issue{Assignees: []string{"alice"}, Labels: labels}
+	}
+	cfg := domain.TrackerIntakeConfig{Assignee: "alice", ExcludeLabels: []string{"charter"}}
+
+	if issueMatchesConfig(withLabels("charter"), cfg) {
+		t.Fatal("exact label charter should be excluded")
+	}
+	if issueMatchesConfig(withLabels("charter:C03"), cfg) {
+		t.Fatal("scoped label charter:C03 should be excluded by the charter prefix")
+	}
+	if issueMatchesConfig(withLabels("Charter:C03"), cfg) {
+		t.Fatal("prefix match must be case-insensitive")
+	}
+	if !issueMatchesConfig(withLabels("charter-audit"), cfg) {
+		t.Fatal("charter-audit (hyphen) must NOT be swept up by the charter: prefix")
+	}
+	if !issueMatchesConfig(withLabels("chartering"), cfg) {
+		t.Fatal("chartering must NOT match the charter prefix (prefix requires a ':' boundary)")
+	}
+
+	// Multi-segment entries keep their full scope: "agent:noauto" excludes
+	// "agent:noauto:beta" but a bare "agent" scope must not.
+	multi := domain.TrackerIntakeConfig{Assignee: "alice", ExcludeLabels: []string{"agent:noauto"}}
+	if issueMatchesConfig(withLabels("agent:noauto:beta"), multi) {
+		t.Fatal("agent:noauto must exclude the agent:noauto:* family")
+	}
+	if !issueMatchesConfig(withLabels("agent:other"), multi) {
+		t.Fatal("agent:noauto must NOT exclude a different agent:* scope")
+	}
+}
+
+// TestIssueHasExcludedLabelFoldConsistency locks that the exact-match and
+// scoped-prefix-match paths fold identically. The long-s (ſ) folds to "s" under
+// EqualFold, so an entry "scope" must exclude both "ſcope" (exact) and "ſcope:x"
+// (scoped prefix) — the two case-insensitive paths cannot disagree.
+func TestIssueHasExcludedLabelFoldConsistency(t *testing.T) {
+	if !issueHasExcludedLabel([]string{"ſcope"}, "scope") {
+		t.Fatal("exact fold match should hold for ſcope vs scope")
+	}
+	if !issueHasExcludedLabel([]string{"ſcope:x"}, "scope") {
+		t.Fatal("scoped-prefix fold match should hold for ſcope:x vs scope")
+	}
+}
+
+// TestPollAppliesDefaultOptOutLabels proves opt-out-by-default: a project that
+// enables intake without configuring ExcludeLabels still skips issues carrying
+// any of the default opt-out labels, and works everything else.
+func TestPollAppliesDefaultOptOutLabels(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		// No Assignee, no ExcludeLabels: pure opt-out-by-default.
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "opted out", State: domain.IssueOpen, Labels: []string{"no-ao"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "charter family", State: domain.IssueOpen, Labels: []string{"charter:C03"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "deferred", State: domain.IssueOpen, Labels: []string{"deferred"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#4"}, Title: "plain unlabeled", State: domain.IssueOpen},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	// #1 no-ao, #2 charter:C03 (prefix), #3 deferred are all default opt-outs;
+	// only the unlabeled #4 is worked.
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#4" {
+		t.Fatalf("spawn calls = %+v, want only the unlabeled issue #4", spawner.calls)
+	}
+}
+
+// TestPollPicksUpSensitiveUnlabeledIssue locks the two-gates rule from #80:
+// "sensitive" lives ONLY at the merge gate and NEVER at the work gate. An issue
+// describing sensitive-path work is picked up and worked exactly like any other
+// unlabeled issue; parking for a human happens later at merge, not here.
+func TestPollPicksUpSensitiveUnlabeledIssue(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#7"},
+		Title: "Refactor backend/internal/daemon session lifecycle",
+		Body:  "Touches backend/internal/session_manager and backend/internal/lifecycle.",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#7" {
+		t.Fatalf("sensitive-but-unlabeled issue must be picked up; spawn calls = %+v", spawner.calls)
+	}
 }
