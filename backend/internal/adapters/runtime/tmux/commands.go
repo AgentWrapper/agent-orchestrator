@@ -30,6 +30,13 @@ func setMouseOnArgs(id string) []string {
 	return []string{"set-option", "-t", id, "mouse", "on"}
 }
 
+// setWindowSizeLatestArgs makes the newest attached client drive the session's
+// shared window geometry. This avoids a stale or smaller client pinning a
+// browser/Electron terminal to the wrong grid.
+func setWindowSizeLatestArgs(id string) []string {
+	return []string{"set-window-option", "-t", id, "window-size", "latest"}
+}
+
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
 // requests exact-name matching so a session "foo" does not accidentally match
 // "foobar" (tmux otherwise does unique-prefix matching).
