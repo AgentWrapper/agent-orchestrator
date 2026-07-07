@@ -3,6 +3,7 @@ package trackerintake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -593,5 +594,201 @@ func TestPollPicksUpSensitiveUnlabeledIssue(t *testing.T) {
 	}
 	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#7" {
 		t.Fatalf("sensitive-but-unlabeled issue must be picked up; spawn calls = %+v", spawner.calls)
+	}
+}
+
+// mixIssues builds n open, eligible issues for a repo.
+func mixIssues(repo string, n int) []domain.Issue {
+	issues := make([]domain.Issue, 0, n)
+	for i := 1; i <= n; i++ {
+		issues = append(issues, domain.Issue{
+			ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: fmt.Sprintf("%s#%d", repo, i)},
+			Title: fmt.Sprintf("issue %d", i),
+			State: domain.IssueOpen,
+		})
+	}
+	return issues
+}
+
+// TestPollWorkerMixConvergesWithinPass proves the acceptance criteria: with a
+// weighted mix configured, intake picks a provider-matched harness+model per
+// spawn (deficit-based) so the realized distribution over a single pass matches
+// the target apportionment (60/30/10 over 10 spawns -> 6/3/1). It also confirms
+// the codex/fugu buckets carry no explicit model (the manager resolves the
+// provider default) while the claude bucket carries its pinned opus model — no
+// claude model ever lands on a codex spawn.
+func TestPollWorkerMixConvergesWithinPass(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Weight: 60},
+				{Harness: domain.HarnessCodexFugu, Weight: 30},
+				{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 10},
+			},
+		},
+	}}}
+	tracker := &fakeTracker{issues: mixIssues("acme/demo", 10)}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 10 {
+		t.Fatalf("spawn calls = %d, want 10", len(spawner.calls))
+	}
+	counts := map[domain.AgentHarness]int{}
+	models := map[domain.AgentHarness]string{}
+	for _, c := range spawner.calls {
+		counts[c.Harness]++
+		models[c.Harness] = c.Model
+	}
+	want := map[domain.AgentHarness]int{
+		domain.HarnessCodex:      6,
+		domain.HarnessCodexFugu:  3,
+		domain.HarnessClaudeCode: 1,
+	}
+	for h, w := range want {
+		if counts[h] != w {
+			t.Fatalf("harness %s = %d, want %d (all=%v)", h, counts[h], w, counts)
+		}
+	}
+	if models[domain.HarnessClaudeCode] != "opus" {
+		t.Fatalf("claude bucket model = %q, want opus", models[domain.HarnessClaudeCode])
+	}
+	if models[domain.HarnessCodex] != "" {
+		t.Fatalf("codex bucket model = %q, want empty (manager resolves provider default)", models[domain.HarnessCodex])
+	}
+	if models[domain.HarnessCodexFugu] != "" {
+		t.Fatalf("fugu bucket model = %q, want empty (manager resolves provider default)", models[domain.HarnessCodexFugu])
+	}
+}
+
+// TestPollWorkerMixBiasesTowardUnderservedBucket proves selection is
+// deficit-based against the ALREADY-running fleet, not a fresh count: with a
+// 50/50 mix and two codex workers already live, the next two intake spawns both
+// go to fugu to rebalance toward the target ratio.
+func TestPollWorkerMixBiasesTowardUnderservedBucket(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+				WorkerMix: domain.WorkerMix{
+					{Harness: domain.HarnessCodex, Weight: 50},
+					{Harness: domain.HarnessCodexFugu, Weight: 50},
+				},
+			},
+		}},
+		sessions: []domain.SessionRecord{
+			{ID: "demo-1", ProjectID: "demo", Kind: domain.KindWorker, Harness: domain.HarnessCodex},
+			{ID: "demo-2", ProjectID: "demo", Kind: domain.KindWorker, Harness: domain.HarnessCodex},
+		},
+	}
+	tracker := &fakeTracker{issues: mixIssues("acme/demo", 2)}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want 2", len(spawner.calls))
+	}
+	for i, c := range spawner.calls {
+		if c.Harness != domain.HarnessCodexFugu {
+			t.Fatalf("spawn %d harness = %q, want fugu (rebalancing against 2 live codex)", i, c.Harness)
+		}
+	}
+}
+
+// TestPollWorkerMixRespectsConcurrencyCap proves the cap (#49) still bounds the
+// mixed spawns: with maxConcurrent=2 and no live workers, only two of the four
+// eligible issues spawn this pass, and both come from the mix.
+func TestPollWorkerMixRespectsConcurrencyCap(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 2},
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Weight: 50},
+				{Harness: domain.HarnessCodexFugu, Weight: 50},
+			},
+		},
+	}}}
+	tracker := &fakeTracker{issues: mixIssues("acme/demo", 4)}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want 2 (cap)", len(spawner.calls))
+	}
+	for i, c := range spawner.calls {
+		if c.Harness == "" {
+			t.Fatalf("spawn %d harness empty; mix must have selected one", i)
+		}
+	}
+}
+
+// TestPollNoMixKeepsSingleDefault proves back-compat: with no mix configured the
+// spawn carries no harness/model, so the session manager resolves the single
+// worker.agent default exactly as before.
+func TestPollNoMixKeepsSingleDefault(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+	}}}
+	tracker := &fakeTracker{issues: mixIssues("acme/demo", 1)}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1", len(spawner.calls))
+	}
+	if got := spawner.calls[0]; got.Harness != "" || got.Model != "" {
+		t.Fatalf("no-mix spawn should carry no harness/model, got harness=%q model=%q", got.Harness, got.Model)
+	}
+}
+
+// TestPollWorkerMixFailedSpawnDoesNotConsumeBucket proves a failed spawn does
+// not shift the running distribution: when the first codex pick fails, the retry
+// budget is not "used up" on that bucket — the next successful spawn still lands
+// on the bucket the deficit selector would have chosen without the failure.
+func TestPollWorkerMixFailedSpawnDoesNotConsumeBucket(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Weight: 50},
+				{Harness: domain.HarnessCodexFugu, Weight: 50},
+			},
+		},
+	}}}
+	// Issue #1 is picked first (codex, the earliest row on a tie) and fails; the
+	// running count stays empty, so issue #2 must again pick codex.
+	tracker := &fakeTracker{issues: mixIssues("acme/demo", 2)}
+	spawner := &fakeSpawner{failIssue: domain.IssueID("github:acme/demo#1")}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want 2 (both attempted)", len(spawner.calls))
+	}
+	if spawner.calls[0].Harness != domain.HarnessCodex {
+		t.Fatalf("first pick = %q, want codex", spawner.calls[0].Harness)
+	}
+	if spawner.calls[1].Harness != domain.HarnessCodex {
+		t.Fatalf("second pick = %q, want codex (failed spawn must not consume the codex bucket)", spawner.calls[1].Harness)
 	}
 }
