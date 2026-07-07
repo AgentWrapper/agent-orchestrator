@@ -35,6 +35,62 @@ func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandAppliesModelAndEffort(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "opus", Effort: "high"},
+		Prompt: "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"claude",
+		"--model", "opus",
+		"--effort", "high",
+		"--", "go",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandClampsMinimalEffort(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	// "minimal" is a Codex-only tier; claude --effort doesn't accept it, so it
+	// must clamp to "low" rather than emit an effort claude would reject.
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "opus", Effort: "minimal"},
+		Prompt: "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"claude", "--model", "opus", "--effort", "low", "--", "go"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankEffort(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "opus"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range cmd {
+		if arg == "--effort" {
+			t.Fatalf("command %#v contains --effort without an effort config", cmd)
+		}
+	}
+}
+
 func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	tests := []struct {
 		name        string

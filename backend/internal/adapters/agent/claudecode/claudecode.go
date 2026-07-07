@@ -113,6 +113,12 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 				Description: "Model override passed to `claude --model` (e.g. claude-opus-4-5).",
 			},
 			{
+				Key:         "effort",
+				Type:        ports.ConfigFieldEnum,
+				Description: "Reasoning-effort level passed to `claude --effort`.",
+				Enum:        []string{"low", "medium", "high", "xhigh", "max"},
+			},
+			{
 				Key:         "permissions",
 				Type:        ports.ConfigFieldEnum,
 				Description: "Starting permission mode.",
@@ -169,6 +175,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
+	}
+	if effort := normalizeClaudeEffort(string(cfg.Config.Effort)); effort != "" {
+		cmd = append(cmd, "--effort", effort)
 	}
 
 	systemPrompt, err := resolveSystemPrompt(cfg)
@@ -252,6 +261,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
+	}
+	if effort := normalizeClaudeEffort(string(cfg.Config.Effort)); effort != "" {
+		cmd = append(cmd, "--effort", effort)
 	}
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
@@ -431,6 +443,21 @@ func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
 	}
 	if len(disallowed) > 0 {
 		*cmd = append(*cmd, "--disallowedTools", strings.Join(disallowed, ","))
+	}
+}
+
+// normalizeClaudeEffort maps AO's union effort vocabulary onto the levels
+// `claude --effort` accepts (low|medium|high|xhigh|max). AO's "minimal" (a
+// Codex-only tier) clamps to "low" so a valid stored config never emits an
+// effort flag Claude would reject. Empty/unknown yields "".
+func normalizeClaudeEffort(effort string) string {
+	switch e := strings.ToLower(strings.TrimSpace(effort)); e {
+	case "low", "medium", "high", "xhigh", "max":
+		return e
+	case "minimal":
+		return "low"
+	default:
+		return ""
 	}
 }
 

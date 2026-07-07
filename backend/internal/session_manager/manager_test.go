@@ -1647,6 +1647,34 @@ func TestSpawn_RejectsUnknownHarness(t *testing.T) {
 	}
 }
 
+func TestSpawn_RejectsCrossProviderModelBeforeDurableState(t *testing.T) {
+	st := newFakeStore()
+	// Worker role resolves to codex; an explicit Claude model (opus) is the wrong
+	// provider for it — the exact combination that hung codex workers.
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "opus"})
+	if !errors.Is(err, ErrModelHarnessMismatch) {
+		t.Fatalf("err = %v, want ErrModelHarnessMismatch", err)
+	}
+	// The mismatch is caught before any durable state — no seed row, no
+	// worktree, no runtime — so a wrong-provider model never leaves an orphan.
+	if len(st.sessions) != 0 {
+		t.Fatalf("no session row should be created, got %d", len(st.sessions))
+	}
+	if ws.lastCfg.SessionID != "" || ws.destroyed != 0 {
+		t.Fatal("workspace must not be created for a cross-provider model")
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime must not be created for a cross-provider model")
+	}
+}
+
 // pathPinManager builds a manager whose Executable dep is stubbed, plus a
 // buffer capturing its log output, for the hook PATH pin tests.
 func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *fakeRuntime, *bytes.Buffer) {

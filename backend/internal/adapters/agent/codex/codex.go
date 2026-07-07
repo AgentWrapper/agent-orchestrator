@@ -102,6 +102,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
 	}
+	appendReasoningEffortFlag(&cmd, string(cfg.Config.Effort))
 
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
@@ -148,6 +149,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
 	}
+	appendReasoningEffortFlag(&cmd, string(cfg.Config.Effort))
 	cmd = append(cmd, agentSessionID)
 	return cmd, true, nil
 }
@@ -435,6 +437,32 @@ func appendHookTrustBypassFlag(cmd *[]string) {
 	// `[hooks.state]`. Without this flag Codex would hold them for an
 	// interactive hooks review, leaving AO without activity signals.
 	*cmd = append(*cmd, "--dangerously-bypass-hook-trust")
+}
+
+// appendReasoningEffortFlag maps AO's effort level onto Codex's
+// model_reasoning_effort config override. Empty means unset — Codex keeps its
+// own default. The value is emitted as a quoted TOML string so `-c` parses it
+// as the reasoning-effort enum.
+func appendReasoningEffortFlag(cmd *[]string, effort string) {
+	if e := normalizeCodexEffort(effort); e != "" {
+		*cmd = append(*cmd, "-c", fmt.Sprintf("model_reasoning_effort=%q", e))
+	}
+}
+
+// normalizeCodexEffort maps AO's union effort vocabulary onto the levels Codex
+// accepts (minimal|low|medium|high). AO's higher tiers (xhigh|max) clamp to
+// high so a valid stored config never emits an effort flag Codex would reject
+// and hang on — the same "provider-mismatched input must not silently hang"
+// contract this package enforces for models. Empty/unknown yields "".
+func normalizeCodexEffort(effort string) string {
+	switch e := strings.ToLower(strings.TrimSpace(effort)); e {
+	case "minimal", "low", "medium", "high":
+		return e
+	case "xhigh", "max":
+		return "high"
+	default:
+		return ""
+	}
 }
 
 func appendTerminalCompatibilityFlags(cmd *[]string) {

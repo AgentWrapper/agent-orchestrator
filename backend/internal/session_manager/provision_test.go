@@ -135,17 +135,23 @@ func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 		t.Fatalf("orchestrator harness = %q, want claude-code", h)
 	}
 
-	// Role override merges over the base agent config (set fields win; unset keep base).
-	got := effectiveAgentConfig(domain.KindWorker, cfg, "")
+	// Role override merges over the base agent config (set fields win; unset keep
+	// base). The role/base scalar models here ("worker"/"base"/"spawn") are
+	// unclassified, so the codex/claude-code harness provider leaves them
+	// unguarded and they resolve exactly as before per-harness resolution landed.
+	got, err := effectiveAgentConfig(domain.KindWorker, cfg, "", domain.HarnessCodex)
+	if err != nil {
+		t.Fatalf("worker resolve err = %v", err)
+	}
 	if got.Model != "worker" || got.Permissions != domain.PermissionModeAuto {
 		t.Fatalf("merged worker config = %#v, want model=worker permissions=auto", got)
 	}
 	// Orchestrator has no agent-config override, so the base config is used as-is.
-	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg, ""); got.Model != "base" {
-		t.Fatalf("orchestrator config = %#v, want base", got)
+	if got, err := effectiveAgentConfig(domain.KindOrchestrator, cfg, "", domain.HarnessClaudeCode); err != nil || got.Model != "base" {
+		t.Fatalf("orchestrator config = %#v (err %v), want base", got, err)
 	}
-	if got := effectiveAgentConfig(domain.KindWorker, cfg, "spawn"); got.Model != "spawn" {
-		t.Fatalf("per-spawn model = %q, want spawn", got.Model)
+	if got, err := effectiveAgentConfig(domain.KindWorker, cfg, "spawn", domain.HarnessCodex); err != nil || got.Model != "spawn" {
+		t.Fatalf("per-spawn model = %q (err %v), want spawn", got.Model, err)
 	}
 }
 

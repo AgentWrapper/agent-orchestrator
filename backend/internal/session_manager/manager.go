@@ -56,6 +56,11 @@ var (
 	// would answer it on the user's behalf. The API maps it to a 409; the
 	// caller retries once the user has answered in the terminal.
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
+	// ErrModelHarnessMismatch means an explicit per-spawn model belongs to a
+	// different provider than the resolved harness (e.g. a Claude model on a
+	// Codex spawn). Passing it would hang the agent, so spawn fails loudly
+	// instead. The API maps it to a 400.
+	ErrModelHarnessMismatch = errors.New("session: model not valid for harness")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -282,6 +287,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 
+	// Resolve the per-harness agent config before any durable state is created,
+	// so a cross-provider model (e.g. a Claude model on a Codex spawn) fails
+	// loudly here rather than wasting a worktree or silently hanging the agent.
+	agentConfig, err := effectiveAgentConfig(cfg.Kind, project.Config, cfg.Model, cfg.Harness)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	}
+
 	if err := m.validateRuntimePrerequisites(); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
@@ -336,7 +349,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config, cfg.Model)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
@@ -424,22 +436,85 @@ func roleConfigName(kind domain.SessionKind) string {
 	return "worker"
 }
 
-// effectiveAgentConfig merges the role override's agent config over the
-// project's base agent config, then applies the per-spawn model override; set
-// override fields win.
-func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spawnModel string) ports.AgentConfig {
-	merged := cfg.AgentConfig
+// effectiveAgentConfig resolves the agent config for a spawn of the given
+// harness. Permissions merge role-over-base as before. Model and effort resolve
+// PER HARNESS: a model name is provider-specific, so the resolved harness — not
+// one harness-blind scalar — decides which model applies. This is what stops a
+// pinned model (e.g. worker role model=opus) from leaking onto a different
+// harness in a worker mix and hanging it.
+//
+// Model precedence, lowest to highest:
+//  1. base scalar Model      — applied only if provider-compatible with harness
+//  2. role scalar Model      — same compatibility gate
+//  3. base ModelByHarness[h] — per-harness pin (declared for the harness)
+//  4. role ModelByHarness[h] — per-harness pin (role override)
+//  5. explicit per-spawn model — wins, but a cross-provider model is a loud
+//     ErrModelHarnessMismatch, never silently passed
+//
+// Effort mirrors 1–4 (there is no per-spawn effort override today). A harness
+// whose provider is unknown is unguarded: every model is compatible, preserving
+// behavior for the many harnesses AO has not mapped.
+func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spawnModel string, harness domain.AgentHarness) (ports.AgentConfig, error) {
+	base := cfg.AgentConfig
 	override := roleOverride(kind, cfg).AgentConfig
-	if override.Model != "" {
-		merged.Model = override.Model
-	}
+	hp := harness.ModelProvider()
+
+	resolved := ports.AgentConfig{Permissions: base.Permissions}
 	if override.Permissions != "" {
-		merged.Permissions = override.Permissions
+		resolved.Permissions = override.Permissions
 	}
-	if spawnModel := strings.TrimSpace(spawnModel); spawnModel != "" {
-		merged.Model = spawnModel
+
+	var model string
+	var effort domain.Effort
+
+	// 1–2: scalar fallbacks (role over base), compatibility-gated so an
+	// incompatible pinned model is ignored rather than leaked onto this harness.
+	if m := strings.TrimSpace(base.Model); m != "" && domain.ClassifyModelProvider(m).CompatibleWith(hp) {
+		model = m
 	}
-	return merged
+	if base.Effort != "" {
+		effort = base.Effort
+	}
+	if m := strings.TrimSpace(override.Model); m != "" && domain.ClassifyModelProvider(m).CompatibleWith(hp) {
+		model = m
+	}
+	if override.Effort != "" {
+		effort = override.Effort
+	}
+
+	// 3–4: per-harness pins (base then role override) are the authoritative
+	// source and win over the scalars for this harness. The model is still
+	// compatibility-gated here — AgentConfig.Validate already rejects a
+	// cross-provider map entry at write time, but gating in resolution too keeps
+	// the resolver self-defending against a hand-edited row or a future write
+	// path that skips validation, mirroring the scalar gate above.
+	applyHarnessModel := func(hm domain.HarnessModel) {
+		if m := strings.TrimSpace(hm.Model); m != "" && domain.ClassifyModelProvider(m).CompatibleWith(hp) {
+			model = m
+		}
+		if hm.Effort != "" {
+			effort = hm.Effort
+		}
+	}
+	if hm, ok := base.ModelByHarness[harness]; ok {
+		applyHarnessModel(hm)
+	}
+	if hm, ok := override.ModelByHarness[harness]; ok {
+		applyHarnessModel(hm)
+	}
+
+	// 5: explicit per-spawn model wins, but a cross-provider explicit model is a
+	// loud failure rather than a silent hang.
+	if sm := strings.TrimSpace(spawnModel); sm != "" {
+		if !domain.ClassifyModelProvider(sm).CompatibleWith(hp) {
+			return ports.AgentConfig{}, fmt.Errorf("%w: %q is not a %s model (harness %q)", ErrModelHarnessMismatch, sm, hp, harness)
+		}
+		model = sm
+	}
+
+	resolved.Model = model
+	resolved.Effort = effort
+	return resolved, nil
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
@@ -672,7 +747,11 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn. A
 	// session-scoped model override stays pinned to this session when present.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config, meta.Model), rec.Kind)
+	restoreCfg, err := effectiveAgentConfig(rec.Kind, project.Config, meta.Model, rec.Harness)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, restoreCfg, rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -756,7 +835,10 @@ func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHar
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: system prompt: %w", id, err)
 	}
 	switchModel := strings.TrimSpace(model)
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config, switchModel)
+	agentConfig, err := effectiveAgentConfig(rec.Kind, project.Config, switchModel, newHarness)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
 
 	// A harness this session has already launched has a native session on disk;
 	// relaunching it fresh would collide, so resume it. The current harness

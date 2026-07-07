@@ -50,3 +50,22 @@ func (h AgentHarness) IsKnown() bool {
 	}
 	return false
 }
+
+// ModelProvider maps a harness to the vendor family whose models it accepts.
+// Only harnesses whose model namespace AO knows are classified; every other
+// harness returns ProviderUnknown and is left unguarded, so its configured
+// model is passed through untouched. This is what lets model resolution reject
+// a cross-provider model (e.g. a Claude model on a Codex harness) without
+// constraining the many harnesses AO has not mapped.
+func (h AgentHarness) ModelProvider() ModelProvider {
+	switch h {
+	case HarnessClaudeCode:
+		return ProviderAnthropic
+	case HarnessCodex:
+		return ProviderOpenAI
+	case HarnessCodexFugu:
+		return ProviderFugu
+	default:
+		return ProviderUnknown
+	}
+}

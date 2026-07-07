@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -170,6 +171,54 @@ func TestGetLaunchCommandOmitsBlankAgentConfigModel(t *testing.T) {
 	}
 	if contains(cmd, "--model") {
 		t.Fatalf("command %#v contains blank --model flag", cmd)
+	}
+}
+
+func TestGetLaunchCommandAppliesReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "gpt-5.5-codex", Effort: "high"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="high"`}) {
+		t.Fatalf("command %#v missing model_reasoning_effort override", cmd)
+	}
+}
+
+func TestGetLaunchCommandClampsUnsupportedReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	// Codex tops out at "high"; AO's higher tiers must clamp to it rather than
+	// emit an effort Codex rejects (which would hang the session).
+	for _, in := range []string{"xhigh", "max"} {
+		cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+			Config: ports.AgentConfig{Model: "gpt-5.5-codex", Effort: domain.Effort(in)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="high"`}) {
+			t.Fatalf("effort %q: command %#v did not clamp to high", in, cmd)
+		}
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "gpt-5.5-codex"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range cmd {
+		if strings.HasPrefix(arg, "model_reasoning_effort=") {
+			t.Fatalf("command %#v contains a reasoning-effort override without config", cmd)
+		}
 	}
 }
 
@@ -666,6 +715,23 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	)
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandAppliesReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "gpt-5.5-codex", Effort: domain.EffortHigh},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore err=%v ok=%v", err, ok)
+	}
+	if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="high"`}) {
+		t.Fatalf("resume command %#v missing reasoning effort", cmd)
 	}
 }
 

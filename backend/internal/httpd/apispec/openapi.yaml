@@ -1627,8 +1627,14 @@ components:
       type: object
     AgentConfig:
       properties:
+        effort:
+          type: string
         model:
           type: string
+        modelByHarness:
+          additionalProperties:
+            $ref: '#/components/schemas/DomainHarnessModel'
+          type: object
         permissions:
           type: string
       type: object
@@ -1805,6 +1811,13 @@ components:
       required:
       - state
       - lastActivityAt
+      type: object
+    DomainHarnessModel:
+      properties:
+        effort:
+          type: string
+        model:
+          type: string
       type: object
     DomainReviewerConfig:
       properties:

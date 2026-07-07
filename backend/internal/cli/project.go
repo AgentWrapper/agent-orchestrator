@@ -76,7 +76,18 @@ type workspaceRepoDetails struct {
 // agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
 type agentConfig struct {
 	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
 	Permissions string `json:"permissions,omitempty"`
+	// ModelByHarness mirrors domain.AgentConfig.ModelByHarness so a
+	// --config-json payload round-trips the per-harness model/effort map through
+	// to the daemon instead of silently dropping it.
+	ModelByHarness map[string]harnessModel `json:"modelByHarness,omitempty"`
+}
+
+// harnessModel mirrors domain.HarnessModel for the CLI client.
+type harnessModel struct {
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // roleOverride mirrors domain.RoleOverride.

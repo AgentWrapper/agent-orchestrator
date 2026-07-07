@@ -577,7 +577,11 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            effort?: string;
             model?: string;
+            modelByHarness?: {
+                [key: string]: components["schemas"]["DomainHarnessModel"];
+            };
             permissions?: string;
         };
         AgentInfo: {
@@ -642,6 +646,10 @@ export interface components {
             /** Format: date-time */
             lastActivityAt: string;
             state: string;
+        };
+        DomainHarnessModel: {
+            effort?: string;
+            model?: string;
         };
         DomainReviewerConfig: {
             harness: string;
