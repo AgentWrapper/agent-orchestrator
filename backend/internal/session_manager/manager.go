@@ -1214,12 +1214,16 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if ws.Path == "" {
 			continue
 		}
+		// Runtime teardown is keyed on the terminated session's own handle, not
+		// the workspace path, so it runs even when the workspace is shared with a
+		// live successor — otherwise a skipped session would leak its runtime
+		// (the lingering keep-alive shell) until cleanup reruns.
+		if h := runtimeHandle(rec.Metadata); h.ID != "" {
+			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
+		}
 		if liveWorkspaces[normalizeWorkspacePath(ws.Path)] {
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace in use by a live session"})
 			continue
-		}
-		if h := runtimeHandle(rec.Metadata); h.ID != "" {
-			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if !errors.Is(err, ports.ErrWorkspaceDirty) {
