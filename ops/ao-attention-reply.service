@@ -1,0 +1,19 @@
+[Unit]
+Description=ao two-way attention reply listener (Slack reply -> ao send unblock)
+Documentation=https://github.com/polymath-ventures/agent-orchestrator/issues/82
+After=ao.service
+Wants=ao.service
+
+[Service]
+# SLACK_SIGNING_SECRET (inbound verification) + SLACK_MEMBER_ID (allow-list)
+# come from the deploy/nickify env layer. Loopback-only; Slack reaches it via
+# the same tailnet/ingress boundary that fronts the web surface.
+EnvironmentFile=-%h/agent-orchestrator/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=AO_ATTENTION_REPLY_PORT=3002
+ExecStart=/usr/bin/node %h/agent-orchestrator/ops/attention-reply-listener.mjs
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

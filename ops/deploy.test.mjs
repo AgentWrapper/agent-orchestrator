@@ -51,6 +51,10 @@ describe("ao self-deploy script", () => {
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
 		assert.match(result.stdout, /ops\/ changed; restarting ao-slack-notifier\.service/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-slack-notifier\.service/);
+		assert.match(result.stdout, /installing \+ restarting attention units/);
+		assert.match(result.stdout, /DRY-RUN: cd .* && bash ops\/install-attention\.sh/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user is-active --quiet ao-attention-notifier\.service/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user is-active --quiet ao-attention-reply\.service/);
 		assert.match(result.stdout, /DRY-RUN: ao status/);
 		assert.match(result.stdout, /DRY-RUN: ao doctor/);
 		assert.match(result.stdout, /DRY-RUN: curl .*\/api\/v1\/projects/);

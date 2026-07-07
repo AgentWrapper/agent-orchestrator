@@ -28,6 +28,8 @@ state_file="${AO_DEPLOY_STATE_FILE:-${state_dir}/agent-orchestrator.last-deploye
 ao_unit="${AO_DEPLOY_AO_UNIT:-ao.service}"
 web_unit="${AO_DEPLOY_WEB_UNIT:-ao-web.service}"
 notifier_unit="${AO_DEPLOY_NOTIFIER_UNIT:-ao-slack-notifier.service}"
+attention_notifier_unit="${AO_DEPLOY_ATTENTION_NOTIFIER_UNIT:-ao-attention-notifier.service}"
+attention_reply_unit="${AO_DEPLOY_ATTENTION_REPLY_UNIT:-ao-attention-reply.service}"
 wait_seconds="${AO_DEPLOY_WAIT_SECONDS:-30}"
 ao_port="${AO_PORT:-3001}"
 dry_run="${AO_DEPLOY_DRY_RUN:-0}"
@@ -348,8 +350,21 @@ deploy() {
     log "ops/ changed; restarting ${notifier_unit}."
     restart_unit "${notifier_unit}"
     verify_unit_active "${notifier_unit}" "Slack notifier"
+
+    # Two-way attention system (issue #82): install/refresh its units from the
+    # deploy/nickify layer, then (re)start them. Config (SLACK_MEMBER_ID,
+    # SLACK_SIGNING_SECRET, sink) lives in the env layer, not a bespoke unit.
+    log "ops/ changed; installing + restarting attention units (${attention_notifier_unit}, ${attention_reply_unit})."
+    run_in "${repo_root}" bash ops/install-attention.sh
+
+    # install-attention.sh is best-effort (run_soft) so it can run on hosts
+    # without a user bus; in a real deploy we must not finish green with the
+    # attention services down, so verify both are active here.
+    verify_unit_active "${attention_notifier_unit}" "attention notifier"
+    verify_unit_active "${attention_reply_unit}" "attention reply listener"
   else
     log "ops/ unchanged; leaving ${notifier_unit} running."
+    log "ops/ unchanged; leaving attention units running."
   fi
 
   if [[ "${dry_run}" != "1" ]]; then

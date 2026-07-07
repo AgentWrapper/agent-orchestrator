@@ -1,0 +1,18 @@
+[Unit]
+Description=ao two-way attention notifier (outbound alerts + what-needs-me digest)
+Documentation=https://github.com/polymath-ventures/agent-orchestrator/issues/82
+After=ao.service
+Wants=ao.service
+
+[Service]
+# Slack + member-id config lives in the deploy/nickify layer, not a hand-patched
+# unit. EnvironmentFile is optional (-) so a host without .env still starts and
+# self-reports "no SLACK_MEMBER_ID" rather than failing silently.
+EnvironmentFile=-%h/agent-orchestrator/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node %h/agent-orchestrator/ops/attention-notifier.mjs
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

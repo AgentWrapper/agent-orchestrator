@@ -14,6 +14,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { resolveMentionUserId } from "./attention-core.mjs";
+
 const ENV_FILE = "/home/orchestrator/agent-orchestrator/.env";
 try {
 	for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
@@ -26,7 +28,9 @@ const PORT = process.env.AO_PORT || "3001";
 const TOKEN = process.env.SLACK_BOT_TOKEN;
 const CHANNEL = process.env.SLACK_CHANNEL;
 const WEBHOOK = process.env.SLACK_WEBHOOK_URL;
-const MENTION_USER_ID = process.env.SLACK_MENTION_USER_ID;
+// Acceptance #4 (issue #82): read SLACK_MEMBER_ID natively; the legacy
+// SLACK_MENTION_USER_ID name is only a fallback for un-migrated hosts.
+const MENTION_USER_ID = resolveMentionUserId();
 
 if (isMain() && !(TOKEN && CHANNEL) && !WEBHOOK) {
 	console.error(
@@ -60,8 +64,14 @@ async function post(text) {
 	}
 }
 
-const INTERESTING = new Set(["needs_input", "ready_to_merge", "pr_merged"]);
-const MENTIONABLE = new Set(["needs_input", "ready_to_merge"]);
+// Division of responsibility (issue #82): the two-way attention notifier
+// (attention-notifier.mjs) owns SESSION-derived attention states it can poll
+// authoritatively — needs_input, blocked, no_signal. This legacy SSE consumer
+// keeps owning the PR/merge EVENTS that are not derivable from a session poll
+// (ready_to_merge incl. parked-sensitive-merge, pr_merged, park notes). So we
+// drop needs_input here to avoid double-paging while preserving merge alerts.
+const INTERESTING = new Set(["ready_to_merge", "pr_merged"]);
+const MENTIONABLE = new Set(["ready_to_merge"]);
 const NEVER_MENTION = new Set(["info", "pr_merged"]);
 
 function isMain() {

@@ -132,6 +132,33 @@ Configuration comes from the environment or
 _app_ credentials alone cannot post — without one of those sinks the service
 exits at startup with a pointed error.
 
+## 5a. Two-way attention system (issue #82)
+
+The one-way `ao-slack-notifier` above is complemented by the **two-way
+attention system** — outbound alerts Nick can trust plus an inbound
+reply-to-unblock path — all in the ops/nickify layer (vanilla rule: reads ao's
+public HTTP API + shells `ao send`; no ao core change). The two share work by
+disjoint ownership (session-derived attention here; PR/merge events stay on the
+legacy notifier). See `docs/attention-system.md` for the full design. Summary:
+
+- **`ops/attention-notifier.mjs`** (`ao-attention-notifier.service`) polls the
+  authoritative `GET /api/v1/sessions` surface, @mentions Nick on every new
+  attention transition (`needs_input`, `blocked`, parked sensitive merge, dead
+  orchestrator, daemon unhealthy), **dedupes** unchanged states, keeps a single
+  edited-in-place **"what needs me"** Slack digest, and self-alerts if it loses
+  the daemon (silence never means healthy).
+- **`ops/attention-reply-listener.mjs`** (`ao-attention-reply.service`) is a
+  loopback Slack Events API endpoint: a signed, Nick-authored threaded reply
+  (or `send <session> <msg>`) is verified and routed back to the originating
+  session via `ao send`.
+- **`ops/what-needs-me.mjs`** is the terminal equivalent of the digest.
+- **`ops/install-attention.sh`** is the nickify/deploy wiring — it installs the
+  units and checks that `SLACK_MEMBER_ID`, `SLACK_SIGNING_SECRET`, and a Slack
+  sink are present in the env layer. `ops/deploy.sh` runs it whenever `ops/`
+  changes. The notifier reads **`SLACK_MEMBER_ID` natively** (the legacy
+  `SLACK_MENTION_USER_ID` alias is only a fallback), closing the config bug
+  that made #6 inert.
+
 ## 6. Tracked deltas from upstream (the vanilla rule)
 
 The ao backend is never patched ad hoc; each delta is an issue here plus an

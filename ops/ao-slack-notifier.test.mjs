@@ -4,7 +4,9 @@ import { describe, it } from "node:test";
 import { describeSlackMessage } from "./ao-slack-notifier.mjs";
 
 describe("ao Slack notifier message formatting", () => {
-	it("mentions needs_input events when configured", () => {
+	it("no longer handles needs_input (owned by the two-way attention poller, issue #82)", () => {
+		// Division of responsibility: the session-poll notifier owns needs_input;
+		// this legacy SSE consumer drops it to avoid double-paging.
 		const msg = describeSlackMessage(
 			{
 				type: "needs_input",
@@ -17,7 +19,7 @@ describe("ao Slack notifier message formatting", () => {
 			"U123",
 		);
 
-		assert.equal(msg, "<@U123> 🖐️ *needs_input* [ao] agent-1: permission prompt");
+		assert.equal(msg, null);
 	});
 
 	it("mentions ready_to_merge events when configured", () => {
@@ -88,17 +90,17 @@ describe("ao Slack notifier message formatting", () => {
 	it("preserves existing text when no mention user is configured", () => {
 		const msg = describeSlackMessage(
 			{
-				type: "needs_input",
+				type: "ready_to_merge",
 				notification: {
 					sessionId: "agent-5",
 					projectId: "ao",
-					message: "question",
+					title: "PR ready",
 				},
 			},
 			"",
 		);
 
-		assert.equal(msg, "🖐️ *needs_input* [ao] agent-5: question");
+		assert.equal(msg, "🟢 *ready_to_merge* [ao] agent-5: PR ready");
 	});
 
 	it("ignores informational events that are not park-shaped", () => {
