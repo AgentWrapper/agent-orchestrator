@@ -286,9 +286,10 @@ func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
 }
 
 // liveIntakeWorkersByProject counts the live (non-terminated) worker sessions
-// that carry a tracker issue id, per project. These are the sessions intake is
-// responsible for; the count feeds the per-project MaxConcurrent cap so a bulk
-// assignment burst cannot spawn an unbounded number of workers.
+// that carry canonical tracker issue ids, per project. Canonical ids are the
+// sessions intake creates and dedupes against; manual ad-hoc --issue values do
+// not consume intake capacity. The count feeds the per-project MaxConcurrent cap
+// so a bulk assignment burst cannot spawn an unbounded number of workers.
 func liveIntakeWorkersByProject(sessions []domain.SessionRecord) map[string]int {
 	counts := make(map[string]int)
 	for _, sess := range sessions {
