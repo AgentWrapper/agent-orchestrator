@@ -17,8 +17,52 @@ type AgentInfo = components["schemas"]["AgentInfo"];
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
+	permissions: string;
+	model: string;
 	trackerIntake?: TrackerIntakeConfig;
 };
+
+// NEW_PROJECT_DEFAULTS is this deployment's standard baseline for a project born
+// through the web UI, mirroring what /nickify applies when it onboards a repo:
+// bypass-permissions so the orchestrator runs unattended instead of stalling on
+// a permission prompt, and opus pinned so no claude-code role inherits the
+// account default (fable — see #61). The model is a scalar fallback resolved at
+// spawn (manager.go effectiveAgentConfig): the provider gate applies it to a
+// claude-provider role (claude-code) and drops it for a role on a
+// known-incompatible provider (codex → openai, codex-fugu → fugu). A harness
+// with an unclassified provider is treated as compatible, so the pin can still
+// pass through there — harmless, and the model field below is editable for a
+// non-claude worker mix. Surfaced in the create form, pre-filled and editable,
+// so what a project comes up with is visible at creation rather than a hidden
+// bare default.
+export const NEW_PROJECT_DEFAULTS = {
+	permissions: "bypass-permissions",
+	model: "opus",
+} as const;
+
+type AgentConfig = components["schemas"]["AgentConfig"];
+
+// buildProjectAgentConfig assembles the agentConfig for the POST /api/v1/projects
+// body from the create form's permission mode and model. Blank fields are
+// omitted, and an all-blank result returns undefined so the daemon persists no
+// agentConfig at all rather than an empty {}. Kept as a pure, exported function
+// so the create flow's integration point is unit-testable without mounting the
+// whole shell route.
+export function buildProjectAgentConfig(permissions: string, model: string): AgentConfig | undefined {
+	const trimmedModel = model.trim();
+	const agentConfig: AgentConfig = {
+		...(permissions ? { permissions } : {}),
+		...(trimmedModel ? { model: trimmedModel } : {}),
+	};
+	return Object.keys(agentConfig).length > 0 ? agentConfig : undefined;
+}
+
+const PERMISSION_MODE_OPTIONS = [
+	{ value: "default", label: "Default" },
+	{ value: "accept-edits", label: "Accept edits" },
+	{ value: "auto", label: "Auto" },
+	{ value: "bypass-permissions", label: "Bypass permissions" },
+] as const;
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
 
@@ -65,6 +109,8 @@ export function CreateProjectAgentSheet({
 		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const [permissions, setPermissions] = useState<string>(NEW_PROJECT_DEFAULTS.permissions);
+	const [model, setModel] = useState<string>(NEW_PROJECT_DEFAULTS.model);
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
 	const canSubmit =
@@ -74,6 +120,8 @@ export function CreateProjectAgentSheet({
 		if (!open) {
 			setWorkerAgent("");
 			setOrchestratorAgent("");
+			setPermissions(NEW_PROJECT_DEFAULTS.permissions);
+			setModel(NEW_PROJECT_DEFAULTS.model);
 			setIntake(EMPTY_INTAKE);
 		}
 	}, [open, path]);
@@ -106,7 +154,13 @@ export function CreateProjectAgentSheet({
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!canSubmit) return;
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) });
+							void onSubmit({
+								workerAgent,
+								orchestratorAgent,
+								permissions,
+								model: model.trim(),
+								trackerIntake: buildIntake(intake),
+							});
 						}}
 					>
 						<div className="grid gap-3 sm:grid-cols-2">
@@ -135,6 +189,42 @@ export function CreateProjectAgentSheet({
 						</div>
 
 						{isLoadingAgents && <p className="text-[12px] leading-5 text-muted-foreground">Loading agents...</p>}
+
+						<div className="grid gap-3 sm:grid-cols-2">
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="newProjectPermissions" className="text-[12px] font-medium text-muted-foreground">
+									Permission mode
+								</Label>
+								<Select value={permissions} onValueChange={setPermissions}>
+									<SelectTrigger id="newProjectPermissions" className="h-8 w-full text-[13px]">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent position="popper" align="start" sideOffset={4}>
+										{PERMISSION_MODE_OPTIONS.map((opt) => (
+											<SelectItem key={opt.value} value={opt.value}>
+												{opt.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="newProjectModel" className="text-[12px] font-medium text-muted-foreground">
+									Model
+								</Label>
+								<input
+									id="newProjectModel"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={model}
+									onChange={(event) => setModel(event.target.value)}
+									placeholder="(agent default)"
+								/>
+							</div>
+						</div>
+						<p className="text-[12px] leading-5 text-muted-foreground">
+							Standard defaults keep a new project runnable unattended. The model applies to claude-code roles; codex
+							and codex-fugu keep their own default.
+						</p>
 
 						<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
 							<span>Agent availability is cached.</span>

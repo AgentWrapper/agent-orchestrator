@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
-import { CreateProjectAgentSheet } from "./CreateProjectAgentSheet";
+import { buildProjectAgentConfig, CreateProjectAgentSheet } from "./CreateProjectAgentSheet";
 
 function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -40,6 +40,31 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
+describe("buildProjectAgentConfig", () => {
+	it("assembles the standard baseline (bypass-permissions + opus) sent to the create API", () => {
+		expect(buildProjectAgentConfig("bypass-permissions", "opus")).toEqual({
+			permissions: "bypass-permissions",
+			model: "opus",
+		});
+	});
+
+	it("trims the model and omits it when blank", () => {
+		expect(buildProjectAgentConfig("bypass-permissions", "  claude-opus-4-5  ")).toEqual({
+			permissions: "bypass-permissions",
+			model: "claude-opus-4-5",
+		});
+		expect(buildProjectAgentConfig("bypass-permissions", "   ")).toEqual({ permissions: "bypass-permissions" });
+	});
+
+	it("omits the permission mode when blank", () => {
+		expect(buildProjectAgentConfig("", "opus")).toEqual({ model: "opus" });
+	});
+
+	it("returns undefined when nothing is set, so the daemon persists no agentConfig", () => {
+		expect(buildProjectAgentConfig("", "  ")).toBeUndefined();
+	});
+});
+
 describe("CreateProjectAgentSheet", () => {
 	it("creates without intake when the toggle is left off", async () => {
 		const onSubmit = renderSheet();
@@ -52,6 +77,34 @@ describe("CreateProjectAgentSheet", () => {
 		expect(onSubmit).toHaveBeenCalledWith({
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
+			permissions: "bypass-permissions",
+			model: "opus",
+			trackerIntake: undefined,
+		});
+	});
+
+	it("pre-fills the standard baseline (bypass-permissions + opus) and lets it be adjusted before creating", async () => {
+		const onSubmit = renderSheet();
+		// Defaults are visible in the form, not a hidden bare default.
+		expect(screen.getByLabelText("Permission mode")).toHaveTextContent("Bypass permissions");
+		expect(screen.getByLabelText("Model")).toHaveValue("opus");
+
+		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
+		await chooseOption(screen.getByLabelText("Orchestrator agent"), "claude-code");
+		// Override the pre-filled defaults to prove they are editable.
+		await chooseOption(screen.getByLabelText("Permission mode"), "Accept edits");
+		const modelInput = screen.getByLabelText("Model");
+		await userEvent.clear(modelInput);
+		await userEvent.type(modelInput, "  claude-opus-4-5  ");
+
+		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+		expect(onSubmit).toHaveBeenCalledWith({
+			workerAgent: "claude-code",
+			orchestratorAgent: "claude-code",
+			permissions: "accept-edits",
+			model: "claude-opus-4-5",
 			trackerIntake: undefined,
 		});
 	});
@@ -73,6 +126,8 @@ describe("CreateProjectAgentSheet", () => {
 		expect(onSubmit).toHaveBeenCalledWith({
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
+			permissions: "bypass-permissions",
+			model: "opus",
 			trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 		});
 	});

@@ -11,6 +11,8 @@ export type ShellContextValue = {
 		path: string;
 		workerAgent: string;
 		orchestratorAgent: string;
+		permissions: string;
+		model: string;
 		trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 	}) => Promise<void>;
 };

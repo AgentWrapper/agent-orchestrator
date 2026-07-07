@@ -13,6 +13,7 @@ import { apiClient, apiErrorMessage, getApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
+import { buildProjectAgentConfig } from "../components/CreateProjectAgentSheet";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
@@ -68,6 +69,8 @@ function ShellLayout() {
 			path: string;
 			workerAgent: string;
 			orchestratorAgent: string;
+			permissions: string;
+			model: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 		}) => {
 			void addRendererExceptionStep("Project add requested", {
@@ -80,12 +83,19 @@ function ShellLayout() {
 			if (status.state !== "ready") {
 				throw new Error(status.message || "AO daemon is not ready.");
 			}
+			// Apply this deployment's standard new-project baseline (permission mode +
+			// model, pre-filled from NEW_PROJECT_DEFAULTS in the create sheet) so a
+			// UI-created project is immediately runnable unattended — bypass-permissions
+			// + an opus pin on claude-code roles — the same standard a nickify-onboarded
+			// project gets. buildProjectAgentConfig (imported from the create sheet)
+			// assembles the agentConfig and omits blank fields.
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,
 					config: {
 						worker: { agent: input.workerAgent },
 						orchestrator: { agent: input.orchestratorAgent },
+						agentConfig: buildProjectAgentConfig(input.permissions, input.model),
 						trackerIntake: input.trackerIntake,
 					},
 				},

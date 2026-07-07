@@ -58,7 +58,13 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
-type CreateProjectHandler = (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+type CreateProjectHandler = (input: {
+	path: string;
+	workerAgent: string;
+	orchestratorAgent: string;
+	permissions: string;
+	model: string;
+}) => Promise<void>;
 type RemoveProjectHandler = (projectId: string) => Promise<void>;
 
 function renderSidebar({
@@ -204,6 +210,8 @@ describe("Sidebar", () => {
 				path: "/repo/new-project",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				permissions: "bypass-permissions",
+				model: "opus",
 			}),
 		);
 	});
@@ -234,6 +242,8 @@ describe("Sidebar", () => {
 				path: "/repo/browser-project",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				permissions: "bypass-permissions",
+				model: "opus",
 			}),
 		);
 	});
@@ -332,6 +342,8 @@ describe("Sidebar", () => {
 				path: "/repo/new-project",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				permissions: "bypass-permissions",
+				model: "opus",
 			}),
 		);
 	});
