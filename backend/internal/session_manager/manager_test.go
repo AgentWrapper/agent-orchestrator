@@ -1187,9 +1187,11 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 // a live successor can share one path — reclaiming it deletes the live
 // session's cwd out from under it.
 func TestCleanup_SkipsWorkspaceStillReferencedByLiveSession(t *testing.T) {
-	m, st, _, ws := newManager()
+	m, st, rt, ws := newManager()
 	// Terminated predecessor and live successor share one persistent worktree.
-	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/shared"})
+	// The predecessor keeps its OWN runtime handle (independent of the shared
+	// workspace and of the successor's handle).
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/shared", RuntimeHandleID: "mer-1-runtime"})
 	live := mkLive("mer-2")
 	live.Metadata.WorkspacePath = "/ws/shared"
 	st.sessions["mer-2"] = live
@@ -1209,6 +1211,11 @@ func TestCleanup_SkipsWorkspaceStillReferencedByLiveSession(t *testing.T) {
 	}
 	if ws.destroyed != 0 {
 		t.Fatalf("destroyed = %d, want 0 — shared live workspace must not be torn down", ws.destroyed)
+	}
+	// The workspace is preserved, but the predecessor's own runtime must still be
+	// reclaimed — keying the skip on the workspace path must not leak its runtime.
+	if rt.destroyed != 1 || len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "mer-1-runtime" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want the skipped session's own handle torn down", rt.destroyed, rt.destroyedIDs)
 	}
 }
 
