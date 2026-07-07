@@ -17,6 +17,41 @@ func TestDefaultOptOutLabels(t *testing.T) {
 	}
 }
 
+func TestStandardIssueLabelsAreSingleSourceForOptOutTaxonomy(t *testing.T) {
+	var got []string
+	for _, label := range StandardIssueLabels() {
+		if label.Kind == IssueLabelKindOptOut {
+			got = append(got, label.Name)
+		}
+	}
+	if !reflect.DeepEqual(got, DefaultOptOutLabels) {
+		t.Fatalf("opt-out standard labels = %v, want %v", got, DefaultOptOutLabels)
+	}
+}
+
+func TestStandardIssueLabelsIncludesRoutingAndPoolEscape(t *testing.T) {
+	got := map[string]IssueLabelKind{}
+	for _, label := range StandardIssueLabels() {
+		got[label.Name] = label.Kind
+		if label.Color == "" || label.Description == "" {
+			t.Fatalf("standard label %q missing color or description: %#v", label.Name, label)
+		}
+	}
+	for name, kind := range map[string]IssueLabelKind{
+		"bug":          IssueLabelKindType,
+		"feature":      IssueLabelKindType,
+		"task":         IssueLabelKindType,
+		"agent:codex":  IssueLabelKindRouting,
+		"agent:fugu":   IssueLabelKindRouting,
+		"agent:claude": IssueLabelKindRouting,
+		"nopool":       IssueLabelKindPoolEscape,
+	} {
+		if got[name] != kind {
+			t.Fatalf("standard label %q kind = %q, want %q", name, got[name], kind)
+		}
+	}
+}
+
 func TestTrackerIntakeWithDefaultsMaterializesOptOut(t *testing.T) {
 	// Enabled + unset ExcludeLabels → the default opt-out taxonomy is filled in
 	// (opt-out-by-default). The materialized slice must be a copy, not an alias

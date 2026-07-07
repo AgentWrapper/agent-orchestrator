@@ -11,6 +11,61 @@ type TrackerProvider string
 // TrackerProviderGitHub is the only supported issue-tracker provider.
 const TrackerProviderGitHub TrackerProvider = "github"
 
+// IssueLabelKind groups the issue labels ao treats as load-bearing workflow
+// metadata.
+type IssueLabelKind string
+
+const (
+	// IssueLabelKindType identifies issue type labels such as bug, feature, and task.
+	IssueLabelKindType IssueLabelKind = "type"
+	// IssueLabelKindOptOut identifies labels that exclude issues from automated intake.
+	IssueLabelKindOptOut IssueLabelKind = "opt-out"
+	// IssueLabelKindRouting identifies labels that pin a ticket to a specific agent harness.
+	IssueLabelKindRouting IssueLabelKind = "routing"
+	// IssueLabelKindPoolEscape identifies labels that bypass the normal worker pool cap.
+	IssueLabelKindPoolEscape IssueLabelKind = "pool-escape"
+)
+
+// IssueLabelSpec is the canonical metadata for one GitHub label ao expects on
+// ao-native repos.
+type IssueLabelSpec struct {
+	Name        string         `json:"name"`
+	Kind        IssueLabelKind `json:"kind"`
+	Color       string         `json:"color"`
+	Description string         `json:"description"`
+}
+
+var standardIssueLabels = []IssueLabelSpec{
+	{Name: "bug", Kind: IssueLabelKindType, Color: "d73a4a", Description: "Something isn't working"},
+	{Name: "feature", Kind: IssueLabelKindType, Color: "a2eeef", Description: "New capability"},
+	{Name: "task", Kind: IssueLabelKindType, Color: "0e8a16", Description: "Non-feature work item"},
+	{Name: "no-ao", Kind: IssueLabelKindOptOut, Color: "000000", Description: "Opt OUT of ao auto-pickup entirely — ao never works this"},
+	{Name: "deferred", Kind: IssueLabelKindOptOut, Color: "cfd3d7", Description: "Opt-out: parked for future; not for auto-pickup now"},
+	{Name: "charter", Kind: IssueLabelKindOptOut, Color: "c2e0c6", Description: "Opt-out: charter-managed work, handled outside auto-pickup"},
+	{Name: "charter-audit", Kind: IssueLabelKindOptOut, Color: "c2e0c6", Description: "Opt-out: charter audit work, handled outside auto-pickup"},
+	{Name: "human-review", Kind: IssueLabelKindOptOut, Color: "b60205", Description: "Opt-out: parked for human review; not for auto-pickup"},
+	{Name: "agent:codex", Kind: IssueLabelKindRouting, Color: "1d76db", Description: "Route this ticket to codex (gpt-5.5-codex), within pool cap"},
+	{Name: "agent:fugu", Kind: IssueLabelKindRouting, Color: "5319e7", Description: "Route this ticket to codex-fugu (fugu-ultra), within pool cap"},
+	{Name: "agent:claude", Kind: IssueLabelKindRouting, Color: "d4a017", Description: "Route this ticket to claude-code (opus), within pool cap"},
+	{Name: "nopool", Kind: IssueLabelKindPoolEscape, Color: "e11d21", Description: "Launch outside the pool/cap limits"},
+}
+
+// StandardIssueLabels returns the canonical label set ao-native repos should
+// carry. Callers receive a copy so the package-level taxonomy cannot be mutated.
+func StandardIssueLabels() []IssueLabelSpec {
+	return append([]IssueLabelSpec(nil), standardIssueLabels...)
+}
+
+func standardIssueLabelNames(kind IssueLabelKind) []string {
+	var out []string
+	for _, label := range standardIssueLabels {
+		if label.Kind == kind {
+			out = append(out, label.Name)
+		}
+	}
+	return out
+}
+
 // DefaultOptOutLabels is the opt-out taxonomy every ao-native repo carries by
 // default (issue #80): intake works every open issue EXCEPT those bearing one of
 // these labels. It is materialized into TrackerIntakeConfig.ExcludeLabels by
@@ -20,7 +75,7 @@ const TrackerProviderGitHub TrackerProvider = "github"
 // both the bare "charter" label and the whole "charter:*" family (e.g.
 // charter:C03), so charter sub-labels never need enumerating. "charter-audit"
 // is a distinct label (hyphen, not a "charter:" scope) and is listed on its own.
-var DefaultOptOutLabels = []string{"no-ao", "deferred", "charter", "charter-audit", "human-review"}
+var DefaultOptOutLabels = standardIssueLabelNames(IssueLabelKindOptOut)
 
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub) and is parsed by the adapter.
