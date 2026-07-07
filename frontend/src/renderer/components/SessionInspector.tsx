@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Check, ChevronDown, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
+import { ArrowUpRight, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -9,8 +9,6 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
-import { useAgentsQuery } from "../hooks/useAgentsQuery";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { BrowserPanelView } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -203,7 +201,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
-					<AgentRow session={session} />
+					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
 					<Row k="Branch" v={branchLabel} mono />
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
@@ -781,98 +779,6 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 		<div className="inspector-kv__row">
 			<dt className="inspector-kv__k">{k}</dt>
 			<dd className={cn("inspector-kv__v", mono && "inspector-kv__v--mono")}>{v}</dd>
-		</div>
-	);
-}
-
-// The Overview "Agent" row, made switchable: an active session's agent can be
-// swapped in place from the same field that displays it. Terminated sessions
-// render the plain value (switching a dead session is a restore, not a swap).
-// Selecting a new harness fires POST /sessions/{id}/switch; the worktree and
-// its work are preserved and the new agent starts fresh. The workspace query is
-// invalidated so the terminal re-attaches to the new runtime handle over CDC.
-function AgentRow({ session }: { session: WorkspaceSession }) {
-	const queryClient = useQueryClient();
-	const [error, setError] = useState<string | null>(null);
-	const current = session.provider;
-	// Only offer agents whose local auth probe recently passed — switching to an
-	// un-authenticated agent just fails at launch. Advisory (spawn stays the
-	// authoritative check), but it keeps the menu to agents that can actually run.
-	const agentsQuery = useAgentsQuery();
-	const authorized = agentsQuery.data?.authorized ?? [];
-
-	const switchAgent = useMutation({
-		mutationFn: async (harness: string) => {
-			const { error: apiError } = await apiClient.POST("/api/v1/sessions/{sessionId}/switch", {
-				params: { path: { sessionId: session.id } },
-				body: { harness },
-			});
-			if (apiError) throw new Error(apiErrorMessage(apiError));
-		},
-		onSuccess: () => {
-			setError(null);
-			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		},
-		onError: (e) => setError(e instanceof Error ? e.message : "Switch failed"),
-	});
-
-	// A merged session is finished for good — no switch/relaunch. Every other
-	// state (live, or terminated because the agent exited) can be re-pointed at a
-	// new agent: live swaps in place, terminated relaunches under the new agent.
-	if (session.status === "merged") {
-		return <Row k="Agent" v={current} mono />;
-	}
-
-	return (
-		<div className="inspector-kv__row">
-			<dt className="inspector-kv__k">Agent</dt>
-			<dd className={cn("inspector-kv__v", "inspector-kv__v--mono")}>
-				<DropdownMenu>
-					<DropdownMenuTrigger
-						aria-label="Switch agent"
-						className="group -mx-1.5 inline-flex items-center gap-1.5 rounded-[5px] border border-transparent px-1.5 py-0.5 text-left outline-none transition-colors hover:border-border hover:bg-surface focus-visible:border-border focus-visible:bg-surface disabled:opacity-60"
-						disabled={switchAgent.isPending}
-						title="Switch agent"
-					>
-						<span>{switchAgent.isPending ? "Switching…" : current}</span>
-						<ChevronDown
-							aria-hidden="true"
-							className="h-3 w-3 shrink-0 text-passive transition-colors group-hover:text-foreground"
-							strokeWidth={2}
-						/>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
-						{authorized.length === 0 ? (
-							<DropdownMenuItem disabled>
-								<span className="text-[12px] text-passive">
-									{agentsQuery.isLoading ? "Loading agents…" : "No authenticated agents"}
-								</span>
-							</DropdownMenuItem>
-						) : (
-							authorized.map((agent) => (
-								<DropdownMenuItem
-									key={agent.id}
-									disabled={switchAgent.isPending}
-									onSelect={() => {
-										if (agent.id !== current) switchAgent.mutate(agent.id);
-									}}
-								>
-									<Check
-										className={cn("h-3.5 w-3.5", agent.id === current ? "opacity-100" : "opacity-0")}
-										aria-hidden="true"
-									/>
-									<span className="font-mono text-[12px]">{agent.id}</span>
-								</DropdownMenuItem>
-							))
-						)}
-					</DropdownMenuContent>
-				</DropdownMenu>
-				{error ? (
-					<span className="mt-1 block text-[11px] font-normal text-[color:var(--status-fail,#ef6b6b)]" role="alert">
-						{error}
-					</span>
-				) : null}
-			</dd>
 		</div>
 	);
 }
