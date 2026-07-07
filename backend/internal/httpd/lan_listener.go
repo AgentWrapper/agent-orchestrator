@@ -19,6 +19,7 @@ type LANManager struct {
 	handler     http.Handler // shared router, already auth-wrapped
 	defaultPort int
 	log         *slog.Logger
+	state       *authState // shared with authMiddleware; SetPasswordHash writes through here
 
 	mu    sync.Mutex
 	srv   *http.Server
@@ -32,7 +33,15 @@ func NewLANManager(handler http.Handler, state *authState, defaultPort int, log 
 		handler:     authMiddleware(state, lock)(handler),
 		defaultPort: defaultPort,
 		log:         loggerOrDefault(log),
+		state:       state,
 	}
+}
+
+// SetPasswordHash stores the current connection password hash on the shared
+// authState so the auth middleware (already wrapping handler) validates
+// against it. Satisfies controllers.LANController.
+func (m *LANManager) SetPasswordHash(hash string) {
+	m.state.setHash(hash)
 }
 
 func (m *LANManager) Start(port int) (int, error) {
