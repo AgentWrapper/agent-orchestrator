@@ -134,22 +134,27 @@ Reviewer agents are configured separately. The current reviewer harnesses are:
 
 ## Install
 
-The fastest path is the same flow used by the installation docs:
-
-```bash
-npm install -g @aoagents/ao
-ao start
-```
-
-Run `ao start` from the repository you want AO to manage. See the [installation guide](https://ao-agents.com/docs/installation) for pnpm, yarn, source installs, agent CLI setup, and troubleshooting.
-
-You can also download the latest desktop build for your platform:
+Download the latest desktop build for your platform:
 
 | Platform | Download                                                                                          |
 | -------- | ------------------------------------------------------------------------------------------------- |
 | Windows  | [Setup.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)                   |
 | macOS    | [Agent Orchestrator.dmg](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)      |
 | Linux    | [Agent Orchestrator.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
+
+After installing, run `ao start` from the repository you want AO to manage. See the [installation guide](https://ao-agents.com/docs/installation) for agent CLI setup and troubleshooting.
+
+<details>
+<summary>Install via npm (still works, but no longer recommended)</summary>
+
+The `@aoagents/ao` npm package is frozen and no longer receives updates. Prefer the desktop build above.
+
+```bash
+npm install -g @aoagents/ao
+ao start
+```
+
+</details>
 
 ## Witness AO's Journey on X
 

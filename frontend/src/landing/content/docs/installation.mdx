@@ -43,12 +43,25 @@ If you plan to use GitLab or Linear, install and authenticate their CLIs or cred
 
 ## Install AO
 
+The recommended way to install AO is the desktop build from GitHub Releases. Download the latest build for your platform:
+
+| Platform | Download                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------- |
+| macOS    | [Agent Orchestrator.dmg](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)      |
+| Windows  | [Setup.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)                   |
+| Linux    | [Agent Orchestrator.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
+
+<Callout type="warn" title="npm is no longer recommended">
+	The `@aoagents/ao` npm package is frozen and no longer receives updates. Prefer the desktop build above. The package
+	still works if you want the `ao` CLI:
+</Callout>
+
 <Tabs items={["npm", "pnpm", "yarn", "from source"]}>
 	<Tab value="npm">```bash npm install -g @aoagents/ao ```</Tab>
 	<Tab value="pnpm">```bash pnpm add -g @aoagents/ao ```</Tab>
 	<Tab value="yarn">```bash yarn global add @aoagents/ao ```</Tab>
 	<Tab value="from source">
-		```bash git clone https://github.com/ComposioHQ/agent-orchestrator cd agent-orchestrator pnpm install pnpm build
+		```bash git clone https://github.com/AgentWrapper/agent-orchestrator cd agent-orchestrator pnpm install pnpm build
 		pnpm --filter @aoagents/ao link --global ```
 	</Tab>
 </Tabs>
