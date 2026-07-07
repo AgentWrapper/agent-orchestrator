@@ -1311,7 +1311,46 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
+	base += m.roleInstructionsFile(ctx, kind, projectID)
 	return base + m.aoSkillPointer() + systemPromptGuard, nil
+}
+
+// roleInstructionsFile returns the project's per-role instructions-file content,
+// prefixed with a blank-line separator, to append after the built-in per-kind
+// system prompt. A project may point orchestrator and worker roles at their own
+// standing-policy files (RoleOverride.InstructionsFile) so role policy lives in
+// native config rather than the shared repo instruction context every session
+// loads. It degrades gracefully: any failure to load the project, an empty path,
+// or a missing/unreadable/empty file logs at most a warning and returns "" so a
+// spawn is never blocked by instructions-file trouble.
+func (m *Manager) roleInstructionsFile(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) string {
+	project, err := m.loadProject(ctx, projectID)
+	if err != nil {
+		m.logger.Warn("could not load project for role instructions file; spawning without it", "project", projectID, "error", err)
+		return ""
+	}
+	rel := strings.TrimSpace(roleOverride(kind, project.Config).InstructionsFile)
+	if rel == "" {
+		return ""
+	}
+	path := rel
+	if !filepath.IsAbs(path) {
+		if project.Path == "" {
+			m.logger.Warn("role instructions file is relative but project has no root path; spawning without it", "project", projectID, "file", rel)
+			return ""
+		}
+		path = filepath.Join(project.Path, rel)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		m.logger.Warn("could not read role instructions file; spawning without it", "project", projectID, "file", path, "error", err)
+		return ""
+	}
+	content := strings.TrimRight(string(data), "\n")
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	return "\n\n" + content
 }
 
 // aoSkillPointer is appended to every agent system prompt. It points the agent
