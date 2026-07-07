@@ -844,6 +844,7 @@ export interface components {
         RoleOverride: {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
+            instructionsFile?: string;
         };
         RollbackSessionResponse: {
             deleted?: boolean;

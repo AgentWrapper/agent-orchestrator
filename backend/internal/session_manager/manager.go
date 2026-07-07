@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -80,6 +81,11 @@ const (
 	// callback fails against a stale or missing default run file (observed
 	// 2026-07-04: all sessions no_signal, permission dialogs undetected).
 	EnvRunFile = "AO_RUN_FILE"
+
+	// maxRoleInstructionsFileBytes caps optional per-role instruction files so a
+	// misconfigured project cannot hang spawn/restore by pointing at a device,
+	// procfs stream, or accidentally huge file.
+	maxRoleInstructionsFileBytes = 256 * 1024
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -1637,7 +1643,94 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
+	base += m.roleInstructionsFile(ctx, kind, projectID)
 	return base + m.aoSkillPointer() + systemPromptGuard, nil
+}
+
+// roleInstructionsFile returns the project's per-role instructions-file content,
+// prefixed with a blank-line separator, to append after the built-in per-kind
+// system prompt. A project may point orchestrator and worker roles at their own
+// standing-policy files (RoleOverride.InstructionsFile) so role policy lives in
+// native config rather than the shared repo instruction context every session
+// loads. It degrades gracefully: any failure to load the project, an empty path,
+// or a missing/unreadable/empty file logs at most a warning and returns "" so a
+// session launch/resume is never blocked by instructions-file trouble.
+func (m *Manager) roleInstructionsFile(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) string {
+	project, err := m.loadProject(ctx, projectID)
+	if err != nil {
+		m.logger.Warn("could not load project for role instructions file; continuing without it", "project", projectID, "error", err)
+		return ""
+	}
+	rel := roleOverride(kind, project.Config).InstructionsFile
+	if rel == "" {
+		return ""
+	}
+	// Reject leading/trailing whitespace at runtime rather than silently
+	// "fixing up" a corrupted config value: trimming could mask a hidden
+	// "../" or otherwise let a relative path escape the project root.
+	if strings.TrimSpace(rel) != rel {
+		m.logger.Warn("role instructions file path has leading/trailing whitespace; continuing without it", "project", projectID, "file", rel)
+		return ""
+	}
+	path := rel
+	if !filepath.IsAbs(path) {
+		if project.Path == "" {
+			m.logger.Warn("role instructions file is relative but project has no root path; continuing without it", "project", projectID, "file", rel)
+			return ""
+		}
+		// Re-sanitize the relative path (no absolute, no ".." escape) before
+		// joining against the project root, mirroring safeRelPath's contract.
+		clean, err := safeRelPath(rel)
+		if err != nil {
+			m.logger.Warn("role instructions file path is not repo-relative; continuing without it", "project", projectID, "file", rel, "error", err)
+			return ""
+		}
+		path = filepath.Join(project.Path, clean)
+	}
+	content, ok := m.readRoleInstructionsFile(projectID, path)
+	if !ok {
+		return ""
+	}
+	content = strings.TrimRight(content, "\r\n")
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	return "\n\n" + content
+}
+
+// readRoleInstructionsFile reads a role instructions file with a TOCTOU-safe
+// flow: open the file first, stat the open descriptor to confirm it is a
+// regular file, then read through an io.LimitReader so the size cap holds even
+// if the file is swapped between checks. Any failure logs a warning and returns
+// ok=false so the caller degrades gracefully.
+func (m *Manager) readRoleInstructionsFile(projectID domain.ProjectID, path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		m.logger.Warn("could not open role instructions file; continuing without it", "project", projectID, "file", path, "error", err)
+		return "", false
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		m.logger.Warn("could not stat role instructions file; continuing without it", "project", projectID, "file", path, "error", err)
+		return "", false
+	}
+	if !info.Mode().IsRegular() {
+		m.logger.Warn("role instructions file is not a regular file; continuing without it", "project", projectID, "file", path, "mode", info.Mode().String())
+		return "", false
+	}
+	// Read one byte past the cap so an oversized file is detected even if its
+	// stat size is stale or underreported.
+	data, err := io.ReadAll(io.LimitReader(f, maxRoleInstructionsFileBytes+1))
+	if err != nil {
+		m.logger.Warn("could not read role instructions file; continuing without it", "project", projectID, "file", path, "error", err)
+		return "", false
+	}
+	if int64(len(data)) > maxRoleInstructionsFileBytes {
+		m.logger.Warn("role instructions file is too large; continuing without it", "project", projectID, "file", path, "max", maxRoleInstructionsFileBytes)
+		return "", false
+	}
+	return string(data), true
 }
 
 // aoSkillPointer is appended to every agent system prompt. It points the agent
