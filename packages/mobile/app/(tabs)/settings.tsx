@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
 	ActivityIndicator,
 	KeyboardAvoidingView,
+	Modal,
 	Platform,
 	Pressable,
 	ScrollView,
@@ -35,6 +36,8 @@ export default function SettingsScreen() {
 	const [testing, setTesting] = useState(false);
 	const [saved, setSaved] = useState(false);
 	const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+	const [pwPromptOpen, setPwPromptOpen] = useState(false);
+	const [pwDraft, setPwDraft] = useState("");
 
 	useEffect(() => {
 		loadConfig().then((c) => {
@@ -45,16 +48,23 @@ export default function SettingsScreen() {
 
 	const set = (k: keyof ServerConfig) => (v: string) => setCfg((prev) => ({ ...prev, [k]: v }));
 
-	async function test() {
+	async function test(target: ServerConfig = cfg) {
 		setTesting(true);
 		setResult(null);
 		try {
-			await saveConfig(cfg);
-			const count = await pingServer(cfg);
-			setResult({ ok: true, msg: `Connected - ${count} session(s) found.` });
+			await saveConfig(target);
+			const count = await pingServer(target);
+			setResult({ ok: true, msg: `Connected — ${count} session(s) found.` });
 			await reloadConfig();
 		} catch (e) {
-			setResult({ ok: false, msg: e instanceof Error ? e.message : "Could not reach server." });
+			const msg = e instanceof Error ? e.message : "Could not reach server.";
+			setResult({ ok: false, msg });
+			// Wrong/missing password — reopen the prompt instead of leaving the
+			// user stuck on a silent 401.
+			if (msg.startsWith("401")) {
+				setPwDraft(target.password);
+				setPwPromptOpen(true);
+			}
 		} finally {
 			setTesting(false);
 		}
@@ -65,6 +75,26 @@ export default function SettingsScreen() {
 		await reloadConfig();
 		setSaved(true);
 		setTimeout(() => setSaved(false), 1800);
+	}
+
+	// The primary "Connect" action — gated behind a password prompt the first
+	// time (no password saved yet). Once a password is saved it persists in
+	// AsyncStorage with the rest of the config, so subsequent connects skip
+	// straight to test().
+	function connect() {
+		if (!cfg.password.trim()) {
+			setPwDraft("");
+			setPwPromptOpen(true);
+			return;
+		}
+		test();
+	}
+
+	function submitPassword() {
+		const next = { ...cfg, password: pwDraft };
+		setCfg(next);
+		setPwPromptOpen(false);
+		test(next);
 	}
 
 	if (!loaded) {
@@ -109,6 +139,15 @@ export default function SettingsScreen() {
 					</View>
 				</View>
 
+				<Field
+					label="PASSWORD"
+					value={cfg.password}
+					onChangeText={set("password")}
+					placeholder="Daemon connection password"
+					autoCapitalize="none"
+					secureTextEntry
+				/>
+
 				<View style={styles.toggleRow}>
 					<View style={{ flex: 1 }}>
 						<Text style={styles.toggleLabel}>Use TLS (https / wss)</Text>
@@ -122,11 +161,19 @@ export default function SettingsScreen() {
 				</View>
 
 				<Button
+					title="Scan QR"
+					variant="ghost"
+					icon="camera"
+					onPress={() => router.navigate("/pair")}
+					style={{ marginTop: 4, marginBottom: 12 }}
+				/>
+
+				<Button
 					title="Test connection"
 					variant="ghost"
 					icon="activity"
 					loading={testing}
-					onPress={test}
+					onPress={connect}
 					style={{ marginTop: 4 }}
 				/>
 				{result && (
@@ -165,6 +212,41 @@ export default function SettingsScreen() {
 					))
 				)}
 			</ScrollView>
+
+			<Modal
+				visible={pwPromptOpen}
+				transparent
+				animationType="fade"
+				onRequestClose={() => setPwPromptOpen(false)}
+			>
+				<View style={styles.modalBackdrop}>
+					<View style={styles.modalCard}>
+						<Text style={styles.modalTitle}>Enter password</Text>
+						<Text style={styles.toggleHint}>Required to connect to this AO server.</Text>
+						<TextInput
+							style={[styles.input, { marginTop: 14 }]}
+							value={pwDraft}
+							onChangeText={setPwDraft}
+							placeholder="Password"
+							placeholderTextColor={theme.textTertiary}
+							autoCapitalize="none"
+							autoCorrect={false}
+							secureTextEntry
+							autoFocus
+							onSubmitEditing={submitPassword}
+						/>
+						<View style={styles.modalRow}>
+							<Button
+								title="Cancel"
+								variant="ghost"
+								onPress={() => setPwPromptOpen(false)}
+								style={{ flex: 1, marginRight: 8 }}
+							/>
+							<Button title="Connect" onPress={submitPassword} style={{ flex: 1, marginLeft: 8 }} />
+						</View>
+					</View>
+				</View>
+			</Modal>
 		</KeyboardAvoidingView>
 	);
 }
@@ -176,6 +258,7 @@ function Field(props: {
 	placeholder?: string;
 	autoCapitalize?: "none" | "sentences";
 	keyboardType?: "default" | "url" | "number-pad";
+	secureTextEntry?: boolean;
 }) {
 	return (
 		<View style={styles.field}>
@@ -189,6 +272,7 @@ function Field(props: {
 				autoCapitalize={props.autoCapitalize}
 				autoCorrect={false}
 				keyboardType={props.keyboardType}
+				secureTextEntry={props.secureTextEntry}
 			/>
 		</View>
 	);
@@ -247,4 +331,22 @@ const styles = StyleSheet.create({
 	projRowPressed: { backgroundColor: theme.bgElevatedHover, borderColor: theme.borderDefault },
 	projName: { color: theme.textPrimary, fontSize: 14, fontWeight: "600", flex: 1 },
 	projPrefix: { color: theme.textTertiary, fontSize: 12, fontFamily: theme.fontMono },
+	modalBackdrop: {
+		flex: 1,
+		backgroundColor: "rgba(0,0,0,0.6)",
+		alignItems: "center",
+		justifyContent: "center",
+		padding: 24,
+	},
+	modalCard: {
+		width: "100%",
+		maxWidth: 360,
+		backgroundColor: theme.bgElevated,
+		borderRadius: 14,
+		borderWidth: 1,
+		borderColor: theme.borderDefault,
+		padding: 20,
+	},
+	modalTitle: { color: theme.textPrimary, fontSize: 17, fontWeight: "700" },
+	modalRow: { flexDirection: "row", marginTop: 18 },
 });
