@@ -10,6 +10,7 @@ export type ServerConfig = {
 	httpPort: string; // AO daemon HTTP port (REST API + /mux), default 3001
 	muxPort: string; // legacy separate mux port - unused against the Go daemon
 	secure?: boolean; // use https/wss instead of http/ws (TLS / Tailscale funnel)
+	password: string; // daemon connection password for Authorization header
 };
 
 export const DEFAULT_CONFIG: ServerConfig = {
@@ -17,9 +18,14 @@ export const DEFAULT_CONFIG: ServerConfig = {
 	httpPort: "3001",
 	muxPort: "14801",
 	secure: false,
+	password: "",
 };
 
-// Strip a pasted scheme (http://, ws://, ...) and trailing slashes so we never
+export function authHeaders(cfg: ServerConfig): Record<string, string> {
+	return cfg.password ? { Authorization: `Bearer ${cfg.password}` } : {};
+}
+
+// Strip a pasted scheme (http://, ws://, …) and trailing slashes so we never
 // build a double-scheme URL like "http://https://host".
 function cleanHost(host: string): string {
 	return host
