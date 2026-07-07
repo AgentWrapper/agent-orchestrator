@@ -139,3 +139,89 @@ func contains(values []string, needle string) bool {
 	}
 	return false
 }
+
+
+func TestReviewCommandMovesInitialPromptToSystemPrompt(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	inv := ports.ReviewInvocation{
+		ReviewerID:    "review-w1",
+		WorkspacePath: "/ws/w1",
+		Prompt:        "Review the requested pull request for worker session worker-123",
+		SystemPrompt:  "You are an AO reviewer.",
+	}
+
+	if _, err := r.ReviewCommand(context.Background(), inv); err != nil {
+		t.Fatalf("ReviewCommand returned error: %v", err)
+	}
+
+	// Initial prompt must be hidden from the terminal.
+	if agent.got.Prompt != "" {
+		t.Fatalf(
+			"expected launch Prompt to be empty so Claude Code doesn't echo it.\n"+
+				"Expected: %q\nActual:   %q",
+			"",
+			agent.got.Prompt,
+		)
+	}
+
+	// The hidden system prompt should contain BOTH pieces of information.
+	expectedSystemPrompt := combineSystemPrompt(inv.SystemPrompt, inv.Prompt)
+
+	if agent.got.SystemPrompt != expectedSystemPrompt {
+		t.Fatalf(
+			"unexpected SystemPrompt passed to GetLaunchCommand.\n\n"+
+				"Expected:\n%s\n\n"+
+				"Actual:\n%s",
+			expectedSystemPrompt,
+			agent.got.SystemPrompt,
+		)
+	}
+
+	// Ensure the reviewer instructions weren't lost.
+	if !strings.Contains(agent.got.SystemPrompt, inv.SystemPrompt) {
+		t.Fatalf(
+			"reviewer instructions disappeared from SystemPrompt.\n\n"+
+				"Expected to contain:\n%s\n\n"+
+				"Actual:\n%s",
+			inv.SystemPrompt,
+			agent.got.SystemPrompt,
+		)
+	}
+
+	// Ensure the review task is still delivered.
+	if !strings.Contains(agent.got.SystemPrompt, inv.Prompt) {
+		t.Fatalf(
+			"review task disappeared from SystemPrompt.\n\n"+
+				"Expected to contain:\n%s\n\n"+
+				"Actual:\n%s",
+			inv.Prompt,
+			agent.got.SystemPrompt,
+		)
+	}
+
+	// Ensure the prompt wasn't duplicated.
+	if strings.Count(agent.got.SystemPrompt, inv.Prompt) != 1 {
+		t.Fatalf(
+			"review task should appear exactly once in SystemPrompt.\n\n"+
+				"SystemPrompt:\n%s",
+			agent.got.SystemPrompt,
+		)
+	}
+
+	// ReviewMessage must continue returning the prompt for re-review.
+	msg, err := r.ReviewMessage(context.Background(), inv)
+	if err != nil {
+		t.Fatalf("ReviewMessage returned error: %v", err)
+	}
+
+	if msg != inv.Prompt {
+		t.Fatalf(
+			"ReviewMessage must still return the review prompt.\n"+
+				"Expected: %q\nActual:   %q",
+			inv.Prompt,
+			msg,
+		)
+	}
+}
