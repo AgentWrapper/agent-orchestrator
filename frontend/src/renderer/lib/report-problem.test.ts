@@ -67,6 +67,34 @@ describe("report problem drafts", () => {
 		expect(draft).not.toContain("hunter2");
 	});
 
+	it("redacts JSON secrets, authorization headers, and GitHub token forms", () => {
+		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
+		const githubOauthToken = `gho_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
+		const fineGrainedGithubToken = `github_pat_11${"AAAAAAAAAAAAAAAAAAAA"}_${"B".repeat(74)}`;
+
+		const draft = formatReportProblemDraft(
+			{
+				summary: `GitHub token leaked: ${githubToken}`,
+				details: [
+					'{"token": "json-token-secret", "api_key": "json-api-key-secret"}',
+					`Authorization: token ${githubOauthToken}`,
+					"authorization: Bearer header-token-secret",
+					fineGrainedGithubToken,
+				].join("\n"),
+			},
+			diagnostics,
+			"github",
+		);
+
+		expect(draft).toContain("[redacted-secret]");
+		expect(draft).not.toContain("json-token-secret");
+		expect(draft).not.toContain("json-api-key-secret");
+		expect(draft).not.toContain(githubToken);
+		expect(draft).not.toContain(githubOauthToken);
+		expect(draft).not.toContain("header-token-secret");
+		expect(draft).not.toContain(fineGrainedGithubToken);
+	});
+
 	it("produces a useful draft when user input is partial", () => {
 		const draft = formatReportProblemDraft({ summary: "", details: "" }, diagnostics, "email");
 

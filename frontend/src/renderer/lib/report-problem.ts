@@ -30,10 +30,14 @@ const LOCAL_URL_PATTERN =
 const LOCAL_PATH_PATTERN = /(?:\/Users\/|\/home\/|\/tmp\/|\/private\/var\/|\/var\/folders\/)\S+|\b[A-Za-z]:\\[^\s)]+/g;
 const QUERY_SECRET_PATTERN =
 	/([?&](?:api[_-]?key|token|secret|password|access[_-]?token|refresh[_-]?token|auth)=)[^&\s)]+/gi;
+const JSON_SECRET_PATTERN =
+	/((["'])(?:api[_-]?key|token|secret|password|access[_-]?token|refresh[_-]?token|auth)\2\s*:\s*)(["'])(?:\\.|(?!\3).)*\3/gi;
+const AUTHORIZATION_HEADER_PATTERN = /(\bAuthorization\s*:\s*(?:(?:Bearer|token|Basic)\s+)?)[^\s"',)]+/gi;
 const ASSIGNMENT_SECRET_PATTERN =
 	/(\b[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|ACCESS[_-]?TOKEN|REFRESH[_-]?TOKEN|AUTH)[A-Z0-9_]*\s*[:=]\s*)(["']?)[^\s"',)]+/gi;
-const BEARER_SECRET_PATTERN = /\b(Bearer\s+)[A-Za-z0-9._~+/-]+/gi;
+const BEARER_SECRET_PATTERN = /\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi;
 const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
+const GITHUB_TOKEN_PATTERN = /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g;
 
 export function sanitizeReportText(value: string): string {
 	if (!value) return "";
@@ -41,9 +45,12 @@ export function sanitizeReportText(value: string): string {
 		.replace(LOCAL_URL_PATTERN, REDACTED_LOCAL_URL)
 		.replace(LOCAL_PATH_PATTERN, REDACTED_LOCAL_PATH)
 		.replace(QUERY_SECRET_PATTERN, `$1${REDACTED_SECRET}`)
+		.replace(JSON_SECRET_PATTERN, `$1$3${REDACTED_SECRET}$3`)
+		.replace(AUTHORIZATION_HEADER_PATTERN, `$1${REDACTED_SECRET}`)
 		.replace(ASSIGNMENT_SECRET_PATTERN, `$1$2${REDACTED_SECRET}`)
 		.replace(BEARER_SECRET_PATTERN, `$1${REDACTED_SECRET}`)
-		.replace(OPENAI_KEY_PATTERN, REDACTED_SECRET);
+		.replace(OPENAI_KEY_PATTERN, REDACTED_SECRET)
+		.replace(GITHUB_TOKEN_PATTERN, REDACTED_SECRET);
 }
 
 export async function collectReportProblemDiagnostics(now = new Date()): Promise<ReportProblemDiagnostics> {

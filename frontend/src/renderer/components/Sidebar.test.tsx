@@ -333,17 +333,17 @@ describe("Sidebar", () => {
 		);
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
+		const preview = screen.getByLabelText("Report preview");
+		expect(preview).toHaveTextContent("[redacted-local-path]");
+		expect(preview).toHaveTextContent("[redacted-local-url]");
+		const reviewedDraft = preview.textContent;
 
-		expect(screen.getByRole("button", { name: "Send report" })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Raise GitHub issue" })).not.toBeInTheDocument();
-
-		await user.click(screen.getByRole("button", { name: "Send report" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Raise GitHub issue" }));
+		await user.click(screen.getByRole("button", { name: "Raise GitHub issue" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		const copied = writeText.mock.calls[0][0] as string;
+		expect(copied).toBe(reviewedDraft);
 		expect(copied).toContain("Create project fails");
 		expect(copied).toContain("AO version: 9.9.9-test");
 		expect(copied).toContain("Daemon: ready");
@@ -357,6 +357,8 @@ describe("Sidebar", () => {
 			expect.stringContaining("https://github.com/AgentWrapper/agent-orchestrator/issues/new"),
 		);
 		expect(open).not.toHaveBeenCalled();
+		expect(screen.getByLabelText("Summary")).toHaveValue("");
+		expect(screen.getByLabelText("Details")).toHaveValue("");
 	});
 
 	it("opens Discord with an official invite and email with the support mailbox", async () => {
@@ -374,10 +376,14 @@ describe("Sidebar", () => {
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Summary"), "Need help with setup");
 
-		await user.click(screen.getByRole("button", { name: "Send report" }));
+		await user.click(screen.getByRole("button", { name: "Report destination" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Report on Discord" }));
-		await user.click(screen.getByRole("button", { name: "Send report" }));
+		expect(screen.getByLabelText("Report preview")).toHaveTextContent("**AO feedback**");
+		await user.click(screen.getByRole("button", { name: "Report on Discord" }));
+		await user.click(screen.getByRole("button", { name: "Report destination" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Email support" }));
+		expect(screen.getByLabelText("Report preview")).toHaveTextContent("To: support@aoagents.dev");
+		await user.click(screen.getByRole("button", { name: "Email support" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
@@ -386,6 +392,25 @@ describe("Sidebar", () => {
 		expect(openExternal).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG");
 		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:support@aoagents.dev"));
 		expect(open).not.toHaveBeenCalled();
+	});
+
+	it("clears draft text when the feedback dialog closes", async () => {
+		const user = userEvent.setup();
+		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
+		renderSidebar();
+
+		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		await user.type(screen.getByLabelText("Summary"), "Sensitive setup problem");
+		await user.type(screen.getByLabelText("Details"), `Token is ${githubToken}`);
+
+		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
+
+		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		expect(screen.getByLabelText("Summary")).toHaveValue("");
+		expect(screen.getByLabelText("Details")).toHaveValue("");
 	});
 
 	it("keeps the report form to summary and details while tailoring placeholder guidance", async () => {
@@ -402,7 +427,7 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Report preview")).toHaveTextContent("## Safe diagnostics");
 	});
 
 	it("renames a session inline and persists via the daemon", async () => {

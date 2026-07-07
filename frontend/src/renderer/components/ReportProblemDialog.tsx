@@ -34,9 +34,16 @@ const OUTPUT_LABELS: Record<ReportProblemOutput, string> = {
 	email: "Email",
 };
 
+const OUTPUT_ACTION_LABELS: Record<ReportProblemOutput, string> = {
+	github: "Raise GitHub issue",
+	discord: "Report on Discord",
+	email: "Email support",
+};
+
 export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
 	const summaryId = useId();
 	const detailsId = useId();
+	const [previewOutput, setPreviewOutput] = useState<ReportProblemOutput>("github");
 	const [summary, setSummary] = useState("");
 	const [details, setDetails] = useState("");
 	const [copiedOutput, setCopiedOutput] = useState<ReportProblemOutput | null>(null);
@@ -45,6 +52,9 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 	useEffect(() => {
 		if (!open) {
+			setSummary("");
+			setDetails("");
+			setPreviewOutput("github");
 			setCopiedOutput(null);
 			setCopyError(null);
 			return;
@@ -66,15 +76,24 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 		[summary, details],
 	);
 
-	const copyDraft = async (output: ReportProblemOutput) => {
+	const preview = useMemo(
+		() => formatReportProblemDraft(input, diagnostics, previewOutput),
+		[input, diagnostics, previewOutput],
+	);
+
+	const copyDraft = async () => {
 		setCopyError(null);
+		const output = previewOutput;
 		try {
-			await aoBridge.clipboard.writeText(formatReportProblemDraft(input, diagnostics, output));
+			await aoBridge.clipboard.writeText(preview);
 			const destinationUrl = reportProblemDestinationUrl(input, diagnostics, output);
 			if (destinationUrl) {
 				await aoBridge.app.openExternal(destinationUrl);
 			}
 			setCopiedOutput(output);
+			setSummary("");
+			setDetails("");
+			setPreviewOutput("github");
 		} catch (err) {
 			setCopyError(err instanceof Error ? err.message : "Could not copy report draft");
 			setCopiedOutput(null);
@@ -130,6 +149,43 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 							/>
 						</div>
 
+						<div className="space-y-2">
+							<div className="flex items-center justify-between gap-3">
+								<label className="text-[12px] font-medium text-muted-foreground" htmlFor="report-preview">
+									Preview
+								</label>
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<Button type="button" variant="secondary" aria-label="Report destination">
+											{OUTPUT_ACTION_LABELS[previewOutput]}
+											<ChevronDown className="size-3.5" aria-hidden="true" />
+										</Button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" className="w-52">
+										<DropdownMenuItem onSelect={() => setPreviewOutput("github")}>
+											<GitPullRequest aria-hidden="true" />
+											Raise GitHub issue
+										</DropdownMenuItem>
+										<DropdownMenuItem onSelect={() => setPreviewOutput("discord")}>
+											<MessageSquare aria-hidden="true" />
+											Report on Discord
+										</DropdownMenuItem>
+										<DropdownMenuItem onSelect={() => setPreviewOutput("email")}>
+											<Mail aria-hidden="true" />
+											Email support
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
+							</div>
+							<pre
+								id="report-preview"
+								aria-label="Report preview"
+								className="max-h-[220px] min-h-[156px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background/70 p-3 text-[12px] leading-relaxed text-muted-foreground"
+							>
+								{preview}
+							</pre>
+						</div>
+
 						{copyError && (
 							<p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
 								{copyError}
@@ -141,29 +197,10 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					</div>
 
 					<div className="flex items-center justify-end border-t border-border px-5 py-4">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<Button type="button">
-									<Send className="size-3.5" aria-hidden="true" />
-									Send report
-									<ChevronDown className="size-3.5" aria-hidden="true" />
-								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end" side="top" className="w-52">
-								<DropdownMenuItem onSelect={() => void copyDraft("github")}>
-									<GitPullRequest aria-hidden="true" />
-									Raise GitHub issue
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => void copyDraft("discord")}>
-									<MessageSquare aria-hidden="true" />
-									Report on Discord
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => void copyDraft("email")}>
-									<Mail aria-hidden="true" />
-									Email support
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
+						<Button type="button" onClick={() => void copyDraft()}>
+							<Send className="size-3.5" aria-hidden="true" />
+							{OUTPUT_ACTION_LABELS[previewOutput]}
+						</Button>
 					</div>
 				</Dialog.Content>
 			</Dialog.Portal>
