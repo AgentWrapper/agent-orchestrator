@@ -34,6 +34,8 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
+		{"good worker mix", ProjectConfig{WorkerMix: WorkerMix{{Harness: HarnessCodex, Weight: 70}, {Harness: HarnessClaudeCode, Weight: 30}}}, false},
+		{"worker mix bad sum", ProjectConfig{WorkerMix: WorkerMix{{Harness: HarnessCodex, Weight: 70}, {Harness: HarnessClaudeCode, Weight: 20}}}, true},
 		{"tracker intake assignee rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}, false},
 		{"tracker intake explicit github", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitHub, Assignee: "alice"}}, false},
 		{"tracker intake no assignee (opt-out-by-default)", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true}}, false},

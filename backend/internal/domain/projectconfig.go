@@ -36,6 +36,13 @@ type ProjectConfig struct {
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
 
+	// WorkerMix, when non-empty, distributes worker spawns across weighted
+	// agent/model buckets instead of always using Worker.Harness. It drives any
+	// worker spawn that passes no explicit --agent: selection is deficit-based
+	// (see WorkerMix.Select) so the running fleet converges on the configured
+	// ratio. Empty preserves the single Worker.Harness behavior (back-compat).
+	WorkerMix WorkerMix `json:"workerMix,omitempty"`
+
 	// Reviewers names the agent(s) that review a worker's PR when a review is
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to claude-code (see ResolveReviewerHarness).
@@ -139,6 +146,9 @@ func (c ProjectConfig) Validate() error {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
+	}
+	if err := c.WorkerMix.Validate(); err != nil {
+		return err
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {
 		return err

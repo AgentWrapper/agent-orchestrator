@@ -28,6 +28,39 @@ const PERMISSION_MODE_OPTIONS = [
 
 const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
 
+// MIX_OPTIONS are the agent/model buckets a worker-mix row can select. Each is a
+// flattened agent+model pair (issue #62: "type a % and select a model"). Fable is
+// intentionally offered — a user may explicitly weight it in; the no-default rule
+// (GH #61) only bans the system auto-selecting it, which the mix never does.
+const MIX_OPTIONS = [
+	{ value: "claude-code::claude-opus-4-8", label: "Claude — Opus", agent: "claude-code", model: "claude-opus-4-8" },
+	{ value: "claude-code::claude-sonnet-5", label: "Claude — Sonnet", agent: "claude-code", model: "claude-sonnet-5" },
+	{
+		value: "claude-code::claude-haiku-4-5-20251001",
+		label: "Claude — Haiku",
+		agent: "claude-code",
+		model: "claude-haiku-4-5-20251001",
+	},
+	{ value: "claude-code::claude-fable-5", label: "Claude — Fable", agent: "claude-code", model: "claude-fable-5" },
+	{ value: "codex::", label: "Codex", agent: "codex", model: "" },
+	{ value: "codex-fugu::", label: "Codex Fugu", agent: "codex-fugu", model: "" },
+] as const;
+
+type MixRow = { agent: string; model: string; weight: number };
+
+const mixOptionValue = (row: { agent: string; model: string }) => `${row.agent}::${row.model}`;
+
+// mixTotal sums the row percentages; the save gate requires it to equal 100.
+const mixTotal = (rows: MixRow[]) => rows.reduce((sum, r) => sum + (Number.isFinite(r.weight) ? r.weight : 0), 0);
+
+// mixIsValid mirrors the daemon guard client-side: a non-empty mix needs every
+// row to name an agent with a 1..100 weight, and the weights must sum to 100.
+function mixIsValid(rows: MixRow[]): boolean {
+	if (rows.length === 0) return true;
+	if (rows.some((r) => r.agent === "" || !Number.isInteger(r.weight) || r.weight < 1 || r.weight > 100)) return false;
+	return mixTotal(rows) === 100;
+}
+
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
@@ -84,6 +117,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		workerMix: (config.workerMix ?? []).map((r) => ({ agent: r.agent, model: r.model ?? "", weight: r.weight })),
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -95,7 +129,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
-	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	// A non-empty worker mix resolves the worker harness on its own, so the single
+	// default worker agent is only required when no mix is configured. The
+	// orchestrator agent is always required.
+	const mixConfigured = form.workerMix.length > 0;
+	const missingWorkerAgent = form.workerAgent === "" && !mixConfigured;
+	const missingRequiredAgent = missingWorkerAgent || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const agentCatalog = agentsQuery.data;
 	const refreshAgentsMutation = useMutation({
@@ -140,6 +179,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+				workerMix:
+					form.workerMix.length > 0
+						? form.workerMix.map((r) => ({ agent: r.agent, model: r.model || undefined, weight: r.weight }))
+						: undefined,
 				// Pass the loaded intake as base so fields the form doesn't expose
 				// (labels, maxConcurrent) survive the save instead of being wiped.
 				trackerIntake: buildIntake(intakeForm, intake),
@@ -185,6 +228,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setReplacementError(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				if (!mixIsValid(form.workerMix)) {
+					setValidationError("Worker mix percentages must sum to 100% and every row needs an agent.");
 					return;
 				}
 				setValidationError(null);
@@ -242,7 +289,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						installed={agentCatalog?.installed}
 						supported={agentCatalog?.supported}
 						disabled={agentsQuery.isFetching && agentCatalog === undefined}
-						invalid={validationError !== null && form.workerAgent === ""}
+						invalid={validationError !== null && missingWorkerAgent}
 						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
 					/>
 					<RequiredAgentField
@@ -297,6 +344,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
+			<WorkerMixCard
+				rows={form.workerMix}
+				onChange={(rows) => setForm((f) => ({ ...f, workerMix: rows }))}
+				invalid={validationError !== null && !mixIsValid(form.workerMix)}
+			/>
+
 			<Card>
 				<CardHeader>
 					<CardTitle className="text-[13px]">Reviewers</CardTitle>
@@ -339,6 +392,126 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				)}
 			</div>
 		</form>
+	);
+}
+
+// WorkerMixCard renders the weighted worker-mix table (issue #62): a row per
+// agent/model bucket with its percentage, add/remove controls, and a live
+// running total. An empty table means the feature is off — worker spawns fall
+// back to the single default worker agent. The daemon re-validates on save; the
+// running total here blocks the save button's mutation before it is sent.
+function WorkerMixCard({
+	rows,
+	onChange,
+	invalid,
+}: {
+	rows: MixRow[];
+	onChange: (rows: MixRow[]) => void;
+	invalid: boolean;
+}) {
+	const total = mixTotal(rows);
+	const totalOff = rows.length > 0 && total !== 100;
+	const addRow = () => onChange([...rows, { agent: "", model: "", weight: 0 }]);
+	const removeRow = (i: number) => onChange(rows.filter((_, idx) => idx !== i));
+	const patchRow = (i: number, patch: Partial<MixRow>) =>
+		onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-[13px]">Worker mix</CardTitle>
+			</CardHeader>
+			<CardContent className="flex flex-col gap-3">
+				<p className="text-[12px] leading-5 text-muted-foreground">
+					Distribute worker spawns across agents/models by percentage. Leave empty to always use the default worker
+					agent. Percentages must sum to 100%.
+				</p>
+				{rows.map((row, i) => (
+					<div key={i} className="flex items-center gap-2">
+						<div className="flex items-center gap-1">
+							<input
+								type="number"
+								min={0}
+								max={100}
+								aria-label={`Row ${i + 1} percentage`}
+								className="h-8 w-16 rounded-md border border-input bg-transparent px-2 text-right text-[13px] text-foreground focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+								value={Number.isFinite(row.weight) ? row.weight : 0}
+								onChange={(e) => patchRow(i, { weight: Math.trunc(Number(e.target.value)) })}
+							/>
+							<span className="text-[12px] text-muted-foreground">%</span>
+						</div>
+						<div className="min-w-0 flex-1">
+							<MixBucketSelect
+								id={`mix-agent-${i}`}
+								ariaLabel={`Row ${i + 1} agent`}
+								row={row}
+								onChange={(agent, model) => patchRow(i, { agent, model })}
+							/>
+						</div>
+						<button
+							type="button"
+							aria-label={`Remove row ${i + 1}`}
+							className="shrink-0 rounded px-2 text-[12px] text-muted-foreground underline-offset-2 hover:text-error hover:underline"
+							onClick={() => removeRow(i)}
+						>
+							Remove
+						</button>
+					</div>
+				))}
+				<div className="flex items-center justify-between gap-3">
+					<Button type="button" variant="secondary" onClick={addRow}>
+						Add row
+					</Button>
+					{rows.length > 0 && (
+						<span className={`text-[12px] ${totalOff || invalid ? "text-error" : "text-muted-foreground"}`}>
+							Total: {total}% {total === 100 ? "" : "(must equal 100%)"}
+						</span>
+					)}
+				</div>
+			</CardContent>
+		</Card>
+	);
+}
+
+// MixBucketSelect is the agent/model dropdown for one mix row. It renders the
+// curated MIX_OPTIONS and, when a loaded row's pair is not among them (e.g. an
+// exotic combo set via the CLI), a synthetic option so the existing value stays
+// visible and editable rather than silently reset.
+function MixBucketSelect({
+	id,
+	ariaLabel,
+	row,
+	onChange,
+}: {
+	id: string;
+	ariaLabel: string;
+	row: MixRow;
+	onChange: (agent: string, model: string) => void;
+}) {
+	const current = mixOptionValue(row);
+	const known = MIX_OPTIONS.some((o) => o.value === current);
+	return (
+		<Select
+			value={row.agent === "" ? undefined : current}
+			onValueChange={(v) => {
+				const [agent, model = ""] = v.split("::");
+				onChange(agent, model);
+			}}
+		>
+			<SelectTrigger id={id} aria-label={ariaLabel} className="h-8 w-full text-[13px]">
+				<SelectValue placeholder="Select agent/model" />
+			</SelectTrigger>
+			<SelectContent>
+				{!known && row.agent !== "" && (
+					<SelectItem value={current}>{row.model ? `${row.agent} — ${row.model}` : row.agent}</SelectItem>
+				)}
+				{MIX_OPTIONS.map((opt) => (
+					<SelectItem key={opt.value} value={opt.value}>
+						{opt.label}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
 	);
 }
 

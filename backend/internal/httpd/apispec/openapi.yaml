@@ -2157,6 +2157,8 @@ components:
           $ref: '#/components/schemas/TrackerIntakeConfig'
         worker:
           $ref: '#/components/schemas/RoleOverride'
+        workerMix:
+          $ref: '#/components/schemas/WorkerMix'
       type: object
     ProjectGetResponse:
       properties:
@@ -2869,6 +2871,22 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    WorkerMix:
+      items:
+        $ref: '#/components/schemas/WorkerMixEntry'
+      type: array
+    WorkerMixEntry:
+      properties:
+        agent:
+          type: string
+        model:
+          type: string
+        weight:
+          type: integer
+      required:
+      - agent
+      - weight
       type: object
     WorkspaceRepo:
       properties:

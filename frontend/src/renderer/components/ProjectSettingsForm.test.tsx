@@ -188,6 +188,101 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	}, 20_000);
 
+	it("loads an existing worker mix and saves added rows summing to 100", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				workerMix: [{ agent: "codex", weight: 100 }],
+			},
+		});
+
+		renderSettings();
+
+		// The existing single-row mix loads with its percentage.
+		expect(await screen.findByLabelText("Row 1 percentage")).toHaveValue(100);
+
+		// Drop it to 60, add a second bucket at 40 → sums to 100.
+		await userEvent.clear(screen.getByLabelText("Row 1 percentage"));
+		await userEvent.type(screen.getByLabelText("Row 1 percentage"), "60");
+		await userEvent.click(screen.getByRole("button", { name: "Add row" }));
+		await userEvent.type(screen.getByLabelText("Row 2 percentage"), "40");
+		await chooseOption(screen.getByRole("combobox", { name: "Row 2 agent" }), "Claude — Opus");
+
+		expect(screen.getByText(/Total: 100%/)).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.workerMix).toEqual([
+			{ agent: "codex", weight: 60 },
+			{ agent: "claude-code", model: "claude-opus-4-8", weight: 40 },
+		]);
+	}, 20_000);
+
+	it("saves a mix-only project with no default worker agent", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				// No worker.agent — the mix resolves the worker harness on its own.
+				orchestrator: { agent: "claude-code" },
+				workerMix: [{ agent: "codex", weight: 100 }],
+			},
+		});
+
+		renderSettings();
+
+		// The worker-agent-required error must NOT appear when a valid mix exists.
+		await screen.findByLabelText("Row 1 percentage");
+		expect(screen.queryByText("Worker and orchestrator agents are required.")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.workerMix).toEqual([{ agent: "codex", weight: 100 }]);
+	}, 20_000);
+
+	it("blocks save when the worker mix does not sum to 100", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add row" }));
+		await userEvent.type(screen.getByLabelText("Row 1 percentage"), "70");
+		await chooseOption(screen.getByRole("combobox", { name: "Row 1 agent" }), "Codex");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(
+			await screen.findByText("Worker mix percentages must sum to 100% and every row needs an agent."),
+		).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	}, 20_000);
+
 	it("shows the daemon validation message when save fails", async () => {
 		mockProject({
 			id: "proj-1",

@@ -97,6 +97,14 @@ type roleOverride struct {
 	InstructionsFile string      `json:"instructionsFile,omitempty"`
 }
 
+// workerMixEntry mirrors domain.WorkerMixEntry so a --config-json payload
+// round-trips the weighted worker mix through to the daemon instead of dropping it.
+type workerMixEntry struct {
+	Agent  string `json:"agent"`
+	Model  string `json:"model,omitempty"`
+	Weight int    `json:"weight"`
+}
+
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
 type trackerIntakeConfig struct {
 	Enabled       bool     `json:"enabled,omitempty"`
@@ -120,6 +128,7 @@ type projectConfig struct {
 	AgentConfig   agentConfig         `json:"agentConfig,omitempty"`
 	Worker        roleOverride        `json:"worker,omitempty"`
 	Orchestrator  roleOverride        `json:"orchestrator,omitempty"`
+	WorkerMix     []workerMixEntry    `json:"workerMix,omitempty"`
 	TrackerIntake trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 

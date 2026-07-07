@@ -279,6 +279,26 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
+	// A configured worker mix distributes worker spawns across weighted
+	// agent/model buckets. It applies only to a worker spawn that names no
+	// explicit harness; an explicit --agent (e.g. the haiku deploy pool) always
+	// overrides it. Selection is deficit-based against the running fleet, so the
+	// distribution converges on the target ratio deterministically — the judgment
+	// lives in config, not in the orchestrator LLM honoring a prose policy.
+	if cfg.Kind == domain.KindWorker && cfg.Harness == "" && len(project.Config.WorkerMix) > 0 {
+		running, err := m.runningWorkerBuckets(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: worker mix: %w", err)
+		}
+		if pick, ok := project.Config.WorkerMix.Select(running); ok {
+			cfg.Harness = pick.Harness
+			// A per-spawn model still wins; only fill the bucket's model when the
+			// spawn named none, so the recorded model matches the chosen bucket.
+			if strings.TrimSpace(cfg.Model) == "" {
+				cfg.Model = pick.Model
+			}
+		}
+	}
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
@@ -538,6 +558,26 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spa
 	resolved.Model = model
 	resolved.Effort = effort
 	return resolved, nil
+}
+
+// runningWorkerBuckets tallies the project's live (non-terminated) worker
+// sessions by agent/model bucket — the running distribution the worker-mix
+// selector balances against. Orchestrator sessions and terminated rows are
+// excluded; a session's bucket is its harness plus the model recorded at spawn,
+// so a mix-selected session lands in exactly the bucket that produced it.
+func (m *Manager) runningWorkerBuckets(ctx context.Context, projectID domain.ProjectID) (map[domain.BucketKey]int, error) {
+	recs, err := m.store.ListSessions(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	counts := make(map[domain.BucketKey]int)
+	for _, rec := range recs {
+		if rec.Kind != domain.KindWorker || rec.IsTerminated {
+			continue
+		}
+		counts[domain.BucketKey{Harness: rec.Harness, Model: strings.TrimSpace(rec.Metadata.Model)}]++
+	}
+	return counts, nil
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {

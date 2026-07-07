@@ -779,6 +779,7 @@ export interface components {
             symlinks?: string[];
             trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
             worker?: components["schemas"]["RoleOverride"];
+            workerMix?: components["schemas"]["WorkerMix"];
         };
         ProjectGetResponse: {
             project: components["schemas"]["ProjectOrDegraded"];
@@ -1049,6 +1050,12 @@ export interface components {
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        WorkerMix: components["schemas"]["WorkerMixEntry"][];
+        WorkerMixEntry: {
+            agent: string;
+            model?: string;
+            weight: number;
         };
         WorkspaceRepo: {
             name: string;

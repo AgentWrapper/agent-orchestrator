@@ -840,6 +840,94 @@ func TestSpawn_ExplicitHarnessWinsWithoutProjectRoleHarness(t *testing.T) {
 	}
 }
 
+// TestSpawn_WorkerMixConvergesDeficitBased spawns ten workers through the real
+// Spawn against a 60/30/10 mix and asserts the fleet lands on the exact target
+// apportionment (6/3/1). Because selection reads the running counts each spawn
+// persists, this exercises the full loop: pick → persist → count → pick.
+func TestSpawn_WorkerMixConvergesDeficitBased(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessCodex, Weight: 60},
+			{Harness: domain.HarnessCodexFugu, Weight: 30},
+			{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 10},
+		},
+	}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	for i := 0; i < 10; i++ {
+		if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+			t.Fatalf("spawn %d: %v", i, err)
+		}
+	}
+
+	counts := map[domain.AgentHarness]int{}
+	var claudeModel string
+	for _, rec := range st.sessions {
+		counts[rec.Harness]++
+		if rec.Harness == domain.HarnessClaudeCode {
+			claudeModel = rec.Metadata.Model
+		}
+	}
+	want := map[domain.AgentHarness]int{domain.HarnessCodex: 6, domain.HarnessCodexFugu: 3, domain.HarnessClaudeCode: 1}
+	for h, w := range want {
+		if counts[h] != w {
+			t.Fatalf("harness %s = %d, want %d (all=%v)", h, counts[h], w, counts)
+		}
+	}
+	// The bucket's model pin must flow to the spawn so counting stays stable and
+	// the launched agent gets the configured model.
+	if claudeModel != "opus" {
+		t.Fatalf("claude bucket model = %q, want opus", claudeModel)
+	}
+}
+
+// TestSpawn_WorkerMixExplicitHarnessOverrides confirms an explicit --agent wins
+// over a configured mix — this is how the haiku deploy pool stays outside the mix.
+func TestSpawn_WorkerMixExplicitHarnessOverrides(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{Harness: domain.HarnessCodex, Weight: 100}},
+	}}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessDroid}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Harness; got != domain.HarnessDroid {
+		t.Fatalf("explicit harness = %q, want droid (mix must not override)", got)
+	}
+}
+
+// TestSpawn_WorkerMixIgnoredForOrchestrator confirms the mix is worker-only: an
+// orchestrator spawn still resolves via its role override, never the mix.
+func TestSpawn_WorkerMixIgnoredForOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		WorkerMix:    domain.WorkerMix{{Harness: domain.HarnessCodex, Weight: 100}},
+	}}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Harness; got != domain.HarnessClaudeCode {
+		t.Fatalf("orchestrator harness = %q, want claude-code role override (mix is worker-only)", got)
+	}
+}
+
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	m, st, rt, _ := newManager()
 	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
