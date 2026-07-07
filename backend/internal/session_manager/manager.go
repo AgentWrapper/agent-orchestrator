@@ -1199,6 +1199,12 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	if err != nil {
 		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
 	}
+	// Workspace paths a live (non-terminated) session still occupies. A
+	// terminated predecessor and a live successor can share one persistent
+	// worktree (the orchestrator's is reused across respawn), so eligibility
+	// keys on the workspace path, not just the session's terminated state —
+	// reclaiming a path still in use would delete a live session's cwd.
+	liveWorkspaces := liveWorkspacePaths(recs)
 	result := CleanupResult{Cleaned: make([]domain.SessionID, 0, len(recs)), Skipped: []CleanupSkip{}}
 	for _, rec := range recs {
 		if !rec.IsTerminated {
@@ -1206,6 +1212,10 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		}
 		ws := workspaceInfo(rec)
 		if ws.Path == "" {
+			continue
+		}
+		if liveWorkspaces[normalizeWorkspacePath(ws.Path)] {
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace in use by a live session"})
 			continue
 		}
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
@@ -1223,6 +1233,30 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+// liveWorkspacePaths returns the set of normalized workspace paths still
+// occupied by a non-terminated session. Cleanup consults it so a terminated
+// session that shares a persistent worktree with a live successor is skipped
+// rather than reclaimed.
+func liveWorkspacePaths(recs []domain.SessionRecord) map[string]bool {
+	live := make(map[string]bool)
+	for _, rec := range recs {
+		if rec.IsTerminated {
+			continue
+		}
+		if p := rec.Metadata.WorkspacePath; p != "" {
+			live[normalizeWorkspacePath(p)] = true
+		}
+	}
+	return live
+}
+
+// normalizeWorkspacePath canonicalizes a workspace path for set membership so
+// two records naming the same directory (a terminated predecessor and its live
+// successor) compare equal despite trailing slashes or "." segments.
+func normalizeWorkspacePath(p string) string {
+	return filepath.Clean(p)
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short
