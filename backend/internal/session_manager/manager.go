@@ -344,7 +344,6 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			Name:         repo.Name,
 			RelativePath: repo.RelativePath,
 			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
-			BaseBranch:   project.Config.WithDefaults().DefaultBranch,
 		})
 	}
 	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
@@ -1158,7 +1157,7 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 	for _, row := range rows {
 		repoPath := repoPaths[row.RepoName]
 		if repoPath == "" {
-			continue
+			return nil, fmt.Errorf("session worktree row %q no longer matches workspace registry", row.RepoName)
 		}
 		out = append(out, ports.WorkspaceRepoInfo{
 			RepoName:     row.RepoName,

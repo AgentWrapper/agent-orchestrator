@@ -744,13 +744,14 @@ func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) err
 var errNoBaseRef = errors.New("gitworktree: no base ref found")
 
 func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch, baseBranch string) (string, error) {
-	// A per-project base branch (cfg.BaseBranch) overrides the adapter default,
-	// so a project that branches off e.g. "develop" materialises worktrees from
-	// there. Empty falls back to the adapter's configured default.
-	defaultBranch := w.defaultBranch
 	if strings.TrimSpace(baseBranch) != "" {
-		defaultBranch = baseBranch
+		return w.resolveBaseRefFromDefault(ctx, repo, branch, baseBranch)
 	}
+	defaultBranch := w.inferRepoDefaultBranch(ctx, repo)
+	return w.resolveBaseRefFromDefault(ctx, repo, branch, defaultBranch)
+}
+
+func (w *Workspace) resolveBaseRefFromDefault(ctx context.Context, repo, branch, defaultBranch string) (string, error) {
 	candidates := baseRefCandidates(branch, defaultBranch)
 	for _, ref := range candidates {
 		exists, err := w.refExists(ctx, repo, ref)
@@ -772,6 +773,24 @@ func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch, baseBranch
 		return tagRef, nil
 	}
 	return "", fmt.Errorf("%w for branch %q (tried %s, %s)", errNoBaseRef, branch, strings.Join(candidates, ", "), tagRef)
+}
+
+func (w *Workspace) inferRepoDefaultBranch(ctx context.Context, repo string) string {
+	for _, args := range [][]string{
+		{"symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"},
+		{"branch", "--show-current"},
+	} {
+		out, err := w.run(ctx, w.binary, append([]string{"-C", repo}, args...)...)
+		if err != nil {
+			continue
+		}
+		branch := strings.TrimSpace(string(out))
+		branch = strings.TrimPrefix(branch, "origin/")
+		if branch != "" {
+			return branch
+		}
+	}
+	return w.defaultBranch
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {

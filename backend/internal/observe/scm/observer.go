@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -474,13 +475,13 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 				repos = append(repos, repo)
 			}
 		}
-		childRepos, err := o.workspaceSCMRepos(ctx, proj)
+		childRepos, err := o.workspaceSCMSessionRepos(ctx, proj, sess, branch)
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, repo := range childRepos {
-			sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: repo, branch: branch})
-			repos = append(repos, repo)
+		for _, child := range childRepos {
+			sessionRepos = append(sessionRepos, child)
+			repos = append(repos, child.repo)
 		}
 		if len(repos) == 0 {
 			o.logger.Debug("scm observer: project has no supported SCM origins", "project", proj.ID)
@@ -523,7 +524,7 @@ func (o *Observer) resolveScanRepos(proj domain.ProjectRecord, origin ports.SCMR
 		return repos
 	}
 	seen := map[string]bool{prKey(origin, 0): true}
-	for _, url := range gitRemoteURLs(proj.Path) {
+	for _, url := range gitRemoteURLsFunc(proj.Path) {
 		repo, ok := o.provider.ParseRepository(url)
 		if !ok {
 			continue
@@ -538,7 +539,7 @@ func (o *Observer) resolveScanRepos(proj domain.ProjectRecord, origin ports.SCMR
 	return repos
 }
 
-func (o *Observer) workspaceSCMRepos(ctx context.Context, proj domain.ProjectRecord) ([]ports.SCMRepo, error) {
+func (o *Observer) workspaceSCMSessionRepos(ctx context.Context, proj domain.ProjectRecord, sess domain.SessionRecord, branch string) ([]sessionRepo, error) {
 	if proj.Kind.WithDefault() != domain.ProjectKindWorkspace {
 		return nil, nil
 	}
@@ -546,7 +547,7 @@ func (o *Observer) workspaceSCMRepos(ctx context.Context, proj domain.ProjectRec
 	if err != nil {
 		return nil, err
 	}
-	repos := make([]ports.SCMRepo, 0, len(childRepos))
+	repos := make([]sessionRepo, 0, len(childRepos))
 	seen := map[string]bool{}
 	for _, child := range childRepos {
 		if strings.TrimSpace(child.RepoOriginURL) == "" {
@@ -557,18 +558,24 @@ func (o *Observer) workspaceSCMRepos(ctx context.Context, proj domain.ProjectRec
 			o.logger.Debug("scm observer: unsupported SCM origin", "project", proj.ID, "repo", child.Name, "origin", child.RepoOriginURL)
 			continue
 		}
-		key := prKey(repo, 0)
-		if seen[key] {
-			continue
+		childPath := filepath.Join(proj.Path, filepath.FromSlash(child.RelativePath))
+		for _, scanRepo := range o.resolveScanRepos(domain.ProjectRecord{Path: childPath}, repo) {
+			key := prKey(scanRepo, 0)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			repos = append(repos, sessionRepo{session: sess, repo: scanRepo, headRepo: repo, branch: branch})
 		}
-		seen[key] = true
-		repos = append(repos, repo)
 	}
 	return repos, nil
 }
 
 func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRepo, bool) {
-	if pr.Provider != "" || pr.Host != "" || pr.Repo != "" {
+	if pr.Provider != "" && pr.Host != "" && pr.Repo != "" {
+		return ports.SCMRepo{Provider: pr.Provider, Host: pr.Host, Repo: pr.Repo}, true
+	}
+	if pr.Repo != "" {
 		for _, repo := range repos {
 			if matchesTrackedPRRepo(pr, repo) {
 				return repo, true
@@ -1393,6 +1400,8 @@ func gitRemoteURLs(path string) []string {
 	}
 	return urls
 }
+
+var gitRemoteURLsFunc = gitRemoteURLs
 
 func scrubLine(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")

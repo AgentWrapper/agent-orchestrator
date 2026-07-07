@@ -263,6 +263,8 @@ describe("Sidebar", () => {
 					branch: "HEAD",
 					remote: "",
 					hasRemote: false,
+					status: "error",
+					reason: "Origin remote is required.",
 				},
 				{
 					name: "api",
@@ -271,6 +273,7 @@ describe("Sidebar", () => {
 					branch: "main",
 					remote: "git@github.com:acme/api.git",
 					hasRemote: true,
+					status: "ok",
 				},
 			],
 		});
@@ -284,9 +287,10 @@ describe("Sidebar", () => {
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
-		expect(await screen.findByText(/Validation failed · workspace not registered/i)).toBeInTheDocument();
+		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		expect(screen.getByText("workspace not registered")).toBeInTheDocument();
 		expect(screen.getByText("web")).toBeInTheDocument();
-		expect(screen.getByText("No remote configured")).toBeInTheDocument();
+		expect(screen.getByText("Origin remote is required.")).toBeInTheDocument();
 		expect(screen.getByText("api")).toBeInTheDocument();
 		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
 		expect(screen.getByText("Resolve 1 failed repository to continue")).toBeInTheDocument();
@@ -294,6 +298,25 @@ describe("Sidebar", () => {
 			path: "/Users/test/dev/acme",
 			mode: "workspace",
 		});
+	});
+
+	it("does not rescan folders for non-validation create failures", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockRejectedValue(new Error("AO daemon is not ready.")) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.scanImportFolder = vi.fn();
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a folder/i }));
+		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
 	});
 
 	it("opens global settings from the footer menu when no project is selected", async () => {

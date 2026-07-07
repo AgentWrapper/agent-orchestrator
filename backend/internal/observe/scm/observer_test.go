@@ -269,6 +269,20 @@ func TestRepoForTrackedPRMatchesLegacyRepoOnlyRows(t *testing.T) {
 	}
 }
 
+func TestRepoForTrackedPRUsesPersistedRepoWhenCurrentScanDropsUpstream(t *testing.T) {
+	pr := knownPR(42)
+	pr.Provider = "github"
+	pr.Host = "github.com"
+	pr.Repo = "upstream/api"
+	repo, ok := repoForTrackedPR(pr, []ports.SCMRepo{testAPIRepo})
+	if !ok {
+		t.Fatal("persisted tracked PR repo should refresh even when current remotes no longer include it")
+	}
+	if repo.Provider != "github" || repo.Host != "github.com" || repo.Repo != "upstream/api" {
+		t.Fatalf("repo = %#v, want persisted upstream/api tuple", repo)
+	}
+}
+
 func TestStartAsyncPerformsImmediatePollAndStopsOnCancel(t *testing.T) {
 	store := testStoreWithSession()
 	store.listEntered = make(chan struct{})
@@ -608,6 +622,65 @@ func TestPoll_DiscoversWorkspaceChildRepoPR(t *testing.T) {
 	}
 	if len(lc.observed) != 1 {
 		t.Fatalf("lifecycle observations = %d, want 1", len(lc.observed))
+	}
+}
+
+func TestPoll_DiscoversWorkspaceChildRepoUpstreamPR(t *testing.T) {
+	oldRemoteURLs := gitRemoteURLsFunc
+	gitRemoteURLsFunc = func(path string) []string {
+		if strings.HasSuffix(path, "/api") {
+			return []string{"https://github.com/o/api.git", "https://github.com/upstream/api.git"}
+		}
+		return nil
+	}
+	defer func() { gitRemoteURLsFunc = oldRemoteURLs }()
+
+	store := testStoreWithSession()
+	store.sessions[0].Metadata.Branch = "ao/p-1/api-billing"
+	store.projects["p"] = domain.ProjectRecord{
+		ID:            "p",
+		Path:          "/repo/workspace",
+		RepoOriginURL: "https://github.com/o/root.git",
+		Kind:          domain.ProjectKindWorkspace,
+	}
+	store.workspaceRepos = map[string][]domain.WorkspaceRepoRecord{
+		"p": {{ProjectID: "p", Name: "api", RelativePath: "api", RepoOriginURL: "https://github.com/o/api.git"}},
+	}
+	upstreamRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "upstream", Name: "api", Repo: "upstream/api"}
+	prObs := testObs(44)
+	prObs.Repo = "upstream/api"
+	prObs.PR.URL = "https://github.com/upstream/api/pull/44"
+	prObs.PR.HTMLURL = "https://github.com/upstream/api/pull/44"
+	prObs.PR.Number = 44
+	prObs.PR.SourceBranch = "ao/p-1/api-billing"
+	prObs.PR.HeadRepo = "o/api"
+	prObs.PR.TargetBranch = "main"
+	prObs.PR.HeadSHA = "api-sha"
+	prObs.CI.HeadSHA = "api-sha"
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{
+			prKey(upstreamRepo, 0): {ETag: "upstream-v1"},
+		},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(upstreamRepo, 0): {
+				{URL: "https://github.com/upstream/api/pull/44", Number: 44, SourceBranch: "ao/p-1/api-billing", HeadRepo: "o/api", TargetBranch: "main", HeadSHA: "api-sha"},
+			},
+		},
+		observations: map[string]ports.SCMObservation{prKey(upstreamRepo, 44): prObs},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected discovered upstream child PR write")
+	}
+	if got := store.writes[0].pr.Repo; got != "upstream/api" {
+		t.Fatalf("written repo = %q, want upstream/api", got)
+	}
+	if got := store.writes[0].pr.SessionID; got != "p-1" {
+		t.Fatalf("session id = %q, want p-1", got)
 	}
 }
 

@@ -823,14 +823,18 @@ function CreateProjectFlow({
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Could not add project";
 			setError(message);
-			try {
-				const scan = await aoBridge.app.scanImportFolder({
-					path: selectedPath,
-					mode: selectedKind === "workspace" ? "workspace" : "project",
-				});
-				setValidationScan(scan);
-			} catch {
-				setValidationScan({ path: selectedPath, repos: [] });
+			if (shouldScanCreateFailure(message)) {
+				try {
+					const scan = await aoBridge.app.scanImportFolder({
+						path: selectedPath,
+						mode: selectedKind === "workspace" ? "workspace" : "project",
+					});
+					setValidationScan(scan);
+				} catch {
+					setValidationScan({ path: selectedPath, repos: [] });
+				}
+			} else {
+				setValidationScan(null);
 			}
 			setSelectedPath(null);
 			setFolderPickerOpen(true);
@@ -887,13 +891,13 @@ function CreateProjectFlow({
 				open={selectedPath !== null}
 				path={selectedPath}
 			/>
-			{error && (
-				<span className="sr-only" role="status">
-					{error}
-				</span>
-			)}
 		</>
 	);
+}
+
+function shouldScanCreateFailure(message: string): boolean {
+	if (/daemon|server|conflict|already exists|not ready|start|orchestrator|permission denied/i.test(message)) return false;
+	return /workspace|repo|repository|git|path|folder|worktree|bare|branch|commit|remote/i.test(message);
 }
 
 function CreateProjectModeDialog({
@@ -1031,7 +1035,7 @@ function CreateProjectFolderDialog({
 	scan: ImportFolderScan | null;
 }) {
 	const isWorkspace = kind === "workspace";
-	const failedRepos = scan?.repos.filter((repo) => !repo.hasRemote) ?? [];
+	const failedRepos = scan?.repos.filter((repo) => repo.status === "error" || !repo.hasRemote) ?? [];
 	const hasScan = scan !== null;
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -1091,18 +1095,21 @@ function CreateProjectFolderDialog({
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
 										<div className="border-b border-destructive/30 px-4 py-3 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-destructive">
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
-											Validation failed · {isWorkspace ? "workspace" : "project"} not registered
+											Import failed · {isWorkspace ? "workspace" : "project"} not registered
 										</div>
-										{failedRepos.length > 0 ? (
-											failedRepos.map((repo) => <ImportRepoRow key={repo.path} repo={repo} failed />)
-										) : (
-											<div className="px-4 py-3 text-[12px] leading-5 text-destructive">{error}</div>
+										<div className="px-4 py-3 text-[12px] leading-5 text-destructive">{error}</div>
+										{failedRepos.length > 0 && (
+											<div className="border-t border-destructive/30">
+												{failedRepos.map((repo) => (
+													<ImportRepoRow key={repo.path} repo={repo} failed />
+												))}
+											</div>
 										)}
 									</div>
 								)}
 
 								{scan.repos
-									.filter((repo) => repo.hasRemote)
+									.filter((repo) => repo.status !== "error" && repo.hasRemote)
 									.map((repo) => (
 										<div key={repo.path} className="rounded-lg border border-border bg-background">
 											<ImportRepoRow repo={repo} />
@@ -1135,11 +1142,10 @@ function CreateProjectFolderDialog({
 								</span>
 							</button>
 						)}
-						{error && (
+						{error && !hasScan && (
 							<div
 								className={cn(
 									"mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive",
-									hasScan && "sr-only",
 								)}
 							>
 								{error}
@@ -1189,7 +1195,7 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Impor
 					failed ? "text-muted-foreground" : "text-muted-foreground",
 				)}
 			>
-				{repo.hasRemote ? `${repo.branch} ${remoteDisplay(repo.remote)}` : "No remote configured"}
+				{failed ? (repo.reason ?? "Repository cannot be imported") : `${repo.branch} ${remoteDisplay(repo.remote)}`}
 			</div>
 		</div>
 	);

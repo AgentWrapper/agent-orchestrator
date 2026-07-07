@@ -106,12 +106,30 @@ type GitRepoScanResult = {
 	branch: string;
 	remote: string;
 	hasRemote: boolean;
+	status: "ok" | "error";
+	reason?: string;
 };
 
 type ImportFolderScanResult = {
 	path: string;
 	repos: GitRepoScanResult[];
 };
+
+const IMPORT_SCAN_CONCURRENCY = 8;
+const IMPORT_SCAN_MAX_ENTRIES = 200;
+const IMPORT_SCAN_SKIP_DIRS = new Set([
+	".git",
+	"node_modules",
+	"dist",
+	"build",
+	".cache",
+	".turbo",
+	"target",
+	"coverage",
+	"tmp",
+	"temp",
+	"Library",
+]);
 
 const isDev = !app.isPackaged;
 
@@ -860,7 +878,8 @@ async function gitOutput(cwd: string, args: string[]): Promise<string> {
 
 async function isGitRepo(repoPath: string): Promise<boolean> {
 	try {
-		await stat(path.join(repoPath, ".git"));
+		const gitInfo = await stat(path.join(repoPath, ".git"));
+		if (!gitInfo.isDirectory()) return false;
 		await gitOutput(repoPath, ["rev-parse", "--show-toplevel"]);
 		return true;
 	} catch {
@@ -885,20 +904,95 @@ async function resolveDefaultBranch(repoPath: string): Promise<string> {
 }
 
 async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoScanResult | null> {
+	const relativePath = repoPath === rootPath ? "." : path.relative(rootPath, repoPath);
+	const name = path.basename(repoPath);
+	try {
+		const gitInfo = await stat(path.join(repoPath, ".git"));
+		if (!gitInfo.isDirectory()) {
+			return {
+				name,
+				path: repoPath,
+				relativePath,
+				branch: "HEAD",
+				remote: "",
+				hasRemote: false,
+				status: "error",
+				reason: "Linked worktree children cannot be imported.",
+			};
+		}
+	} catch {
+		try {
+			if ((await gitOutput(repoPath, ["rev-parse", "--is-bare-repository"])) === "true") {
+				return {
+					name,
+					path: repoPath,
+					relativePath,
+					branch: "HEAD",
+					remote: "",
+					hasRemote: false,
+					status: "error",
+					reason: "Bare repositories cannot be imported.",
+				};
+			}
+		} catch {
+			// Not a git repository.
+		}
+		return null;
+	}
 	if (!(await isGitRepo(repoPath))) return null;
-	const [branchResult, remoteResult] = await Promise.allSettled([
+	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
 		resolveDefaultBranch(repoPath),
 		gitOutput(repoPath, ["remote", "get-url", "origin"]),
+		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"]),
+		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"]),
 	]);
-	const relativePath = repoPath === rootPath ? "." : path.relative(rootPath, repoPath);
+	const validationReason = scanRepoValidationReason(
+		name,
+		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		bareResult.status === "fulfilled" && bareResult.value === "true",
+		headResult.status === "fulfilled",
+	);
 	return {
-		name: path.basename(repoPath),
+		name,
 		path: repoPath,
 		relativePath,
 		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
 		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
 		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		status: validationReason ? "error" : "ok",
+		reason: validationReason,
 	};
+}
+
+function scanRepoValidationReason(
+	name: string,
+	branch: string,
+	hasRemote: boolean,
+	isBare: boolean,
+	hasHead: boolean,
+): string | undefined {
+	if (name === "__root__") return "Repository name is reserved by AO.";
+	if (isBare) return "Bare repositories cannot be imported.";
+	if (!hasHead) return "Repository must have at least one commit.";
+	if (branch === "HEAD") return "Repository must have a checked-out branch.";
+	if (!hasRemote) return "Origin remote is required.";
+	return undefined;
+}
+
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+	const out = new Array<R>(items.length);
+	let next = 0;
+	await Promise.all(
+		Array.from({ length: Math.min(limit, items.length) }, async () => {
+			for (;;) {
+				const index = next++;
+				if (index >= items.length) return;
+				out[index] = await fn(items[index]);
+			}
+		}),
+	);
+	return out;
 }
 
 async function scanImportFolder(rootPath: string, mode: "project" | "workspace"): Promise<ImportFolderScanResult> {
@@ -907,11 +1001,11 @@ async function scanImportFolder(rootPath: string, mode: "project" | "workspace")
 		return { path: rootPath, repos: repo ? [repo] : [] };
 	}
 
-	const entries = await readdir(rootPath, { withFileTypes: true });
-	const repos = await Promise.all(
-		entries
-			.filter((entry) => entry.isDirectory() && entry.name !== ".git")
-			.map((entry) => scanGitRepo(path.join(rootPath, entry.name), rootPath)),
+	const entries = (await readdir(rootPath, { withFileTypes: true }))
+		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
+		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
+	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
+		scanGitRepo(path.join(rootPath, entry.name), rootPath),
 	);
 	return {
 		path: rootPath,

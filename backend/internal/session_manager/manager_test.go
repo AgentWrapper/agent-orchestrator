@@ -651,6 +651,11 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	if want := filepath.Join(projectPath, "apps", "web"); ws.lastProjectCfg.Repos[1].RepoPath != want {
 		t.Fatalf("web repo path = %q, want %q", ws.lastProjectCfg.Repos[1].RepoPath, want)
 	}
+	for _, repo := range ws.lastProjectCfg.Repos {
+		if repo.BaseBranch != "" {
+			t.Fatalf("child repo %s base branch = %q, want empty so adapter infers per-repo default", repo.Name, repo.BaseBranch)
+		}
+	}
 	rows := st.worktrees["mer-1"]
 	if len(rows) != 3 {
 		t.Fatalf("session worktree rows = %d, want 3: %#v", len(rows), rows)
@@ -839,7 +844,7 @@ func TestKill_WorkspaceProjectDestroysChildrenBeforeRoot(t *testing.T) {
 	}
 }
 
-func TestKill_WorkspaceProjectSkipsUnregisteredChildRows(t *testing.T) {
+func TestKill_WorkspaceProjectFailsClosedOnUnregisteredChildRows(t *testing.T) {
 	m, st, _, ws := newManager()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
@@ -856,12 +861,14 @@ func TestKill_WorkspaceProjectSkipsUnregisteredChildRows(t *testing.T) {
 	}
 
 	freed, err := m.Kill(ctx, "mer-1")
-	if err != nil || !freed {
-		t.Fatalf("freed=%v err=%v", freed, err)
+	if err == nil || !strings.Contains(err.Error(), "old-api") {
+		t.Fatalf("freed=%v err=%v, want unresolved historical row error", freed, err)
 	}
-	want := []string{"Destroy:api", "Destroy:__root__"}
-	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("destroy calls = %v, want %v", got, want)
+	if freed {
+		t.Fatal("workspace must not be reported freed when historical rows are unresolved")
+	}
+	if len(ws.calls) != 0 {
+		t.Fatalf("destroy calls = %v, want none", ws.calls)
 	}
 }
 
@@ -2244,6 +2251,43 @@ func TestSaveAndTeardownAll_WorkspaceProjectPreservesEachRepoAndRemovesChildrenF
 	gotSuffix := ws.calls[len(ws.calls)-2:]
 	if strings.Join(gotSuffix, ",") != strings.Join(wantSuffix, ",") {
 		t.Fatalf("force destroy suffix = %v, want %v; all calls %v", gotSuffix, wantSuffix, ws.calls)
+	}
+}
+
+func TestSaveAndTeardownAll_WorkspaceProjectRegistryDriftPreservesWholeWorkspace(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Path:   "/repo/mer",
+		Kind:   domain.ProjectKindWorkspace,
+		Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1/root", WorktreePath: "/ws/mer-1", State: "active"},
+		{SessionID: "mer-1", RepoName: "old-child", Branch: "ao/mer-1/root", WorktreePath: "/ws/mer-1/old-child", State: "active"},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if ws.stashCalls != 0 {
+		t.Fatalf("stash calls = %d, want 0 when registry drift makes rows unsafe", ws.stashCalls)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("ForceDestroy must not run when a historical child row is unresolved; calls=%v", ws.calls)
+		}
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should remain live when teardown is skipped for registry drift")
 	}
 }
 

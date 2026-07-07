@@ -229,6 +229,8 @@ func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
 		joined := strings.Join(args, " ")
 		calls = append(calls, joined)
 		switch {
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return []byte("origin/main\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet origin/feature/test"):
 			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
 		case strings.Contains(joined, "rev-parse --verify --quiet origin/main"):
@@ -575,6 +577,10 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
 			return nil, nil
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return nil, commandError{args: args, err: exitOne}
+		case strings.Contains(joined, "branch --show-current"):
+			return nil, commandError{args: args, err: exitOne}
 		case strings.Contains(joined, "rev-parse"):
 			return nil, commandError{args: args, err: exitOne}
 		default:
@@ -585,6 +591,37 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/missing"})
 	if !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
+	}
+}
+
+func TestResolveBaseRefInfersRepoDefaultBranchWhenUnset(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": t.TempDir()}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitOne := func() error {
+		cmd := exec.Command("sh", "-c", "exit 1")
+		return cmd.Run()
+	}()
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return []byte("origin/master\n"), nil
+		case strings.Contains(joined, "origin/master"):
+			return []byte("sha\n"), nil
+		case strings.Contains(joined, "rev-parse --verify"):
+			return nil, commandError{args: args, err: exitOne}
+		default:
+			return nil, nil
+		}
+	}
+	ref, err := ws.resolveBaseRef(context.Background(), "/repo/child", "ao/work", "")
+	if err != nil {
+		t.Fatalf("resolveBaseRef err = %v", err)
+	}
+	if ref != "origin/master" {
+		t.Fatalf("base ref = %q, want child origin/master", ref)
 	}
 }
 

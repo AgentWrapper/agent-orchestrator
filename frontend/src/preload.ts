@@ -25,6 +25,8 @@ export type ImportRepoScan = {
 	branch: string;
 	remote: string;
 	hasRemote: boolean;
+	status?: "ok" | "error";
+	reason?: string;
 };
 
 export type ImportFolderScan = {
