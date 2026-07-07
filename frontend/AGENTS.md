@@ -16,7 +16,7 @@ Do not edit backend functions from this directory unless the task explicitly spa
 The page is intended for GitHub Pages or direct static hosting. Browser code calls the deployed backend configured by:
 
 ```js
-const PROXY_URL = 'https://pune-reads-api.vercel.app';
+const PROXY_URL = "https://pune-reads-api.vercel.app";
 ```
 
 If you change API routes, request bodies, auth headers, or response shapes, update the backend in `../saturday-reads-api/api/` and the backend agent guide as part of the same task.
