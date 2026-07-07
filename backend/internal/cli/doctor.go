@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -305,9 +306,13 @@ func (c *commandContext) checkTerminalRuntime(ctx context.Context) doctorCheck {
 }
 
 func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {
-	path, err := c.deps.LookPath("tmux")
+	// Same resolution order as the daemon (AO_TMUX_BIN → PATH → bundled).
+	// AO_BUNDLED_TMUX is stamped only into the daemon env by the desktop app,
+	// so a shell-run doctor usually sees it empty — the WARN wording must not
+	// claim the app itself has no bundled fallback.
+	path, source, err := tmux.ResolveBinary(os.Getenv("AO_TMUX_BIN"), os.Getenv("AO_BUNDLED_TMUX"), c.deps.LookPath, os.Stat)
 	if err != nil || path == "" {
-		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "tmux", Message: "not found in PATH; required on macOS/Linux to start sessions"}
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "tmux", Message: "not found in PATH (the desktop app falls back to its bundled tmux; otherwise install tmux or set AO_TMUX_BIN)"}
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -319,7 +324,7 @@ func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {
 	if version == "" {
 		version = "version unknown"
 	}
-	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s (%s)", path, version)}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s (%s, via %s)", path, version, source)}
 }
 
 // checkHooksLog surfaces recent agent hook delivery failures. `ao hooks`

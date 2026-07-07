@@ -150,7 +150,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	lcm := lifecycle.New(store, nil)
 	cfg := config.Config{DataDir: t.TempDir()}
 
-	rt := runtimeselect.New(nil)
+	rt := runtimeselect.New(nil, nil)
 	messenger := newSessionMessenger(store, rt, log)
 	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lcm := lifecycle.New(store, nil)
 	cfg := config.Config{DataDir: t.TempDir()}
-	rt := runtimeselect.New(nil)
+	rt := runtimeselect.New(nil, nil)
 	messenger := newSessionMessenger(store, rt, log)
 	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {

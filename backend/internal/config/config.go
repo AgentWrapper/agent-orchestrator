@@ -89,6 +89,13 @@ type Config struct {
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
+	// TmuxBin is an explicit tmux binary override (AO_TMUX_BIN). Empty means
+	// resolve at use time: system PATH first, then the bundled fallback.
+	TmuxBin string
+	// BundledTmux is the app-bundled tmux fallback path (AO_BUNDLED_TMUX),
+	// stamped by the Electron supervisor for the packaged app; empty elsewhere.
+	// Used only when no tmux is found on PATH.
+	BundledTmux string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -114,6 +121,8 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_TMUX_BIN          explicit tmux binary override (default: resolve PATH, then bundled)
+//	AO_BUNDLED_TMUX      app-bundled tmux fallback path (set by the desktop app; not for manual use)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -166,6 +175,12 @@ func Load() (Config, error) {
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
 	}
+
+	// No validation here: a missing path is not "malformed", and tmux
+	// resolution is a use-time decision (the spawn prerequisite gate reports
+	// the clear error). See adapters/runtime/tmux.ResolveBinary.
+	cfg.TmuxBin = os.Getenv("AO_TMUX_BIN")
+	cfg.BundledTmux = os.Getenv("AO_BUNDLED_TMUX")
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {
 		// Explicit override replaces the defaults entirely so a deployment can

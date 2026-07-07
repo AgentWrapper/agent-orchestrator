@@ -1185,6 +1185,62 @@ func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
 	}
 }
 
+// TestSpawn_AcceptsBundledTmuxViaResolver: when a TmuxResolver is wired (as
+// production does for the packaged app's bundled fallback), the prerequisite
+// gate accepts its answer even though PATH has no tmux.
+func TestSpawn_AcceptsBundledTmuxViaResolver(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses ConPTY, not tmux")
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(name string) (string, error) {
+		if name == "tmux" {
+			return "", fmt.Errorf("exec: %q: not found", name)
+		}
+		return "/bin/true", nil
+	}
+	resolver := func() (string, error) { return "/app/resources/tmux-dist/tmux", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, TmuxResolver: resolver})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("Spawn = %v, want success past the tmux prerequisite gate", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
+	}
+}
+
+// TestSpawn_RejectsWhenResolverFails: a resolver error (no PATH tmux, no
+// usable bundled fallback) aborts before any session row is created and
+// surfaces the prerequisite sentinel.
+func TestSpawn_RejectsWhenResolverFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses ConPTY, not tmux")
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	resolver := func() (string, error) {
+		return "", fmt.Errorf("%w: tmux not found in PATH and no bundled tmux available", ports.ErrRuntimePrerequisite)
+	}
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, TmuxResolver: resolver})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ports.ErrRuntimePrerequisite) {
+		t.Fatalf("err = %v, want ports.ErrRuntimePrerequisite", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("no session row should be created, got %d", len(st.sessions))
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime must not be created when tmux resolution fails")
+	}
+}
+
 func TestSpawn_RejectsUnknownHarness(t *testing.T) {
 	st := newFakeStore()
 	rt := &fakeRuntime{}

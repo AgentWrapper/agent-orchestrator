@@ -11,6 +11,7 @@ import (
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -110,6 +111,10 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Lifecycle: lcm,
 		DataDir:   cfg.DataDir,
 		Logger:    log,
+		// Same resolution the tmux runtime adapter uses (override → PATH →
+		// bundled), so the spawn prerequisite gate can never disagree with
+		// the binary the runtime would actually exec.
+		TmuxResolver: tmux.NewResolver(cfg.TmuxBin, cfg.BundledTmux),
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

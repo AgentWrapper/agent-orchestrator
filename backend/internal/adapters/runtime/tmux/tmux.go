@@ -32,16 +32,17 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary    string        // default "tmux" (resolved via exec.LookPath)
-	Shell     string        // default $SHELL else /bin/sh
-	Timeout   time.Duration // default 5s
-	ChunkSize int           // default 16*1024
+	Binary    string         // fixed binary path; when set, Resolver is ignored
+	Resolver  BinaryResolver // consulted per command; default PATH-only resolution
+	Shell     string         // default $SHELL else /bin/sh
+	Timeout   time.Duration  // default 5s
+	ChunkSize int            // default 16*1024
 }
 
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary    string
+	resolve   BinaryResolver
 	shell     string
 	timeout   time.Duration
 	chunkSize int
@@ -63,17 +64,19 @@ func (execRunner) Run(ctx context.Context, env []string, name string, args ...st
 	return cmd.CombinedOutput()
 }
 
-// New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
-// (resolved via exec.LookPath), shell from $SHELL (else /bin/sh), and the
+// New builds a tmux Runtime, filling unset Options with defaults: the binary
+// comes from Options.Binary when set (fixed path, mainly tests), else
+// Options.Resolver (consulted per command so a tmux installed later is picked
+// up), else PATH-only resolution; shell from $SHELL (else /bin/sh), and the
 // default timeout and output chunk size.
 func New(opts Options) *Runtime {
-	binary := opts.Binary
-	if binary == "" {
-		if path, err := exec.LookPath("tmux"); err == nil {
-			binary = path
-		} else {
-			binary = "tmux"
-		}
+	resolve := opts.Resolver
+	if opts.Binary != "" {
+		binary := opts.Binary
+		resolve = func() (string, error) { return binary, nil }
+	}
+	if resolve == nil {
+		resolve = NewResolver("", "")
 	}
 	timeout := opts.Timeout
 	if timeout == 0 {
@@ -91,7 +94,7 @@ func New(opts Options) *Runtime {
 		chunkSize = defaultChunkBytes
 	}
 	return &Runtime{
-		binary:    binary,
+		resolve:   resolve,
 		shell:     shellPath,
 		timeout:   timeout,
 		chunkSize: chunkSize,
@@ -246,7 +249,11 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []string{r.binary, "attach-session", "-t", id}, nil
+	bin, err := r.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return []string{bin, "attach-session", "-t", id}, nil
 }
 
 func attachEnv(base []string) []string {
@@ -260,11 +267,16 @@ func attachEnv(base []string) []string {
 	return append(env, "TERM=xterm-256color")
 }
 
-// run wraps runner.Run with a per-call timeout context.
+// run wraps runner.Run with a per-call timeout context, resolving the tmux
+// binary fresh for each command.
 func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
+	bin, err := r.resolve()
+	if err != nil {
+		return nil, err
+	}
 	cmdCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	out, err := r.runner.Run(cmdCtx, nil, r.binary, args...)
+	out, err := r.runner.Run(cmdCtx, nil, bin, args...)
 	if cmdCtx.Err() != nil {
 		return out, cmdCtx.Err()
 	}

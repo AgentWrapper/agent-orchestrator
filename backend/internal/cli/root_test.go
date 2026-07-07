@@ -308,6 +308,10 @@ func setConfigEnv(t *testing.T) testConfig {
 	t.Setenv("AO_PORT", "3001")
 	t.Setenv("AO_REQUEST_TIMEOUT", "")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "")
+	// Keep tmux resolution hermetic: a host with these set would otherwise
+	// change which binary the doctor check reports.
+	t.Setenv("AO_TMUX_BIN", "")
+	t.Setenv("AO_BUNDLED_TMUX", "")
 	return cfg
 }
 

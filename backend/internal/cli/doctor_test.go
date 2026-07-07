@@ -114,6 +114,60 @@ func TestDoctorWarnsWhenTmuxMissing(t *testing.T) {
 	}
 }
 
+// TestDoctorTmuxOverrideWins: AO_TMUX_BIN takes precedence over PATH and the
+// PASS message reports the provenance.
+func TestDoctorTmuxOverrideWins(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ao doctor emits a conpty check on Windows, not tmux")
+	}
+	setConfigEnv(t)
+	override := writeFakeTmux(t)
+	t.Setenv("AO_TMUX_BIN", override)
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "tmux": "/bin/tmux"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name == override {
+			return []byte("tmux 3.5a\n"), nil
+		}
+		return []byte("git version 2.43.0\n"), nil
+	})
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
+	if check.Level != doctorPass || !strings.Contains(check.Message, override) || !strings.Contains(check.Message, "AO_TMUX_BIN") {
+		t.Fatalf("tmux check = %+v, want PASS via AO_TMUX_BIN", check)
+	}
+}
+
+// TestDoctorTmuxBundledFallback: with no tmux on PATH, an executable
+// AO_BUNDLED_TMUX is accepted and reported as bundled.
+func TestDoctorTmuxBundledFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ao doctor emits a conpty check on Windows, not tmux")
+	}
+	setConfigEnv(t)
+	bundled := writeFakeTmux(t)
+	t.Setenv("AO_BUNDLED_TMUX", bundled)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name == bundled {
+			return []byte("tmux 3.5a\n"), nil
+		}
+		return []byte("git version 2.43.0\n"), nil
+	})
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
+	if check.Level != doctorPass || !strings.Contains(check.Message, "via bundled") {
+		t.Fatalf("tmux check = %+v, want PASS via bundled", check)
+	}
+}
+
+// writeFakeTmux drops an executable placeholder file for resolver stat checks.
+func writeFakeTmux(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "tmux")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestDoctorChecksHarnessVersions(t *testing.T) {
 	setConfigEnv(t)
 	cmdPath := map[string]string{
