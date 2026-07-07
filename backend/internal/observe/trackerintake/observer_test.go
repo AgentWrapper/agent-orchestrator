@@ -375,7 +375,8 @@ func TestLiveIntakeWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) 
 		{ID: "a", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#1"},
 		{ID: "b", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#2", IsTerminated: true},
 		{ID: "c", ProjectID: "demo", Kind: domain.KindOrchestrator, IssueID: "github:acme/demo#3"},
-		{ID: "d", ProjectID: "demo", Kind: domain.KindWorker}, // no issue id (ad-hoc worker)
+		{ID: "d", ProjectID: "demo", Kind: domain.KindWorker},                     // no issue id (ad-hoc worker)
+		{ID: "manual", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "47"}, // manual --issue, not intake-spawned
 		{ID: "e", ProjectID: "other", Kind: domain.KindWorker, IssueID: "github:acme/other#1"},
 	}
 	counts := liveIntakeWorkersByProject(sessions)

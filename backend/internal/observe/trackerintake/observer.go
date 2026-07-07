@@ -298,12 +298,20 @@ func liveIntakeWorkersByProject(sessions []domain.SessionRecord) map[string]int 
 		if sess.Kind != domain.KindWorker {
 			continue
 		}
-		if sess.IssueID == "" {
+		if !isCanonicalIssueID(sess.IssueID) {
 			continue
 		}
 		counts[string(sess.ProjectID)]++
 	}
 	return counts
+}
+
+func isCanonicalIssueID(id domain.IssueID) bool {
+	provider, native, ok := strings.Cut(string(id), ":")
+	if !ok || provider == "" || native == "" {
+		return false
+	}
+	return strings.Contains(native, "#")
 }
 
 // CanonicalIssueID stores tracker issue ids in sessions.issue_id with the
