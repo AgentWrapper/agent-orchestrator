@@ -43,6 +43,11 @@ type ProjectResponse struct {
 	Project projectsvc.Project `json:"project"`
 }
 
+// WorkerCapacityResponse is the body of GET /api/v1/projects/{id}/worker-capacity.
+type WorkerCapacityResponse struct {
+	Capacity projectsvc.WorkerCapacity `json:"capacity"`
+}
+
 // GetProjectResponse is the { status, project } body of GET /projects/{id},
 // where project is oneOf Project|Degraded discriminated by status.
 type GetProjectResponse struct {

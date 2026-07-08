@@ -139,6 +139,7 @@ var schemaNames = map[string]string{
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
+	"ControllersWorkerCapacityResponse":           "WorkerCapacityResponse",
 	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
@@ -210,13 +211,16 @@ var schemaNames = map[string]string{
 	// legacyimport report
 	"LegacyimportReport": "ImportReport",
 	// service/project entities + DTOs
-	"ProjectProject":        "Project",
-	"ProjectSummary":        "ProjectSummary",
-	"ProjectDegraded":       "DegradedProject",
-	"ProjectAddInput":       "AddProjectInput",
-	"ProjectRemoveResult":   "RemoveProjectResult",
-	"ProjectSetConfigInput": "SetProjectConfigInput",
-	"ProjectWorkspaceRepo":  "WorkspaceRepo",
+	"ProjectProject":               "Project",
+	"ProjectSummary":               "ProjectSummary",
+	"ProjectDegraded":              "DegradedProject",
+	"ProjectAddInput":              "AddProjectInput",
+	"ProjectRemoveResult":          "RemoveProjectResult",
+	"ProjectSetConfigInput":        "SetProjectConfigInput",
+	"ProjectWorkspaceRepo":         "WorkspaceRepo",
+	"ProjectWorkerCapacity":        "WorkerCapacity",
+	"ProjectWorkerCapacityBucket":  "WorkerCapacityBucket",
+	"ProjectWorkerCapacityHarness": "WorkerCapacityHarness",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -514,6 +518,17 @@ func projectOperations() []operation {
 				{http.StatusOK, controllers.GetProjectResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/worker-capacity", id: "getProjectWorkerCapacity", tag: "projects",
+			summary:    "Return worker mix allocation, health, and health-adjusted capacity for one project",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.WorkerCapacityResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{

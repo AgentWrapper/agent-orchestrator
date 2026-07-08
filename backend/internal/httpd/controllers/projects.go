@@ -5,6 +5,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -19,7 +20,14 @@ import (
 // ProjectsController owns the /projects routes. The controller depends only on
 // projectsvc.Manager; nil keeps routes registered but returns OpenAPI-backed 501s.
 type ProjectsController struct {
-	Mgr projectsvc.Manager
+	Mgr      projectsvc.Manager
+	Capacity WorkerCapacityService
+}
+
+// WorkerCapacityService is the controller-facing contract for the worker
+// capacity dashboard read model.
+type WorkerCapacityService interface {
+	WorkerCapacity(context.Context, domain.ProjectID) (projectsvc.WorkerCapacity, error)
 }
 
 // Register mounts the project routes on the supplied router.
@@ -27,6 +35,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects", c.list)
 	r.Post("/projects", c.add)
 	r.Get("/projects/{id}", c.get)
+	r.Get("/projects/{id}/worker-capacity", c.workerCapacity)
 	r.Put("/projects/{id}/config", c.setConfig)
 	r.Delete("/projects/{id}", c.remove)
 }
@@ -81,6 +90,19 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (c *ProjectsController) workerCapacity(w http.ResponseWriter, r *http.Request) {
+	if c.Capacity == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/projects/{id}/worker-capacity")
+		return
+	}
+	capacity, err := c.Capacity.WorkerCapacity(r.Context(), projectID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, WorkerCapacityResponse{Capacity: capacity})
 }
 
 func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
