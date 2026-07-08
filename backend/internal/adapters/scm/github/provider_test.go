@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -175,6 +176,13 @@ func basePRFixture() *prFixture {
 								},
 							}},
 						}},
+						"files": map[string]any{
+							"nodes": []any{
+								map[string]any{"path": "backend/internal/lifecycle/reactions.go"},
+								map[string]any{"path": "ops/ao-slack-notifier.mjs"},
+							},
+							"pageInfo": map[string]any{"hasNextPage": false},
+						},
 						"reviewThreads": map[string]any{"nodes": []any{}},
 					},
 				},
@@ -321,6 +329,9 @@ func TestObserve_HappyPath(t *testing.T) {
 	}
 	if len(obs.Comments) != 0 {
 		t.Errorf("Comments = %#v; want empty", obs.Comments)
+	}
+	if got, want := obs.ChangedPaths, []string{"backend/internal/lifecycle/reactions.go", "ops/ao-slack-notifier.mjs"}; !slices.Equal(got, want) {
+		t.Errorf("ChangedPaths = %#v, want %#v", got, want)
 	}
 }
 

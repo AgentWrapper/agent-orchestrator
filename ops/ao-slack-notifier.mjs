@@ -14,7 +14,7 @@
 //
 // Notifications forwarded:
 //   needs_input    -> @mention
-//   ready_to_merge -> @mention
+//   ready_to_merge -> plain post, or @mention when server-marked sensitive
 //   pr_merged      -> plain post
 //   pr_closed_unmerged -> plain post
 //
@@ -88,8 +88,13 @@ async function post(text) {
 }
 
 const INTERESTING = new Set(["needs_input", "ready_to_merge", "pr_merged", "pr_closed_unmerged"]);
-const MENTIONABLE = new Set(["needs_input", "ready_to_merge"]);
-const ICONS = { needs_input: "🖐️", ready_to_merge: "🟢", pr_merged: "🚀", pr_closed_unmerged: "🗑️" };
+const ICONS = {
+	needs_input: "🖐️",
+	ready_to_merge: "🟢",
+	parked_sensitive_merge: "🛑",
+	pr_merged: "🚀",
+	pr_closed_unmerged: "🗑️",
+};
 
 function isMain() {
 	return process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
@@ -108,8 +113,23 @@ export function normalizeNotification(raw) {
 		title: n.title ?? n.message ?? raw.title ?? "",
 		body: n.body ?? raw.body ?? "",
 		prUrl: n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "",
+		sensitive: Boolean(n.sensitive ?? raw.sensitive),
+		changedPaths: Array.isArray(n.changedPaths)
+			? n.changedPaths
+			: Array.isArray(raw.changedPaths)
+				? raw.changedPaths
+				: [],
 		createdAt: n.createdAt ?? raw.createdAt ?? "",
 	};
+}
+
+function notificationLabel(n) {
+	if (n.type === "ready_to_merge" && n.sensitive) return "parked_sensitive_merge";
+	return n.type;
+}
+
+function isMentionableNotification(n) {
+	return n.type === "needs_input" || (n.type === "ready_to_merge" && n.sensitive);
 }
 
 export function notificationKey(raw) {
@@ -121,12 +141,13 @@ export function notificationKey(raw) {
 export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
 	const n = normalizeNotification(raw);
 	if (!n) return null;
-	const icon = ICONS[n.type] ?? "📌";
+	const label = notificationLabel(n);
+	const icon = ICONS[label] ?? "📌";
 	const proj = n.projectId ? `[${n.projectId}] ` : "";
 	const sess = n.sessionId ? `${n.sessionId}: ` : "";
 	const title = n.title || n.body;
-	const text = `${icon} *${n.type}* ${proj}${sess}${title} ${n.prUrl}`.trim();
-	if (mentionUserId && MENTIONABLE.has(n.type)) return `<@${mentionUserId}> ${text}`;
+	const text = `${icon} *${label}* ${proj}${sess}${title} ${n.prUrl}`.trim();
+	if (mentionUserId && isMentionableNotification(n)) return `<@${mentionUserId}> ${text}`;
 	return text;
 }
 
@@ -234,7 +255,7 @@ export class SlackNotificationNotifier {
 				// unread informational notifications. Seed those as delivered so deploy
 				// does not spam historical pr_merged posts, while still paging current
 				// attention items that may have been silently missed before #87.
-				if (bootstrapping && this.bootstrapMode === "attention_only" && n && !MENTIONABLE.has(n.type)) {
+				if (bootstrapping && this.bootstrapMode === "attention_only" && n && !isMentionableNotification(n)) {
 					await this.recordDelivered(raw, { post: false });
 					continue;
 				}

@@ -2082,6 +2082,10 @@ components:
       properties:
         body:
           type: string
+        changedPaths:
+          items:
+            type: string
+          type: array
         createdAt:
           format: date-time
           type: string
@@ -2091,6 +2095,8 @@ components:
           type: string
         projectId:
           type: string
+        sensitive:
+          type: boolean
         sessionId:
           type: string
         status:
@@ -2117,6 +2123,8 @@ components:
       - type
       - title
       - body
+      - sensitive
+      - changedPaths
       - status
       - createdAt
       - target

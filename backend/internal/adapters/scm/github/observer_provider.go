@@ -132,6 +132,11 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 				return nil, err
 			}
 		}
+		if changedFilesPaginated(pr) {
+			if err := p.fetchRemainingChangedFiles(ctx, ref, pr); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, scmObservationFromGraphQL(ref, pr))
 	}
 	return out, nil
@@ -263,6 +268,7 @@ mergeable mergeStateStatus reviewDecision headRefName headRefOid baseRefName bas
 createdAt updatedAt mergedAt closedAt
 author{ login }
 mergeCommit{ oid }
+files(first:100){ nodes{ path } pageInfo{ hasNextPage endCursor } }
 commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state contexts(first:CONTEXT_LIMIT){ nodes{
   __typename
   ... on CheckRun { name status conclusion detailsUrl url databaseId }
@@ -272,39 +278,13 @@ commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state contexts(first:CONT
 }
 
 func (p *Provider) fetchRemainingCheckContexts(ctx context.Context, ref ports.SCMPRRef, pr map[string]any) error {
-	contexts := statusContexts(pr)
-	if contexts == nil {
-		return nil
-	}
-	cursor := pageInfoEndCursor(contexts)
-	if cursor == "" {
-		return fmt.Errorf("github scm: paginated check contexts for %s#%d missing end cursor", repoFullName(ref.Repo), ref.Number)
-	}
-	for {
-		query := buildCheckContextsQuery(ref, cursor)
-		data, err := p.client.doGraphQL(ctx, query, nil)
-		if err != nil {
-			return fmt.Errorf("github scm: fetch remaining check contexts for %s#%d: %w", repoFullName(ref.Repo), ref.Number, err)
-		}
-		repoData, _ := data["repo"].(map[string]any)
-		pagePR, _ := repoData["pullRequest"].(map[string]any)
-		if pagePR == nil {
-			return fmt.Errorf("%w: pull request not found in check context response", ErrNotFound)
-		}
-		pageContexts := statusContexts(pagePR)
-		if pageContexts == nil {
-			return fmt.Errorf("github scm: check context fallback for %s#%d returned no contexts", repoFullName(ref.Repo), ref.Number)
-		}
-		appendStatusContextNodes(contexts, pageContexts)
-		if !pageInfoHasMore(pageContexts) {
-			break
-		}
-		cursor = pageInfoEndCursor(pageContexts)
-		if cursor == "" {
-			return fmt.Errorf("github scm: paginated check context page for %s#%d missing end cursor", repoFullName(ref.Repo), ref.Number)
-		}
-	}
-	return nil
+	return p.fetchRemainingPRConnection(ctx, ref, pr, prConnectionPage{
+		name:       "check contexts",
+		missing:    "no contexts",
+		response:   "check context",
+		connection: statusContexts,
+		query:      buildCheckContextsQuery,
+	})
 }
 
 func buildCheckContextsQuery(ref ports.SCMPRRef, cursor string) string {
@@ -328,7 +308,16 @@ func statusContexts(pr map[string]any) map[string]any {
 	return contexts
 }
 
-func appendStatusContextNodes(dst, src map[string]any) {
+func changedFilesPaginated(pr map[string]any) bool {
+	return pageInfoHasMore(filesConnection(pr))
+}
+
+func filesConnection(pr map[string]any) map[string]any {
+	files, _ := pr["files"].(map[string]any)
+	return files
+}
+
+func appendConnectionNodes(dst, src map[string]any) {
 	if dst == nil || src == nil {
 		return
 	}
@@ -338,6 +327,68 @@ func appendStatusContextNodes(dst, src map[string]any) {
 	}
 	dst["nodes"] = merged
 	dst["pageInfo"] = src["pageInfo"]
+}
+
+func (p *Provider) fetchRemainingChangedFiles(ctx context.Context, ref ports.SCMPRRef, pr map[string]any) error {
+	return p.fetchRemainingPRConnection(ctx, ref, pr, prConnectionPage{
+		name:       "changed files",
+		missing:    "no files connection",
+		response:   "changed files",
+		connection: filesConnection,
+		query:      buildChangedFilesQuery,
+	})
+}
+
+type prConnectionPage struct {
+	name       string
+	missing    string
+	response   string
+	connection func(map[string]any) map[string]any
+	query      func(ports.SCMPRRef, string) string
+}
+
+func (p *Provider) fetchRemainingPRConnection(ctx context.Context, ref ports.SCMPRRef, pr map[string]any, page prConnectionPage) error {
+	conn := page.connection(pr)
+	if conn == nil {
+		return nil
+	}
+	cursor := pageInfoEndCursor(conn)
+	if cursor == "" {
+		return fmt.Errorf("github scm: paginated %s for %s#%d missing end cursor", page.name, repoFullName(ref.Repo), ref.Number)
+	}
+	for {
+		query := page.query(ref, cursor)
+		data, err := p.client.doGraphQL(ctx, query, nil)
+		if err != nil {
+			return fmt.Errorf("github scm: fetch remaining %s for %s#%d: %w", page.name, repoFullName(ref.Repo), ref.Number, err)
+		}
+		repoData, _ := data["repo"].(map[string]any)
+		pagePR, _ := repoData["pullRequest"].(map[string]any)
+		if pagePR == nil {
+			return fmt.Errorf("%w: pull request not found in %s response", ErrNotFound, page.response)
+		}
+		next := page.connection(pagePR)
+		if next == nil {
+			return fmt.Errorf("github scm: %s fallback for %s#%d returned %s", page.name, repoFullName(ref.Repo), ref.Number, page.missing)
+		}
+		appendConnectionNodes(conn, next)
+		if !pageInfoHasMore(next) {
+			break
+		}
+		cursor = pageInfoEndCursor(next)
+		if cursor == "" {
+			return fmt.Errorf("github scm: paginated %s page for %s#%d missing end cursor", page.name, repoFullName(ref.Repo), ref.Number)
+		}
+	}
+	return nil
+}
+
+func buildChangedFilesQuery(ref ports.SCMPRRef, cursor string) string {
+	return fmt.Sprintf(`query{
+repo: repository(owner:%s,name:%s){ pullRequest(number:%d){
+  files(first:100, after:%s){ nodes{ path } pageInfo{ hasNextPage endCursor } }
+} }
+}`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, graphQLString(cursor))
 }
 
 func pageInfoEndCursor(connection map[string]any) string {
@@ -375,6 +426,7 @@ func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMO
 			Additions:                int(num(pr["additions"])),
 			Deletions:                int(num(pr["deletions"])),
 			ChangedFiles:             int(num(pr["changedFiles"])),
+			ChangedPaths:             changedPathsFromGraphQL(pr),
 			Author:                   authorLogin(pr["author"]),
 			BaseSHA:                  str(pr["baseRefOid"]),
 			MergeCommitSHA:           mergeCommitOID(pr),

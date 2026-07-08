@@ -92,6 +92,45 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	}
 }
 
+func TestNotificationStore_SensitiveReadyDoesNotDedupeRoutineReady(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	routine := domain.NotificationRecord{
+		ID:        "ntf_1",
+		SessionID: sess.ID,
+		ProjectID: sess.ProjectID,
+		PRURL:     "https://github.com/o/r/pull/1",
+		Type:      domain.NotificationReadyToMerge,
+		Title:     "PR #1 is ready to merge",
+		Status:    domain.NotificationUnread,
+		CreatedAt: now,
+	}
+	if _, inserted, err := s.CreateNotification(ctx, routine); err != nil || !inserted {
+		t.Fatalf("CreateNotification routine inserted=%v err=%v", inserted, err)
+	}
+	sensitive := routine
+	sensitive.ID = "ntf_2"
+	sensitive.Sensitive = true
+	sensitive.ChangedPaths = []string{"backend/internal/lifecycle/reactions.go"}
+	sensitive.CreatedAt = now.Add(time.Minute)
+	if _, inserted, err := s.CreateNotification(ctx, sensitive); err != nil || !inserted {
+		t.Fatalf("CreateNotification sensitive inserted=%v err=%v", inserted, err)
+	}
+	rows, err := s.ListUnreadNotifications(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 2 || !rows[0].Sensitive || rows[1].Sensitive {
+		t.Fatalf("rows = %+v, want sensitive and routine unread notifications", rows)
+	}
+}
+
 func TestNotificationStore_MarkReadMissing(t *testing.T) {
 	s := newTestStore(t)
 	_, ok, err := s.MarkNotificationRead(context.Background(), "missing")

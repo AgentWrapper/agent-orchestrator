@@ -119,10 +119,17 @@ func (p *Provider) Observe(ctx context.Context, prURL string) (ports.PRObservati
 	if err != nil {
 		return out, scmObserveError(err)
 	}
+	ref := ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: repo}, Number: number, URL: prURL}
+	if changedFilesPaginated(gq) {
+		if err := p.fetchRemainingChangedFiles(ctx, ref, gq); err != nil {
+			return out, scmObserveError(err)
+		}
+	}
 
 	out.CI = ciSummaryFromGraphQL(gq)
 	out.Review = reviewDecisionFromGraphQL(gq)
 	out.Mergeability = mergeabilityFromGraphQL(gq, rest, out.CI, out.Review)
+	out.ChangedPaths = changedPathsFromGraphQL(gq)
 	out.Checks = checksFromGraphQL(gq, rest.Head.SHA)
 	out.Comments = commentsFromGraphQL(gq)
 
@@ -221,6 +228,7 @@ const prObservationQuery = `query($owner:String!,$repo:String!,$number:Int!){
       mergeStateStatus
       reviewDecision
       headRefOid
+      files(first:100){ nodes{ path } pageInfo{ hasNextPage endCursor } }
       commits(last:1){ nodes{ commit{
         oid
         statusCheckRollup{
@@ -281,6 +289,21 @@ func (p *Provider) fetchJobLogTail(ctx context.Context, owner, repo string, jobI
 // ---------------------------------------------------------------------------
 // Projection helpers
 // ---------------------------------------------------------------------------
+
+func changedPathsFromGraphQL(pr map[string]any) []string {
+	files, _ := pr["files"].(map[string]any)
+	rawNodes := nodes(files["nodes"])
+	if len(rawNodes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rawNodes))
+	for _, n := range rawNodes {
+		if p := strings.TrimSpace(str(n["path"])); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 // ciSummaryFromGraphQL maps the per-PR status rollup onto domain.CIState.
 // If ANY visible context concluded failure-class we return CIFailing.

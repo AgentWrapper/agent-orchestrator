@@ -51,15 +51,17 @@ func (s NotificationStatus) Valid() bool {
 
 // NotificationRecord is the durable notification persistence shape.
 type NotificationRecord struct {
-	ID        string
-	SessionID SessionID
-	ProjectID ProjectID
-	PRURL     string
-	Type      NotificationType
-	Title     string
-	Body      string
-	Status    NotificationStatus
-	CreatedAt time.Time
+	ID           string
+	SessionID    SessionID
+	ProjectID    ProjectID
+	PRURL        string
+	Type         NotificationType
+	Title        string
+	Body         string
+	Sensitive    bool
+	ChangedPaths []string
+	Status       NotificationStatus
+	CreatedAt    time.Time
 }
 
 var (

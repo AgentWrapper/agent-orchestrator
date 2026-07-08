@@ -30,6 +30,7 @@ type PRObservation struct {
 	CI           domain.CIState
 	Review       domain.ReviewDecision
 	Mergeability domain.Mergeability
+	ChangedPaths []string
 	Checks       []PRCheckObservation
 	Comments     []PRCommentObservation
 }

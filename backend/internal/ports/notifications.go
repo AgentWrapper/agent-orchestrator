@@ -24,4 +24,6 @@ type NotificationIntent struct {
 	PRTargetBranch     string
 	Provider           string
 	Repo               string
+	Sensitive          bool
+	ChangedPaths       []string
 }

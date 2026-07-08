@@ -14,21 +14,23 @@ import (
 
 const createNotification = `-- name: CreateNotification :one
 INSERT INTO notifications (
-    id, session_id, project_id, pr_url, type, title, body, status, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+    id, session_id, project_id, pr_url, type, title, body, sensitive, changed_paths, status, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths
 `
 
 type CreateNotificationParams struct {
-	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
-	PRURL     string
-	Type      domain.NotificationType
-	Title     string
-	Body      string
-	Status    domain.NotificationStatus
-	CreatedAt time.Time
+	ID           string
+	SessionID    domain.SessionID
+	ProjectID    domain.ProjectID
+	PRURL        string
+	Type         domain.NotificationType
+	Title        string
+	Body         string
+	Sensitive    bool
+	ChangedPaths string
+	Status       domain.NotificationStatus
+	CreatedAt    time.Time
 }
 
 func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error) {
@@ -40,6 +42,8 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		arg.Type,
 		arg.Title,
 		arg.Body,
+		arg.Sensitive,
+		arg.ChangedPaths,
 		arg.Status,
 		arg.CreatedAt,
 	)
@@ -54,14 +58,16 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		&i.Body,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Sensitive,
+		&i.ChangedPaths,
 	)
 	return i, err
 }
 
 const getUnreadNotificationByDedupe = `-- name: GetUnreadNotificationByDedupe :one
-SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths
 FROM notifications
-WHERE session_id = ? AND type = ? AND pr_url = ? AND status = 'unread'
+WHERE session_id = ? AND type = ? AND pr_url = ? AND sensitive = ? AND status = 'unread'
 LIMIT 1
 `
 
@@ -69,10 +75,16 @@ type GetUnreadNotificationByDedupeParams struct {
 	SessionID domain.SessionID
 	Type      domain.NotificationType
 	PRURL     string
+	Sensitive bool
 }
 
 func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnreadNotificationByDedupeParams) (Notification, error) {
-	row := q.db.QueryRowContext(ctx, getUnreadNotificationByDedupe, arg.SessionID, arg.Type, arg.PRURL)
+	row := q.db.QueryRowContext(ctx, getUnreadNotificationByDedupe,
+		arg.SessionID,
+		arg.Type,
+		arg.PRURL,
+		arg.Sensitive,
+	)
 	var i Notification
 	err := row.Scan(
 		&i.ID,
@@ -84,12 +96,14 @@ func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnre
 		&i.Body,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Sensitive,
+		&i.ChangedPaths,
 	)
 	return i, err
 }
 
 const listUnreadNotifications = `-- name: ListUnreadNotifications :many
-SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths
 FROM notifications
 WHERE status = 'unread'
 ORDER BY created_at DESC
@@ -115,6 +129,8 @@ func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]N
 			&i.Body,
 			&i.Status,
 			&i.CreatedAt,
+			&i.Sensitive,
+			&i.ChangedPaths,
 		); err != nil {
 			return nil, err
 		}
@@ -133,7 +149,7 @@ const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :many
 UPDATE notifications
 SET status = 'read'
 WHERE status = 'unread'
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths
 `
 
 func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification, error) {
@@ -155,6 +171,8 @@ func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification,
 			&i.Body,
 			&i.Status,
 			&i.CreatedAt,
+			&i.Sensitive,
+			&i.ChangedPaths,
 		); err != nil {
 			return nil, err
 		}
@@ -173,7 +191,7 @@ const markNotificationRead = `-- name: MarkNotificationRead :one
 UPDATE notifications
 SET status = 'read'
 WHERE id = ? AND status = 'unread'
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths
 `
 
 func (q *Queries) MarkNotificationRead(ctx context.Context, id string) (Notification, error) {
@@ -189,6 +207,8 @@ func (q *Queries) MarkNotificationRead(ctx context.Context, id string) (Notifica
 		&i.Body,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Sensitive,
+		&i.ChangedPaths,
 	)
 	return i, err
 }
