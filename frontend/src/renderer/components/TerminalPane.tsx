@@ -124,6 +124,11 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // same way.
 const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode"]);
 
+// Whether the given provider's TUI is one of the keyboard-scroll agents above.
+export function providerScrollsByKeyboard(provider?: string): boolean {
+	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
+}
+
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
 	if (state === "reattaching") return "Terminal disconnected — reattaching…";
 	if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
@@ -227,7 +232,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					fontSize={fontSize}
 					onError={handleInitError}
 					onReady={handleReady}
-					paneScrollsByKeyboard={provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false}
+					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}
 				/>
 				{showEmptyState && (
