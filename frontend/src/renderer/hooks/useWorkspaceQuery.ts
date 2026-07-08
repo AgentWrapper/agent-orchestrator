@@ -43,6 +43,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	return (projectsData?.projects ?? []).map((project) => ({
 		id: project.id,
 		name: project.name,
+		kind: project.kind === "workspace" ? "workspace" : "single_repo",
 		path: project.path,
 		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
 		sessions: (sessionsData?.sessions ?? [])

@@ -17,7 +17,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:  ports.PermissionModeBypassPermissions,
-		Prompt:       "-fix this",
+		Prompt:       "hi",
 		SystemPrompt: "be careful",
 	})
 	if err != nil {
@@ -26,13 +26,17 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 
 	want := []string{
 		"cline",
-		"--json",
 		"--yolo",
 		"-s", "be careful",
-		"--", "-fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if contains(cmd, "--json") {
+		t.Fatalf("prompted Cline launch must use readable terminal output, got: %#v", cmd)
+	}
+	if contains(cmd, "hi") {
+		t.Fatalf("prompted Cline launch must inject prompt after startup, got: %#v", cmd)
 	}
 }
 
@@ -113,14 +117,14 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	}
 }
 
-func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
+func TestGetPromptDeliveryStrategyIsAfterStart(t *testing.T) {
 	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.PromptDeliveryInCommand {
+	if got != ports.PromptDeliveryAfterStart {
 		t.Fatalf("unexpected strategy: %q", got)
 	}
 }
