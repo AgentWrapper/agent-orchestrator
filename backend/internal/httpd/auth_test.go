@@ -36,6 +36,37 @@ func reqFrom(remoteAddr, auth string) *http.Request {
 	return r
 }
 
+func TestAuthLockoutResetsAfterCooldown(t *testing.T) {
+	nowP := time.Now()
+	h, _ := newAuthUnderTest("secret12", func() time.Time { return nowP })
+	// Lock the source with 5 failures.
+	for i := 0; i < 5; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req("Bearer wrong"))
+	}
+	// Still within cooldown → 429 even with the right password.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer secret12"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("during cooldown: got %d want 429", w.Code)
+	}
+	// Advance past the 1-minute cooldown.
+	nowP = nowP.Add(time.Minute + time.Second)
+	// A single WRONG attempt must NOT immediately re-lock — it starts a fresh
+	// window and returns 401, not 429.
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer wrong"))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("first attempt after cooldown: got %d want 401 (fresh window, not re-locked)", w.Code)
+	}
+	// And the correct password now succeeds.
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer secret12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("correct password after cooldown: got %d want 200", w.Code)
+	}
+}
+
 func TestAuthRejectsMissingAndWrong(t *testing.T) {
 	h, _ := newAuthUnderTest("secret12", time.Now)
 	for _, tc := range []struct{ name, auth string; want int }{

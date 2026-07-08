@@ -42,7 +42,20 @@ func (l *lockout) blocked(src string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.until[src]
-	return ok && l.now().Before(t)
+	if !ok {
+		return false
+	}
+	if l.now().Before(t) {
+		return true
+	}
+	// Cooldown elapsed: clear the lockout AND the fail counter so the source
+	// starts a fresh window. Without this the counter stays at the limit and the
+	// very next failure would immediately re-lock for another full cooldown —
+	// and a client that keeps polling would stay locked out forever. This also
+	// bounds map growth, since expired entries are pruned on the next request.
+	delete(l.until, src)
+	delete(l.fails, src)
+	return false
 }
 
 func (l *lockout) fail(src string) {
