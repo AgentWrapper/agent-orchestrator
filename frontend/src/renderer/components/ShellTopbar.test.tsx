@@ -5,9 +5,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TopbarKillButton } from "./ShellTopbar";
 
-const { postMock } = vi.hoisted(() => ({
+const { navigateMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
+	navigateMock: vi.fn(),
 	postMock: vi.fn(),
+	useWorkspaceQueryMock: vi.fn(),
 }));
+
+vi.mock("@tanstack/react-router", () => ({
+	useNavigate: () => navigateMock,
+	useParams: () => ({}),
+}));
+
+vi.mock("../hooks/useWorkspaceQuery", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../hooks/useWorkspaceQuery")>();
+	return {
+		...actual,
+		useWorkspaceQuery: () => useWorkspaceQueryMock(),
+	};
+});
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
@@ -35,6 +50,19 @@ const worker: WorkspaceSession = {
 	prs: [],
 };
 
+const orchestrator: WorkspaceSession = {
+	id: "orch-1",
+	workspaceId: "proj-1",
+	workspaceName: "my-app",
+	title: "orchestrator",
+	provider: "claude-code",
+	kind: "orchestrator",
+	branch: "main",
+	status: "working",
+	updatedAt: "2026-06-10T00:00:00Z",
+	prs: [],
+};
+
 function renderKill(session: WorkspaceSession = worker) {
 	const queryClient = new QueryClient({
 		defaultOptions: {
@@ -51,8 +79,14 @@ function renderKill(session: WorkspaceSession = worker) {
 }
 
 beforeEach(() => {
+	navigateMock.mockReset();
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
+	useWorkspaceQueryMock.mockReturnValue({
+		data: [{ id: "proj-1", name: "my-app", path: "/p/my-app", type: "main", sessions: [] }],
+		isLoading: false,
+		isError: false,
+	});
 });
 
 describe("TopbarKillButton", () => {
@@ -88,5 +122,38 @@ describe("TopbarKillButton", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Confirm kill" }));
 
 		expect(await screen.findByText("session not found")).toBeInTheDocument();
+	});
+
+	it("navigates back to the project orchestrator after a successful kill", async () => {
+		useWorkspaceQueryMock.mockReturnValue({
+			data: [{ id: "proj-1", name: "my-app", path: "/p/my-app", type: "main", sessions: [worker, orchestrator] }],
+			isLoading: false,
+			isError: false,
+		});
+		renderKill();
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+		await userEvent.click(screen.getByRole("button", { name: "Confirm kill" }));
+
+		await waitFor(() => {
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: "proj-1", sessionId: "orch-1" },
+			});
+		});
+	});
+
+	it("falls back to the project board when no orchestrator is available", async () => {
+		renderKill();
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+		await userEvent.click(screen.getByRole("button", { name: "Confirm kill" }));
+
+		await waitFor(() => {
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: "/projects/$projectId",
+				params: { projectId: "proj-1" },
+			});
+		});
 	});
 });

@@ -247,6 +247,8 @@ export function ShellTopbar() {
 // terminated group.
 export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
 	const queryClient = useQueryClient();
+	const navigate = useNavigate();
+	const all = useWorkspaceQuery().data ?? [];
 	const [confirming, setConfirming] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -262,6 +264,16 @@ export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
 			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
 			setConfirming(false);
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			const projectId = session.workspaceId;
+			const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+			if (orchestrator && projectId) {
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId, sessionId: orchestrator.id },
+				});
+			} else if (projectId) {
+				void navigate({ to: "/projects/$projectId", params: { projectId } });
+			}
 		},
 		onError: (e) => {
 			void captureRendererEvent("ao.renderer.session_kill_failed", { project_id: session.workspaceId });
