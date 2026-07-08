@@ -103,29 +103,22 @@ func mountControl(r chi.Router, deps ControlDeps) {
 
 // mountMobile registers the Connect Mobile control routes: status, enable,
 // disable, and regenerate. These toggle the LAN bridge that lets a phone reach
-// the daemon, so — like mountControl — every handler is gated by
-// localControlRequest: only the desktop/CLI (a loopback caller) may flip the
-// phone's access on or off; the phone itself must never be able to.
+// the daemon. They must be reachable from the desktop renderer — a browser
+// context that always sends an Origin header — so they are NOT gated by
+// localControlRequest (which rejects any Origin-bearing request and is meant for
+// the CLI). The "phone must never toggle its own access" invariant is enforced
+// on the LAN listener instead, by lanControlBlock, which 404s /api/v1/mobile on
+// the 0.0.0.0 socket the phone reaches — a transport-based check that cannot be
+// spoofed with a forged Host header. On the loopback listener these routes are
+// protected by the same CORS allowlist as every other app route.
 func mountMobile(r chi.Router, c *controllers.MobileController) {
 	if c == nil {
 		return
 	}
-	guard := func(h http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, req *http.Request) {
-			if !localControlRequest(req) {
-				envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
-					"status":  "forbidden",
-					"service": daemonmeta.ServiceName,
-				})
-				return
-			}
-			h(w, req)
-		}
-	}
-	r.Get("/api/v1/mobile/status", guard(c.Status))
-	r.Post("/api/v1/mobile/enable", guard(c.Enable))
-	r.Post("/api/v1/mobile/disable", guard(c.Disable))
-	r.Post("/api/v1/mobile/regenerate", guard(c.Regenerate))
+	r.Get("/api/v1/mobile/status", c.Status)
+	r.Post("/api/v1/mobile/enable", c.Enable)
+	r.Post("/api/v1/mobile/disable", c.Disable)
+	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
 }
 
 type cliInvokedRequest struct {

@@ -31,8 +31,7 @@ func (fakeMobileBridge) Regenerate() (controllers.MobileStatusResponse, error) {
 }
 
 // newTestRouterWithMobile builds a bare router with only the mobile control
-// routes mounted, backed by a fake bridge — enough to exercise the
-// loopback gate without a real LAN listener.
+// routes mounted, backed by a fake bridge.
 func newTestRouterWithMobile(t *testing.T) chi.Router {
 	t.Helper()
 	r := chi.NewRouter()
@@ -40,13 +39,22 @@ func newTestRouterWithMobile(t *testing.T) chi.Router {
 	return r
 }
 
-func TestMobileStatusRouteIsLoopbackGated(t *testing.T) {
+// The mobile control routes are served on the loopback router without a
+// Host/Origin gate: the desktop renderer is a browser context that always
+// sends an Origin, so a localControlRequest-style gate would (wrongly) 403 the
+// very client meant to call them. The "phone cannot toggle its own access"
+// invariant is enforced on the LAN listener by lanControlBlock instead — see
+// TestLANManagerBlocksLoopbackOnlyControlRoutes. This test pins that the
+// loopback route is reachable and NOT Host-gated.
+func TestMobileStatusRouteServedOnLoopbackRouter(t *testing.T) {
 	r := newTestRouterWithMobile(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/mobile/status", nil)
-	req.Host = "192.168.1.9:3011" // non-loopback → must be refused
+	// A non-loopback Host used to force a 403; it must no longer matter here,
+	// because Host-based gating is not how the phone is blocked.
+	req.Host = "192.168.1.9:3011"
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("non-loopback status: got %d want 403", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("mobile status on loopback router: got %d want 200", w.Code)
 	}
 }
