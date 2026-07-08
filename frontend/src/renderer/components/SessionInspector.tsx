@@ -628,16 +628,23 @@ function ReviewPanel({
 		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
 	}
 
-	const latest = reviewStates.find((review) => review.latestRun)?.latestRun;
+	const openPRURLs = new Set(
+		sortedPRs(session)
+			.filter((pr) => pr.state === "open")
+			.map((pr) => pr.url),
+	);
+	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const aggregateVerdict = sessionReviewVerdict(reviewStates);
-	const runAction = reviewSessionRunAction(reviewStates, isTriggering);
+	const aggregateVerdict = sessionReviewVerdict(openReviewStates);
+	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
+	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const runDisabled =
 		isTriggering ||
-		reviewStates.length === 0 ||
-		reviewStates.some((reviewState) => reviewState.status === "running") ||
-		reviewStates.every((reviewState) => reviewState.status === "ineligible");
+		openReviewStates.length === 0 ||
+		reviewRunning ||
+		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -669,10 +676,10 @@ function ReviewPanel({
 					</span>
 				</div>
 				<div className="flex flex-col gap-0 overflow-hidden rounded-md border border-border bg-surface-faint">
-					{reviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "p-3")}>No review state loaded yet.</p>
+					{openReviewStates.length === 0 ? (
+						<p className={cn(inspectorEmptyClass, "p-3")}>No open pull requests to review.</p>
 					) : null}
-					{reviewStates.map((reviewState) => (
+					{openReviewStates.map((reviewState) => (
 						<ReviewStateRow key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
 					))}
 				</div>
@@ -684,7 +691,7 @@ function ReviewPanel({
 						type="button"
 					>
 						<Play aria-hidden="true" />
-						{runAction}
+						{reviewRunning ? "Review running" : runAction}
 					</button>
 					<button
 						className="inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border border-border bg-raised px-2.5 text-xs font-semibold text-muted-foreground transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0"
@@ -696,7 +703,7 @@ function ReviewPanel({
 						type="button"
 					>
 						<Terminal aria-hidden="true" />
-						Open terminal
+						{reviewRunning ? "Stop review" : "Open terminal"}
 					</button>
 				</div>
 			</div>
