@@ -154,6 +154,24 @@ func TestPreview_MissingSessionIDIsUsageError(t *testing.T) {
 	}
 }
 
+func TestPreview_TooManyArgsIsUsageError(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, Deps{}, "preview", "url1", "url2")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
+func TestPreviewClear_TooManyArgsIsUsageError(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, Deps{}, "preview", "clear", "extra")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
 func TestPreview_HelpIncludesExamples(t *testing.T) {
 	out, _, err := executeCLI(t, Deps{}, "preview", "--help")
 	if err != nil {

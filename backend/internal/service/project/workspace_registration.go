@@ -213,6 +213,12 @@ func validateWorkspaceChild(ctx context.Context, child string) error {
 			"suggestedFix": "Check out the repository's default branch (for example `main`) and retry.",
 		})
 	}
+	if origin := resolveGitOriginURL(child); origin == "" {
+		return apierr.Invalid("WORKSPACE_CHILD_ORIGIN_REQUIRED", "Workspace child repositories must have an origin remote configured", map[string]any{
+			"path":         child,
+			"suggestedFix": "Run `git remote add origin <url>` in the child repository, then retry.",
+		})
+	}
 	return nil
 }
 

@@ -16,10 +16,30 @@ export type BrowserNavigateInput = {
 	url: string;
 };
 
+export type ImportFolderMode = "project" | "workspace";
+
+export type ImportRepoScan = {
+	name: string;
+	path: string;
+	relativePath: string;
+	branch: string;
+	remote: string;
+	hasRemote: boolean;
+	status?: "ok" | "error";
+	reason?: string;
+};
+
+export type ImportFolderScan = {
+	path: string;
+	repos: ImportRepoScan[];
+};
+
 const api = {
 	app: {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
-		chooseDirectory: () => ipcRenderer.invoke("app:chooseDirectory") as Promise<string | null>,
+		chooseDirectory: (title?: string) => ipcRenderer.invoke("app:chooseDirectory", title) as Promise<string | null>,
+		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
+			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
 	},
 	clipboard: {
 		writeText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
