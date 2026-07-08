@@ -215,6 +215,11 @@ var schemaNames = map[string]string{
 	// domain review entities
 	"DomainReviewRun":     "ReviewRun",
 	"ReviewPRReviewState": "PRReviewState",
+	// httpd/controllers: permission relaunch wire envelopes
+	"ControllersAffectedSessionItem":                "AffectedSessionItem",
+	"ControllersAffectedByPermissionChangeResponse": "AffectedByPermissionChangeResponse",
+	"ControllersRelaunchOutcomeItem":                "RelaunchOutcomeItem",
+	"ControllersRelaunchForPermissionChangeResponse": "RelaunchForPermissionChangeResponse",
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
 	"ControllersImportRunResponse":    "ImportRunResponse",
@@ -973,6 +978,26 @@ func sessionOperations() []operation {
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/permission-relaunch/affected", id: "affectedByPermissionChange", tag: "sessions",
+			summary:    "List running worker sessions affected by a project permission mode change",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AffectedByPermissionChangeResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/permission-relaunch", id: "relaunchForPermissionChange", tag: "sessions",
+			summary:    "Kill and restore running worker sessions whose permission mode diverges from the project default",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RelaunchForPermissionChangeResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 const (
@@ -76,6 +77,8 @@ type SessionService interface {
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
+	AffectedByPermissionChange(ctx context.Context, projectID domain.ProjectID) ([]sessionmanager.AffectedSession, error)
+	RelaunchForPermissionChange(ctx context.Context, projectID domain.ProjectID) ([]sessionmanager.RelaunchOutcome, error)
 }
 
 // ActivityRecorder applies an agent activity-state signal to a session. It is
@@ -117,6 +120,8 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
+	r.Get("/projects/{id}/permission-relaunch/affected", c.affectedByPermissionChange)
+	r.Post("/projects/{id}/permission-relaunch", c.relaunchForPermissionChange)
 }
 
 func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
@@ -749,6 +754,56 @@ func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) affectedByPermissionChange(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/projects/{id}/permission-relaunch/affected")
+		return
+	}
+	affected, err := c.Svc.AffectedByPermissionChange(r.Context(), projectID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	items := make([]AffectedSessionItem, len(affected))
+	for i, a := range affected {
+		items[i] = AffectedSessionItem{
+			SessionID: string(a.SessionID),
+			Title:     a.Title,
+			Kind:      string(a.Kind),
+			FromMode:  string(a.FromMode),
+			ToMode:    string(a.ToMode),
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, AffectedByPermissionChangeResponse{Affected: items, Count: len(items)})
+}
+
+func (c *SessionsController) relaunchForPermissionChange(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/projects/{id}/permission-relaunch")
+		return
+	}
+	outcomes, err := c.Svc.RelaunchForPermissionChange(r.Context(), projectID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	results := make([]RelaunchOutcomeItem, len(outcomes))
+	relaunched, failed := 0, 0
+	for i, o := range outcomes {
+		results[i] = RelaunchOutcomeItem{
+			SessionID: string(o.SessionID),
+			OK:        o.OK,
+			Error:     o.Error,
+		}
+		if o.OK {
+			relaunched++
+		} else {
+			failed++
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, RelaunchForPermissionChangeResponse{Results: results, Relaunched: relaunched, Failed: failed})
 }
 
 func sessionID(r *http.Request) domain.SessionID {

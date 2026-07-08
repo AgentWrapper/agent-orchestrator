@@ -332,6 +332,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/permission-relaunch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Kill and restore running worker sessions whose permission mode diverges from the project default */
+        post: operations["relaunchForPermissionChange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/permission-relaunch/affected": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List running worker sessions affected by a project permission mode change */
+        get: operations["affectedByPermissionChange"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/initialize": {
         parameters: {
             query?: never;
@@ -782,6 +816,17 @@ export interface components {
             path: string;
             projectId?: null | string;
         };
+        AffectedByPermissionChangeResponse: {
+            affected: components["schemas"]["AffectedSessionItem"][];
+            count: number;
+        };
+        AffectedSessionItem: {
+            fromMode: string;
+            kind: string;
+            sessionId: string;
+            title: string;
+            toMode: string;
+        };
         AgentConfig: {
             model?: string;
             permissions?: string;
@@ -1081,6 +1126,16 @@ export interface components {
             platform?: "ios" | "android";
             /** @description Expo push token, e.g. ExponentPushToken[...]. */
             token: string;
+        };
+        RelaunchForPermissionChangeResponse: {
+            failed: number;
+            relaunched: number;
+            results: components["schemas"]["RelaunchOutcomeItem"][];
+        };
+        RelaunchOutcomeItem: {
+            error?: string;
+            ok: boolean;
+            sessionId: string;
         };
         RemoveProjectResult: {
             projectId: string;
@@ -2423,6 +2478,88 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    relaunchForPermissionChange: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelaunchForPermissionChangeResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    affectedByPermissionChange: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AffectedByPermissionChangeResponse"];
                 };
             };
             /** @description Not Found */
