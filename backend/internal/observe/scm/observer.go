@@ -573,7 +573,11 @@ func (o *Observer) workspaceSCMSessionRepos(ctx context.Context, proj domain.Pro
 
 func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRepo, bool) {
 	if pr.Provider != "" && pr.Host != "" && pr.Repo != "" {
-		return ports.SCMRepo{Provider: pr.Provider, Host: pr.Host, Repo: pr.Repo}, true
+		owner, name, ok := strings.Cut(pr.Repo, "/")
+		if !ok || owner == "" || name == "" {
+			return ports.SCMRepo{}, false
+		}
+		return ports.SCMRepo{Provider: pr.Provider, Host: pr.Host, Owner: owner, Name: name, Repo: pr.Repo}, true
 	}
 	if pr.Repo != "" {
 		for _, repo := range repos {

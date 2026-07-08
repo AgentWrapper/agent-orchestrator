@@ -281,6 +281,9 @@ func TestRepoForTrackedPRUsesPersistedRepoWhenCurrentScanDropsUpstream(t *testin
 	if repo.Provider != "github" || repo.Host != "github.com" || repo.Repo != "upstream/api" {
 		t.Fatalf("repo = %#v, want persisted upstream/api tuple", repo)
 	}
+	if repo.Owner != "upstream" || repo.Name != "api" {
+		t.Fatalf("repo owner/name = %q/%q, want upstream/api", repo.Owner, repo.Name)
+	}
 }
 
 func TestStartAsyncPerformsImmediatePollAndStopsOnCancel(t *testing.T) {
