@@ -14,6 +14,7 @@ import {
 	Plus,
 	Search,
 	Settings,
+	Smartphone,
 	Sun,
 	Trash2,
 	X,
@@ -36,6 +37,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
+import { ConnectMobileModal } from "./ConnectMobileModal";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -151,6 +153,8 @@ export function Sidebar({
 	const isCollapsed = state === "collapsed";
 	const theme = useUiStore((s) => s.theme);
 	const toggleTheme = useUiStore((s) => s.toggleTheme);
+	// Connect Mobile pairing modal, opened from the Settings menu.
+	const [mobileOpen, setMobileOpen] = useState(false);
 	// Disclosure state: projects are expanded by default; a project id present in
 	// this set is collapsed (sessions hidden).
 	const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -322,6 +326,11 @@ export function Sidebar({
 								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
 							</DropdownMenuItem>
 							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setTimeout(() => setMobileOpen(true), 0)}>
+								<Smartphone aria-hidden="true" />
+								Connect Mobile
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
 							{selection.activeProjectId && (
 								<DropdownMenuItem onSelect={() => selection.goSettings(selection.activeProjectId!)}>
 									<Settings aria-hidden="true" />
@@ -382,6 +391,11 @@ export function Sidebar({
 								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
 							</DropdownMenuItem>
 							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setTimeout(() => setMobileOpen(true), 0)}>
+								<Smartphone aria-hidden="true" />
+								Connect Mobile
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
 							{selection.activeProjectId && (
 								<DropdownMenuItem onSelect={() => selection.goSettings(selection.activeProjectId!)}>
 									<Settings aria-hidden="true" />
@@ -411,6 +425,8 @@ export function Sidebar({
 				onDoubleClick={onResizeDoubleClick}
 				style={noDragStyle}
 			/>
+
+			<ConnectMobileModal open={mobileOpen} onOpenChange={setMobileOpen} />
 		</SidebarRoot>
 	);
 }
