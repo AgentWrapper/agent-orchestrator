@@ -135,6 +135,7 @@ describe("createNotificationsTransport", () => {
 			id: "ntf_1",
 			title: "checkout-flow needs input",
 			body: "The agent is waiting for your response.",
+			type: "needs_input",
 		});
 	});
 

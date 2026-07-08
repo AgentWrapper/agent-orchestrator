@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, Check, CheckCheck, CircleAlert, ExternalLink, GitMerge, GitPullRequest, XCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bell, Check, CheckCheck, ExternalLink, GitMerge, GitPullRequest, XCircle } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	useMarkAllNotificationsReadMutation,
 	useMarkNotificationReadMutation,
@@ -60,6 +60,10 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	useEffect(() => createNotificationsTransport(queryClient).connect(), [queryClient]);
 
 	useEffect(() => {
+		void aoBridge.notifications.setBadge(unreadCount);
+	}, [unreadCount]);
+
+	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
 			const current = queryClient.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey) ?? [];
 			const notification = current.find((item) => item.id === id);
@@ -92,7 +96,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	};
 
 	return (
-		<DropdownMenu>
+		<DropdownMenu onOpenChange={(open) => { if (open) setActionError(null); }}>
 			<DropdownMenuTrigger asChild>
 				<button
 					aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
@@ -108,29 +112,29 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					) : null}
 				</button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="end" className="w-[380px] p-0" sideOffset={8}>
-				<div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-					<DropdownMenuLabel className="px-0 py-0">Notifications</DropdownMenuLabel>
+			<DropdownMenuContent align="end" className="w-[320px] p-0" sideOffset={8}>
+				<div className="flex items-center justify-between gap-3 border-b border-border px-2.5 py-1.5">
+					<DropdownMenuLabel className="px-0 py-0 text-[12px]">Notifications</DropdownMenuLabel>
 					<button
 						aria-label="Mark all notifications read"
-						className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
+						className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
 						disabled={unreadCount === 0 || markAllRead.isPending}
 						onClick={() => void markAll()}
 						type="button"
 					>
-						<CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
+						<CheckCheck className="h-3 w-3" aria-hidden="true" />
 						Mark all
 					</button>
 				</div>
 				{actionError ? (
-					<div className="border-b border-border px-3 py-2 text-[12px] text-error">{actionError}</div>
+					<div className="border-b border-border px-2.5 py-1.5 text-[11px] text-error">{actionError}</div>
 				) : null}
 				{notificationsQuery.isError && unreadCount === 0 ? (
-					<div className="px-3 py-8 text-center text-[13px] text-muted-foreground">Could not load notifications.</div>
+					<div className="px-3 py-6 text-center text-[11.5px] text-muted-foreground">Could not load notifications.</div>
 				) : unreadCount === 0 ? (
-					<div className="px-3 py-8 text-center text-[13px] text-muted-foreground">No unread notifications.</div>
+					<div className="px-3 py-6 text-center text-[11.5px] text-muted-foreground">No unread notifications.</div>
 				) : (
-					<div className="max-h-[420px] overflow-y-auto p-1">
+					<div className="max-h-[360px] overflow-y-auto p-0.5">
 						{notifications.map((notification, index) => (
 							<div key={notification.id}>
 								<NotificationItem
@@ -160,65 +164,77 @@ function NotificationItem({
 	onMarkRead: (id: string) => Promise<void>;
 	onOpen: (notification: NotificationDTO) => void;
 }) {
-	const Icon = notificationIcon(notification.type);
+	const icon = notificationIcon(notification.type);
 	return (
-		<div className="grid grid-cols-[26px_minmax(0,1fr)_auto] gap-2 rounded-md px-2 py-2.5">
-			<div
-				className={cn(
-					"mt-0.5 grid h-6 w-6 place-items-center rounded-md border",
-					notification.type === "needs_input" && "border-warning/40 text-warning",
-					notification.type === "ready_to_merge" && "border-success/40 text-success",
-					notification.type === "pr_merged" && "border-accent-dim text-accent",
-					notification.type === "pr_closed_unmerged" && "border-error/40 text-error",
+		<div className="grid grid-cols-[14px_minmax(0,1fr)_auto] gap-2 rounded-md px-2.5 py-2.5">
+			<div className="flex items-start justify-center pt-[5px]">
+				{icon.type === "dot" ? (
+					<span
+						className="h-[7px] w-[7px] shrink-0 rounded-full"
+						style={{ background: icon.color }}
+						aria-hidden="true"
+					/>
+				) : (
+					<icon.Component
+						className={cn(
+							"h-3.5 w-3.5 shrink-0",
+							notification.type === "ready_to_merge" && "text-success",
+							notification.type === "pr_merged" && "text-accent",
+							notification.type === "pr_closed_unmerged" && "text-error",
+						)}
+						aria-hidden="true"
+					/>
 				)}
-			>
-				<Icon className="h-3.5 w-3.5" aria-hidden="true" />
 			</div>
 			<div className="min-w-0">
-				<div className="flex min-w-0 items-center gap-2">
-					<p className="truncate text-[13px] font-medium leading-5 text-foreground">{notification.title}</p>
-					<span className="shrink-0 text-[11px] text-passive">{formatTimeCompact(notification.createdAt)}</span>
+				<div className="flex min-w-0 items-center gap-1.5">
+					<p className="truncate text-[12px] font-semibold leading-[1.4] text-foreground">{notification.title}</p>
+					<span className="shrink-0 text-[10px] text-passive">{formatTimeCompact(notification.createdAt)}</span>
 				</div>
 				{notification.body ? (
-					<p className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">{notification.body}</p>
+					<p className="mt-0.5 line-clamp-2 text-[11.5px] leading-[1.5] text-muted-foreground">{notification.body}</p>
 				) : null}
 			</div>
-			<div className="flex items-start gap-1">
+			<div className="flex items-start gap-0.5">
 				<button
 					aria-label="Open notification target"
-					className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground"
+					className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground"
 					onClick={() => onOpen(notification)}
 					title="Open target"
 					type="button"
 				>
-					<ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+					<ExternalLink className="h-3 w-3" aria-hidden="true" />
 				</button>
 				<button
 					aria-label="Mark notification read"
-					className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
+					className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
 					disabled={disabled}
 					onClick={() => void onMarkRead(notification.id)}
 					title="Mark read"
 					type="button"
 				>
-					<Check className="h-3.5 w-3.5" aria-hidden="true" />
+					<Check className="h-3 w-3" aria-hidden="true" />
 				</button>
 			</div>
 		</div>
 	);
 }
 
-function notificationIcon(type: string) {
+type IconSpec =
+	| { type: "dot"; color: string }
+	| { type: "component"; Component: React.ComponentType<React.SVGProps<SVGSVGElement>> };
+
+function notificationIcon(type: string): IconSpec {
 	switch (type) {
 		case "needs_input":
-			return CircleAlert;
+			return { type: "dot", color: "var(--amber)" };
 		case "ready_to_merge":
-			return GitPullRequest;
+			return { type: "component", Component: GitPullRequest };
 		case "pr_merged":
-			return GitMerge;
+			return { type: "component", Component: GitMerge };
 		case "pr_closed_unmerged":
-			return XCircle;
+			return { type: "component", Component: XCircle };
 		default:
-			return Bell;
+			return { type: "component", Component: Bell };
 	}
 }

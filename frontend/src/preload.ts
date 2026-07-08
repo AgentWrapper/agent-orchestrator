@@ -80,8 +80,10 @@ const api = {
 		},
 	},
 	notifications: {
-		show: (notification: { id: string; title: string; body?: string }) =>
+		show: (notification: { id: string; title: string; body?: string; type?: string }) =>
 			ipcRenderer.invoke("notifications:show", notification) as Promise<void>,
+		setBadge: (count: number) => ipcRenderer.invoke("notifications:setBadge", count) as Promise<void>,
+		devBounce: () => ipcRenderer.invoke("notifications:devBounce") as Promise<void>,
 		onClick: (listener: (id: string) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, id: string) => listener(id);
 			ipcRenderer.on("notifications:click", wrapped);

@@ -6,7 +6,7 @@ import {
 	ipcMain,
 	net,
 	nativeImage,
-	Notification as ElectronNotification,
+
 	protocol,
 	shell,
 	WebContentsView,
@@ -96,6 +96,8 @@ let daemonStatus: DaemonStatus = { state: "stopped" };
 let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
+// Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
+let isFlashing = false;
 
 const execFileAsync = promisify(execFile);
 
@@ -1095,20 +1097,69 @@ ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
 });
 
-ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
-	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
-	const toast = new ElectronNotification({
-		title: notification.title,
-		body: notification.body,
-	});
-	toast.on("click", () => {
+ipcMain.handle(
+	"notifications:show",
+	(_event, notification: { id: string; title: string; body?: string; type?: string }) => {
+		if (!notification.id || !mainWindow) return;
+		// Never show OS banners/toasts. Only signal via dock (macOS) and taskbar (Windows/Linux).
+		if (mainWindow.isFocused()) return;
+		const type = notification.type;
+		if (type !== "needs_input" && type !== "ready_to_merge") return;
+		if (process.platform === "darwin" && app.dock) {
+			app.dock.bounce("informational");
+		} else if (process.platform === "win32" || process.platform === "linux") {
+			if (!isFlashing) {
+				isFlashing = true;
+				mainWindow.flashFrame(true);
+				mainWindow.once("focus", () => {
+					isFlashing = false;
+					mainWindow?.flashFrame(false);
+				});
+			}
+		}
+	},
+);
+
+// Dev-only: force attention signal regardless of window focus (for testing)
+if (!app.isPackaged) {
+	ipcMain.handle("notifications:devBounce", () => {
 		if (!mainWindow) return;
-		if (mainWindow.isMinimized()) mainWindow.restore();
-		mainWindow.show();
-		mainWindow.focus();
-		mainWindow.webContents.send("notifications:click", notification.id);
+		if (process.platform === "darwin") {
+			const id = app.dock?.bounce("critical");
+			setTimeout(() => { if (id !== undefined) app.dock?.cancelBounce(id); }, 2000);
+		} else if (process.platform === "win32" || process.platform === "linux") {
+			mainWindow.flashFrame(true);
+			setTimeout(() => { mainWindow?.flashFrame(false); }, 2000);
+		}
 	});
-	toast.show();
+}
+
+ipcMain.handle("notifications:setBadge", (_event, count: number) => {
+	if (!mainWindow) return { error: "no mainWindow" };
+	const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+	if (process.platform === "darwin") {
+		const dock = app.dock;
+		if (!dock) return { error: "no app.dock" };
+		try {
+			dock.setBadge(n > 0 ? String(n) : "");
+		} catch (e) {
+			return { error: String(e) };
+		}
+	} else if (process.platform === "win32") {
+		if (n > 0) {
+			// Pre-built red dot PNG overlay — indicates unread without needing Canvas.
+			const badgeDataUrl =
+				"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABnSURBVDiNY/j///9/BioDE0MfGGBgYGBgY/j//z8DAwMjAwMDA8P////+/v7+/n5+fn5AQEBASEhISkpKSkpKSkpKSkpKSkpKSoqKiouLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4tLSwAAAABJRU5ErkJggg==";
+			const icon = nativeImage.createFromDataURL(badgeDataUrl);
+			mainWindow.setOverlayIcon(icon, `${n} unread`);
+		} else {
+			mainWindow.setOverlayIcon(null, "");
+		}
+	} else if (process.platform === "linux") {
+		// Unity/KDE launchers display a numeric badge via setBadgeCount.
+		app.setBadgeCount(n);
+	}
+	return { ok: true };
 });
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
