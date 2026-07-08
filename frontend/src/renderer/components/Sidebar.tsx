@@ -66,6 +66,7 @@ import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
+import { ResizeHandle } from "./ResizeHandle";
 import { Button } from "./ui/button";
 import { ResizeHandle } from "./ResizeHandle";
 
