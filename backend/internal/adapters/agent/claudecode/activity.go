@@ -10,7 +10,9 @@ import (
 // payload) onto an AO activity state. The bool is false when the event carries
 // no activity signal — e.g. SessionStart (metadata only, v1), a Notification
 // type we don't track, or a SessionEnd reason that doesn't actually end the AO
-// session — in which case the caller reports nothing.
+// session — in which case the caller reports nothing. WaitingInput is reserved
+// for genuine blocking prompts (permission_prompt); routine end-of-turn
+// idleness (stop, idle_prompt) reports Idle.
 //
 // event is the AO hook sub-command name installed in claudeManagedHooks
 // ("user-prompt-submit", "stop", "notification", "session-end", ...), NOT the
@@ -22,7 +24,8 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 		return domain.ActivityActive, true
 	case "stop":
 		// End of a turn: the agent is idle but alive (not exited). A following
-		// Notification(idle_prompt) upgrades this to the sticky waiting_input.
+		// Notification(idle_prompt) just reaffirms ActivityIdle — it's a routine
+		// "done and quiet for now" signal, not a real block.
 		return domain.ActivityIdle, true
 	case "notification":
 		return notificationState(payload)
@@ -33,9 +36,11 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	}
 }
 
-// notificationState reports waiting_input only for the notification types that
-// mean "the agent is blocked on the user": a pending tool-permission prompt or
-// an idle prompt awaiting the next instruction. Other types (auth_success,
+// notificationState reports waiting_input only for permission_prompt: the
+// agent is genuinely blocked on a tool-permission decision that requires a
+// human/orchestrator response. idle_prompt fires after ordinary end-of-turn
+// idling — it's a routine "done and quiet for now" signal, not a real
+// blocker — so it maps to ActivityIdle instead. Other types (auth_success,
 // elicitation_*) carry no activity meaning, as does a malformed payload.
 func notificationState(payload []byte) (domain.ActivityState, bool) {
 	var p struct {
@@ -43,8 +48,10 @@ func notificationState(payload []byte) (domain.ActivityState, bool) {
 	}
 	_ = json.Unmarshal(payload, &p)
 	switch p.NotificationType {
-	case "idle_prompt", "permission_prompt":
+	case "permission_prompt":
 		return domain.ActivityWaitingInput, true
+	case "idle_prompt":
+		return domain.ActivityIdle, true
 	default:
 		return "", false
 	}

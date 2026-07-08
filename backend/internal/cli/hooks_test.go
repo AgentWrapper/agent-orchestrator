@@ -62,7 +62,7 @@ func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 
 	_, errOut, err := executeCLI(t, Deps{
-		In:           strings.NewReader(`{"notification_type":"idle_prompt"}`),
+		In:           strings.NewReader(`{"notification_type":"permission_prompt"}`),
 		ProcessAlive: func(int) bool { return true },
 	}, "hooks", "claude-code", "notification")
 	if err != nil {
