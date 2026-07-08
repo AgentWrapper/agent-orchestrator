@@ -147,7 +147,7 @@ func TestGetLaunchCommandWithPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"vibe", "--trust", "--output", "text", "--workdir", "/work/repo", "--agent", "auto-approve", "-p", "add a health check"}
+	want := []string{"vibe", "--trust", "--output", "streaming", "--workdir", "/work/repo", "--agent", "auto-approve", "-p", "add a health check"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -160,17 +160,17 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 		want       []string
 		wantAbsent string
 	}{
-		{"default omits flag", ports.PermissionModeDefault, []string{"vibe", "--trust", "--output", "text"}, "--agent"},
-		{"empty omits flag", "", []string{"vibe", "--trust", "--output", "text"}, "--agent"},
-		{"accept edits", ports.PermissionModeAcceptEdits, []string{"vibe", "--trust", "--output", "text", "--agent", "accept-edits"}, ""},
-		{"auto", ports.PermissionModeAuto, []string{"vibe", "--trust", "--output", "text", "--agent", "auto-approve"}, ""},
-		{"bypass", ports.PermissionModeBypassPermissions, []string{"vibe", "--trust", "--output", "text", "--agent", "auto-approve"}, ""},
+		{"default omits flag", ports.PermissionModeDefault, []string{"vibe", "--trust", "--output", "streaming", "-p", "task"}, "--agent"},
+		{"empty omits flag", "", []string{"vibe", "--trust", "--output", "streaming", "-p", "task"}, "--agent"},
+		{"accept edits", ports.PermissionModeAcceptEdits, []string{"vibe", "--trust", "--output", "streaming", "--agent", "accept-edits", "-p", "task"}, ""},
+		{"auto", ports.PermissionModeAuto, []string{"vibe", "--trust", "--output", "streaming", "--agent", "auto-approve", "-p", "task"}, ""},
+		{"bypass", ports.PermissionModeBypassPermissions, []string{"vibe", "--trust", "--output", "streaming", "--agent", "auto-approve", "-p", "task"}, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &Plugin{resolvedBinary: "vibe"}
-			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: tt.mode})
+			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: tt.mode, Prompt: "task"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,23 +188,23 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandOmitsPromptWhenEmpty(t *testing.T) {
+func TestGetLaunchCommandRejectsEmptyPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "vibe"}
-	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions: ports.PermissionModeAuto,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, errEmptyWorkerPrompt) {
+		t.Fatalf("err = %v, want %v", err, errEmptyWorkerPrompt)
 	}
+}
 
-	want := []string{"vibe", "--trust", "--output", "text", "--agent", "auto-approve"}
-	if !reflect.DeepEqual(cmd, want) {
-		t.Fatalf("cmd = %#v, want %#v", cmd, want)
-	}
-	for _, arg := range cmd {
-		if arg == "-p" {
-			t.Fatalf("cmd = %#v unexpectedly contains %q", cmd, "-p")
-		}
+func TestGetLaunchCommandRejectsWhitespacePrompt(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt: " \t\n",
+	})
+	if !errors.Is(err, errEmptyWorkerPrompt) {
+		t.Fatalf("err = %v, want %v", err, errEmptyWorkerPrompt)
 	}
 }
 
@@ -224,7 +224,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	want := []string{"vibe", "--trust", "--output", "text", "--workdir", "/work/repo", "--agent", "auto-approve", "--resume", "abcd1234-5678-90ab-cdef-1234567890ab"}
+	want := []string{"vibe", "--trust", "--output", "streaming", "--workdir", "/work/repo", "--agent", "auto-approve", "--resume", "abcd1234-5678-90ab-cdef-1234567890ab"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
