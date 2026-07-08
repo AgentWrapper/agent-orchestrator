@@ -58,6 +58,12 @@ const (
 	EnvDataDir = "AO_DATA_DIR"
 )
 
+const (
+	afterStartPromptInitialDelay = 500 * time.Millisecond
+	afterStartPromptRetryDelay   = 250 * time.Millisecond
+	afterStartPromptAttempts     = 4
+)
+
 // hookBinaryName is the executable name the workspace hook commands invoke:
 // every agent adapter installs a bare `ao hooks <agent> <event>`. The session
 // PATH pin (hookPATH) only works when the daemon's own executable carries this
@@ -129,6 +135,10 @@ type Manager struct {
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
 	executable func() (string, error)
 	logger     *slog.Logger
+
+	afterStartPromptInitialDelay time.Duration
+	afterStartPromptRetryDelay   time.Duration
+	afterStartPromptAttempts     int
 }
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -171,6 +181,10 @@ func New(d Deps) *Manager {
 		lookPath:   d.LookPath,
 		executable: d.Executable,
 		logger:     d.Logger,
+
+		afterStartPromptInitialDelay: afterStartPromptInitialDelay,
+		afterStartPromptRetryDelay:   afterStartPromptRetryDelay,
+		afterStartPromptAttempts:     afterStartPromptAttempts,
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -315,15 +329,55 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
-	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
-		if err := m.messenger.Send(ctx, id, prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
-			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
-		}
+	if err := m.deliverAfterStartPrompt(ctx, id, prompt, delivery); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
+		m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 	}
 	return m.getRecord(ctx, id)
+}
+
+func (m *Manager) deliverAfterStartPrompt(ctx context.Context, id domain.SessionID, prompt string, strategy ports.PromptDeliveryStrategy) error {
+	if strategy != ports.PromptDeliveryAfterStart || prompt == "" {
+		return nil
+	}
+	if err := waitContext(ctx, m.afterStartPromptInitialDelay); err != nil {
+		return err
+	}
+	attempts := m.afterStartPromptAttempts
+	if attempts <= 0 {
+		attempts = 1
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if err := m.messenger.Send(ctx, id, prompt); err != nil {
+			lastErr = err
+		} else {
+			return nil
+		}
+		if i == attempts-1 {
+			break
+		}
+		if err := waitContext(ctx, m.afterStartPromptRetryDelay); err != nil {
+			return err
+		}
+	}
+	return lastErr
+}
+
+func waitContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // loadProject loads the project record so spawn can resolve its per-project

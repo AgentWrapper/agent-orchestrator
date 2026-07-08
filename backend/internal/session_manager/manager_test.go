@@ -424,11 +424,31 @@ func fakeWorkspaceRepoName(info ports.WorkspaceInfo) string {
 }
 
 type fakeMessenger struct {
-	msgs []string
-	err  error
+	msgs      []string
+	ids       []domain.SessionID
+	err       error
+	failErr   error
+	failCount int
+	onSend    func(domain.SessionID, string) error
 }
 
-func (m *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+func (m *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string) error {
+	if m.onSend != nil {
+		if err := m.onSend(id, msg); err != nil {
+			return err
+		}
+	}
+	if m.failCount > 0 {
+		m.failCount--
+		if m.failErr != nil {
+			return m.failErr
+		}
+		return m.err
+	}
+	if m.err != nil {
+		return m.err
+	}
+	m.ids = append(m.ids, id)
 	m.msgs = append(m.msgs, msg)
 	return m.err
 }
@@ -576,6 +596,8 @@ func TestSpawn_DeliversPromptAfterStartWhenAgentRequestsIt(t *testing.T) {
 		Lifecycle: &fakeLCM{store: st},
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
+	m.afterStartPromptInitialDelay = 0
+	m.afterStartPromptRetryDelay = 0
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
 		t.Fatal(err)
@@ -588,6 +610,83 @@ func TestSpawn_DeliversPromptAfterStartWhenAgentRequestsIt(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.Prompt != "fix the button" {
 		t.Fatalf("stored prompt = %q, want original prompt", st.sessions["mer-1"].Metadata.Prompt)
+	}
+}
+
+func TestSpawn_InCommandPromptIsNotSentAfterStart(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	msg := &fakeMessenger{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: msg, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastLaunch.Prompt != "do it" {
+		t.Fatalf("launch prompt = %q, want in-command prompt", agent.lastLaunch.Prompt)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("messenger sends = %v, want none for in-command delivery", msg.msgs)
+	}
+}
+
+func TestSpawn_AfterStartPromptSentAfterRuntimeHandleIsRecorded(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	msg := &fakeMessenger{}
+	msg.onSend = func(id domain.SessionID, msg string) error {
+		rec := st.sessions[id]
+		if rec.Metadata.RuntimeHandleID == "" {
+			return errors.New("prompt sent before runtime handle landed")
+		}
+		return nil
+	}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: afterStartAgent{recordingAgent: agent}}, Workspace: ws, Store: st,
+		Messenger: msg, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.afterStartPromptInitialDelay = 0
+	m.afterStartPromptRetryDelay = 0
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastLaunch.Prompt != "" {
+		t.Fatalf("launch prompt = %q, want empty for after-start delivery", agent.lastLaunch.Prompt)
+	}
+	if len(msg.ids) != 1 || msg.ids[0] != rec.ID || len(msg.msgs) != 1 || msg.msgs[0] != "do it" {
+		t.Fatalf("sent ids/messages = %v/%v, want one prompt to %s", msg.ids, msg.msgs, rec.ID)
+	}
+	if rt.destroyed != 0 || ws.destroyed != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("successful after-start delivery should keep session live; destroyed runtime/workspace=%d/%d terminated=%v", rt.destroyed, ws.destroyed, st.sessions[rec.ID].IsTerminated)
+	}
+}
+
+func TestSpawn_AfterStartPromptRetriesTransportFailures(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	msg := &fakeMessenger{failErr: errors.New("pane not ready"), failCount: 2}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: afterStartAgent{recordingAgent: agent}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: msg, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.afterStartPromptInitialDelay = 0
+	m.afterStartPromptRetryDelay = 0
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || msg.msgs[0] != "do it" {
+		t.Fatalf("messages after retries = %v, want one successful prompt", msg.msgs)
 	}
 }
 
@@ -608,6 +707,9 @@ func TestSpawn_AfterStartPromptFailureCleansUpSpawn(t *testing.T) {
 		Lifecycle: lcm,
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
+	m.afterStartPromptInitialDelay = 0
+	m.afterStartPromptRetryDelay = 0
+	m.afterStartPromptAttempts = 3
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
 	if err == nil {
@@ -656,6 +758,9 @@ func TestSpawn_AfterStartPromptFailureCleansUpWorkspaceProjectRows(t *testing.T)
 		Lifecycle: lcm,
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
+	m.afterStartPromptInitialDelay = 0
+	m.afterStartPromptRetryDelay = 0
+	m.afterStartPromptAttempts = 3
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
 	if err == nil || !strings.Contains(err.Error(), "deliver prompt") {
