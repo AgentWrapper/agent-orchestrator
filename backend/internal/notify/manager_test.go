@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -50,6 +51,27 @@ func TestManagerNotifyPersistsThenPublishes(t *testing.T) {
 		}
 	default:
 		t.Fatal("expected published notification")
+	}
+}
+
+func TestManagerNotifyCarriesSensitivePRMetadata(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:         domain.NotificationReadyToMerge,
+		SessionID:    "mer-1",
+		ProjectID:    "mer",
+		PRURL:        "https://github.com/o/r/pull/1",
+		Sensitive:    true,
+		ChangedPaths: []string{"backend/internal/lifecycle/reactions.go"},
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if got := st.rows[0]; !got.Sensitive || !reflect.DeepEqual(got.ChangedPaths, []string{"backend/internal/lifecycle/reactions.go"}) {
+		t.Fatalf("stored notification metadata = sensitive:%v paths:%#v", got.Sensitive, got.ChangedPaths)
 	}
 }
 

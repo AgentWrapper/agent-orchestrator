@@ -72,6 +72,8 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "NotificationStatus"
+          - column: "notifications.sensitive"
+            go_type: "bool"
           - column: "projects.id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

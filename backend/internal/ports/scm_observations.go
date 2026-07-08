@@ -120,6 +120,8 @@ type SCMPRObservation struct {
 	Deletions int
 	// ChangedFiles is the provider-reported changed file count.
 	ChangedFiles int
+	// ChangedPaths contains provider-reported PR diff paths when fetched.
+	ChangedPaths []string
 	// Author is the provider login/name of the PR author.
 	Author string
 	// BaseSHA is the current base branch SHA when the provider supplies it.

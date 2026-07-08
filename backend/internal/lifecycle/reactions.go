@@ -18,6 +18,12 @@ import (
 
 const reviewMaxNudge = 3
 
+var sensitiveMergePathPrefixes = []string{
+	"backend/internal/daemon/",
+	"backend/internal/session_manager/",
+	"backend/internal/lifecycle/",
+}
+
 // ReviewDeliveryOutcome reports what ApplyReviewResult did with a completed
 // AO-internal review pass.
 type ReviewDeliveryOutcome string
@@ -361,6 +367,7 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 		PRTargetBranch:     o.PR.TargetBranch,
 		Provider:           o.Provider,
 		Repo:               o.Repo,
+		ChangedPaths:       append([]string(nil), o.PR.ChangedPaths...),
 	}
 	if o.PR.Merged {
 		base.Type = domain.NotificationPRMerged
@@ -374,7 +381,20 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 		return nil
 	}
 	base.Type = domain.NotificationReadyToMerge
+	base.Sensitive = touchesSensitiveMergePath(base.ChangedPaths)
 	return &base
+}
+
+func touchesSensitiveMergePath(paths []string) bool {
+	for _, p := range paths {
+		p = strings.TrimLeft(strings.TrimSpace(p), "/")
+		for _, prefix := range sensitiveMergePathPrefixes {
+			if strings.HasPrefix(p, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
@@ -420,6 +440,7 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 		CI:           domain.CIState(o.CI.Summary),
 		Review:       domain.ReviewDecision(o.Review.Decision),
 		Mergeability: domain.Mergeability(o.Mergeability.State),
+		ChangedPaths: append([]string(nil), o.PR.ChangedPaths...),
 	}
 	if pr.CI == "" {
 		pr.CI = domain.CIUnknown

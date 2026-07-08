@@ -75,7 +75,7 @@ func notificationsvcNotFound() error {
 func TestNotificationsAPI_ListUnread(t *testing.T) {
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
 	svc := &fakeNotificationService{items: []notificationsvc.Notification{{
-		NotificationRecord: domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "checkout-flow needs input", Body: "The agent is waiting for your response.", Status: domain.NotificationUnread, CreatedAt: now},
+		NotificationRecord: domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "checkout-flow needs input", Body: "The agent is waiting for your response.", Status: domain.NotificationUnread, CreatedAt: now, Sensitive: true, ChangedPaths: []string{"backend/internal/lifecycle/reactions.go"}},
 		Target:             notificationsvc.Target{Kind: notificationsvc.TargetSession, SessionID: "mer-1"},
 	}}}
 	srv := newNotificationTestServer(t, svc)
@@ -89,19 +89,21 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	}
 	var resp struct {
 		Notifications []struct {
-			ID        string `json:"id"`
-			SessionID string `json:"sessionId"`
-			ProjectID string `json:"projectId"`
-			Type      string `json:"type"`
-			Status    string `json:"status"`
-			Target    struct {
+			ID           string   `json:"id"`
+			SessionID    string   `json:"sessionId"`
+			ProjectID    string   `json:"projectId"`
+			Type         string   `json:"type"`
+			Status       string   `json:"status"`
+			Sensitive    bool     `json:"sensitive"`
+			ChangedPaths []string `json:"changedPaths"`
+			Target       struct {
 				Kind      string `json:"kind"`
 				SessionID string `json:"sessionId"`
 			} `json:"target"`
 		} `json:"notifications"`
 	}
 	mustJSON(t, body, &resp)
-	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" || resp.Notifications[0].Target.Kind != "session" {
+	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" || resp.Notifications[0].Target.Kind != "session" || !resp.Notifications[0].Sensitive || len(resp.Notifications[0].ChangedPaths) != 1 {
 		t.Fatalf("resp = %+v", resp)
 	}
 }

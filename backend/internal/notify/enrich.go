@@ -9,12 +9,14 @@ import (
 
 func enrich(intent Intent) (domain.NotificationRecord, error) {
 	rec := domain.NotificationRecord{
-		SessionID: intent.SessionID,
-		ProjectID: intent.ProjectID,
-		PRURL:     strings.TrimSpace(intent.PRURL),
-		Type:      intent.Type,
-		Status:    domain.NotificationUnread,
-		CreatedAt: intent.CreatedAt,
+		SessionID:    intent.SessionID,
+		ProjectID:    intent.ProjectID,
+		PRURL:        strings.TrimSpace(intent.PRURL),
+		Type:         intent.Type,
+		Status:       domain.NotificationUnread,
+		CreatedAt:    intent.CreatedAt,
+		Sensitive:    intent.Sensitive,
+		ChangedPaths: append([]string(nil), intent.ChangedPaths...),
 	}
 	if !intent.Type.Valid() {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationType

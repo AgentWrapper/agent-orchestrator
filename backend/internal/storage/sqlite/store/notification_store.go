@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -30,15 +31,17 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		return existing, false, nil
 	}
 	row, err := s.qw.CreateNotification(ctx, gen.CreateNotificationParams{
-		ID:        rec.ID,
-		SessionID: rec.SessionID,
-		ProjectID: rec.ProjectID,
-		PRURL:     rec.PRURL,
-		Type:      rec.Type,
-		Title:     rec.Title,
-		Body:      rec.Body,
-		Status:    rec.Status,
-		CreatedAt: rec.CreatedAt,
+		ID:           rec.ID,
+		SessionID:    rec.SessionID,
+		ProjectID:    rec.ProjectID,
+		PRURL:        rec.PRURL,
+		Type:         rec.Type,
+		Title:        rec.Title,
+		Body:         rec.Body,
+		Sensitive:    rec.Sensitive,
+		ChangedPaths: encodeNotificationPaths(rec.ChangedPaths),
+		Status:       rec.Status,
+		CreatedAt:    rec.CreatedAt,
 	})
 	if err != nil {
 		if isSQLiteUnique(err) {
@@ -92,6 +95,7 @@ func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.No
 		SessionID: rec.SessionID,
 		Type:      rec.Type,
 		PRURL:     rec.PRURL,
+		Sensitive: rec.Sensitive,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NotificationRecord{}, false, nil
@@ -109,16 +113,37 @@ func isSQLiteUnique(err error) bool {
 
 func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 	return domain.NotificationRecord{
-		ID:        row.ID,
-		SessionID: row.SessionID,
-		ProjectID: row.ProjectID,
-		PRURL:     row.PRURL,
-		Type:      row.Type,
-		Title:     row.Title,
-		Body:      row.Body,
-		Status:    row.Status,
-		CreatedAt: row.CreatedAt,
+		ID:           row.ID,
+		SessionID:    row.SessionID,
+		ProjectID:    row.ProjectID,
+		PRURL:        row.PRURL,
+		Type:         row.Type,
+		Title:        row.Title,
+		Body:         row.Body,
+		Sensitive:    row.Sensitive,
+		ChangedPaths: decodeNotificationPaths(row.ChangedPaths),
+		Status:       row.Status,
+		CreatedAt:    row.CreatedAt,
 	}
+}
+
+func encodeNotificationPaths(paths []string) string {
+	if len(paths) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(paths)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+func decodeNotificationPaths(raw string) []string {
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
+		return nil
+	}
+	return paths
 }
 
 func notificationsFromGen(rows []gen.Notification) []domain.NotificationRecord {

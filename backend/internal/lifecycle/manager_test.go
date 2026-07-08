@@ -1440,14 +1440,18 @@ func TestActivity_TerminatedSessionDoesNotEmitNotification(t *testing.T) {
 
 func TestSCMObservation_Notifications(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		obs  ports.SCMObservation
-		want domain.NotificationType
+		name             string
+		obs              ports.SCMObservation
+		want             domain.NotificationType
+		wantSensitive    bool
+		wantChangedPaths []string
 	}{
 		{
-			name: "ready",
-			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1, Title: "checkout"}, CI: ports.SCMCIObservation{Summary: string(domain.CIPassing)}, Review: ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
-			want: domain.NotificationReadyToMerge,
+			name:             "ready sensitive",
+			obs:              ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1, Title: "checkout", ChangedPaths: []string{"backend/internal/lifecycle/reactions.go", "ops/ao-slack-notifier.mjs"}}, CI: ports.SCMCIObservation{Summary: string(domain.CIPassing)}, Review: ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+			want:             domain.NotificationReadyToMerge,
+			wantSensitive:    true,
+			wantChangedPaths: []string{"backend/internal/lifecycle/reactions.go", "ops/ao-slack-notifier.mjs"},
 		},
 		{
 			name: "merged",
@@ -1473,6 +1477,9 @@ func TestSCMObservation_Notifications(t *testing.T) {
 			}
 			if got := sink.intents[0]; got.Type != tc.want || got.PRURL != tc.obs.PR.URL || got.PRNumber != tc.obs.PR.Number {
 				t.Fatalf("intent = %+v, want type %s", got, tc.want)
+			}
+			if got := sink.intents[0]; got.Sensitive != tc.wantSensitive || !reflect.DeepEqual(got.ChangedPaths, tc.wantChangedPaths) {
+				t.Fatalf("intent metadata = sensitive:%v paths:%#v, want sensitive:%v paths:%#v", got.Sensitive, got.ChangedPaths, tc.wantSensitive, tc.wantChangedPaths)
 			}
 		})
 	}

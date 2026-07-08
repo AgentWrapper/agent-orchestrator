@@ -44,7 +44,7 @@ describe("ao Slack notifier notification formatting", () => {
 		assert.equal(msg, "<@U123> 🖐️ *needs_input* [ao] agent-1: permission prompt");
 	});
 
-	it("mentions ready_to_merge notifications", () => {
+	it("does not mention routine ready_to_merge notifications", () => {
 		const msg = describeSlackMessage(
 			{
 				type: "ready_to_merge",
@@ -56,7 +56,24 @@ describe("ao Slack notifier notification formatting", () => {
 			"U123",
 		);
 
-		assert.equal(msg, "<@U123> 🟢 *ready_to_merge* [ao] agent-2: PR ready https://github.example/pr/1");
+		assert.equal(msg, "🟢 *ready_to_merge* [ao] agent-2: PR ready https://github.example/pr/1");
+	});
+
+	it("mentions sensitive ready_to_merge notifications distinctly", () => {
+		const msg = describeSlackMessage(
+			{
+				type: "ready_to_merge",
+				sessionId: "agent-2",
+				projectId: "ao",
+				title: "PR ready",
+				prUrl: "https://github.example/pr/1",
+				sensitive: true,
+				changedPaths: ["backend/internal/lifecycle/reactions.go"],
+			},
+			"U123",
+		);
+
+		assert.equal(msg, "<@U123> 🛑 *parked_sensitive_merge* [ao] agent-2: PR ready https://github.example/pr/1");
 	});
 
 	it("does not mention pr_merged notifications", () => {
@@ -178,7 +195,7 @@ describe("ao Slack notifier replay/dedup", () => {
 
 		await notifier.catchUpUnread();
 
-		assert.equal(posts.length, 3);
+		assert.equal(posts.length, 2);
 		assert.deepEqual(marked, ["ntf_1", "ntf_2", "ntf_3"]);
 		const saved = loadState(stateFile);
 		assert.ok(saved.seen.has("ntf_1"));

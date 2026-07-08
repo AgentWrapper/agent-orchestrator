@@ -761,11 +761,13 @@ export interface components {
         };
         NotificationResponse: {
             body: string;
+            changedPaths: string[];
             /** Format: date-time */
             createdAt: string;
             id: string;
             prUrl: string;
             projectId: string;
+            sensitive: boolean;
             sessionId: string;
             /** @enum {string} */
             status: "unread" | "read";
