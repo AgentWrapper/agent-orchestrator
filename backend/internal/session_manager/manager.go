@@ -1243,6 +1243,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	ws := workspaceInfo(rec)
 	ref, err := m.workspace.StashUncommitted(ctx, ws)
 	if err != nil {
+		if rec.Kind == domain.KindOrchestrator && errors.Is(err, os.ErrNotExist) {
+			return m.reensureMissingOrchestrator(ctx, rec)
+		}
 		// Could not capture work: do NOT write a restore marker or tear down the
 		// worktree (that would risk losing un-preserved work). Mark terminated so
 		// a dead session is not left looking live; the worktree stays put.
@@ -1271,6 +1274,29 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	// clean and replays the ref. The dead runtime needs no Destroy.
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		m.logger.Warn("reconcile: force destroy failed after marker", "sessionID", rec.ID, "error", err)
+	}
+	return nil
+}
+
+func (m *Manager) reensureMissingOrchestrator(ctx context.Context, rec domain.SessionRecord) error {
+	m.logger.Warn("reconcile: orchestrator worktree missing; re-ensuring instead of terminating permanently", "sessionID", rec.ID)
+	row := domain.SessionWorktreeRecord{
+		SessionID:    rec.ID,
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       rec.Metadata.Branch,
+		WorktreePath: rec.Metadata.WorkspacePath,
+	}
+	if err := m.store.UpsertSessionWorktree(ctx, row); err != nil {
+		return fmt.Errorf("reconcile %s: upsert missing-orchestrator marker: %w", rec.ID, err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("reconcile %s: mark missing orchestrator terminated: %w", rec.ID, err)
+	}
+	if _, err := m.Restore(ctx, rec.ID); err != nil {
+		return fmt.Errorf("reconcile %s: reensure missing orchestrator: %w", rec.ID, err)
+	}
+	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		m.logger.Error("reconcile: delete consumed missing-orchestrator marker failed", "sessionID", rec.ID, "error", err)
 	}
 	return nil
 }

@@ -180,6 +180,7 @@ func Run() error {
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
+	orchestratorSupervisorDone := startOrchestratorSupervisor(ctx, projectSvc, sessionSvc, orchestratorSupervisorInterval, log)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second
@@ -211,6 +212,7 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	<-orchestratorSupervisorDone
 	<-previewDone
 	<-agentHealthDone
 	lcStack.Stop()

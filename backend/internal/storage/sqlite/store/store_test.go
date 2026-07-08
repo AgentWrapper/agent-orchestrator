@@ -313,6 +313,27 @@ func TestHasActiveOrchestrator(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRejectsSecondLiveOrchestratorForProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	orch := sampleRecord("mer")
+	orch.Kind = domain.KindOrchestrator
+	if _, err := s.CreateSession(ctx, orch); err != nil {
+		t.Fatalf("create first orchestrator: %v", err)
+	}
+	if _, err := s.CreateSession(ctx, orch); err == nil {
+		t.Fatal("create second live orchestrator succeeded; want unique constraint failure")
+	}
+
+	terminated := orch
+	terminated.IsTerminated = true
+	if _, err := s.CreateSession(ctx, terminated); err != nil {
+		t.Fatalf("create terminated historical orchestrator: %v", err)
+	}
+}
+
 func TestSessionFirstSignalRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

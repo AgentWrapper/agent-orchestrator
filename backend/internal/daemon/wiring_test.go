@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -481,5 +483,85 @@ func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	}
 	if !fake.restoreAllCalled {
 		t.Fatal("RestoreAll was not called through the interface")
+	}
+}
+
+type fakeOrchestratorProjectLister struct {
+	projects []projectsvc.Summary
+	err      error
+}
+
+func (f fakeOrchestratorProjectLister) List(context.Context) ([]projectsvc.Summary, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.projects, nil
+}
+
+type fakeOrchestratorEnsurer struct {
+	mu    sync.Mutex
+	calls []domain.ProjectID
+}
+
+func (f *fakeOrchestratorEnsurer) SpawnOrchestrator(_ context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	if clean {
+		return domain.Session{}, errors.New("supervisor must use clean=false")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, projectID)
+	return domain.Session{
+		SessionRecord: domain.SessionRecord{
+			ID:        domain.SessionID(string(projectID) + "-orch"),
+			ProjectID: projectID,
+			Kind:      domain.KindOrchestrator,
+		},
+	}, nil
+}
+
+func (f *fakeOrchestratorEnsurer) seen(projectID domain.ProjectID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, got := range f.calls {
+		if got == projectID {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStartOrchestratorSupervisorEnsuresEveryProject(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}, {ID: "ao"}}}
+	ensurer := &fakeOrchestratorEnsurer{}
+	done := startOrchestratorSupervisor(ctx, projects, ensurer, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if ensurer.seen("mer") && ensurer.seen("ao") {
+			cancel()
+			<-done
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("supervisor did not ensure both projects, calls=%v", ensurer.calls)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestEnsureOrchestratorsSuppressesCanceledContextWarnings(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var logBuf strings.Builder
+	projects := fakeOrchestratorProjectLister{err: context.Canceled}
+	ensureOrchestrators(ctx, projects, &fakeOrchestratorEnsurer{}, slog.New(slog.NewTextHandler(&logBuf, nil)))
+
+	if got := logBuf.String(); got != "" {
+		t.Fatalf("canceled supervisor should not warn, got log %q", got)
 	}
 }

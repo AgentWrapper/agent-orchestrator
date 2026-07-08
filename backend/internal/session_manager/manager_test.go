@@ -329,6 +329,7 @@ type fakeWorkspace struct {
 	// stashRef is returned by StashUncommitted (empty means clean worktree).
 	stashRef        string
 	stashErr        error
+	restoreErr      error
 	applyErr        error
 	forceDestroyErr error
 	// stashCalls counts StashUncommitted invocations.
@@ -356,6 +357,9 @@ func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 	return w.destroyErr
 }
 func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	if w.restoreErr != nil {
+		return ports.WorkspaceInfo{}, w.restoreErr
+	}
 	return w.Create(ctx, cfg)
 }
 func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo) error {
@@ -2754,6 +2758,47 @@ func TestReconcileLive_DeadSessionStashedAndTerminated(t *testing.T) {
 	}
 	if !foundForceDestroy {
 		t.Fatalf("reconcileLive must ForceDestroy the worktree after capturing work; calls = %v", ws.calls)
+	}
+}
+
+func TestReconcileLive_OrchestratorMissingWorktreeIsRestored(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{}} // handle not alive
+	ws := &fakeWorkspace{stashErr: fmt.Errorf("dirty check: %w", os.ErrNotExist)}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	rec := domain.SessionRecord{
+		ID:           "p1-orch",
+		ProjectID:    "p1",
+		Kind:         domain.KindOrchestrator,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/p1-orchestrator", WorkspacePath: "/wt/p1-orch", RuntimeHandleID: "orch",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if lcm.terminated[rec.ID] != 1 {
+		t.Fatalf("missing orchestrator must be marked terminated once before restore; got %d", lcm.terminated[rec.ID])
+	}
+	if got := ws.lastCfg; got.ProjectID != "p1" || got.SessionID != rec.ID || got.Kind != domain.KindOrchestrator || got.Branch != "ao/p1-orchestrator" {
+		t.Fatalf("Restore config = %+v, want orchestrator session config", got)
+	}
+	if rt.created != 1 {
+		t.Fatalf("missing orchestrator worktree must relaunch runtime once, got %d", rt.created)
+	}
+	if st.sessions[rec.ID].IsTerminated {
+		t.Fatal("missing orchestrator must be live after same-boot restore")
+	}
+	if rows := st.worktrees[rec.ID]; len(rows) != 0 {
+		t.Fatalf("restore marker must be consumed after successful restore, got %+v", rows)
 	}
 }
 

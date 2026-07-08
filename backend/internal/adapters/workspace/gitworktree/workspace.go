@@ -247,6 +247,12 @@ func (w *Workspace) StashUncommitted(ctx context.Context, info ports.WorkspaceIn
 	if info.SessionID == "" {
 		return "", errors.New("gitworktree: session id is required for StashUncommitted")
 	}
+	if _, err := os.Stat(info.Path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("gitworktree: StashUncommitted path %q: %w", info.Path, os.ErrNotExist)
+		}
+		return "", fmt.Errorf("gitworktree: StashUncommitted stat %q: %w", info.Path, err)
+	}
 
 	// Early exit for clean worktrees: nothing to preserve.
 	dirty, err := w.isDirty(ctx, info.Path)
