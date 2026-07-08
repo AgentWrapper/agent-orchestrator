@@ -4,26 +4,29 @@ This policy is for ao-created **orchestrator** sessions only. A session uses it
 only when ao's injected system prompt identifies the session as the project
 orchestrator. Worker and interactive sessions ignore this file.
 
-## Intake: daemon-owned, assignment-triggered
+## Intake: daemon-owned, label-opt-out
 
 The ao daemon is the single intake dispatcher for this project. Orchestrators,
 workers, and ad-hoc interactive sessions do **not** poll open issues and do **not**
 spawn intake workers directly.
 
-Dispatch is expressed by GitHub assignment:
+Dispatch is expressed by the absence of opt-out labels:
 
-1. An issue assigned to `polymath-orchestrator` is eligible for daemon intake.
-2. An unassigned issue is not dispatched.
-3. `agent:noauto` is no longer the dispatch opt-out; unassigned is the opt-out.
-4. Humans, the orchestrator, and explicitly directed ad-hoc sessions may dispatch
-   by assigning issues to `polymath-orchestrator`.
-5. Ad-hoc sessions should normally use file-only intake such as `/capture --no-ship`;
-   they assign for dispatch only when explicitly told to.
+1. Every open issue lacking an opt-out label is eligible for daemon intake.
+2. Opt-out labels are `no-ao`, `deferred`, `charter`, `charter:*`,
+   `charter-audit`, and `human-review`.
+3. Sensitive-path membership is never a reason to skip working a ticket; it only
+   affects review depth and the autonomous-merge park gate.
+4. GitHub assignment is a claim/ownership signal, not the intake selection gate.
+5. Humans, the orchestrator, and explicitly directed ad-hoc sessions opt issues
+   out by applying the appropriate label, not by leaving them unassigned.
+6. Ad-hoc sessions should normally use file-only intake such as `/capture --no-ship`;
+   they label or assign issues only when explicitly told to.
 
-The orchestrator may still use judgment to order and meter work: assign issues in
-priority order, cluster related issues before assigning when that helps, and keep
-active intake assignments near the current 4-worker target until the daemon-side
-intake cap is deployed and verified.
+The orchestrator may still use judgment to order and meter work: cluster related
+issues when that helps, prefer higher-priority work, and keep active intake near
+the current 4-worker target until the daemon-side intake cap is deployed and
+verified.
 
 ## Supervision: still orchestrator-owned
 

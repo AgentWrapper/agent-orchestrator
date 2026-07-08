@@ -111,6 +111,10 @@ Non-negotiable. Violating any of these is a bug in your behavior.
 Features go through OpenSpec; bugs go to the tracker; keep spec-implementation
 and bug-fix sessions separate.
 
+**Selection rule:** work every open issue lacking an opt-out label (`no-ao`,
+`deferred`, `charter`, `charter:*`, `charter-audit`, `human-review`);
+sensitive-path membership is never a reason to skip working a ticket.
+
 **Start here (routing entry points):**
 
 - `/capture <description>` — untracked idea/bug/task → GH issue + bead +
