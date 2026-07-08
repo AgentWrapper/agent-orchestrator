@@ -78,27 +78,33 @@ func (b *BridgeService) currentHost() string { return mobilebridge.AutopickLANIP
 
 func (b *BridgeService) Status() MobileStatusResponse {
 	st, _ := mobilebridge.Load(b.ConfigPath)
-	return MobileStatusResponse{
-		Enabled: st.Enabled && b.LAN.Running(),
+	enabled := st.Enabled && b.LAN.Running()
+	res := MobileStatusResponse{
+		Enabled: enabled,
 		Host:    b.currentHost(),
 		Port:    b.LAN.BoundPort(),
 		Warning: mobileUnencryptedWarning,
 	}
+	// Only surface the password while the bridge is actually enabled. This route
+	// is reachable only on the loopback listener (the LAN listener 404s
+	// /api/v1/mobile via lanControlBlock), so the plaintext never reaches a phone.
+	if enabled {
+		res.Password = st.Password
+	}
+	return res
 }
 
 func (b *BridgeService) enableWithPassword(pw string) (MobileStatusResponse, error) {
-	hash := mobilebridge.HashPassword(pw)
-	b.LAN.SetPasswordHash(hash)
+	// The persisted password is plaintext; the auth hash is derived in memory.
+	b.LAN.SetPasswordHash(mobilebridge.HashPassword(pw))
 	port, err := b.LAN.Start(b.DefaultPort)
 	if err != nil {
 		return MobileStatusResponse{}, err
 	}
-	if err := mobilebridge.Save(b.ConfigPath, mobilebridge.State{Enabled: true, PasswordHash: hash, LastPort: port}); err != nil {
+	if err := mobilebridge.Save(b.ConfigPath, mobilebridge.State{Enabled: true, Password: pw, LastPort: port}); err != nil {
 		return MobileStatusResponse{}, err
 	}
-	res := b.Status()
-	res.Password = pw // transient — never persisted in plaintext
-	return res, nil
+	return b.Status(), nil
 }
 
 func (b *BridgeService) Enable() (MobileStatusResponse, error) {

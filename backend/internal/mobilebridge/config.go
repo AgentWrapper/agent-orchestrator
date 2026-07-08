@@ -19,10 +19,16 @@ import (
 // two listeners can run concurrently.
 const DefaultPort = 3011
 
+// State is the persisted Connect Mobile bridge config in ~/.ao/mobile/config.json.
+// Password is stored in plaintext by deliberate decision: it is a low-value,
+// rotating LAN enabler that already travels in plaintext over the LAN and is
+// shown on the desktop screen, so persisting it (in a 0600 file under ~/.ao)
+// lets the desktop redisplay it while the bridge is enabled. The daemon derives
+// the auth hash from it in memory (HashPassword) — see BridgeService.
 type State struct {
-	Enabled      bool   `json:"enabled"`
-	PasswordHash string `json:"passwordHash"`
-	LastPort     int    `json:"lastPort"`
+	Enabled  bool   `json:"enabled"`
+	Password string `json:"password"`
+	LastPort int    `json:"lastPort"`
 }
 
 func Path(dataDir string) string { return filepath.Join(dataDir, "mobile", "config.json") }

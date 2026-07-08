@@ -28,7 +28,7 @@ func (f *fakeLAN) SetPasswordHash(hash string)     { f.hash = hash }
 func TestRestoreEnabledStartsListener(t *testing.T) {
 	dir := t.TempDir()
 	path := mobilebridge.Path(dir)
-	if err := mobilebridge.Save(path, mobilebridge.State{Enabled: true, PasswordHash: "h", LastPort: 3011}); err != nil {
+	if err := mobilebridge.Save(path, mobilebridge.State{Enabled: true, Password: "secret12", LastPort: 3011}); err != nil {
 		t.Fatalf("save state: %v", err)
 	}
 	lan := &fakeLAN{}
@@ -38,8 +38,10 @@ func TestRestoreEnabledStartsListener(t *testing.T) {
 	if !lan.started {
 		t.Fatal("expected LAN listener started from persisted enabled state")
 	}
-	if lan.hash != "h" {
-		t.Fatalf("expected persisted hash reused, got %q", lan.hash)
+	// Restore derives the auth hash from the persisted plaintext password (no
+	// rotation), so the fake must have received HashPassword(persisted password).
+	if want := mobilebridge.HashPassword("secret12"); lan.hash != want {
+		t.Fatalf("expected hash derived from persisted password %q, got %q", want, lan.hash)
 	}
 	if lan.port != 3011 {
 		t.Fatalf("expected persisted port reused, got %d", lan.port)

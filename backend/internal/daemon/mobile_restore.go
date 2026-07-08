@@ -9,10 +9,11 @@ import (
 
 // restoreMobileOnBoot re-arms the Connect Mobile LAN listener across daemon
 // restarts. If the persisted state says the bridge was enabled, it reuses the
-// existing password hash (no rotation — the paired phone keeps working) and
-// restarts the listener on its last bound port. A non-nil return means the
-// listener failed to (re)bind; the caller logs it as a warning and continues
-// booting regardless — Connect Mobile is best-effort, not load-bearing.
+// existing password (no rotation — the paired phone keeps working), deriving the
+// auth hash in memory, and restarts the listener on its last bound port. A
+// non-nil return means the listener failed to (re)bind; the caller logs it as a
+// warning and continues booting regardless — Connect Mobile is best-effort, not
+// load-bearing.
 func restoreMobileOnBoot(path string, lan controllers.LANController) error {
 	state, err := mobilebridge.Load(path)
 	if err != nil {
@@ -21,7 +22,7 @@ func restoreMobileOnBoot(path string, lan controllers.LANController) error {
 	if !state.Enabled {
 		return nil
 	}
-	lan.SetPasswordHash(state.PasswordHash)
+	lan.SetPasswordHash(mobilebridge.HashPassword(state.Password))
 	if _, err := lan.Start(state.LastPort); err != nil {
 		return fmt.Errorf("restart mobile LAN listener: %w", err)
 	}

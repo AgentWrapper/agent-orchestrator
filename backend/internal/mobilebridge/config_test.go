@@ -10,7 +10,7 @@ import (
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	p := Path(dir)
-	want := State{Enabled: true, PasswordHash: "abc", LastPort: 3011}
+	want := State{Enabled: true, Password: "abc", LastPort: 3011}
 	if err := Save(p, want); err != nil {
 		t.Fatalf("save: %v", err)
 	}
