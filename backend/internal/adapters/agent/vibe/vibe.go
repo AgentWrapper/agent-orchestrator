@@ -24,7 +24,6 @@ package vibe
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 
@@ -35,8 +34,6 @@ import (
 )
 
 const adapterID = "vibe"
-
-var errEmptyWorkerPrompt = errors.New("vibe: worker launch requires a non-empty prompt")
 
 // Plugin is the Mistral Vibe agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
@@ -69,21 +66,20 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new interactive Vibe session:
 //
-//	vibe --trust [--workdir <path>] [--agent <profile>] -- <prompt>
+//	vibe --trust [--workdir <path>] [--agent <profile>] [-- <prompt>]
 //
-// The prompt is delivered as Vibe's positional initial prompt, so AO uses
-// in-command delivery. `--trust` skips the trust prompt for automation and
-// avoiding `-p` keeps Vibe in its Textual TUI instead of programmatic output
-// mode. `--workdir` is passed explicitly because Vibe validates its own working
-// directory in addition to the process cwd AO sets through the runtime. Vibe
-// exposes no CLI system-prompt flag (system prompts are config-driven), so
-// SystemPrompt is not forwarded.
+// When present, the prompt is delivered as Vibe's positional initial prompt, so
+// AO uses in-command delivery. Empty prompts intentionally launch an interactive
+// Vibe TUI with no positional prompt: the session manager uses promptless
+// launches for orchestrators and restore fallback. `--trust` skips the trust
+// prompt for automation and avoiding `-p` keeps Vibe in its Textual TUI instead
+// of programmatic output mode. `--workdir` is passed explicitly because Vibe
+// validates its own working directory in addition to the process cwd AO sets
+// through the runtime. Vibe exposes no CLI system-prompt flag (system prompts
+// are config-driven), so SystemPrompt is not forwarded.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	if strings.TrimSpace(cfg.Prompt) == "" {
-		return nil, errEmptyWorkerPrompt
 	}
 	binary, err := p.vibeBinary(ctx)
 	if err != nil {
@@ -94,7 +90,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = append(cmd, binary, "--trust")
 	appendWorkdirFlag(&cmd, cfg.WorkspacePath)
 	appendAgentFlags(&cmd, cfg.Permissions)
-	cmd = append(cmd, "--", cfg.Prompt)
+	if strings.TrimSpace(cfg.Prompt) != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
 	return cmd, nil
 }
 

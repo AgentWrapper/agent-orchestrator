@@ -207,23 +207,33 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandRejectsEmptyPrompt(t *testing.T) {
+func TestGetLaunchCommandPromptlessLaunchStaysInteractive(t *testing.T) {
 	p := &Plugin{resolvedBinary: "vibe"}
-	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Permissions: ports.PermissionModeAuto,
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:   ports.PermissionModeAuto,
+		WorkspacePath: "/work/repo",
 	})
-	if !errors.Is(err, errEmptyWorkerPrompt) {
-		t.Fatalf("err = %v, want %v", err, errEmptyWorkerPrompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"vibe", "--trust", "--workdir", "/work/repo", "--agent", "auto-approve"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestGetLaunchCommandRejectsWhitespacePrompt(t *testing.T) {
+func TestGetLaunchCommandWhitespacePromptStaysInteractive(t *testing.T) {
 	p := &Plugin{resolvedBinary: "vibe"}
-	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Prompt: " \t\n",
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:      " \t\n",
+		Permissions: ports.PermissionModeAcceptEdits,
 	})
-	if !errors.Is(err, errEmptyWorkerPrompt) {
-		t.Fatalf("err = %v, want %v", err, errEmptyWorkerPrompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"vibe", "--trust", "--agent", "accept-edits"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
