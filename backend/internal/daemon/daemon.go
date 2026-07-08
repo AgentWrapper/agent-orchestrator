@@ -141,7 +141,13 @@ func Run() error {
 
 	// The projects service is shared between the API surface and the agent-health
 	// monitor (which reads project configs to discover the harness set to probe).
-	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
+	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{
+		Store:          store,
+		Sessions:       sessionSvc,
+		ModelValidator: agentSvc,
+		DefaultHarness: domain.AgentHarness(cfg.Agent),
+		Telemetry:      telemetrySink,
+	})
 
 	// Background agent-health monitor: periodically probes each configured
 	// harness for install+auth readiness and tracks transitions so operators can

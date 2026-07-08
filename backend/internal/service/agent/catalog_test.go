@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,12 @@ type fakeAuthAgent struct {
 type probeTrackingAgent struct {
 	fakeAgent
 	onProbe func()
+}
+
+type modelProbeAgent struct {
+	fakeAgent
+	err    error
+	models []string
 }
 
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -93,6 +100,11 @@ func (f fakeAuthAgent) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, e
 		}
 	}
 	return f.status, f.authErr
+}
+
+func (f *modelProbeAgent) ValidateModel(_ context.Context, model string) error {
+	f.models = append(f.models, model)
+	return f.err
 }
 
 func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
@@ -332,6 +344,44 @@ func TestProbeReportsUnsupportedAndMissingAgent(t *testing.T) {
 	}
 	if unsupported.Supported || unsupported.Installed || unsupported.Agent.ID != "unknown" {
 		t.Fatalf("Probe unknown = %#v, want unsupported unknown", unsupported)
+	}
+}
+
+func TestValidateModelForwardsToMatchingHarness(t *testing.T) {
+	codex := &modelProbeAgent{}
+	claude := &modelProbeAgent{}
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness:  domain.HarnessCodex,
+			Manifest: adapters.Manifest{ID: string(domain.HarnessCodex), Name: "Codex"},
+			Agent:    codex,
+		},
+		{
+			Harness:  domain.HarnessClaudeCode,
+			Manifest: adapters.Manifest{ID: string(domain.HarnessClaudeCode), Name: "Claude Code"},
+			Agent:    claude,
+		},
+	})
+
+	if err := svc.ValidateModel(context.Background(), domain.HarnessCodex, " gpt-5.5-codex "); err != nil {
+		t.Fatalf("ValidateModel: %v", err)
+	}
+	if len(codex.models) != 1 || codex.models[0] != "gpt-5.5-codex" {
+		t.Fatalf("codex models = %#v, want trimmed model", codex.models)
+	}
+	if len(claude.models) != 0 {
+		t.Fatalf("claude models = %#v, want no probe", claude.models)
+	}
+}
+
+func TestValidateModelReportsUnsupportedHarness(t *testing.T) {
+	svc := NewWithAgents(nil)
+	err := svc.ValidateModel(context.Background(), domain.AgentHarness("missing"), "model")
+	if err == nil {
+		t.Fatal("ValidateModel err = nil, want unsupported harness")
+	}
+	if !strings.Contains(err.Error(), "unsupported agent") {
+		t.Fatalf("ValidateModel err = %v, want unsupported agent", err)
 	}
 }
 

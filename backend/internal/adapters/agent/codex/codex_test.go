@@ -374,6 +374,98 @@ exit 2
 	}
 }
 
+func TestValidateModelRunsBoundedEphemeralExec(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := filepath.Join(t.TempDir(), "codex")
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$AO_CODEX_ARGS_FILE"
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AO_CODEX_ARGS_FILE", argsFile)
+
+	plugin := &Plugin{resolvedBinary: bin}
+	if err := plugin.ValidateModel(context.Background(), "gpt-5.5-codex"); err != nil {
+		t.Fatalf("ValidateModel: %v", err)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Fields(string(data))
+	for _, want := range [][]string{
+		{"exec"},
+		{"--model", "gpt-5.5-codex"},
+		{"--sandbox", "read-only"},
+		{"--ask-for-approval", "never"},
+		{"--skip-git-repo-check"},
+		{"--ephemeral"},
+		{"--ignore-rules"},
+	} {
+		if !containsSubsequence(args, want) {
+			t.Fatalf("probe args %#v missing %#v", args, want)
+		}
+	}
+}
+
+func TestFuguValidateModelPreservesWrapperFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := filepath.Join(t.TempDir(), "codex-fugu")
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$AO_CODEX_ARGS_FILE"
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AO_CODEX_ARGS_FILE", argsFile)
+
+	plugin := NewFugu()
+	plugin.resolvedBinary = bin
+	if err := plugin.ValidateModel(context.Background(), "fugu-ultra"); err != nil {
+		t.Fatalf("ValidateModel: %v", err)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Fields(string(data))
+	if len(args) < 2 || args[0] != "--no-update" || args[1] != "exec" {
+		t.Fatalf("fugu probe args = %#v, want --no-update before exec", args)
+	}
+}
+
+func TestValidateModelReturnsProviderFailureOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := filepath.Join(t.TempDir(), "codex")
+	script := `#!/bin/sh
+echo '400 model not available' >&2
+exit 1
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	plugin := &Plugin{resolvedBinary: bin}
+	err := plugin.ValidateModel(context.Background(), "gpt-5.5-codex")
+	if err == nil {
+		t.Fatal("ValidateModel err = nil, want provider failure")
+	}
+	if !strings.Contains(err.Error(), "400 model not available") {
+		t.Fatalf("ValidateModel err = %v, want provider output", err)
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string

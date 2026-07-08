@@ -64,6 +64,12 @@ type AgentAuthChecker interface {
 	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
 }
 
+// AgentModelValidator is an optional capability for adapters that can make a
+// bounded provider/account probe for one explicit model pin.
+type AgentModelValidator interface {
+	ValidateModel(ctx context.Context, model string) error
+}
+
 // AgentBinaryResolver is the optional capability adapters expose when their
 // binary can be checked without constructing a real session launch command.
 type AgentBinaryResolver interface {

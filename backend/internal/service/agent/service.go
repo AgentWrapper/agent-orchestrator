@@ -3,17 +3,21 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 var (
 	agentInstallProbeTimeout = 2 * time.Second
 	agentAuthProbeTimeout    = 10 * time.Second
+	agentModelProbeTimeout   = 45 * time.Second
 	agentRefreshMinInterval  = 10 * time.Second
 )
 
@@ -226,6 +230,36 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		}, nil
 	}
 	return ProbeResult{Agent: Info{ID: agentID}, Supported: false, Installed: false}, nil
+}
+
+// ValidateModel runs a fresh bounded provider/account probe for one explicit
+// model pin. Unsupported harnesses fail clearly; adapters without a model-probe
+// capability remain permissive because AO cannot safely infer their model API.
+func (s *Service) ValidateModel(ctx context.Context, harness domain.AgentHarness, model string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	for _, item := range s.agents {
+		if item.Harness != harness {
+			continue
+		}
+		validator, ok := item.Agent.(ports.AgentModelValidator)
+		if !ok {
+			return nil
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, agentModelProbeTimeout)
+		err := validator.ValidateModel(probeCtx, model)
+		cancel()
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported agent %q", harness)
 }
 
 func supportedInfos(agents []agentregistry.HarnessAgent) []Info {

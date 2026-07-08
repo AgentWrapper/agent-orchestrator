@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,10 +48,19 @@ type SessionOps interface {
 	HasActiveOrchestrator(ctx context.Context, project domain.ProjectID) (bool, error)
 }
 
+// ModelValidator optionally performs provider/account reachability checks for
+// explicit model pins in project config.
+type ModelValidator interface {
+	ValidateModel(ctx context.Context, harness domain.AgentHarness, model string) error
+}
+
+const projectConfigModelValidationTimeout = 45 * time.Second
+
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
 	store          Store
 	sessions       SessionOps
+	modelValidator ModelValidator
 	clock          func() time.Time
 	telemetry      ports.EventSink
 	defaultHarness domain.AgentHarness
@@ -70,6 +80,7 @@ type Deps struct {
 	DefaultHarness domain.AgentHarness
 	Store          Store
 	Sessions       SessionOps
+	ModelValidator ModelValidator
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
 }
@@ -88,6 +99,7 @@ func NewWithDeps(d Deps) *Service {
 	s := &Service{
 		store:          d.Store,
 		sessions:       d.Sessions,
+		modelValidator: d.ModelValidator,
 		clock:          d.Clock,
 		telemetry:      d.Telemetry,
 		defaultHarness: defaultHarness,
@@ -160,6 +172,14 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		return Project{}, err
 	}
 
+	var projectConfig domain.ProjectConfig
+	if in.Config != nil {
+		if err := m.validateProjectConfig(ctx, *in.Config); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+		projectConfig = *in.Config
+	}
+
 	m.addMu.Lock()
 	defer m.addMu.Unlock()
 
@@ -191,14 +211,6 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
-	}
-
-	var projectConfig domain.ProjectConfig
-	if in.Config != nil {
-		if err := in.Config.Validate(); err != nil {
-			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
-		}
-		projectConfig = *in.Config
 	}
 
 	registeredAt := time.Now()
@@ -291,7 +303,7 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
-	if err := in.Config.Validate(); err != nil {
+	if err := m.validateProjectConfig(ctx, in.Config); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
@@ -329,6 +341,27 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
 	return m.projectFromRow(row), nil
+}
+
+func (m *Service) validateProjectConfig(ctx context.Context, cfg domain.ProjectConfig) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if m.modelValidator == nil {
+		return nil
+	}
+	validateCtx, cancel := context.WithTimeout(ctx, projectConfigModelValidationTimeout)
+	defer cancel()
+	for i, bucket := range cfg.WorkerMix {
+		model := strings.TrimSpace(bucket.Model)
+		if model == "" {
+			continue
+		}
+		if err := m.modelValidator.ValidateModel(validateCtx, bucket.Harness, model); err != nil {
+			return fmt.Errorf("workerMix[%d].model %q is not reachable for agent %q: %w", i, model, bucket.Harness, err)
+		}
+	}
+	return nil
 }
 
 // resolveGitOriginURL returns the project's `origin` remote URL via

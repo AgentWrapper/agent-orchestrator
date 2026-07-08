@@ -105,6 +105,16 @@ type captureSink struct {
 	events []ports.TelemetryEvent
 }
 
+type fakeModelValidator struct {
+	err   error
+	calls []domain.WorkerMixEntry
+}
+
+func (f *fakeModelValidator) ValidateModel(_ context.Context, harness domain.AgentHarness, model string) error {
+	f.calls = append(f.calls, domain.WorkerMixEntry{Harness: harness, Model: model})
+	return f.err
+}
+
 func (s *captureSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 	s.events = append(s.events, ev)
 }
@@ -442,6 +452,44 @@ func TestManager_SetConfig(t *testing.T) {
 	// Setting on an unknown project is a clean not-found.
 	_, err = m.SetConfig(ctx, "ghost", project.SetConfigInput{Config: cfg})
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_SetConfigRejectsUnreachableWorkerMixModel(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeModelValidator{err: errors.New("400 model not available")}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config: domain.ProjectConfig{
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100},
+			},
+		},
+	})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+	if len(validator.calls) != 1 {
+		t.Fatalf("validator calls = %#v, want one codex model probe", validator.calls)
+	}
+	if validator.calls[0].Harness != domain.HarnessCodex || validator.calls[0].Model != "gpt-5.5-codex" {
+		t.Fatalf("validator call = %#v, want codex/gpt-5.5-codex", validator.calls[0])
+	}
+
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.Config != nil {
+		t.Fatalf("bad worker mix config persisted: %#v", got.Project)
+	}
 }
 
 // TestManager_SetConfigRejectsPrefixChangeWithLiveOrchestrator reproduces #113:

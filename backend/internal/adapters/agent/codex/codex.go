@@ -65,6 +65,7 @@ func (p *Plugin) EmitsBlockedActivity() bool { return true }
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentModelValidator = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -184,6 +185,52 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnauthorized, cmdErr
 	}
 	return ports.AgentAuthStatusUnknown, nil
+}
+
+// ValidateModel performs a bounded non-interactive Codex call with the requested
+// model. This catches account/provider rejections that namespace validation
+// cannot know about, before a worker-mix bucket is stored.
+func (p *Plugin) ValidateModel(ctx context.Context, model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	binary, err := p.agentBinary(ctx)
+	if err != nil {
+		return err
+	}
+	args := make([]string, 0, 16)
+	p.appendWrapperFlags(&args)
+	args = append(args,
+		"exec",
+		"--model", model,
+		"--sandbox", "read-only",
+		"--ask-for-approval", "never",
+		"--skip-git-repo-check",
+		"--ephemeral",
+		"--ignore-rules",
+		"--color", "never",
+		"Reply exactly OK. Do not use tools.",
+	)
+	out, err := exec.CommandContext(ctx, binary, args...).CombinedOutput()
+	if ctx.Err() != nil {
+		return fmt.Errorf("model probe timed out: %w", ctx.Err())
+	}
+	if err != nil {
+		return fmt.Errorf("model probe failed: %w%s", err, formatProbeOutput(out))
+	}
+	return nil
+}
+
+func formatProbeOutput(out []byte) string {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return ""
+	}
+	if len(text) > 500 {
+		text = text[:500] + "...[truncated]"
+	}
+	return ": " + text
 }
 
 func (p *Plugin) appendWrapperFlags(cmd *[]string) {
