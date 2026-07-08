@@ -540,6 +540,13 @@ func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message str
 	f.sentMessages = append(f.sentMessages, message)
 	return nil
 }
+
+func (f *fakeCommander) AffectedByPermissionChange(_ context.Context, _ domain.ProjectID) ([]sessionmanager.AffectedSession, error) {
+	return nil, nil
+}
+func (f *fakeCommander) RelaunchForPermissionChange(_ context.Context, _ domain.ProjectID) ([]sessionmanager.RelaunchOutcome, error) {
+	return nil, nil
+}
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)
 	if f.cleanupErr != nil {
