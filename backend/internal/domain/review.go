@@ -37,7 +37,11 @@ type ReviewRun struct {
 	// legacy/single-run delivery.
 	BatchID string          `json:"batchId"`
 	Harness ReviewerHarness `json:"harness"`
-	PRURL   string          `json:"prUrl"`
+	// Source identifies which review system produced this run. "ao-review"
+	// marks daemon-spawned native reviewers; "final-review" marks the
+	// polypowers final-review gate recorded through AO for merge gating.
+	Source ReviewRunSource `json:"source"`
+	PRURL  string          `json:"prUrl"`
 	// TargetSHA is the PR head commit this pass reviewed.
 	TargetSHA string          `json:"targetSha"`
 	Status    ReviewRunStatus `json:"status"`
@@ -65,6 +69,20 @@ const (
 	ReviewRunDelivered ReviewRunStatus = "delivered"
 	ReviewRunFailed    ReviewRunStatus = "failed"
 )
+
+// ReviewRunSource identifies the review system that produced a ReviewRun.
+type ReviewRunSource string
+
+// Review run sources.
+const (
+	ReviewRunSourceAOReview    ReviewRunSource = "ao-review"
+	ReviewRunSourceFinalReview ReviewRunSource = "final-review"
+)
+
+// Valid reports whether s is a recognized review run source.
+func (s ReviewRunSource) Valid() bool {
+	return s == ReviewRunSourceAOReview || s == ReviewRunSourceFinalReview
+}
 
 // ReviewVerdict is the outcome a reviewer reports. The empty verdict marks a
 // run that has not produced an outcome yet.

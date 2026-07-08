@@ -43,7 +43,7 @@ func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, re
 	f.submitted = append([]reviewsvc.SubmittedReview(nil), reviews...)
 	runs := make([]domain.ReviewRun, 0, len(reviews))
 	for _, review := range reviews {
-		runs = append(runs, domain.ReviewRun{ID: review.RunID, Verdict: review.Verdict, Body: review.Body, GithubReviewID: review.GithubReviewID})
+		runs = append(runs, domain.ReviewRun{ID: review.RunID, Source: review.Source, PRURL: review.PRURL, TargetSHA: review.TargetSHA, Verdict: review.Verdict, Body: review.Body, GithubReviewID: review.GithubReviewID})
 	}
 	return runs, nil
 }
@@ -142,5 +142,26 @@ func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
+	}
+}
+
+func TestReviewsSubmitAcceptsFinalReviewByPRHead(t *testing.T) {
+	svc := &fakeReviewService{}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/submit", `{"source":"final-review","prUrl":"https://github.com/o/r/pull/1","targetSha":"abc123","verdict":"approved","body":"clean"}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if len(svc.submitted) != 1 {
+		t.Fatalf("submitted = %+v", svc.submitted)
+	}
+	got := svc.submitted[0]
+	if got.Source != domain.ReviewRunSourceFinalReview || got.PRURL != "https://github.com/o/r/pull/1" || got.TargetSHA != "abc123" || got.RunID != "" {
+		t.Fatalf("submitted = %+v", got)
+	}
+	if !strings.Contains(string(body), `"source":"final-review"`) {
+		t.Fatalf("body missing final-review source: %s", body)
 	}
 }

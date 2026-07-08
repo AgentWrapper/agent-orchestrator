@@ -132,6 +132,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ReviewRunStatus"
+          - column: "review_run.source"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ReviewRunSource"
           - column: "review_run.verdict"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

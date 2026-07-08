@@ -47,6 +47,7 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 		if existing.SessionID == r.SessionID &&
 			existing.PRURL == r.PRURL &&
 			existing.TargetSHA == r.TargetSHA &&
+			reviewRunSourceOrDefault(existing.Source) == reviewRunSourceOrDefault(r.Source) &&
 			existing.TargetSHA != "" &&
 			existing.Status != domain.ReviewRunFailed &&
 			existing.Verdict != domain.VerdictChangesRequested {
@@ -103,9 +104,10 @@ func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun
 	}
 	return domain.ReviewRun{}, false, nil
 }
-func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, sessionID domain.SessionID, prURL, sha string) (domain.ReviewRun, bool, error) {
+func (f *fakeStore) GetReviewRunBySessionPRSHAAndSource(_ context.Context, sessionID domain.SessionID, prURL, sha string, source domain.ReviewRunSource) (domain.ReviewRun, bool, error) {
+	source = reviewRunSourceOrDefault(source)
 	for i := len(f.runs) - 1; i >= 0; i-- {
-		if f.runs[i].SessionID == sessionID && f.runs[i].PRURL == prURL && f.runs[i].TargetSHA == sha {
+		if f.runs[i].SessionID == sessionID && f.runs[i].PRURL == prURL && f.runs[i].TargetSHA == sha && reviewRunSourceOrDefault(f.runs[i].Source) == source {
 			return f.runs[i], true, nil
 		}
 	}
@@ -113,6 +115,13 @@ func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, sessionID d
 }
 func (f *fakeStore) ListReviewRunsBySession(_ context.Context, _ domain.SessionID) ([]domain.ReviewRun, error) {
 	return f.runs, nil
+}
+
+func reviewRunSourceOrDefault(source domain.ReviewRunSource) domain.ReviewRunSource {
+	if source == "" {
+		return domain.ReviewRunSourceAOReview
+	}
+	return source
 }
 
 type fakeSessions struct {
@@ -188,6 +197,18 @@ func newEngineForTest(store Store, sessions Sessions, prs PRs, projects Projects
 		Clock: func() time.Time { return time.Unix(0, 0).UTC() },
 		NewID: func() string { ids++; return "id-" + string(rune('0'+ids)) },
 	})
+}
+
+func fixedIDs(ids ...string) func() string {
+	i := 0
+	return func() string {
+		if i >= len(ids) {
+			return "extra-id"
+		}
+		id := ids[i]
+		i++
+		return id
+	}
 }
 
 func prAt(sha string) fakePRs {
@@ -603,5 +624,156 @@ func TestListReturnsHandleAndRuns(t *testing.T) {
 	}
 	if got.ReviewerHandleID != "review-mer-1" || len(got.Runs) != 1 {
 		t.Fatalf("list = %+v", got)
+	}
+}
+
+func TestRecordFinalReviewCreatesHeadScopedVerdict(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	store := &fakeStore{}
+	eng := New(Deps{
+		Store:    store,
+		Sessions: fakeSessions{rec: liveWorker(), ok: true},
+		PRs:      fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", Number: 1, HeadSHA: "sha1"}}},
+		Projects: fakeProjects{},
+		Launcher: &fakeLauncher{},
+		Clock:    func() time.Time { return now },
+		NewID:    fixedIDs("review-1", "run-final"),
+	})
+
+	run, err := eng.RecordFinalReview(context.Background(), "mer-1", FinalReviewRecord{
+		PRURL:     "https://github.com/o/r/pull/1",
+		TargetSHA: "sha1",
+		Verdict:   domain.VerdictApproved,
+		Body:      "final-review verdict: clean",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ID != "run-final" || run.Source != domain.ReviewRunSourceFinalReview || run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictApproved {
+		t.Fatalf("run = %+v", run)
+	}
+	states := Plan([]domain.PullRequest{{URL: run.PRURL, Number: 1, HeadSHA: "sha1"}}, store.runs)
+	if len(states) != 1 || states[0].FinalReviewStatus != ReviewStateUpToDate || states[0].FinalReview == nil || states[0].FinalReview.ID != run.ID {
+		t.Fatalf("states = %+v", states)
+	}
+}
+
+func TestRecordFinalReviewCoexistsWithNativeRunOnSameHead(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	store := &fakeStore{
+		review: &domain.Review{ID: "review-1", SessionID: "mer-1", ProjectID: "mer", Harness: domain.ReviewerClaudeCode, CreatedAt: now, UpdatedAt: now},
+		runs: []domain.ReviewRun{{
+			ID:        "run-native",
+			ReviewID:  "review-1",
+			SessionID: "mer-1",
+			Source:    domain.ReviewRunSourceAOReview,
+			PRURL:     "https://github.com/o/r/pull/1",
+			TargetSHA: "sha1",
+			Status:    domain.ReviewRunComplete,
+			Verdict:   domain.VerdictApproved,
+			CreatedAt: now,
+		}},
+	}
+	eng := New(Deps{
+		Store:    store,
+		Sessions: fakeSessions{rec: liveWorker(), ok: true},
+		PRs:      fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", Number: 1, HeadSHA: "sha1"}}},
+		Projects: fakeProjects{},
+		Launcher: &fakeLauncher{},
+		Clock:    func() time.Time { return now.Add(time.Second) },
+		NewID:    fixedIDs("review-unused", "run-final"),
+	})
+
+	run, err := eng.RecordFinalReview(context.Background(), "mer-1", FinalReviewRecord{
+		PRURL:     "https://github.com/o/r/pull/1",
+		TargetSHA: "sha1",
+		Verdict:   domain.VerdictApproved,
+		Body:      "final-review verdict: clean",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ID != "run-final" || run.Source != domain.ReviewRunSourceFinalReview {
+		t.Fatalf("run = %+v", run)
+	}
+	if len(store.runs) != 2 {
+		t.Fatalf("runs = %+v", store.runs)
+	}
+}
+
+func TestTriggerCoexistsWithFinalReviewRunOnSameHead(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	store := &fakeStore{
+		review: &domain.Review{ID: "review-1", SessionID: "mer-1", ProjectID: "mer", Harness: domain.ReviewerClaudeCode, CreatedAt: now, UpdatedAt: now},
+		runs: []domain.ReviewRun{{
+			ID:        "run-final",
+			ReviewID:  "review-1",
+			SessionID: "mer-1",
+			Source:    domain.ReviewRunSourceFinalReview,
+			PRURL:     "https://github.com/o/r/pull/1",
+			TargetSHA: "sha1",
+			Status:    domain.ReviewRunComplete,
+			Verdict:   domain.VerdictApproved,
+			CreatedAt: now,
+		}},
+	}
+	launcher := &fakeLauncher{}
+	eng := New(Deps{
+		Store:    store,
+		Sessions: fakeSessions{rec: liveWorker(), ok: true},
+		PRs:      fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", Number: 1, HeadSHA: "sha1"}}},
+		Projects: fakeProjects{},
+		Launcher: launcher,
+		Clock:    func() time.Time { return now.Add(time.Second) },
+		NewID:    fixedIDs("review-unused", "batch-1", "run-native"),
+	})
+
+	result, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Created || len(store.runs) != 2 {
+		t.Fatalf("result = %+v runs=%+v", result, store.runs)
+	}
+	if result.Run.ID != "run-native" || result.Run.Source != domain.ReviewRunSourceAOReview {
+		t.Fatalf("run = %+v", result.Run)
+	}
+}
+
+func TestRecordFinalReviewIsInvalidatedByNewHead(t *testing.T) {
+	run := domain.ReviewRun{
+		ID:        "run-final",
+		SessionID: "mer-1",
+		Source:    domain.ReviewRunSourceFinalReview,
+		PRURL:     "https://github.com/o/r/pull/1",
+		TargetSHA: "sha1",
+		Status:    domain.ReviewRunComplete,
+		Verdict:   domain.VerdictApproved,
+		CreatedAt: time.Unix(100, 0).UTC(),
+	}
+
+	states := Plan([]domain.PullRequest{{URL: run.PRURL, Number: 1, HeadSHA: "sha2"}}, []domain.ReviewRun{run})
+	if len(states) != 1 || states[0].FinalReviewStatus != ReviewStateNeedsReview || states[0].FinalReview != nil {
+		t.Fatalf("states = %+v", states)
+	}
+}
+
+func TestRecordFinalReviewRejectsStaleHead(t *testing.T) {
+	eng := New(Deps{
+		Store:    &fakeStore{},
+		Sessions: fakeSessions{rec: liveWorker(), ok: true},
+		PRs:      fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", Number: 1, HeadSHA: "sha2"}}},
+		Projects: fakeProjects{},
+		Launcher: &fakeLauncher{},
+		NewID:    fixedIDs("review-1", "run-final"),
+	})
+
+	_, err := eng.RecordFinalReview(context.Background(), "mer-1", FinalReviewRecord{
+		PRURL:     "https://github.com/o/r/pull/1",
+		TargetSHA: "sha1",
+		Verdict:   domain.VerdictApproved,
+	})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
 }

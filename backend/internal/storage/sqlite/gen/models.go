@@ -158,6 +158,7 @@ type ReviewRun struct {
 	GithubReviewID string
 	DeliveredAt    sql.NullTime
 	BatchID        string
+	Source         domain.ReviewRunSource
 }
 
 type Session struct {

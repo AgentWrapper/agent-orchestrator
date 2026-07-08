@@ -12,6 +12,7 @@ import (
 	stdctx "context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +38,7 @@ type Store interface {
 	SupersedeReviewRun(ctx stdctx.Context, id, body string) (bool, error)
 	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
 	GetReviewRun(ctx stdctx.Context, id string) (domain.ReviewRun, bool, error)
-	GetReviewRunBySessionPRAndSHA(ctx stdctx.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error)
+	GetReviewRunBySessionPRSHAAndSource(ctx stdctx.Context, id domain.SessionID, prURL, targetSHA string, source domain.ReviewRunSource) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
 
@@ -147,6 +148,17 @@ type SessionReviews struct {
 	Reviews          []PRReviewState
 }
 
+// FinalReviewRecord is a completed external final-review verdict for one PR
+// head. It is recorded into review_run so AO has one authoritative,
+// head-SHA-scoped review read model.
+type FinalReviewRecord struct {
+	PRURL          string
+	TargetSHA      string
+	Verdict        domain.ReviewVerdict
+	Body           string
+	GithubReviewID string
+}
+
 // Trigger starts reviews for every PR on the worker session that needs review.
 // It reuses running/up-to-date runs, retries failed/current changes-requested
 // heads, and uses one reviewer pane for every new run in the batch.
@@ -237,6 +249,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 			SessionID: workerID,
 			BatchID:   batchID,
 			Harness:   harness,
+			Source:    domain.ReviewRunSourceAOReview,
 			PRURL:     reviewState.PRURL,
 			TargetSHA: reviewState.TargetSHA,
 			Status:    domain.ReviewRunRunning,
@@ -245,7 +258,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		}
 		if err := e.store.InsertReviewRun(ctx, run); err != nil {
 			if errors.Is(err, domain.ErrDuplicateReviewRun) {
-				if existing, ok, getErr := e.store.GetReviewRunBySessionPRAndSHA(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA); getErr != nil {
+				if existing, ok, getErr := e.store.GetReviewRunBySessionPRSHAAndSource(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, domain.ReviewRunSourceAOReview); getErr != nil {
 					return TriggerResult{}, getErr
 				} else if ok {
 					reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, existing)
@@ -300,6 +313,113 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		created[i].ReviewID = reviewRow.ID
 	}
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
+}
+
+// RecordFinalReview records the polypowers final-review gate result for a
+// worker's current PR head without launching AO's native reviewer.
+func (e *Engine) RecordFinalReview(ctx stdctx.Context, workerID domain.SessionID, record FinalReviewRecord) (domain.ReviewRun, error) {
+	if workerID == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	record.PRURL = strings.TrimSpace(record.PRURL)
+	record.TargetSHA = strings.TrimSpace(record.TargetSHA)
+	if record.PRURL == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: prUrl is required for final-review", ErrInvalid)
+	}
+	if record.TargetSHA == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: targetSha is required for final-review", ErrInvalid)
+	}
+	if !record.Verdict.Valid() {
+		return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
+	}
+	if record.Verdict == domain.VerdictChangesRequested && strings.TrimSpace(record.Body) == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: a non-clean final-review requires a body", ErrInvalid)
+	}
+
+	worker, ok, err := e.sessions.GetSession(ctx, workerID)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	if !ok {
+		return domain.ReviewRun{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
+	}
+	if worker.IsTerminated {
+		return domain.ReviewRun{}, fmt.Errorf("%w: worker session %q is terminated", ErrInvalid, workerID)
+	}
+	prs, err := e.prs.ListPRsBySession(ctx, workerID)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	if !currentPRHead(prs, record.PRURL, record.TargetSHA) {
+		return domain.ReviewRun{}, fmt.Errorf("%w: final-review target %s @ %s is not a current PR head for worker %q", ErrInvalid, record.PRURL, record.TargetSHA, workerID)
+	}
+
+	if existing, ok, err := e.store.GetReviewRunBySessionPRSHAAndSource(ctx, workerID, record.PRURL, record.TargetSHA, domain.ReviewRunSourceFinalReview); err != nil {
+		return domain.ReviewRun{}, err
+	} else if ok && existing.Status != domain.ReviewRunFailed {
+		if existing.Verdict != record.Verdict {
+			return domain.ReviewRun{}, fmt.Errorf("%w: final-review for %s @ %s already recorded verdict %q", ErrInvalid, record.PRURL, record.TargetSHA, existing.Verdict)
+		}
+		if record.Body != "" && existing.Body != "" && record.Body != existing.Body {
+			return domain.ReviewRun{}, fmt.Errorf("%w: final-review for %s @ %s already recorded a different body", ErrInvalid, record.PRURL, record.TargetSHA)
+		}
+		if record.GithubReviewID != "" && existing.GithubReviewID != "" && record.GithubReviewID != existing.GithubReviewID {
+			return domain.ReviewRun{}, fmt.Errorf("%w: final-review for %s @ %s already recorded GitHub review id %q", ErrInvalid, record.PRURL, record.TargetSHA, existing.GithubReviewID)
+		}
+		return existing, nil
+	}
+
+	harness, err := e.reviewerHarness(ctx, worker)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	now := e.clock()
+	reviewRow, err := e.upsertReview(ctx, worker, harness, existingReviewerHandle(e.store, ctx, workerID), now)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	run := domain.ReviewRun{
+		ID:             e.newID(),
+		ReviewID:       reviewRow.ID,
+		SessionID:      workerID,
+		Harness:        harness,
+		Source:         domain.ReviewRunSourceFinalReview,
+		PRURL:          record.PRURL,
+		TargetSHA:      record.TargetSHA,
+		Status:         domain.ReviewRunComplete,
+		Verdict:        record.Verdict,
+		Body:           record.Body,
+		GithubReviewID: record.GithubReviewID,
+		CreatedAt:      now,
+	}
+	if err := e.store.InsertReviewRun(ctx, run); err != nil {
+		if errors.Is(err, domain.ErrDuplicateReviewRun) {
+			if existing, ok, getErr := e.store.GetReviewRunBySessionPRSHAAndSource(ctx, workerID, record.PRURL, record.TargetSHA, domain.ReviewRunSourceFinalReview); getErr != nil {
+				return domain.ReviewRun{}, getErr
+			} else if ok {
+				return existing, nil
+			}
+		}
+		return domain.ReviewRun{}, err
+	}
+	return run, nil
+}
+
+func currentPRHead(prs []domain.PullRequest, prURL, targetSHA string) bool {
+	for _, pr := range prs {
+		if pr.URL == prURL && pr.HeadSHA == targetSHA && !pr.Draft && !pr.Merged && !pr.Closed {
+			return true
+		}
+	}
+	return false
+}
+
+func existingReviewerHandle(store Store, ctx stdctx.Context, workerID domain.SessionID) string {
+	review, ok, err := store.GetReviewBySession(ctx, workerID)
+	if err != nil || !ok {
+		return ""
+	}
+	return review.ReviewerHandleID
 }
 
 func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {

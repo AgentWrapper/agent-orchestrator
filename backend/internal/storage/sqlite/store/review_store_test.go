@@ -32,13 +32,28 @@ func TestInsertReviewRunDuplicatePRSHAMapsToSentinel(t *testing.T) {
 		t.Fatalf("first insert: %v", err)
 	}
 
-	// A second run for the same (session_id, pr_url, target_sha) hits the
-	// partial unique index (migration 0020) and must surface as the sentinel so
-	// the engine can fall back to the existing run.
+	// A second run for the same (session_id, pr_url, target_sha, source) hits
+	// the partial unique index and must surface as the sentinel so the engine
+	// can fall back to the existing run.
 	dup := run
 	dup.ID = "run-2"
 	if err := s.InsertReviewRun(ctx, dup); !errors.Is(err, domain.ErrDuplicateReviewRun) {
 		t.Fatalf("duplicate insert err = %v, want ErrDuplicateReviewRun", err)
+	}
+
+	finalReview := run
+	finalReview.ID = "run-final-review"
+	finalReview.Source = domain.ReviewRunSourceFinalReview
+	finalReview.Status = domain.ReviewRunComplete
+	finalReview.Verdict = domain.VerdictApproved
+	if err := s.InsertReviewRun(ctx, finalReview); err != nil {
+		t.Fatalf("same head from final-review source should insert: %v", err)
+	}
+
+	dupFinalReview := finalReview
+	dupFinalReview.ID = "run-final-review-dup"
+	if err := s.InsertReviewRun(ctx, dupFinalReview); !errors.Is(err, domain.ErrDuplicateReviewRun) {
+		t.Fatalf("duplicate final-review insert err = %v, want ErrDuplicateReviewRun", err)
 	}
 
 	otherPR := run
@@ -165,14 +180,14 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 		t.Fatalf("get run = %+v", gotRun)
 	}
 
-	bySHA, ok, err := s.GetReviewRunBySessionPRAndSHA(ctx, rec.ID, got.PRURL, "sha1")
+	bySHA, ok, err := s.GetReviewRunBySessionPRSHAAndSource(ctx, rec.ID, got.PRURL, "sha1", domain.ReviewRunSourceAOReview)
 	if err != nil || !ok {
 		t.Fatalf("by sha: ok=%v err=%v", ok, err)
 	}
 	if bySHA.Status != domain.ReviewRunComplete || bySHA.Verdict != domain.VerdictChangesRequested || bySHA.Body != "please fix" || bySHA.GithubReviewID != "rev-987" {
 		t.Fatalf("run result not persisted: %+v", bySHA)
 	}
-	if _, ok, _ := s.GetReviewRunBySessionPRAndSHA(ctx, rec.ID, got.PRURL, "other"); ok {
+	if _, ok, _ := s.GetReviewRunBySessionPRSHAAndSource(ctx, rec.ID, got.PRURL, "other", domain.ReviewRunSourceAOReview); ok {
 		t.Fatal("unexpected run for a different sha")
 	}
 
@@ -204,7 +219,7 @@ func TestReviewGettersMissing(t *testing.T) {
 	if _, ok, err := s.GetReviewBySession(ctx, "mer-1"); err != nil || ok {
 		t.Fatalf("missing review: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := s.GetReviewRunBySessionPRAndSHA(ctx, "mer-1", "pr1", "sha1"); err != nil || ok {
+	if _, ok, err := s.GetReviewRunBySessionPRSHAAndSource(ctx, "mer-1", "pr1", "sha1", domain.ReviewRunSourceAOReview); err != nil || ok {
 		t.Fatalf("missing run: ok=%v err=%v", ok, err)
 	}
 	if _, ok, err := s.GetReviewRun(ctx, "run-missing"); err != nil || ok {

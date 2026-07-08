@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
@@ -29,6 +30,7 @@ type Store interface {
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
+	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
@@ -623,7 +625,43 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, PRs: prs}, nil
+	status := deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness))
+	if status == domain.StatusMergeable || status == domain.StatusApproved {
+		clean, err := s.currentHeadsHaveCleanFinalReview(ctx, rec.ID)
+		if err != nil {
+			return domain.Session{}, err
+		}
+		if !clean {
+			status = domain.StatusReviewPending
+		}
+	}
+	return domain.Session{SessionRecord: rec, Status: status, TerminalHandleID: rec.Metadata.RuntimeHandleID, PRs: prs}, nil
+}
+
+func (s *Service) currentHeadsHaveCleanFinalReview(ctx context.Context, id domain.SessionID) (bool, error) {
+	prs, err := s.store.ListPRsBySession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	open := make([]domain.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.URL != "" && pr.HeadSHA != "" && !pr.Draft && !pr.Merged && !pr.Closed {
+			open = append(open, pr)
+		}
+	}
+	if len(open) == 0 {
+		return true, nil
+	}
+	runs, err := s.store.ListReviewRunsBySession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	for _, state := range reviewcore.Plan(open, runs) {
+		if state.FinalReviewStatus != reviewcore.ReviewStateUpToDate {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

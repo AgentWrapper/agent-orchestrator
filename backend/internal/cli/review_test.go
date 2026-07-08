@@ -130,6 +130,25 @@ func TestReviewSubmitBatchReadsReviewsFromStdin(t *testing.T) {
 	}
 }
 
+func TestReviewSubmitFinalReviewUsesPRHead(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"approved","source":"final-review"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, aliveDeps(),
+		"review", "submit", "mer-1", "--source", "final-review", "--pr-url", "https://github.com/o/r/pull/1", "--target-sha", "abc123", "--verdict", "approved")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.Source != "final-review" || req.PRURL != "https://github.com/o/r/pull/1" || req.TargetSHA != "abc123" || req.RunID != "" {
+		t.Fatalf("request = %+v", req)
+	}
+}
+
 func TestReviewSubmitUsesSessionFlag(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"approved"}}`)
@@ -162,6 +181,14 @@ func TestReviewSubmitMissingWorkerIsUsageError(t *testing.T) {
 func TestReviewSubmitMissingRunIsUsageError(t *testing.T) {
 	setConfigEnv(t)
 	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "--verdict", "approved")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
+func TestReviewSubmitFinalReviewRequiresPRHead(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "--source", "final-review", "--verdict", "approved")
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}

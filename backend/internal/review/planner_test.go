@@ -22,6 +22,9 @@ func TestPlanStatuses(t *testing.T) {
 		{name: "approved current sha up to date", pr: planPR("pr1", 1, "sha1"), runs: []domain.ReviewRun{
 			{ID: "run-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now},
 		}, want: ReviewStateUpToDate},
+		{name: "final review current sha does not satisfy native status", pr: planPR("pr1", 1, "sha1"), runs: []domain.ReviewRun{
+			{ID: "run-1", Source: domain.ReviewRunSourceFinalReview, PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now},
+		}, want: ReviewStateNeedsReview},
 		{name: "changes requested current sha", pr: planPR("pr1", 1, "sha1"), runs: []domain.ReviewRun{
 			{ID: "run-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested, CreatedAt: now},
 		}, want: ReviewStateChangesRequested},

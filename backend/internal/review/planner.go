@@ -24,50 +24,51 @@ const (
 
 // PRReviewState is one PR-scoped review decision for a worker session.
 type PRReviewState struct {
-	PRURL     string            `json:"prUrl"`
-	PRNumber  int               `json:"prNumber"`
-	Title     string            `json:"title"`
-	TargetSHA string            `json:"targetSha"`
-	Status    StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
-	LatestRun *domain.ReviewRun `json:"latestRun,omitempty"`
+	PRURL             string            `json:"prUrl"`
+	PRNumber          int               `json:"prNumber"`
+	Title             string            `json:"title"`
+	TargetSHA         string            `json:"targetSha"`
+	Status            StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	LatestRun         *domain.ReviewRun `json:"latestRun,omitempty"`
+	FinalReviewStatus StateStatus       `json:"finalReviewStatus" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	FinalReview       *domain.ReviewRun `json:"finalReview,omitempty"`
 }
 
 // Plan computes per-PR review work from the currently observed PRs and existing
 // review runs. It is pure so the trigger path and API list path share exactly
 // the same eligibility/status rules.
 func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
-	latest := latestRunsByPRAndSHA(runs)
+	latest := latestNativeRunsByPRAndSHA(runs)
+	finalReviews := latestRunsByPRAndSHA(runs, domain.ReviewRunSourceFinalReview)
 	reviews := make([]PRReviewState, 0, len(prs))
 	for _, pr := range prs {
 		review := PRReviewState{
-			PRURL:     pr.URL,
-			PRNumber:  pr.Number,
-			Title:     pr.Title,
-			TargetSHA: pr.HeadSHA,
-			Status:    ReviewStateNeedsReview,
+			PRURL:             pr.URL,
+			PRNumber:          pr.Number,
+			Title:             pr.Title,
+			TargetSHA:         pr.HeadSHA,
+			Status:            ReviewStateNeedsReview,
+			FinalReviewStatus: ReviewStateNeedsReview,
 		}
 		if pr.URL == "" || pr.HeadSHA == "" || pr.Draft || pr.Merged || pr.Closed {
 			review.Status = ReviewStateIneligible
+			review.FinalReviewStatus = ReviewStateIneligible
 			if run, ok := latest[review.PRURL+"\x00"+review.TargetSHA]; ok {
 				review.LatestRun = &run
+			}
+			if run, ok := finalReviews[review.PRURL+"\x00"+review.TargetSHA]; ok {
+				review.FinalReview = &run
 			}
 			reviews = append(reviews, review)
 			continue
 		}
 		if run, ok := latest[review.PRURL+"\x00"+review.TargetSHA]; ok {
 			review.LatestRun = &run
-			switch {
-			case run.Status == domain.ReviewRunRunning:
-				review.Status = ReviewStateRunning
-			case run.Verdict == domain.VerdictApproved:
-				review.Status = ReviewStateUpToDate
-			case run.Verdict == domain.VerdictChangesRequested:
-				review.Status = ReviewStateChangesRequested
-			case run.Status == domain.ReviewRunFailed:
-				review.Status = ReviewStateNeedsReview
-			default:
-				review.Status = ReviewStateNeedsReview
-			}
+			review.Status = statusForRun(run)
+		}
+		if run, ok := finalReviews[review.PRURL+"\x00"+review.TargetSHA]; ok {
+			review.FinalReview = &run
+			review.FinalReviewStatus = statusForRun(run)
 		}
 		reviews = append(reviews, review)
 	}
@@ -80,10 +81,42 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 	return reviews
 }
 
-func latestRunsByPRAndSHA(runs []domain.ReviewRun) map[string]domain.ReviewRun {
+func statusForRun(run domain.ReviewRun) StateStatus {
+	switch {
+	case run.Status == domain.ReviewRunRunning:
+		return ReviewStateRunning
+	case run.Verdict == domain.VerdictApproved:
+		return ReviewStateUpToDate
+	case run.Verdict == domain.VerdictChangesRequested:
+		return ReviewStateChangesRequested
+	case run.Status == domain.ReviewRunFailed:
+		return ReviewStateNeedsReview
+	default:
+		return ReviewStateNeedsReview
+	}
+}
+
+func latestRunsByPRAndSHA(runs []domain.ReviewRun, source domain.ReviewRunSource) map[string]domain.ReviewRun {
 	latest := make(map[string]domain.ReviewRun)
 	for _, run := range runs {
 		if run.PRURL == "" || run.TargetSHA == "" {
+			continue
+		}
+		if source != "" && run.Source != source {
+			continue
+		}
+		key := run.PRURL + "\x00" + run.TargetSHA
+		if existing, ok := latest[key]; !ok || run.CreatedAt.After(existing.CreatedAt) {
+			latest[key] = run
+		}
+	}
+	return latest
+}
+
+func latestNativeRunsByPRAndSHA(runs []domain.ReviewRun) map[string]domain.ReviewRun {
+	latest := make(map[string]domain.ReviewRun)
+	for _, run := range runs {
+		if run.PRURL == "" || run.TargetSHA == "" || run.Source == domain.ReviewRunSourceFinalReview {
 			continue
 		}
 		key := run.PRURL + "\x00" + run.TargetSHA

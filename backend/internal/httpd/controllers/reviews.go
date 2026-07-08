@@ -39,7 +39,10 @@ type TriggerReviewResponse struct {
 
 // SubmitReviewItem is one review result in a batched submit request.
 type SubmitReviewItem struct {
-	RunID          string `json:"runId" description:"Review run id being completed."`
+	RunID          string `json:"runId,omitempty" description:"Review run id being completed. Required for ao-review submissions; omitted for final-review submissions."`
+	Source         string `json:"source,omitempty" description:"Review source: ao-review or final-review. final-review submissions use prUrl and targetSha instead of runId."`
+	PRURL          string `json:"prUrl,omitempty" description:"PR URL for final-review submissions."`
+	TargetSHA      string `json:"targetSha,omitempty" description:"PR head SHA for final-review submissions."`
 	Verdict        string `json:"verdict" description:"Review verdict: approved or changes_requested."`
 	Body           string `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
 	GithubReviewID string `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
@@ -48,6 +51,9 @@ type SubmitReviewItem struct {
 // SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
 type SubmitReviewInput struct {
 	RunID          string             `json:"runId,omitempty" description:"Review run id being completed."`
+	Source         string             `json:"source,omitempty" description:"Review source: ao-review or final-review. final-review submissions use prUrl and targetSha instead of runId."`
+	PRURL          string             `json:"prUrl,omitempty" description:"PR URL for final-review submissions."`
+	TargetSHA      string             `json:"targetSha,omitempty" description:"PR head SHA for final-review submissions."`
 	Verdict        string             `json:"verdict,omitempty" description:"Review verdict: approved or changes_requested."`
 	Body           string             `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
 	GithubReviewID string             `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
@@ -124,6 +130,9 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 		for _, item := range in.Reviews {
 			reviews = append(reviews, reviewsvc.SubmittedReview{
 				RunID:          item.RunID,
+				Source:         domain.ReviewRunSource(item.Source),
+				PRURL:          item.PRURL,
+				TargetSHA:      item.TargetSHA,
 				Verdict:        domain.ReviewVerdict(item.Verdict),
 				Body:           item.Body,
 				GithubReviewID: item.GithubReviewID,
@@ -132,6 +141,9 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 	} else {
 		reviews = append(reviews, reviewsvc.SubmittedReview{
 			RunID:          in.RunID,
+			Source:         domain.ReviewRunSource(in.Source),
+			PRURL:          in.PRURL,
+			TargetSHA:      in.TargetSHA,
 			Verdict:        domain.ReviewVerdict(in.Verdict),
 			Body:           in.Body,
 			GithubReviewID: in.GithubReviewID,

@@ -20,14 +20,14 @@ const mergeabilityStates = new Set<SessionPRSummary["mergeability"]["state"]>([
 export type PRDisplayTone = "neutral" | "passive" | "success" | "warning" | "error";
 
 export type PRStatusRow = {
-	key: "ci" | "review" | "merge";
+	key: "ci" | "review" | "final-review" | "merge";
 	label: string;
 	value: string;
 	detail?: string;
 	tone: PRDisplayTone;
 };
 
-export type PRSummaryPartKey = "ci" | "review" | "merge";
+export type PRSummaryPartKey = "ci" | "review" | "final-review" | "merge";
 
 export type PRSummaryLink = {
 	label: string;
@@ -94,6 +94,13 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 			hasUnresolvedHumanComments: pr.reviewComments,
 			unresolvedBy: [],
 		},
+		finalReview: {
+			status: "needs_review",
+			targetSha: "",
+			reviewRunId: "",
+			reviewBody: "",
+			githubReviewId: "",
+		},
 		mergeability: {
 			state: toMergeabilityState(pr.mergeability),
 			reasons: [],
@@ -154,6 +161,16 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 					: overflowLabel(pr.review.unresolvedBy.length, 3, "reviewer"),
 			overflowNoun: "reviewer",
 			tone: reviewTone(pr.review.decision, pr.review.hasUnresolvedHumanComments),
+		},
+		{
+			key: "final-review",
+			label: "Final",
+			status: finalReviewLabel(pr.finalReview.status),
+			summary: finalReviewSummary(pr),
+			links: finalReviewLinks(pr),
+			linkTotal: finalReviewLinks(pr).length,
+			overflowNoun: "link",
+			tone: finalReviewTone(pr.finalReview.status),
 		},
 	];
 }
@@ -216,6 +233,35 @@ function reviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
 		links.push({ label: "PR", href: prBrowserUrl(pr), title: "Open pull request" });
 	}
 	return links;
+}
+
+function finalReviewSummary(pr: SessionPRSummary): string | undefined {
+	if (pr.state === "merged" || pr.state === "closed") {
+		return undefined;
+	}
+	if (pr.finalReview.status === "up_to_date" && pr.finalReview.targetSha) {
+		return `Head ${shortSHA(pr.finalReview.targetSha)}`;
+	}
+	if (pr.finalReview.status === "changes_requested") {
+		return "Final review did not clear this head";
+	}
+	if (pr.finalReview.status === "needs_review") {
+		return pr.headSha ? `Required for ${shortSHA(pr.headSha)}` : "Required before merge";
+	}
+	if (pr.finalReview.status === "running") {
+		return "Final review in progress";
+	}
+	return undefined;
+}
+
+function finalReviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
+	if (pr.finalReview.githubReviewId && prBrowserUrl(pr)) {
+		return [{ label: "review", href: `${prBrowserUrl(pr)}#pullrequestreview-${pr.finalReview.githubReviewId}` }];
+	}
+	if (pr.finalReview.reviewRunId) {
+		return [{ label: pr.finalReview.reviewRunId, href: prBrowserUrl(pr), title: "Open pull request" }];
+	}
+	return [];
 }
 
 function mergeSummary(pr: SessionPRSummary): string | undefined {
@@ -357,6 +403,40 @@ function reviewTone(
 		case "none":
 			return hasUnresolvedHumanComments ? "warning" : "passive";
 	}
+}
+
+function finalReviewLabel(status: SessionPRSummary["finalReview"]["status"]): string {
+	switch (status) {
+		case "up_to_date":
+			return "Clean";
+		case "changes_requested":
+			return "Parked";
+		case "running":
+			return "Running";
+		case "ineligible":
+			return "Ineligible";
+		case "needs_review":
+			return "Required";
+	}
+}
+
+function finalReviewTone(status: SessionPRSummary["finalReview"]["status"]): PRDisplayTone {
+	switch (status) {
+		case "up_to_date":
+			return "success";
+		case "changes_requested":
+			return "warning";
+		case "running":
+			return "neutral";
+		case "ineligible":
+			return "passive";
+		case "needs_review":
+			return "warning";
+	}
+}
+
+function shortSHA(sha: string): string {
+	return sha.slice(0, 7);
 }
 
 function mergeabilityLabel(state: SessionPRSummary["mergeability"]["state"]): string {

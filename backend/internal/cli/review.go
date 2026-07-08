@@ -20,6 +20,7 @@ type reviewRun struct {
 	SessionID      string     `json:"sessionId"`
 	BatchID        string     `json:"batchId"`
 	Harness        string     `json:"harness"`
+	Source         string     `json:"source"`
 	PRURL          string     `json:"prUrl"`
 	TargetSHA      string     `json:"targetSha"`
 	Status         string     `json:"status"`
@@ -40,6 +41,9 @@ type reviewRunResponse struct {
 // submitReviewItem mirrors controllers.SubmitReviewItem.
 type submitReviewItem struct {
 	RunID          string `json:"runId"`
+	Source         string `json:"source,omitempty"`
+	PRURL          string `json:"prUrl,omitempty"`
+	TargetSHA      string `json:"targetSha,omitempty"`
 	Verdict        string `json:"verdict"`
 	Body           string `json:"body,omitempty"`
 	GithubReviewID string `json:"githubReviewId,omitempty"`
@@ -48,6 +52,9 @@ type submitReviewItem struct {
 // submitReviewRequest mirrors controllers.SubmitReviewInput.
 type submitReviewRequest struct {
 	RunID          string             `json:"runId,omitempty"`
+	Source         string             `json:"source,omitempty"`
+	PRURL          string             `json:"prUrl,omitempty"`
+	TargetSHA      string             `json:"targetSha,omitempty"`
 	Verdict        string             `json:"verdict,omitempty"`
 	Body           string             `json:"body,omitempty"`
 	GithubReviewID string             `json:"githubReviewId,omitempty"`
@@ -57,6 +64,9 @@ type submitReviewRequest struct {
 type reviewSubmitOptions struct {
 	session  string
 	runID    string
+	source   string
+	prURL    string
+	sha      string
 	verdict  string
 	body     string
 	reviewID string
@@ -88,7 +98,10 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
 	})
 	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
-	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
+	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required for ao-review; disallowed for --source final-review)")
+	cmd.Flags().StringVar(&opts.source, "source", "", "Review source: ao-review or final-review")
+	cmd.Flags().StringVar(&opts.prURL, "pr-url", "", "PR URL for final-review submissions")
+	cmd.Flags().StringVar(&opts.sha, "target-sha", "", "PR head SHA for final-review submissions")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
 	cmd.Flags().StringVar(&opts.body, "body", "", "Review body: a path to a Markdown file, or - to read from stdin (so nothing is written into the worktree)")
 	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (the .id from the gh api POST that created the review)")
@@ -108,8 +121,19 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 		return c.submitReviewBatch(cmd, session, opts)
 	}
 	runID := strings.TrimSpace(opts.runID)
-	if runID == "" {
+	source := strings.TrimSpace(opts.source)
+	if source != "final-review" && runID == "" {
 		return usageError{errors.New("usage: --run is required")}
+	}
+	prURL := strings.TrimSpace(opts.prURL)
+	targetSHA := strings.TrimSpace(opts.sha)
+	if source == "final-review" {
+		if runID != "" {
+			return usageError{errors.New("usage: --source final-review cannot be combined with --run")}
+		}
+		if prURL == "" || targetSHA == "" {
+			return usageError{errors.New("usage: --source final-review requires --pr-url and --target-sha")}
+		}
 	}
 	verdict := strings.TrimSpace(opts.verdict)
 	if verdict == "" {
@@ -134,7 +158,7 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	reviewID := strings.TrimSpace(opts.reviewID)
 	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
 	var res reviewRunResponse
-	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{RunID: runID, Verdict: verdict, Body: body, GithubReviewID: reviewID}, &res); err != nil {
+	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{RunID: runID, Source: source, PRURL: prURL, TargetSHA: targetSHA, Verdict: verdict, Body: body, GithubReviewID: reviewID}, &res); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "recorded %s review for %s\n", res.Review.Verdict, session)
@@ -142,8 +166,8 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 }
 
 func (c *commandContext) submitReviewBatch(cmd *cobra.Command, session string, opts reviewSubmitOptions) error {
-	if strings.TrimSpace(opts.runID) != "" || strings.TrimSpace(opts.verdict) != "" || strings.TrimSpace(opts.body) != "" || strings.TrimSpace(opts.reviewID) != "" {
-		return usageError{errors.New("usage: --reviews cannot be combined with --run, --verdict, --body, or --review-id")}
+	if strings.TrimSpace(opts.runID) != "" || strings.TrimSpace(opts.source) != "" || strings.TrimSpace(opts.prURL) != "" || strings.TrimSpace(opts.sha) != "" || strings.TrimSpace(opts.verdict) != "" || strings.TrimSpace(opts.body) != "" || strings.TrimSpace(opts.reviewID) != "" {
+		return usageError{errors.New("usage: --reviews cannot be combined with --run, --source, --pr-url, --target-sha, --verdict, --body, or --review-id")}
 	}
 	reviews, err := readReviewItems(cmd, strings.TrimSpace(opts.reviews))
 	if err != nil {

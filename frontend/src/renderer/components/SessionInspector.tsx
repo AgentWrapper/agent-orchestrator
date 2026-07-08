@@ -590,6 +590,7 @@ function ReviewPanel({
 
 function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
+	const finalReview = finalReviewVerdict(reviewState);
 	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
@@ -607,11 +608,34 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 						{title}
 					</a>
 					<span className="reviewer-row__number">#{reviewState.prNumber}</span>
+					<span className={cn("reviewer-row__final", `reviewer-row__final--${finalReview.tone}`)}>
+						Final: {finalReview.label}
+						{reviewState.finalReview?.targetSha ? ` · ${reviewState.finalReview.targetSha.slice(0, 7)}` : ""}
+					</span>
 				</div>
 			</div>
 			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>{verdict.label}</span>
 		</div>
 	);
+}
+
+function finalReviewVerdict(reviewState: PRReviewState): {
+	label: string;
+	tone: "neutral" | "running" | "success" | "danger";
+} {
+	switch (reviewState.finalReviewStatus) {
+		case "running":
+			return { label: "Running", tone: "running" };
+		case "up_to_date":
+			return { label: "Clean", tone: "success" };
+		case "changes_requested":
+			return { label: "Parked", tone: "danger" };
+		case "needs_review":
+			return { label: "Required", tone: "danger" };
+		case "ineligible":
+			return { label: "Ineligible", tone: "neutral" };
+	}
+	return { label: "Required", tone: "danger" };
 }
 
 function sessionReviewVerdict(reviewStates: PRReviewState[]): {

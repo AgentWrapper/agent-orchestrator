@@ -1395,6 +1395,28 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg-passive);
 }
 
+.reviewer-row__final {
+	grid-column: 2;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	color: var(--fg-muted);
+}
+
+.reviewer-row__final--running {
+	color: var(--orange);
+}
+
+.reviewer-row__final--success {
+	color: var(--green);
+}
+
+.reviewer-row__final--danger {
+	color: var(--red);
+}
+
 .reviewer-row__verdict {
 	white-space: nowrap;
 	font-size: 11px;

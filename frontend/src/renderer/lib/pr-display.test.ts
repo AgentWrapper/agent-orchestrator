@@ -19,6 +19,7 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	changedFiles: 2,
 	ci: { state: "passing", failingChecks: [] },
 	review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+	finalReview: { status: "up_to_date", verdict: "approved", targetSha: "abc123", reviewRunId: "run-1" },
 	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 	updatedAt: "2026-06-15T00:00:00Z",
 	observedAt: "2026-06-15T00:00:00Z",
@@ -37,7 +38,12 @@ describe("prStatusRows", () => {
 			}),
 		);
 
-		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual(["CI:Checking", "Merge:Checking", "Review:None"]);
+		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual([
+			"CI:Checking",
+			"Merge:Checking",
+			"Review:None",
+			"Final:Clean",
+		]);
 	});
 
 	it("includes minimal diff detail on the merge row", () => {
@@ -70,8 +76,8 @@ describe("prBrowserUrl", () => {
 });
 
 describe("prSummaryParts", () => {
-	it("always returns CI, Merge, and Review parts", () => {
-		expect(prSummaryParts(summary()).map((part) => part.label)).toEqual(["CI", "Merge", "Review"]);
+	it("always returns CI, Merge, Review, and Final parts", () => {
+		expect(prSummaryParts(summary()).map((part) => part.label)).toEqual(["CI", "Merge", "Review", "Final"]);
 	});
 
 	it("details active CI, merge, and review blockers under their parts", () => {
@@ -102,7 +108,7 @@ describe("prSummaryParts", () => {
 			}),
 		);
 
-		expect(parts.map((part) => part.key)).toEqual(["ci", "merge", "review"]);
+		expect(parts.map((part) => part.key)).toEqual(["ci", "merge", "review", "final-review"]);
 		expect(parts.find((part) => part.key === "ci")).toMatchObject({
 			status: "Failing",
 			summary: undefined,
@@ -276,7 +282,7 @@ describe("prSummaryParts", () => {
 		});
 	});
 
-	it("keeps closed or merged PR summaries to the three status parts", () => {
+	it("keeps closed or merged PR summaries to the four status parts", () => {
 		const parts = prSummaryParts(
 			summary({
 				state: "merged",
@@ -286,7 +292,7 @@ describe("prSummaryParts", () => {
 			}),
 		);
 
-		expect(parts).toHaveLength(3);
+		expect(parts).toHaveLength(4);
 		expect(parts.find((part) => part.key === "merge")?.links).toEqual([]);
 		expect(parts.find((part) => part.key === "review")?.links).toEqual([]);
 	});

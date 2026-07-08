@@ -647,6 +647,16 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        ControllersSessionPRFinalReviewSummary: {
+            githubReviewId?: string;
+            reviewBody?: string;
+            reviewRunId?: string;
+            /** @enum {string} */
+            status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
+            targetSha?: string;
+            /** @enum {string} */
+            verdict?: "approved" | "changes_requested";
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -776,6 +786,9 @@ export interface components {
             projectName?: string;
         };
         PRReviewState: {
+            finalReview?: components["schemas"]["ReviewRun"];
+            /** @enum {string} */
+            finalReviewStatus: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             latestRun?: components["schemas"]["ReviewRun"];
             prNumber: number;
             prUrl: string;
@@ -867,6 +880,7 @@ export interface components {
             prUrl: string;
             reviewId: string;
             sessionId: string;
+            source: string;
             status: string;
             targetSha: string;
             verdict: string;
@@ -952,6 +966,7 @@ export interface components {
             /** Format: date-time */
             ciObservedAt?: string;
             deletions: number;
+            finalReview: components["schemas"]["ControllersSessionPRFinalReviewSummary"];
             headSha: string;
             htmlUrl?: string;
             mergeability: components["schemas"]["SessionPRMergeabilitySummary"];
@@ -1045,10 +1060,16 @@ export interface components {
             body?: string;
             /** @description Id of the GitHub PR review the reviewer posted, if any. */
             githubReviewId?: string;
+            /** @description PR URL for final-review submissions. */
+            prUrl?: string;
             /** @description Batched review results recorded by one reviewer CLI command. */
             reviews?: components["schemas"]["SubmitReviewItem"][];
             /** @description Review run id being completed. */
             runId?: string;
+            /** @description Review source: ao-review or final-review. final-review submissions use prUrl and targetSha instead of runId. */
+            source?: string;
+            /** @description PR head SHA for final-review submissions. */
+            targetSha?: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict?: string;
         };
@@ -1057,8 +1078,14 @@ export interface components {
             body?: string;
             /** @description Id of the GitHub PR review the reviewer posted, if any. */
             githubReviewId?: string;
-            /** @description Review run id being completed. */
-            runId: string;
+            /** @description PR URL for final-review submissions. */
+            prUrl?: string;
+            /** @description Review run id being completed. Required for ao-review submissions; omitted for final-review submissions. */
+            runId?: string;
+            /** @description Review source: ao-review or final-review. final-review submissions use prUrl and targetSha instead of runId. */
+            source?: string;
+            /** @description PR head SHA for final-review submissions. */
+            targetSha?: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
         };

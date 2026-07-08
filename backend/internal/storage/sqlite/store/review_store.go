@@ -41,7 +41,7 @@ func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (do
 }
 
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
-// (session_id, pr_url, target_sha) index (migration 0020) is surfaced as the sentinel
+// (session_id, pr_url, target_sha, source) index is surfaced as the sentinel
 // domain.ErrDuplicateReviewRun so the engine can fall back to the existing run.
 func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 	s.writeMu.Lock()
@@ -52,6 +52,7 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		SessionID:      r.SessionID,
 		BatchID:        r.BatchID,
 		Harness:        r.Harness,
+		Source:         reviewRunSourceOrDefault(r.Source),
 		PRURL:          r.PRURL,
 		TargetSha:      r.TargetSHA,
 		Status:         r.Status,
@@ -139,17 +140,20 @@ func (s *Store) GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, 
 	return reviewRunFromRow(row), true, nil
 }
 
-// GetReviewRunBySessionPRAndSHA returns the most recent review pass for a
-// worker session, PR, and commit, ok=false if none. It lets a repeat trigger for
-// the same PR head short-circuit to the existing run without colliding with
-// another PR that happens to share the same head commit.
-func (s *Store) GetReviewRunBySessionPRAndSHA(ctx context.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error) {
-	row, err := s.qr.GetReviewRunBySessionPRAndSHA(ctx, gen.GetReviewRunBySessionPRAndSHAParams{SessionID: id, PRURL: prURL, TargetSha: targetSHA})
+// GetReviewRunBySessionPRSHAAndSource returns the most recent review pass from
+// one review source for a worker session, PR, and commit.
+func (s *Store) GetReviewRunBySessionPRSHAAndSource(ctx context.Context, id domain.SessionID, prURL, targetSHA string, source domain.ReviewRunSource) (domain.ReviewRun, bool, error) {
+	row, err := s.qr.GetReviewRunBySessionPRSHAAndSource(ctx, gen.GetReviewRunBySessionPRSHAAndSourceParams{
+		SessionID: id,
+		PRURL:     prURL,
+		TargetSha: targetSHA,
+		Source:    reviewRunSourceOrDefault(source),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ReviewRun{}, false, nil
 	}
 	if err != nil {
-		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s pr %s sha %s: %w", id, prURL, targetSHA, err)
+		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s pr %s sha %s source %s: %w", id, prURL, targetSHA, source, err)
 	}
 	return reviewRunFromRow(row), true, nil
 }
@@ -205,6 +209,7 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		SessionID:      r.SessionID,
 		BatchID:        r.BatchID,
 		Harness:        r.Harness,
+		Source:         reviewRunSourceOrDefault(r.Source),
 		PRURL:          r.PRURL,
 		TargetSHA:      r.TargetSha,
 		Status:         r.Status,
@@ -214,4 +219,11 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		CreatedAt:      r.CreatedAt,
 		DeliveredAt:    deliveredAt,
 	}
+}
+
+func reviewRunSourceOrDefault(source domain.ReviewRunSource) domain.ReviewRunSource {
+	if source == "" {
+		return domain.ReviewRunSourceAOReview
+	}
+	return source
 }

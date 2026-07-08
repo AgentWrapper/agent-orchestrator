@@ -289,6 +289,7 @@ type SessionPRSummary struct {
 	ChangedFiles     int                          `json:"changedFiles"`
 	CI               SessionPRCISummary           `json:"ci"`
 	Review           SessionPRReviewSummary       `json:"review"`
+	FinalReview      SessionPRFinalReviewSummary  `json:"finalReview"`
 	Mergeability     SessionPRMergeabilitySummary `json:"mergeability"`
 	UpdatedAt        time.Time                    `json:"updatedAt"`
 	ObservedAt       time.Time                    `json:"observedAt,omitempty"`
@@ -315,6 +316,16 @@ type SessionPRReviewSummary struct {
 	Decision                   domain.ReviewDecision         `json:"decision" enum:"none,approved,changes_requested,review_required"`
 	HasUnresolvedHumanComments bool                          `json:"hasUnresolvedHumanComments"`
 	UnresolvedBy               []SessionPRUnresolvedReviewer `json:"unresolvedBy"`
+}
+
+// SessionPRFinalReviewSummary is the final-review gate state for the current PR head.
+type SessionPRFinalReviewSummary struct {
+	Status       string               `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	Verdict      domain.ReviewVerdict `json:"verdict,omitempty" enum:"approved,changes_requested"`
+	TargetSHA    string               `json:"targetSha,omitempty"`
+	ReviewRunID  string               `json:"reviewRunId,omitempty"`
+	ReviewBody   string               `json:"reviewBody,omitempty"`
+	GitHubReview string               `json:"githubReviewId,omitempty"`
 }
 
 // SessionPRUnresolvedReviewer groups unresolved human comments by reviewer.
@@ -372,11 +383,23 @@ func NewSessionPRSummary(in sessionsvc.PRSummary) SessionPRSummary {
 		ChangedFiles:     in.ChangedFiles,
 		CI:               newSessionPRCISummary(in.CI),
 		Review:           newSessionPRReviewSummary(in.Review),
+		FinalReview:      newSessionPRFinalReviewSummary(in.FinalReview),
 		Mergeability:     newSessionPRMergeabilitySummary(in.Mergeability),
 		UpdatedAt:        in.UpdatedAt,
 		ObservedAt:       in.ObservedAt,
 		CIObservedAt:     in.CIObservedAt,
 		ReviewObservedAt: in.ReviewObservedAt,
+	}
+}
+
+func newSessionPRFinalReviewSummary(in sessionsvc.PRFinalReviewSummary) SessionPRFinalReviewSummary {
+	return SessionPRFinalReviewSummary{
+		Status:       string(in.Status),
+		Verdict:      in.Verdict,
+		TargetSHA:    in.TargetSHA,
+		ReviewRunID:  in.ReviewRunID,
+		ReviewBody:   in.ReviewBody,
+		GitHubReview: in.GitHubReview,
 	}
 }
 

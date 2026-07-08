@@ -27,6 +27,7 @@ type fakeStore struct {
 	projects map[string]domain.ProjectRecord
 	checks   map[string][]domain.PullRequestCheck
 	reviews  map[string][]domain.PullRequestReview
+	runs     map[domain.SessionID][]domain.ReviewRun
 	threads  map[string][]domain.PullRequestReviewThread
 	comments map[string][]domain.PullRequestComment
 	num      int
@@ -39,6 +40,7 @@ func newFakeStore() *fakeStore {
 		projects: map[string]domain.ProjectRecord{},
 		checks:   map[string][]domain.PullRequestCheck{},
 		reviews:  map[string][]domain.PullRequestReview{},
+		runs:     map[domain.SessionID][]domain.ReviewRun{},
 		threads:  map[string][]domain.PullRequestReviewThread{},
 		comments: map[string][]domain.PullRequestComment{},
 	}
@@ -131,6 +133,10 @@ func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]doma
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
 	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
+}
+
+func (f *fakeStore) ListReviewRunsBySession(_ context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
+	return append([]domain.ReviewRun(nil), f.runs[id]...), nil
 }
 
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -1003,6 +1009,67 @@ func TestListPRSummariesOnlyEmitsMergeReasonsForBlockedStates(t *testing.T) {
 	}
 	if reasons := byNumber[12].Mergeability.Reasons; !containsString(reasons, "behind_base") || !containsString(reasons, "review_required") {
 		t.Fatalf("blocked reasons = %+v", reasons)
+	}
+}
+
+func TestListPRSummariesIncludesCurrentHeadFinalReview(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{
+			URL:       "https://github.com/o/r/pull/1",
+			SessionID: "mer-1",
+			Number:    1,
+			HeadSHA:   "sha-current",
+			UpdatedAt: now,
+		},
+		{
+			URL:       "https://github.com/o/r/pull/2",
+			SessionID: "mer-1",
+			Number:    2,
+			HeadSHA:   "sha-new",
+			UpdatedAt: now.Add(time.Minute),
+		},
+	}}
+	st.runs["mer-1"] = []domain.ReviewRun{
+		{ID: "run-current", SessionID: "mer-1", Source: domain.ReviewRunSourceFinalReview, PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha-current", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now},
+		{ID: "run-old", SessionID: "mer-1", Source: domain.ReviewRunSourceFinalReview, PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha-old", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now},
+	}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byNumber := map[int]PRSummary{}
+	for _, pr := range got {
+		byNumber[pr.Number] = pr
+	}
+	if current := byNumber[1].FinalReview; current.Status != "up_to_date" || current.ReviewRunID != "run-current" || current.TargetSHA != "sha-current" {
+		t.Fatalf("current final review = %+v", current)
+	}
+	if stale := byNumber[2].FinalReview; stale.Status != "needs_review" || stale.ReviewRunID != "" || stale.TargetSHA != "sha-new" {
+		t.Fatalf("stale final review = %+v", stale)
+	}
+}
+
+func TestGetDoesNotRequireFinalReviewForDraftPR(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	st.pr["mer-1"] = domain.PRFacts{
+		URL:          "https://github.com/o/r/pull/1",
+		Number:       1,
+		Draft:        true,
+		Mergeability: domain.MergeMergeable,
+		UpdatedAt:    time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}
+
+	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.StatusDraft {
+		t.Fatalf("status = %s, want draft", got.Status)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
 
 // PRSummary is the user-facing SCM read model for one PR owned by a session.
@@ -29,6 +30,7 @@ type PRSummary struct {
 	ChangedFiles     int
 	CI               PRCISummary
 	Review           PRReviewSummary
+	FinalReview      PRFinalReviewSummary
 	Mergeability     PRMergeabilitySummary
 	UpdatedAt        time.Time
 	ObservedAt       time.Time
@@ -55,6 +57,17 @@ type PRReviewSummary struct {
 	Decision                   domain.ReviewDecision
 	HasUnresolvedHumanComments bool
 	UnresolvedBy               []PRUnresolvedReviewer
+}
+
+// PRFinalReviewSummary describes the authoritative final-review gate for the
+// PR's current head.
+type PRFinalReviewSummary struct {
+	Status       reviewcore.StateStatus
+	Verdict      domain.ReviewVerdict
+	TargetSHA    string
+	ReviewRunID  string
+	ReviewBody   string
+	GitHubReview string
 }
 
 // PRUnresolvedReviewer groups unresolved human comments by reviewer.
@@ -99,6 +112,11 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 	if err != nil {
 		return nil, err
 	}
+	runs, err := s.store.ListReviewRunsBySession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	reviewStates := reviewStatesByPR(reviewcore.Plan(prs, runs))
 	out := make([]PRSummary, 0, len(prs))
 	for _, pr := range prs {
 		checks, err := s.store.ListChecks(ctx, pr.URL)
@@ -117,13 +135,13 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, summarizePR(pr, checks, reviews, threads, comments))
+		out = append(out, summarizePR(pr, checks, reviews, threads, comments, reviewStates[pr.URL]))
 	}
 	sortPRSummaries(out)
 	return out, nil
 }
 
-func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) PRSummary {
+func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewState reviewcore.PRReviewState) PRSummary {
 	return PRSummary{
 		URL:              pr.URL,
 		HTMLURL:          firstNonEmpty(pr.HTMLURL, pr.URL),
@@ -141,12 +159,37 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, review
 		ChangedFiles:     pr.ChangedFiles,
 		CI:               summarizeCI(pr, checks),
 		Review:           summarizeReview(pr, comments, reviews),
+		FinalReview:      summarizeFinalReview(reviewState),
 		Mergeability:     summarizeMergeability(pr, threads),
 		UpdatedAt:        pr.UpdatedAt,
 		ObservedAt:       pr.ObservedAt,
 		CIObservedAt:     pr.CIObservedAt,
 		ReviewObservedAt: pr.ReviewObservedAt,
 	}
+}
+
+func reviewStatesByPR(states []reviewcore.PRReviewState) map[string]reviewcore.PRReviewState {
+	out := make(map[string]reviewcore.PRReviewState, len(states))
+	for _, state := range states {
+		out[state.PRURL] = state
+	}
+	return out
+}
+
+func summarizeFinalReview(state reviewcore.PRReviewState) PRFinalReviewSummary {
+	out := PRFinalReviewSummary{Status: state.FinalReviewStatus, TargetSHA: state.TargetSHA}
+	if out.Status == "" {
+		out.Status = reviewcore.ReviewStateNeedsReview
+	}
+	if state.FinalReview == nil {
+		return out
+	}
+	out.Verdict = state.FinalReview.Verdict
+	out.TargetSHA = state.FinalReview.TargetSHA
+	out.ReviewRunID = state.FinalReview.ID
+	out.ReviewBody = state.FinalReview.Body
+	out.GitHubReview = state.FinalReview.GithubReviewID
+	return out
 }
 
 func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISummary {

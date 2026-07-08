@@ -90,6 +90,9 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (revie
 // SubmittedReview is one review result supplied by the reviewer CLI.
 type SubmittedReview struct {
 	RunID          string
+	Source         domain.ReviewRunSource
+	PRURL          string
+	TargetSHA      string
 	Verdict        domain.ReviewVerdict
 	Body           string
 	GithubReviewID string
@@ -154,9 +157,28 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 
 func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, review SubmittedReview) (domain.ReviewRun, error) {
 	runID := review.RunID
+	source := review.Source
 	verdict := review.Verdict
 	body := review.Body
 	githubReviewID := review.GithubReviewID
+	if source == "" {
+		source = domain.ReviewRunSourceAOReview
+	}
+	if !source.Valid() {
+		return domain.ReviewRun{}, fmt.Errorf("%w: source must be %q or %q", ErrInvalid, domain.ReviewRunSourceAOReview, domain.ReviewRunSourceFinalReview)
+	}
+	if source == domain.ReviewRunSourceFinalReview {
+		if runID != "" {
+			return domain.ReviewRun{}, fmt.Errorf("%w: final-review submissions use prUrl and targetSha, not runId", ErrInvalid)
+		}
+		return s.engine.RecordFinalReview(ctx, workerID, reviewcore.FinalReviewRecord{
+			PRURL:          review.PRURL,
+			TargetSHA:      review.TargetSHA,
+			Verdict:        verdict,
+			Body:           body,
+			GithubReviewID: githubReviewID,
+		})
+	}
 	if runID == "" {
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
 	}

@@ -1783,6 +1783,32 @@ components:
       - sessionId
       - reason
       type: object
+    ControllersSessionPRFinalReviewSummary:
+      properties:
+        githubReviewId:
+          type: string
+        reviewBody:
+          type: string
+        reviewRunId:
+          type: string
+        status:
+          enum:
+          - needs_review
+          - running
+          - up_to_date
+          - changes_requested
+          - ineligible
+          type: string
+        targetSha:
+          type: string
+        verdict:
+          enum:
+          - approved
+          - changes_requested
+          type: string
+      required:
+      - status
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -2124,6 +2150,16 @@ components:
       type: object
     PRReviewState:
       properties:
+        finalReview:
+          $ref: '#/components/schemas/ReviewRun'
+        finalReviewStatus:
+          enum:
+          - needs_review
+          - running
+          - up_to_date
+          - changes_requested
+          - ineligible
+          type: string
         latestRun:
           $ref: '#/components/schemas/ReviewRun'
         prNumber:
@@ -2148,6 +2184,7 @@ components:
       - title
       - targetSha
       - status
+      - finalReviewStatus
       type: object
     ProbeAgentResponse:
       properties:
@@ -2353,6 +2390,8 @@ components:
           type: string
         sessionId:
           type: string
+        source:
+          type: string
         status:
           type: string
         targetSha:
@@ -2365,6 +2404,7 @@ components:
       - sessionId
       - batchId
       - harness
+      - source
       - prUrl
       - targetSha
       - status
@@ -2596,6 +2636,8 @@ components:
           type: string
         deletions:
           type: integer
+        finalReview:
+          $ref: '#/components/schemas/ControllersSessionPRFinalReviewSummary'
         headSha:
           type: string
         htmlUrl:
@@ -2652,6 +2694,7 @@ components:
       - changedFiles
       - ci
       - review
+      - finalReview
       - mergeability
       - updatedAt
       type: object
@@ -2849,6 +2892,9 @@ components:
         githubReviewId:
           description: Id of the GitHub PR review the reviewer posted, if any.
           type: string
+        prUrl:
+          description: PR URL for final-review submissions.
+          type: string
         reviews:
           description: Batched review results recorded by one reviewer CLI command.
           items:
@@ -2856,6 +2902,13 @@ components:
           type: array
         runId:
           description: Review run id being completed.
+          type: string
+        source:
+          description: 'Review source: ao-review or final-review. final-review submissions
+            use prUrl and targetSha instead of runId.'
+          type: string
+        targetSha:
+          description: PR head SHA for final-review submissions.
           type: string
         verdict:
           description: 'Review verdict: approved or changes_requested.'
@@ -2869,14 +2922,24 @@ components:
         githubReviewId:
           description: Id of the GitHub PR review the reviewer posted, if any.
           type: string
+        prUrl:
+          description: PR URL for final-review submissions.
+          type: string
         runId:
-          description: Review run id being completed.
+          description: Review run id being completed. Required for ao-review submissions;
+            omitted for final-review submissions.
+          type: string
+        source:
+          description: 'Review source: ao-review or final-review. final-review submissions
+            use prUrl and targetSha instead of runId.'
+          type: string
+        targetSha:
+          description: PR head SHA for final-review submissions.
           type: string
         verdict:
           description: 'Review verdict: approved or changes_requested.'
           type: string
       required:
-      - runId
       - verdict
       type: object
     SwitchAgentRequest:
