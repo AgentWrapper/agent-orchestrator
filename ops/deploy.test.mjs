@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -44,6 +44,9 @@ describe("ao self-deploy script", () => {
 
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(result.stdout, /Deploying ao from /);
+		assert.match(result.stdout, /DRY-RUN: mkdir -p .*\/\.config\/systemd\/user/);
+		assert.match(result.stdout, /DRY-RUN: cp .*\/ops\/ao\.service .*\/\.config\/systemd\/user\/ao\.service/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user daemon-reload/);
 		assert.match(result.stdout, /DRY-RUN: cp .*\/\.local\/bin\/ao .*\/\.local\/bin\/ao\.prev/);
 		assert.match(result.stdout, /DRY-RUN: cd .*\/backend && go build -o .*\/\.local\/bin\/ao \.\/cmd\/ao/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao\.service/);
@@ -96,8 +99,18 @@ describe("ao self-deploy script", () => {
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(result.stdout, /Rolling back ao binary/);
 		assert.match(result.stdout, /DRY-RUN: cp .*\/\.local\/bin\/ao\.prev .*\/\.local\/bin\/ao/);
+		assert.match(result.stdout, /DRY-RUN: cp .*\/ops\/ao\.service .*\/\.config\/systemd\/user\/ao\.service/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user daemon-reload/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao\.service/);
 		assert.doesNotMatch(result.stdout, /go build/);
+	});
+
+	it("ships an ao.service unit that does not signal agent tmux sessions on restart", async () => {
+		const unit = await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8");
+
+		assert.match(unit, /^ExecStart=%h\/\.local\/bin\/ao daemon$/m);
+		assert.match(unit, /^KillMode=mixed$/m);
+		assert.match(unit, /^TimeoutStopSec=60s$/m);
 	});
 });
 

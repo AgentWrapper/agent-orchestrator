@@ -39,9 +39,12 @@ Three user units under `~/.config/systemd/user/`, all `WantedBy=default.target`.
 `loginctl enable-linger orchestrator` keeps the user manager (and therefore
 the fleet) alive without an interactive login; verified `Linger=yes`.
 
-- **`ao.service`** — `ExecStart=%h/.local/bin/ao daemon`, `Restart=on-failure`,
-  `RestartSec=5`. `Environment=PATH=%h/.local/bin:…` so spawned sessions and
-  the daemon's own `ao hooks` calls resolve the binary.
+- **`ao.service`** — tracked in `ops/ao.service`; `ExecStart=%h/.local/bin/ao
+daemon`, `Restart=on-failure`, `RestartSec=5`. `Environment=PATH=%h/.local/bin:…`
+  so spawned sessions and the daemon's own `ao hooks` calls resolve the binary.
+  `KillMode=mixed` keeps systemd from sending the daemon's restart SIGTERM to
+  tmux-backed agent sessions, and `TimeoutStopSec=60s` gives the daemon's
+  background workers enough room to drain before any cgroup-level SIGKILL.
 - **`ao-web.service`** — `After=ao.service`;
   `WorkingDirectory=%h/agent-orchestrator`;
   `Environment=VITE_AO_API_BASE_URL=` makes the browser bundle use same-origin

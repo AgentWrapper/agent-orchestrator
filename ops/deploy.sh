@@ -11,6 +11,7 @@ Deploy ao's self-hosted production target: the local user-level ao daemon.
 Environment overrides:
   AO_DEPLOY_REPO_ROOT       repo checkout to deploy from (default: script parent)
   AO_DEPLOY_AO_BIN          ao binary path (default: ~/.local/bin/ao)
+  AO_DEPLOY_SYSTEMD_USER_DIR systemd user unit dir (default: ~/.config/systemd/user)
   AO_DEPLOY_BASE            base git ref for changed-path detection
   AO_DEPLOY_HEAD            head git ref for changed-path detection (default: HEAD)
   AO_DEPLOY_WEB_URL         tailnet/public web URL to verify
@@ -23,6 +24,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="${AO_DEPLOY_REPO_ROOT:-$(cd "${script_dir}/.." && pwd -P)}"
 ao_bin="${AO_DEPLOY_AO_BIN:-${HOME}/.local/bin/ao}"
 ao_prev="${AO_DEPLOY_AO_PREV:-${ao_bin}.prev}"
+systemd_user_dir="${AO_DEPLOY_SYSTEMD_USER_DIR:-${HOME}/.config/systemd/user}"
 state_dir="${AO_DEPLOY_STATE_DIR:-${HOME}/.ao/deploy}"
 state_file="${AO_DEPLOY_STATE_FILE:-${state_dir}/agent-orchestrator.last-deployed}"
 ao_unit="${AO_DEPLOY_AO_UNIT:-ao.service}"
@@ -245,6 +247,12 @@ restart_unit() {
   run systemctl --user restart "${unit}"
 }
 
+install_ao_unit() {
+  run mkdir -p "${systemd_user_dir}"
+  run cp "${repo_root}/ops/ao.service" "${systemd_user_dir}/${ao_unit}"
+  run systemctl --user daemon-reload
+}
+
 verify_unit_active() {
   local unit="$1"
   local label="$2"
@@ -297,6 +305,7 @@ rollback_deploy() {
 
   run cp "${ao_prev}" "${ao_bin}"
   run chmod +x "${ao_bin}"
+  install_ao_unit
   restart_unit "${ao_unit}"
   verify_after_restart "${pre_sessions}"
   verify_tailnet_web
@@ -330,6 +339,7 @@ deploy() {
   fi
 
   run mkdir -p "$(dirname "${ao_bin}")"
+  install_ao_unit
   run cp "${ao_bin}" "${ao_prev}"
   run_in "${repo_root}/backend" go build -o "${ao_bin}" ./cmd/ao
   restart_unit "${ao_unit}"

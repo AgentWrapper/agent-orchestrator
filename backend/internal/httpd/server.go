@@ -26,6 +26,7 @@ type Server struct {
 	http   *http.Server
 	listen net.Listener
 
+	cancelRequests    context.CancelFunc
 	shutdownRequested chan struct{}
 	shutdownOnce      sync.Once
 }
@@ -59,16 +60,21 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 		ln = fallback
 	}
 
+	requestCtx, cancelRequests := context.WithCancel(context.Background())
 	srv := &Server{
 		cfg:               cfg,
 		log:               log,
 		listen:            ln,
+		cancelRequests:    cancelRequests,
 		shutdownRequested: make(chan struct{}),
 	}
 	srv.http = &http.Server{
 		Handler: NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{
 			RequestShutdown: srv.requestShutdown,
 		}),
+		BaseContext: func(net.Listener) context.Context {
+			return requestCtx
+		},
 		// ReadHeaderTimeout guards against slow-loris even on loopback;
 		// per-request body/handler timeouts are applied per-surface.
 		ReadHeaderTimeout: 10 * time.Second,
@@ -126,6 +132,11 @@ func (s *Server) Run(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 	defer cancel()
 
+	// Long-lived handlers such as SSE and terminal WebSockets intentionally
+	// bypass REST request timeouts. Cancel their base context before Shutdown
+	// starts waiting, otherwise an active dashboard can hold the drain open until
+	// ShutdownTimeout and make every daemon restart look like an unclean exit.
+	s.cancelRequests()
 	if err := s.http.Shutdown(shutdownCtx); err != nil {
 		// The deadline elapsed with connections still open; force them closed.
 		s.log.Warn("graceful shutdown timed out, forcing close", "err", err)

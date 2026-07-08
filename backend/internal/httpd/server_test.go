@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
@@ -173,6 +174,63 @@ func TestServerShutdownEndpoint(t *testing.T) {
 	if after, _ := runfile.Read(runPath); after != nil {
 		t.Error("run-file still present after shutdown endpoint; want it removed")
 	}
+}
+
+func TestServerShutdownCancelsLongLivedEventStreams(t *testing.T) {
+	runPath := filepath.Join(t.TempDir(), "running.json")
+	cfg := config.Config{
+		Host:            "127.0.0.1",
+		Port:            0,
+		RequestTimeout:  time.Second,
+		ShutdownTimeout: 100 * time.Millisecond,
+		RunFilePath:     runPath,
+	}
+
+	srv, err := NewWithDeps(cfg, discardLogger(), nil, APIDeps{
+		CDC:    emptyCDCSource{},
+		Events: cdc.NewBroadcaster(),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() { runErr <- srv.Run(ctx) }()
+
+	base := "http://" + srv.Addr().String()
+	waitForHealth(t, base)
+
+	resp, err := http.Get(base + "/api/v1/events")
+	if err != nil {
+		t.Fatalf("GET /api/v1/events: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/events = %d, want 200", resp.StatusCode)
+	}
+
+	cancel()
+
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("Run returned error with live event stream: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after context cancel with live event stream")
+	}
+}
+
+type emptyCDCSource struct{}
+
+func (emptyCDCSource) EventsAfter(context.Context, int64, int) ([]cdc.Event, error) {
+	return nil, nil
+}
+
+func (emptyCDCSource) LatestSeq(context.Context) (int64, error) {
+	return 0, nil
 }
 
 func waitForHealth(t *testing.T, base string) {

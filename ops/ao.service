@@ -1,0 +1,19 @@
+[Unit]
+Description=Agent Orchestrator daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ao daemon
+Restart=on-failure
+RestartSec=5s
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# Only SIGTERM the daemon's main process on restart. Agent sessions run under
+# tmux and must survive deploys; the boot-time reconcile pass re-adopts them.
+KillMode=mixed
+TimeoutStopSec=60s
+
+[Install]
+WantedBy=default.target
