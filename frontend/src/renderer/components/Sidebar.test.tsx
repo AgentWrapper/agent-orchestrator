@@ -173,10 +173,11 @@ describe("Sidebar", () => {
 		expect(onRemoveProject).not.toHaveBeenCalled();
 	});
 
-	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
+	it("reveals dashboard, capacity, and orchestrator buttons alongside the kebab on the project row", () => {
 		renderSidebar();
 
 		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
+		expect(screen.getByLabelText("Open Project One capacity")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
 	});
@@ -188,6 +189,18 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("Open Project One dashboard"));
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
+	it("navigates to project capacity when the capacity button is clicked", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getByLabelText("Open Project One capacity"));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/capacity",
+			params: { projectId: "proj-1" },
+		});
 	});
 
 	it("requires explicit worker and orchestrator agents when creating a project", async () => {
@@ -391,6 +404,6 @@ describe("Sidebar", () => {
 
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
-		expect(projectRow).toHaveClass("pr-[84px]");
+		expect(projectRow).toHaveClass("pr-[106px]");
 	});
 });

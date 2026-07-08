@@ -3,6 +3,7 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
 	ChevronRight,
+	Gauge,
 	GitPullRequest,
 	LayoutDashboard,
 	Moon,
@@ -106,6 +107,7 @@ function useSelection() {
 		goHome: () => void navigate({ to: "/" }),
 		goPrs: () => void navigate({ to: "/prs" }),
 		goGlobalSettings: () => void navigate({ to: "/settings" }),
+		goCapacity: (projectId: string) => void navigate({ to: "/projects/$projectId/capacity", params: { projectId } }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
@@ -510,8 +512,8 @@ function ProjectItem({
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
 					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground data-[active=true]:before:bg-accent",
 					// Always reserve room for the action cluster (dashboard,
-					// orchestrator, kebab) — icons are always visible, not hover-gated.
-					"pr-[84px]",
+					// capacity, orchestrator, kebab) — icons are always visible, not hover-gated.
+					"pr-[106px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -555,6 +557,19 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
+							aria-label={`Open ${workspace.name} capacity`}
+							className={HOVER_ACTION_CLASS}
+							onClick={() => selection.goCapacity(workspace.id)}
+							type="button"
+						>
+							<Gauge aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>Capacity</TooltipContent>
+				</Tooltip>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
 							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
 							className={HOVER_ACTION_CLASS}
 							disabled={isSpawning || isProjectRestarting}
@@ -581,6 +596,10 @@ function ProjectItem({
 						</button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent side="right" align="start" className="min-w-44">
+						<DropdownMenuItem onSelect={() => selection.goCapacity(workspace.id)}>
+							<Gauge aria-hidden="true" />
+							Capacity
+						</DropdownMenuItem>
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 							<Settings aria-hidden="true" />
 							Project settings

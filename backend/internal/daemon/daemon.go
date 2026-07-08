@@ -156,6 +156,7 @@ func Run() error {
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
+		ProjectCapacity:    projectsvc.NewWorkerCapacity(store, agentHealth),
 		Agents:             agentSvc,
 		AgentHealth:        agentHealth,
 		Sessions:           sessionSvc,

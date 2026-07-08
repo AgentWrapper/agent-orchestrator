@@ -648,6 +648,46 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/worker-capacity:
+    get:
+      operationId: getProjectWorkerCapacity
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerCapacityResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return worker mix allocation, health, and health-adjusted capacity
+        for one project
+      tags:
+      - projects
   /api/v1/prs/{id}/merge:
     post:
       operationId: mergePR
@@ -3007,6 +3047,120 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    WorkerCapacity:
+      properties:
+        activeWorkers:
+          type: integer
+        availableCapacity:
+          type:
+          - "null"
+          - number
+        buckets:
+          items:
+            $ref: '#/components/schemas/WorkerCapacityBucket'
+          type: array
+        cap:
+          type:
+          - "null"
+          - integer
+        checkedAt:
+          format: date-time
+          type: string
+        downBucketShare:
+          type:
+          - "null"
+          - number
+        freeAvailableCapacity:
+          type:
+          - "null"
+          - number
+        harnesses:
+          items:
+            $ref: '#/components/schemas/WorkerCapacityHarness'
+          type: array
+        projectId:
+          type: string
+        state:
+          enum:
+          - healthy
+          - degraded
+          - uncapped
+          - unconfigured
+          type: string
+      required:
+      - projectId
+      - activeWorkers
+      - state
+      - buckets
+      - harnesses
+      type: object
+    WorkerCapacityBucket:
+      properties:
+        activeWorkers:
+          type: integer
+        agent:
+          type: string
+        down:
+          type: boolean
+        downCapacityShare:
+          type:
+          - "null"
+          - number
+        health:
+          type: string
+        model:
+          type: string
+        realizedPercent:
+          format: double
+          type: number
+        reason:
+          type: string
+        remedy:
+          type: string
+        targetCapacity:
+          type:
+          - "null"
+          - number
+        targetPercent:
+          type: integer
+      required:
+      - agent
+      - targetPercent
+      - activeWorkers
+      - realizedPercent
+      - health
+      - down
+      type: object
+    WorkerCapacityHarness:
+      properties:
+        changedAt:
+          format: date-time
+          type: string
+        checkedAt:
+          format: date-time
+          type: string
+        health:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        remedy:
+          type: string
+      required:
+      - id
+      - label
+      - health
+      type: object
+    WorkerCapacityResponse:
+      properties:
+        capacity:
+          $ref: '#/components/schemas/WorkerCapacity'
+      required:
+      - capacity
       type: object
     WorkerMix:
       items:

@@ -30,6 +30,7 @@ function routeSurface(pathname: string): string {
 	if (/^\/prs(?:\/|$)/.test(pathname)) return "pull_requests";
 	if (/^\/projects\/[^/]+\/sessions\/[^/]+$/.test(pathname)) return "session_detail";
 	if (/^\/projects\/[^/]+(?:\/|$)/.test(pathname)) {
+		if (/\/capacity$/.test(pathname)) return "project_capacity";
 		if (/\/settings$/.test(pathname)) return "project_settings";
 		return "project_board";
 	}

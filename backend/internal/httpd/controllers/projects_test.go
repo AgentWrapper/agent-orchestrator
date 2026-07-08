@@ -29,6 +29,8 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
+
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -46,6 +48,14 @@ func (emptyGetManager) Get(context.Context, domain.ProjectID) (projectsvc.GetRes
 
 	return projectsvc.GetResult{}, nil
 
+}
+
+type fakeWorkerCapacity struct {
+	capacity projectsvc.WorkerCapacity
+}
+
+func (f fakeWorkerCapacity) WorkerCapacity(context.Context, domain.ProjectID) (projectsvc.WorkerCapacity, error) {
+	return f.capacity, nil
 }
 
 // TestProjectsAPI_GetEmptyResultIs500 locks the fix for the discriminated-union
@@ -114,6 +124,50 @@ func TestProjectsRoutes_DefaultToStubsWithoutManager(t *testing.T) {
 
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 
+}
+
+func TestProjectsAPI_WorkerCapacity(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	workerCap := 8
+	usable := 5.6
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		ProjectCapacity: fakeWorkerCapacity{capacity: projectsvc.WorkerCapacity{
+			ProjectID:         "ao",
+			Cap:               &workerCap,
+			ActiveWorkers:     3,
+			AvailableCapacity: &usable,
+			State:             "degraded",
+			Buckets: []projectsvc.WorkerCapacityBucket{
+				{Agent: domain.HarnessCodex, TargetPercent: 70, ActiveWorkers: 2, RealizedPercent: 66.7, Health: agenthealth.HealthHealthy},
+				{Agent: domain.HarnessClaudeCode, TargetPercent: 30, ActiveWorkers: 1, Health: agenthealth.HealthUnauthorized, Down: true, Reason: "not authenticated"},
+			},
+			Harnesses: []projectsvc.WorkerCapacityHarness{
+				{ID: string(domain.HarnessCodex), Label: "Codex", Health: agenthealth.HealthHealthy},
+				{ID: string(domain.HarnessClaudeCode), Label: "Claude Code", Health: agenthealth.HealthUnauthorized, Reason: "not authenticated"},
+			},
+		}},
+	}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/projects/ao/worker-capacity", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET worker capacity = %d, want 200; body=%s", status, body)
+	}
+	assertJSON(t, headers)
+	for _, want := range []string{`"projectId":"ao"`, `"cap":8`, `"availableCapacity":5.6`, `"state":"degraded"`, `"agent":"claude-code"`, `"health":"unauthorized"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestProjectsAPI_WorkerCapacityNotImplementedWhenUnset(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/projects/ao/worker-capacity", "")
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
 func TestProjectsAPI_ListAddGet(t *testing.T) {

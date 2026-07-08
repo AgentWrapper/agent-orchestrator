@@ -263,6 +263,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/worker-capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return worker mix allocation, health, and health-adjusted capacity for one project */
+        get: operations["getProjectWorkerCapacity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/prs/{id}/merge": {
         parameters: {
             query?: never;
@@ -1113,6 +1130,48 @@ export interface components {
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        WorkerCapacity: {
+            activeWorkers: number;
+            availableCapacity?: null | number;
+            buckets: components["schemas"]["WorkerCapacityBucket"][];
+            cap?: null | number;
+            /** Format: date-time */
+            checkedAt?: string;
+            downBucketShare?: null | number;
+            freeAvailableCapacity?: null | number;
+            harnesses: components["schemas"]["WorkerCapacityHarness"][];
+            projectId: string;
+            /** @enum {string} */
+            state: "healthy" | "degraded" | "uncapped" | "unconfigured";
+        };
+        WorkerCapacityBucket: {
+            activeWorkers: number;
+            agent: string;
+            down: boolean;
+            downCapacityShare?: null | number;
+            health: string;
+            model?: string;
+            /** Format: double */
+            realizedPercent: number;
+            reason?: string;
+            remedy?: string;
+            targetCapacity?: null | number;
+            targetPercent: number;
+        };
+        WorkerCapacityHarness: {
+            /** Format: date-time */
+            changedAt?: string;
+            /** Format: date-time */
+            checkedAt?: string;
+            health: string;
+            id: string;
+            label: string;
+            reason?: string;
+            remedy?: string;
+        };
+        WorkerCapacityResponse: {
+            capacity: components["schemas"]["WorkerCapacity"];
         };
         WorkerMix: components["schemas"]["WorkerMixEntry"][];
         WorkerMixEntry: {
@@ -1982,6 +2041,56 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getProjectWorkerCapacity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerCapacityResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };
