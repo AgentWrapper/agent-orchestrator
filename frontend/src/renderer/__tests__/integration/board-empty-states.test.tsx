@@ -113,10 +113,8 @@ describe("global board first launch", () => {
 
 		expect(await screen.findByText("Welcome to Agent Orchestrator")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Add your first project" })).toBeInTheDocument();
-		// The three orientation steps and the column legend are present.
-		expect(screen.getByText("Add a project")).toBeInTheDocument();
-		expect(screen.getByText("Describe a task")).toBeInTheDocument();
-		expect(screen.getByText("Ready to merge")).toBeInTheDocument();
+		// The CTA is present.
+		expect(screen.getByRole("button", { name: "Add your first project" })).toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 		// The welcome carries its own orientation — no dangling "Board" header.
 		expect(screen.queryByText("Board")).not.toBeInTheDocument();
