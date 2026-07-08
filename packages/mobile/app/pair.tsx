@@ -4,13 +4,16 @@ import { useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { loadConfig, saveConfig } from "../lib/config";
 import { parsePairingPayload } from "../lib/pairing";
+import { useApp } from "../lib/store";
 import { theme } from "../lib/theme";
 import { Button } from "../lib/ui";
 
-// Scans the desktop's pairing QR code (a `{v,host,port}` JSON payload) and
-// writes host/httpPort into the saved server config, then returns to Settings.
+// Scans the desktop's pairing QR code (a `{v,host,port,password}` JSON payload),
+// writes host/httpPort/password into the saved server config, kicks off a
+// reconnect, and returns to Settings — so one scan connects with no typing.
 export default function PairScreen() {
 	const router = useRouter();
+	const { reloadConfig } = useApp();
 	const [permission, requestPermission] = useCameraPermissions();
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -30,7 +33,14 @@ export default function PairScreen() {
 		setError(null);
 		try {
 			const cfg = await loadConfig();
-			await saveConfig({ ...cfg, host: parsed.host, httpPort: parsed.port });
+			// Keep any existing password if the QR is an older host+port-only code.
+			await saveConfig({
+				...cfg,
+				host: parsed.host,
+				httpPort: parsed.port,
+				password: parsed.password || cfg.password,
+			});
+			await reloadConfig(); // reconnect with the scanned credentials
 			router.back();
 		} catch {
 			setError("Couldn't save the scanned config. Try again.");

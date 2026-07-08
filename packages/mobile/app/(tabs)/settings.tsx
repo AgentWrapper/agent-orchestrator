@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
 	ActivityIndicator,
 	KeyboardAvoidingView,
@@ -34,17 +34,31 @@ export default function SettingsScreen() {
 	const [cfg, setCfg] = useState<ServerConfig>(DEFAULT_CONFIG);
 	const [loaded, setLoaded] = useState(false);
 	const [testing, setTesting] = useState(false);
-	const [saved, setSaved] = useState(false);
 	const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 	const [pwPromptOpen, setPwPromptOpen] = useState(false);
 	const [pwDraft, setPwDraft] = useState("");
 
+	// Reload the saved config every time the screen regains focus — not just on
+	// mount — so returning from the QR scanner (which writes host/port to storage
+	// then navigates back here) repaints the fields with the scanned values.
+	useFocusEffect(
+		useCallback(() => {
+			loadConfig().then((c) => {
+				setCfg(c);
+				setLoaded(true);
+			});
+		}, []),
+	);
+
+	// Once the background poller reports a live connection, drop any stale error
+	// banner (e.g. a leftover 401/429 from an earlier failed attempt) so the UI
+	// doesn't show a scary error while the app is actually connected. A success
+	// message is kept.
 	useEffect(() => {
-		loadConfig().then((c) => {
-			setCfg(c);
-			setLoaded(true);
-		});
-	}, []);
+		if (connection === "open") {
+			setResult((r) => (r && !r.ok ? null : r));
+		}
+	}, [connection]);
 
 	const set = (k: keyof ServerConfig) => (v: string) => setCfg((prev) => ({ ...prev, [k]: v }));
 
@@ -70,11 +84,17 @@ export default function SettingsScreen() {
 		}
 	}
 
-	async function save() {
-		await saveConfig(cfg);
-		await reloadConfig();
-		setSaved(true);
-		setTimeout(() => setSaved(false), 1800);
+	// Save now behaves like Connect: it prompts for the password when none is set
+	// (so it can't silently persist a passwordless config that never connects),
+	// then tests + persists and reports the result. test() already calls
+	// saveConfig, so the config is persisted on the way.
+	function save() {
+		if (!cfg.password.trim()) {
+			setPwDraft("");
+			setPwPromptOpen(true);
+			return;
+		}
+		void test();
 	}
 
 	// The primary "Connect" action — gated behind a password prompt the first
@@ -187,8 +207,9 @@ export default function SettingsScreen() {
 					</View>
 				)}
 				<Button
-					title={saved ? "Saved" : "Save"}
-					icon={saved ? undefined : "save"}
+					title="Save & connect"
+					icon="save"
+					loading={testing}
 					onPress={save}
 					disabled={!cfg.host.trim()}
 					style={{ marginTop: 12 }}
