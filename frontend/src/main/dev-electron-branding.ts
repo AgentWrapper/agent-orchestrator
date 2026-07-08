@@ -94,6 +94,10 @@ export function prepareBrandedDevElectronExecutable({
 	const electronPath = electronExecutablePath ?? defaultElectronExecutablePath();
 	const brandedPath = brandedExecutablePath ?? resolveBrandedDevElectronExecutable(electronPath, appName);
 
+	if (!exists(brandedPath)) {
+		symlink(path.basename(electronPath), brandedPath);
+	}
+
 	brandDevElectronApp({
 		platform,
 		appName,
@@ -101,10 +105,6 @@ export function prepareBrandedDevElectronExecutable({
 		exists,
 		...brandingOptions,
 	});
-
-	if (!exists(brandedPath)) {
-		symlink(path.basename(electronPath), brandedPath);
-	}
 
 	return brandedPath;
 }
