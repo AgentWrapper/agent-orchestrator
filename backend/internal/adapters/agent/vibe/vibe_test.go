@@ -147,9 +147,28 @@ func TestGetLaunchCommandWithPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"vibe", "--trust", "--output", "streaming", "--workdir", "/work/repo", "--agent", "auto-approve", "-p", "add a health check"}
+	want := []string{"vibe", "--trust", "--workdir", "/work/repo", "--agent", "auto-approve", "--", "add a health check"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandUsesInteractiveTUI(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, arg := range cmd {
+		switch arg {
+		case "--output", "-p", "--prompt":
+			t.Fatalf("cmd = %#v must not use programmatic output mode", cmd)
+		case "--":
+			if i+1 >= len(cmd) || cmd[i+1] != "task" {
+				t.Fatalf("cmd = %#v must pass prompt as positional initial prompt", cmd)
+			}
+		}
 	}
 }
 
@@ -160,11 +179,11 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 		want       []string
 		wantAbsent string
 	}{
-		{"default omits flag", ports.PermissionModeDefault, []string{"vibe", "--trust", "--output", "streaming", "-p", "task"}, "--agent"},
-		{"empty omits flag", "", []string{"vibe", "--trust", "--output", "streaming", "-p", "task"}, "--agent"},
-		{"accept edits", ports.PermissionModeAcceptEdits, []string{"vibe", "--trust", "--output", "streaming", "--agent", "accept-edits", "-p", "task"}, ""},
-		{"auto", ports.PermissionModeAuto, []string{"vibe", "--trust", "--output", "streaming", "--agent", "auto-approve", "-p", "task"}, ""},
-		{"bypass", ports.PermissionModeBypassPermissions, []string{"vibe", "--trust", "--output", "streaming", "--agent", "auto-approve", "-p", "task"}, ""},
+		{"default omits flag", ports.PermissionModeDefault, []string{"vibe", "--trust", "--", "task"}, "--agent"},
+		{"empty omits flag", "", []string{"vibe", "--trust", "--", "task"}, "--agent"},
+		{"accept edits", ports.PermissionModeAcceptEdits, []string{"vibe", "--trust", "--agent", "accept-edits", "--", "task"}, ""},
+		{"auto", ports.PermissionModeAuto, []string{"vibe", "--trust", "--agent", "auto-approve", "--", "task"}, ""},
+		{"bypass", ports.PermissionModeBypassPermissions, []string{"vibe", "--trust", "--agent", "auto-approve", "--", "task"}, ""},
 	}
 
 	for _, tt := range tests {
@@ -224,7 +243,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	want := []string{"vibe", "--trust", "--output", "streaming", "--workdir", "/work/repo", "--agent", "auto-approve", "--resume", "abcd1234-5678-90ab-cdef-1234567890ab"}
+	want := []string{"vibe", "--trust", "--workdir", "/work/repo", "--agent", "auto-approve", "--resume", "abcd1234-5678-90ab-cdef-1234567890ab"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
