@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildTelemetryContext,
 	routeSurface,
 	sanitizePostHogEvent,
 	sanitizeReplayRequestName,
@@ -8,6 +9,19 @@ import {
 } from "./telemetry";
 
 describe("telemetry sanitizers", () => {
+	it("builds stable AO version context for PostHog events", () => {
+		expect(buildTelemetryContext(" 1.2.3-nightly.20260707 ", "linux")).toMatchObject({
+			app_version: "1.2.3-nightly.20260707",
+			ao_version: "1.2.3-nightly.20260707",
+			platform: "linux",
+		});
+		expect(buildTelemetryContext("", "darwin")).toMatchObject({
+			app_version: "unknown",
+			ao_version: "unknown",
+			platform: "darwin",
+		});
+	});
+
 	it("categorizes routes without exporting raw paths", () => {
 		expect(routeSurface("/")).toBe("home");
 		expect(routeSurface("/projects/demo")).toBe("project_board");
@@ -110,5 +124,102 @@ describe("telemetry sanitizers", () => {
 		expect(sanitizeReplayRequestName("https://api.example.com/endpoint?token=secret")).toBe(
 			"https://api.example.com/endpoint",
 		);
+	});
+
+	it("hashes project ids and drops everything else on CTA triads", async () => {
+		const triads = [
+			"ao.renderer.task_create_requested",
+			"ao.renderer.task_create_succeeded",
+			"ao.renderer.task_create_failed",
+			"ao.renderer.session_kill_requested",
+			"ao.renderer.session_kill_succeeded",
+			"ao.renderer.session_kill_failed",
+			"ao.renderer.settings_save_requested",
+			"ao.renderer.settings_save_succeeded",
+			"ao.renderer.settings_save_failed",
+		];
+		for (const event of triads) {
+			const props = await sanitizeRendererProperties(event, {
+				project_id: "demo-project",
+				title: "raw user text",
+				error: "raw error with /Users/alice/path",
+			});
+			expect(Object.keys(props)).toEqual(["project_id_hash"]);
+		}
+	});
+
+	it("keeps only the source enum on orchestrator_spawn events", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_requested", {
+			project_id: "demo-project",
+			source: "board",
+		});
+		expect(Object.keys(props).sort()).toEqual(["project_id_hash", "source"]);
+		expect(props.source).toBe("board");
+
+		const badSource = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_failed", {
+			project_id: "demo-project",
+			source: "/Users/alice/private",
+		});
+		expect(badSource).not.toHaveProperty("source");
+	});
+
+	it("keeps every whitelisted spawn source, including topbar/sidebar/project_add/settings/restart", async () => {
+		for (const source of ["board", "restore_dialog", "topbar", "sidebar", "project_add", "settings", "restart"]) {
+			const props = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_succeeded", {
+				project_id: "demo-project",
+				source,
+			});
+			expect(Object.keys(props).sort()).toEqual(["project_id_hash", "source"]);
+			expect(props.source).toBe(source);
+		}
+	});
+
+	it("keeps only enum values on notification events", async () => {
+		expect(await sanitizeRendererProperties("ao.renderer.notification_opened", { target: "pr" })).toEqual({
+			target: "pr",
+		});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_opened", { target: "http://x" })).toEqual({});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_requested", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_succeeded", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_failed", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(
+			await sanitizeRendererProperties("ao.renderer.notification_mark_read_requested", { scope: "everything" }),
+		).toEqual({});
+	});
+
+	it("whitelists coarse daemon failure fields and drops messages", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.daemon_failure", {
+			daemon_state: "error",
+			code: "spawn_failed",
+			exit_code: 1,
+			signal: "SIGKILL",
+			message: "spawn /Users/alice/ao failed",
+		});
+		expect(props).toEqual({ daemon_state: "error", code: "spawn_failed", exit_code: 1, signal: "SIGKILL" });
+	});
+
+	it("whitelists normalized api_error fields", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.api_error", {
+			operation: "GET /api/v1/projects/:id",
+			error_category: "http_5xx",
+			status: 500,
+			body: "raw response body",
+		});
+		expect(props).toEqual({ operation: "GET /api/v1/projects/:id", error_category: "http_5xx", status: 500 });
+	});
+
+	it("keeps only the reason enum on terminal_attach_failed", async () => {
+		expect(await sanitizeRendererProperties("ao.renderer.terminal_attach_failed", { reason: "open_timeout" })).toEqual({
+			reason: "open_timeout",
+		});
+		expect(
+			await sanitizeRendererProperties("ao.renderer.terminal_attach_failed", { reason: "something else" }),
+		).toEqual({});
 	});
 });

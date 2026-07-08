@@ -26,12 +26,13 @@ import {
 	type UpdateSettings,
 	type UpdateStatus,
 } from "./main/update-settings";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
@@ -70,6 +71,14 @@ process.stderr.on("error", ignoreStdStreamError);
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
 
+// Windows shows native toasts only when the app declares an AppUserModelID that
+// matches its installer shortcut (the NSIS maker's appId). Without it,
+// Notification.isSupported() still returns true but show() silently drops the
+// toast, so notifications never appear. No-op on macOS/Linux.
+if (process.platform === "win32") {
+	app.setAppUserModelId("dev.agent-orchestrator.desktop");
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
@@ -87,6 +96,40 @@ let daemonStatus: DaemonStatus = { state: "stopped" };
 let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
+
+const execFileAsync = promisify(execFile);
+
+type GitRepoScanResult = {
+	name: string;
+	path: string;
+	relativePath: string;
+	branch: string;
+	remote: string;
+	hasRemote: boolean;
+	status: "ok" | "error";
+	reason?: string;
+};
+
+type ImportFolderScanResult = {
+	path: string;
+	repos: GitRepoScanResult[];
+};
+
+const IMPORT_SCAN_CONCURRENCY = 8;
+const IMPORT_SCAN_MAX_ENTRIES = 200;
+const IMPORT_SCAN_SKIP_DIRS = new Set([
+	".git",
+	"node_modules",
+	"dist",
+	"build",
+	".cache",
+	".turbo",
+	"target",
+	"coverage",
+	"tmp",
+	"temp",
+	"Library",
+]);
 
 const isDev = !app.isPackaged;
 
@@ -478,6 +521,7 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO daemon is no longer reachable.",
+			code: "daemon_unreachable",
 		});
 	}
 	return daemonStatus;
@@ -518,6 +562,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
+			code: "not_configured",
 		});
 		return daemonStatus;
 	}
@@ -640,6 +685,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "error",
 			message: `Bundled AO daemon binary was not found at ${launch.command}. Rebuild the desktop package.`,
+			code: "binary_missing",
 		});
 		return daemonStatus;
 	}
@@ -737,6 +783,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			state: "ready",
 			port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
 			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
+			code: "port_unconfirmed",
 		});
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
@@ -745,17 +792,29 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message });
+		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
 	});
 
 	child.once("exit", (code, signal) => {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
-		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
+		// An explicit stopDaemon() already set a clean `{ state: "stopped" }`.
+		// daemon-telemetry reports any status carrying a `code` as
+		// ao.renderer.daemon_failure, so don't stamp `code: "exited"` on a stop
+		// the user or app asked for — that would count intentional stops as
+		// failures. Preserve the clean stopped status instead.
+		if (daemonStoppingProcess === child) {
+			daemonStoppingProcess = null;
+			setDaemonStatus({ state: "stopped" });
+			return;
+		}
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			code: "exited",
+			exitCode: code,
+			signal,
 		});
 	});
 
@@ -801,15 +860,167 @@ ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("telemetry:getBootstrap", () =>
 	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
 );
-ipcMain.handle("app:chooseDirectory", async () => {
+async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
-		title: "Choose a git repository",
+		title,
 	};
 	const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
 
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
+}
+
+async function gitOutput(cwd: string, args: string[]): Promise<string> {
+	const { stdout } = await execFileAsync("git", args, { cwd, env: daemonEnv(), timeout: 5000 });
+	return String(stdout).trim();
+}
+
+async function isGitRepo(repoPath: string): Promise<boolean> {
+	try {
+		const gitInfo = await stat(path.join(repoPath, ".git"));
+		if (!gitInfo.isDirectory()) return false;
+		await gitOutput(repoPath, ["rev-parse", "--show-toplevel"]);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function resolveDefaultBranch(repoPath: string): Promise<string> {
+	try {
+		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+		if (ref) return ref.replace(/^origin\//, "");
+	} catch {
+		// Fall back to the checked-out branch when origin/HEAD is unavailable.
+	}
+	try {
+		const branch = await gitOutput(repoPath, ["branch", "--show-current"]);
+		if (branch) return branch;
+	} catch {
+		// Detached or unreadable HEAD is represented below.
+	}
+	return "HEAD";
+}
+
+async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoScanResult | null> {
+	const relativePath = repoPath === rootPath ? "." : path.relative(rootPath, repoPath);
+	const name = path.basename(repoPath);
+	try {
+		const gitInfo = await stat(path.join(repoPath, ".git"));
+		if (!gitInfo.isDirectory()) {
+			return {
+				name,
+				path: repoPath,
+				relativePath,
+				branch: "HEAD",
+				remote: "",
+				hasRemote: false,
+				status: "error",
+				reason: "Linked worktree children cannot be imported.",
+			};
+		}
+	} catch {
+		try {
+			if ((await gitOutput(repoPath, ["rev-parse", "--is-bare-repository"])) === "true") {
+				return {
+					name,
+					path: repoPath,
+					relativePath,
+					branch: "HEAD",
+					remote: "",
+					hasRemote: false,
+					status: "error",
+					reason: "Bare repositories cannot be imported.",
+				};
+			}
+		} catch {
+			// Not a git repository.
+		}
+		return null;
+	}
+	if (!(await isGitRepo(repoPath))) return null;
+	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
+		resolveDefaultBranch(repoPath),
+		gitOutput(repoPath, ["remote", "get-url", "origin"]),
+		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"]),
+		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"]),
+	]);
+	const validationReason = scanRepoValidationReason(
+		name,
+		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		bareResult.status === "fulfilled" && bareResult.value === "true",
+		headResult.status === "fulfilled",
+	);
+	return {
+		name,
+		path: repoPath,
+		relativePath,
+		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
+		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		status: validationReason ? "error" : "ok",
+		reason: validationReason,
+	};
+}
+
+function scanRepoValidationReason(
+	name: string,
+	branch: string,
+	hasRemote: boolean,
+	isBare: boolean,
+	hasHead: boolean,
+): string | undefined {
+	if (name === "__root__") return "Repository name is reserved by AO.";
+	if (isBare) return "Bare repositories cannot be imported.";
+	if (!hasHead) return "Repository must have at least one commit.";
+	if (branch === "HEAD") return "Repository must have a checked-out branch.";
+	if (!hasRemote) return "Origin remote is required.";
+	return undefined;
+}
+
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+	const out = new Array<R>(items.length);
+	let next = 0;
+	await Promise.all(
+		Array.from({ length: Math.min(limit, items.length) }, async () => {
+			for (;;) {
+				const index = next++;
+				if (index >= items.length) return;
+				out[index] = await fn(items[index]);
+			}
+		}),
+	);
+	return out;
+}
+
+async function scanImportFolder(rootPath: string, mode: "project" | "workspace"): Promise<ImportFolderScanResult> {
+	if (mode === "project") {
+		const repo = await scanGitRepo(rootPath, rootPath);
+		return { path: rootPath, repos: repo ? [repo] : [] };
+	}
+
+	const entries = (await readdir(rootPath, { withFileTypes: true }))
+		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
+		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
+	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
+		scanGitRepo(path.join(rootPath, entry.name), rootPath),
+	);
+	return {
+		path: rootPath,
+		repos: repos
+			.filter((repo): repo is GitRepoScanResult => repo !== null)
+			.sort((a, b) => a.name.localeCompare(b.name)),
+	};
+}
+
+ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
+	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
+});
+ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
+	await ensureShellEnv();
+	return scanImportFolder(input.path, input.mode);
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");

@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -88,15 +91,119 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	}
 }
 
-func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
+func TestGetLaunchCommandWorkerStartsInteractive(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+	workspace := t.TempDir()
+	dataDir := t.TempDir()
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:          domain.KindWorker,
+		DataDir:       dataDir,
+		WorkspacePath: workspace,
+		Permissions:   ports.PermissionModeDefault,
+		Prompt:        "-fix this",
+		SessionID:     "repo/issue#42",
+		SystemPrompt:  "be terse",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS == "windows" {
+		want := []string{
+			"qwen",
+			"--append-system-prompt", "be terse",
+			"-i", "-fix this",
+		}
+		if !reflect.DeepEqual(cmd, want) {
+			t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+		}
+		return
+	}
+
+	want := []string{
+		"sh",
+		"-lc",
+	}
+	if len(cmd) != 3 || !reflect.DeepEqual(cmd[:2], want) {
+		t.Fatalf("unexpected command prefix\nwant: %#v\n got: %#v", want, cmd)
+	}
+	script := cmd[2]
+	sessionKey := safeQwenSessionKey("repo/issue#42")
+	for _, part := range []string{
+		"umask 077; ",
+		"mkdir -p ",
+		filepath.Join(dataDir, "agent-runtime", "qwen", sessionKey, sessionKey+".input.jsonl"),
+		sessionKey + ".input.jsonl",
+		sessionKey + ".output.jsonl",
+		`"type":"submit"`,
+		`"text":"-fix this"`,
+		`"session_start"`,
+		"exec 'qwen' '--append-system-prompt' 'be terse' '--json-file'",
+		"'--input-file'",
+	} {
+		if !strings.Contains(script, part) {
+			t.Fatalf("worker script missing %q in: %s", part, script)
+		}
+	}
+	if strings.Contains(script, "'-p'") || strings.Contains(script, "'-i'") {
+		t.Fatalf("worker script must not use -p/-i prompt flags: %s", script)
+	}
+	if strings.Contains(script, workspace) || strings.Contains(script, ".qwen-remote-input") {
+		t.Fatalf("worker script must not store remote-input files in workspace: %s", script)
+	}
+}
+
+func TestSafeQwenSessionKeyDisambiguatesSanitizedCollisions(t *testing.T) {
+	first := safeQwenSessionKey("a.b-1")
+	second := safeQwenSessionKey("a_b-1")
+	if first == second {
+		t.Fatalf("safeQwenSessionKey collision: %q", first)
+	}
+	if first != "a_b-1-612e622d31" {
+		t.Fatalf("first key = %q, want readable prefix plus raw hex suffix", first)
+	}
+	if second != "a_b-1-615f622d31" {
+		t.Fatalf("second key = %q, want readable prefix plus raw hex suffix", second)
+	}
+}
+
+func TestGetLaunchCommandWorkerRequiresDataDirForRemoteInput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows worker launch uses the native -i fallback")
+	}
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	_, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:      domain.KindWorker,
+		Prompt:    "fix it",
+		SessionID: "repo-1",
+	})
+	if err == nil {
+		t.Fatal("err = nil, want missing data dir error")
+	}
+	if !strings.Contains(err.Error(), "data dir is required") {
+		t.Fatalf("err = %v, want data dir context", err)
+	}
+}
+
+func TestGetPromptDeliveryStrategy(t *testing.T) {
 	plugin := &Plugin{}
 
-	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
+	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{Kind: domain.KindWorker, Prompt: "fix it"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != ports.PromptDeliveryInCommand {
-		t.Fatalf("unexpected strategy: %q", got)
+		t.Fatalf("worker strategy = %q, want %q", got, ports.PromptDeliveryInCommand)
+	}
+
+	got, err = plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryInCommand {
+		t.Fatalf("default strategy = %q, want %q", got, ports.PromptDeliveryInCommand)
 	}
 }
 
@@ -289,6 +396,30 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	want := []string{
 		"qwen",
 		"--approval-mode", "auto",
+		"-r", "sess-123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandDefaultModeOmitsApprovalFlags(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Permissions: ports.PermissionModeDefault,
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"qwen",
 		"-r", "sess-123",
 	}
 	if !reflect.DeepEqual(cmd, want) {

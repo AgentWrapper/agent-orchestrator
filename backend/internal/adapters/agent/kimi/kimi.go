@@ -1,11 +1,13 @@
 // Package kimi implements the Kimi CLI (Moonshot AI) agent adapter: launching
-// new non-interactive sessions and resuming sessions when a native Kimi session
-// id is known.
+// new interactive sessions and resuming sessions when a native Kimi session id
+// is known.
 //
 // Kimi CLI (binary "kimi") is Moonshot AI's terminal-native agentic coding
-// agent. A new task is run non-interactively with `kimi -p <prompt>`, which
-// streams the assistant output to stdout without opening the TUI. Sessions are
-// resumed by id with `kimi --session <id>`.
+// agent. AO launches Kimi sessions interactively as `kimi [--auto|-y]` and
+// delivers prompted worker tasks after startup through the runtime pane. Kimi's
+// `-p/--prompt` mode is intentionally avoided for AO workers because it is
+// non-interactive and streams transcript output without opening the TUI.
+// Sessions are resumed by id with `kimi --session <id>`.
 //
 // Kimi exposes no native lifecycle/hook system and is not documented as
 // Claude Code hook-compatible, so this is a Tier C adapter: hook installation
@@ -59,16 +61,12 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new Kimi session:
 //
-//	kimi -p <prompt>                            (non-interactive, default)
-//	kimi [--yolo|--auto]                        (interactive, no prompt)
+//	kimi [--auto|-y]                            (interactive)
 //
-// When a prompt is supplied, it is delivered via `-p` (in command), which runs
-// a single prompt without opening the TUI. Per Kimi docs, `--prompt` cannot be
-// combined with `--yolo`, `--auto`, or `--plan` -- non-interactive mode already
-// uses the `auto` permission policy by default, so approval flags would be
-// rejected at startup. They are only emitted on the (interactive) path with no
-// prompt. Kimi has no documented system-prompt flag, so cfg.SystemPrompt /
-// cfg.SystemPromptFile are not injected.
+// Prompted tasks are delivered after startup by the session manager rather than
+// via `-p`, so the dashboard keeps the interactive Kimi TUI instead of a plain
+// transcript stream. Kimi has no documented system-prompt flag, so
+// cfg.SystemPrompt / cfg.SystemPromptFile are not injected.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kimiBinary(ctx)
 	if err != nil {
@@ -76,14 +74,18 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "-p", cfg.Prompt)
-		return cmd, nil
-	}
-
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that AO should inject prompted Kimi tasks
+// into the interactive terminal after startup. Kimi's `-p/--prompt` mode is
+// non-interactive and does not open the TUI.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryAfterStart, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Kimi session

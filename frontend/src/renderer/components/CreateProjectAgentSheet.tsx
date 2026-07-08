@@ -6,6 +6,7 @@ import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
+import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -25,6 +26,7 @@ const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;
+	kind: ProjectKind;
 	onOpenChange: (open: boolean) => void;
 	onSubmit: (selection: CreateProjectAgentSelection) => Promise<void>;
 	open: boolean;
@@ -34,6 +36,7 @@ type CreateProjectAgentSheetProps = {
 export function CreateProjectAgentSheet({
 	error,
 	isCreating,
+	kind,
 	onOpenChange,
 	onSubmit,
 	open,
@@ -58,6 +61,11 @@ export function CreateProjectAgentSheet({
 			? agentsQuery.error.message
 			: "Could not load agent catalog."
 		: null;
+	const displayError = refreshAgentsMutation.isError
+		? refreshAgentsMutation.error instanceof Error
+			? refreshAgentsMutation.error.message
+			: "Could not refresh agent catalog."
+		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
@@ -80,7 +88,9 @@ export function CreateProjectAgentSheet({
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
-							<Dialog.Title className="text-[15px] font-semibold text-foreground">Project agents</Dialog.Title>
+							<Dialog.Title className="text-[15px] font-semibold text-foreground">
+								{kind === "workspace" ? "Workspace agents" : "Project agents"}
+							</Dialog.Title>
 							<Dialog.Description className="mt-1 break-all text-[12px] text-muted-foreground">
 								{path ?? ""}
 							</Dialog.Description>
@@ -143,24 +153,17 @@ export function CreateProjectAgentSheet({
 							</button>
 						</div>
 
-						{agentsError && (
+						{displayError && (
 							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
-								<span>{agentsError}</span>
+								<span>{displayError}</span>
 								<button
 									type="button"
-									className="shrink-0 rounded text-foreground underline-offset-2 hover:underline"
+									className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+									disabled={refreshAgentsMutation.isPending}
 									onClick={() => refreshAgentsMutation.mutate()}
 								>
 									Retry
 								</button>
-							</div>
-						)}
-
-						{refreshAgentsMutation.isError && (
-							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
-								{refreshAgentsMutation.error instanceof Error
-									? refreshAgentsMutation.error.message
-									: "Could not refresh agent catalog."}
 							</div>
 						)}
 
@@ -179,7 +182,7 @@ export function CreateProjectAgentSheet({
 								Cancel
 							</Button>
 							<Button type="submit" variant="primary" disabled={!canSubmit}>
-								{isCreating ? "Creating..." : "Create and start"}
+								{isCreating ? "Creating..." : kind === "workspace" ? "Create workspace and start" : "Create and start"}
 							</Button>
 						</div>
 					</form>

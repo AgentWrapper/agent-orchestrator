@@ -14,10 +14,10 @@
 // callbacks through the existing "ao hooks claude-code <evt>" dispatcher — no
 // Continue-specific native hook config or activity deriver is needed.
 //
-// Launch is headless via `cn --print [--auto|--readonly] <prompt>`; the prompt
-// is the positional argument (in-command delivery). Restore continues a specific
-// native session by id with `cn --fork <sessionId>` (Continue's `--resume` only
-// continues the *last* session, so it cannot target a particular AO session).
+// Launch is interactive via `cn [--auto|--readonly] [-- <prompt>]`. Restore
+// continues a specific native session by id with `cn --fork <sessionId>`
+// (Continue's `--resume` only continues the *last* session, so it cannot target
+// a particular AO session).
 package continueagent
 
 import (
@@ -77,19 +77,19 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds `cn --print [--auto|--readonly] <prompt>`.
+// GetLaunchCommand builds the Continue CLI argv for a fresh launch.
 //
-// `--print` runs Continue in non-interactive (headless) mode. The prompt is the
-// positional argument and is delivered in-command. Permission flags map AO's 4
-// modes onto Continue's two booleans (--auto / --readonly); Default and
-// AcceptEdits emit no flag so Continue resolves behavior from the user's config.
+// AO sessions are long-lived terminal sessions, so prompted and promptless
+// launches both stay interactive as `cn ...`. Permission flags map AO's 4 modes
+// onto Continue's two booleans (--auto / --readonly); Default and AcceptEdits
+// emit no flag so Continue resolves behavior from the user's config.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.continueBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary, "--print"}
+	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	if cfg.Prompt != "" {
@@ -97,6 +97,19 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports how Continue receives the initial prompt.
+// Prompted launches carry the prompt in `cn ... -- <prompt>`; promptless
+// launches start interactively and have no command prompt to deliver.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if cfg.Prompt != "" {
+		return ports.PromptDeliveryInCommand, nil
+	}
+	return ports.PromptDeliveryAfterStart, nil
 }
 
 // GetAgentHooks reuses the Claude Code hook installer because the Continue CLI
@@ -115,11 +128,11 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	return (&claudecode.Plugin{}).GetAgentHooks(ctx, cfg)
 }
 
-// GetRestoreCommand builds `cn --print [--auto|--readonly] --fork <agentSessionId>`
-// when a hook-captured native session id is available. ok=false otherwise (the
-// manager falls back to a fresh launch). `--fork <id>` continues a specific
-// session by id; Continue's `--resume` only continues the last session and so
-// cannot target a particular AO session.
+// GetRestoreCommand builds `cn [--auto|--readonly] --fork <agentSessionId>` when
+// a hook-captured native session id is available. ok=false otherwise (the manager
+// falls back to a fresh launch). `--fork <id>` continues a specific session by
+// id; Continue's `--resume` only continues the last session and so cannot target
+// a particular AO session.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -135,7 +148,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 
 	cmd = make([]string, 0, 4)
-	cmd = append(cmd, binary, "--print")
+	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--fork", agentSessionID)
 	return cmd, true, nil

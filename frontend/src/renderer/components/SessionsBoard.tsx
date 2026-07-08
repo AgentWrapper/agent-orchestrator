@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
@@ -14,13 +14,13 @@ import {
 } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
-import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
-import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 import { useUiStore } from "../stores/ui-store";
 
 type SessionsBoardProps = {
@@ -85,11 +85,33 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const orchestratorStartupError = useUiStore((state) =>
+		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
+	);
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
+	const visibleSpawnError = spawnError ?? orchestratorStartupError;
+	// The board instance survives project-to-project navigation (same route,
+	// new param), so a spawn failure must not follow the user to another board.
+	useEffect(() => setSpawnError(null), [projectId]);
+	const previousProjectIdRef = useRef(projectId);
+	useEffect(() => {
+		const previousProjectId = previousProjectIdRef.current;
+		if (previousProjectId && previousProjectId !== projectId) {
+			setOrchestratorStartupError(previousProjectId, null);
+		}
+		previousProjectIdRef.current = projectId;
+	}, [projectId, setOrchestratorStartupError]);
+	useEffect(() => {
+		if (projectId && orchestrator && orchestratorStartupError) {
+			setOrchestratorStartupError(projectId, null);
+		}
+	}, [orchestrator, orchestratorStartupError, projectId, setOrchestratorStartupError]);
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -97,6 +119,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
 	const done = byZone.get("done") ?? [];
+	// First-run orientation replaces the empty column shells (only once the
+	// query has resolved, so the welcome never flashes over real data): the
+	// global board teaches the app before any project exists, and a fresh
+	// project board invites the first task instead of showing four zeros.
+	const isLoaded = workspaceQuery.isSuccess;
+	const showWelcome = !projectId && isLoaded && all.length === 0;
+	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Collapsed by default, like agent-orchestrator's done-bar: finished and
 	// killed sessions cost one quiet line under the board until expanded.
 	const [doneExpanded, setDoneExpanded] = useState(false);
@@ -116,14 +145,22 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			});
 			return;
 		}
+		setSpawnError(null);
+		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId);
+			const sessionId = await spawnOrchestrator(projectId, "board");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			setOrchestratorStartupError(projectId, null);
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
 			});
+		} catch (err) {
+			// Never fail silently: the daemon's message (e.g. a worktree/branch
+			// conflict) is the only actionable signal the user gets.
+			console.error("Failed to spawn orchestrator:", err);
+			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
 		} finally {
 			setIsSpawning(false);
 		}
@@ -151,6 +188,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			{visibleSpawnError && !showProjectEmpty && (
+				<span className="dashboard-app-header__kill-error max-w-[320px] truncate" title={visibleSpawnError}>
+					{visibleSpawnError}
+				</span>
+			)}
 			<button
 				aria-label="New task"
 				className="dashboard-app-header__accent-btn"
@@ -182,11 +224,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead
-				title="Board"
-				subtitle="Live agent sessions flowing from work → review → merge."
-				actions={actions}
-			/>
+			{/* The first-launch welcome carries its own orientation; a "Board"
+			    header above it would describe a board that isn't rendered
+			    (review feedback on #2432). */}
+			{!showWelcome && (
+				<DashboardSubhead
+					title="Board"
+					subtitle="Live agent sessions flowing from work → review → merge."
+					actions={actions}
+				/>
+			)}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{projectId && health.state !== "ok" ? (
@@ -208,6 +255,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				) : null}
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
+				) : showWelcome ? (
+					<BoardWelcome />
+				) : showProjectEmpty ? (
+					<ProjectBoardEmpty
+						hasOrchestrator={orchestrator !== undefined}
+						isSpawning={isSpawning}
+						isProjectRestarting={isProjectRestarting}
+						onNewTask={() => setIsNewTaskOpen(true)}
+						onOpenOrchestrator={() => void openOrchestrator()}
+						spawnError={visibleSpawnError}
+					/>
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">
 						{COLUMNS.map((col) => (
@@ -320,71 +378,101 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 		onOpen();
 	};
 	return (
-		<div
-			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
-			onClick={onOpen}
-			onKeyDown={handleKeyDown}
-			role="button"
-			tabIndex={0}
-		>
-			<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
-				<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
-					<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
-					{badge.label}
-				</span>
-				{issueId && (
-					<span
-						className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
-						title={`Intake issue: ${issueId}`}
-					>
-						{issueId}
+		<div className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong">
+			<div onClick={onOpen} onKeyDown={handleKeyDown} role="button" tabIndex={0}>
+				<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
+					<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
+						<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
+						{badge.label}
 					</span>
-				)}
-				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
-					{agentLabel(session.provider)}
-				</span>
+					{issueId && (
+						<span
+							className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
+							title={`Intake issue: ${issueId}`}
+						>
+							{issueId}
+						</span>
+					)}
+					<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
+						{agentLabel(session.provider)}
+					</span>
+				</div>
+				<div
+					className={cn(
+						"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+						showBranch ? "pb-2" : "pb-3",
+						"line-clamp-2 overflow-hidden",
+					)}
+				>
+					{session.title}
+				</div>
+				{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			</div>
 			<div
-				className={cn(
-					"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
-					showBranch ? "pb-2" : "pb-3",
-					"line-clamp-2 overflow-hidden",
-				)}
+				className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive"
+				onClick={(event) => event.stopPropagation()}
 			>
-				{session.title}
-			</div>
-			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
-			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{prSummaries.length > 0 ? (
-					<div className="flex flex-col gap-2">
-						{prSummaries.map((prSummary, index) => (
-							<BoardPRSummary
-								className={cn(index > 0 && "border-t border-border pt-2")}
-								key={prSummary.number}
-								pr={prSummary}
-							/>
+				{prSummaries.length === 0 ? (
+					"no PR yet"
+				) : (
+					<div className="flex flex-col gap-1">
+						{groupPRsByLifecycle(prSummaries).map((group) => (
+							<BoardPRGroup group={group} key={group.status.label} />
 						))}
 					</div>
-				) : (
-					"no PR yet"
 				)}
 			</div>
 		</div>
 	);
 }
 
-function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
-	const diffSummary = prDiffSummary(pr);
+type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
+type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
+
+function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 	return (
-		<div className={cn("flex min-w-0 flex-col gap-1", className)}>
-			<span>
-				PR #{pr.number} · {pr.state}
-			</span>
-			{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
-			<PRStatusStrip pr={pr} />
-			<PRAttentionPanel className="mt-1.5 pt-1.5" maxItems={2} pr={pr} />
-		</div>
+		<span
+			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
+			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
+		>
+			<span>PR</span>
+			{group.prs.map((pr, index) => (
+				<span key={pr.number}>
+					<a
+						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+						href={prBrowserUrl(pr)}
+						rel="noreferrer"
+						target="_blank"
+					>
+						#{pr.number}
+					</a>
+					{index < group.prs.length - 1 ? "," : null}
+				</span>
+			))}
+			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
+		</span>
 	);
+}
+
+function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
+	const groups = new Map<BoardPRLifecycleStatus["label"], BoardPRGroup>();
+	for (const pr of prs) {
+		const status = prLifecycleStatus(pr);
+		const group = groups.get(status.label);
+		if (group) {
+			group.prs.push(pr);
+		} else {
+			groups.set(status.label, { status, prs: [pr] });
+		}
+	}
+	return Array.from(groups.values());
+}
+
+function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
+	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
+	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
+	if (pr.state === "closed") return { label: "closed", className: "text-error" };
+	return { label: "open", className: "text-success" };
 }
 
 function sameLabel(a: string, b: string): boolean {

@@ -25,6 +25,7 @@ function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
 		<QueryClientProvider client={queryClient}>
 			<CreateProjectAgentSheet
 				isCreating={false}
+				kind="single_repo"
 				onOpenChange={() => undefined}
 				onSubmit={onSubmit}
 				open={true}
