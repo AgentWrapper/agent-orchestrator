@@ -11,9 +11,9 @@ import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
 This page gets your machine ready to run Agent Orchestrator. By the end, the desktop app (or the legacy `ao` CLI) should be installed, your source-control CLI should be authenticated, and an agent CLI should be ready to do the coding.
 
 <Callout type="info" title="What AO installs">
-	The recommended install is the **desktop app** from GitHub Releases. It bundles the daemon, dashboard, and plugins, and
-	updates itself. The `@aoagents/ao` npm package is the legacy on-ramp: it ships the `ao` CLI, whose `ao start` fetches and
-	opens the same desktop app. The npm package is frozen and no longer updated.
+	The recommended install is the **desktop app** from GitHub Releases. It bundles the daemon, dashboard, and plugins,
+	and updates itself. The `@aoagents/ao` npm package is the legacy on-ramp: it ships the `ao` CLI, whose `ao start`
+	fetches and opens the same desktop app. The npm package is frozen and no longer updated.
 </Callout>
 
 ## Prerequisites
@@ -46,18 +46,18 @@ If you plan to use GitLab or Linear, install and authenticate their CLIs or cred
 
 The recommended way to install AO is the desktop build from GitHub Releases. Download the latest build for your platform, then open it:
 
-| Platform              | Download                                                                                                                      |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| macOS (Apple silicon) | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)       |
-| macOS (Intel)         | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)         |
-| Windows               | [.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)          |
+| Platform              | Download                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| macOS (Apple silicon) | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)        |
+| macOS (Intel)         | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)          |
+| Windows               | [.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)           |
 | Linux                 | [.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
 
 The desktop app owns the daemon, dashboard, and auto-updates, so a desktop install needs no CLI. Skip ahead to [Authenticate Your Tools](#authenticate-your-tools).
 
 <Callout type="warn" title="npm is the legacy path, no longer recommended">
-	The `@aoagents/ao` npm package is frozen and no longer receives updates. It ships the `ao` CLI for existing users;
-	`ao start` fetches and opens the same desktop build above. Use it only if you already run AO from the CLI:
+	The `@aoagents/ao` npm package is frozen and no longer receives updates. It ships the `ao` CLI for existing users; `ao
+	start` fetches and opens the same desktop build above. Use it only if you already run AO from the CLI:
 </Callout>
 
 <Tabs items={["npm", "pnpm", "yarn", "from source"]}>
