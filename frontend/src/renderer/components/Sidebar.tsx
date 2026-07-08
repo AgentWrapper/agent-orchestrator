@@ -599,11 +599,6 @@ function ProjectItem({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			{removeError && (
-				<span className="sr-only" role="status">
-					{removeError}
-				</span>
-			)}
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
@@ -623,14 +618,13 @@ function ProjectItem({
 				onOpenChange={(open) => {
 					if (!isRemoving) setConfirmOpen(open);
 				}}
-				size="lg"
 				title={`Remove project`}
 				description={
 					<>
-						<p className="text-lg font-medium text-foreground">
-							This will remove <strong>{workspace.name}</strong>
+						<p className="text-sm font-medium text-foreground">
+							This will remove <strong>{workspace.name}</strong> from AO
 						</p>
-						<p className="mt-1.5 text-sm text-muted-foreground">
+						<p className="mt-1 text-xs text-muted-foreground">
 							This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored
 							history on disk.
 						</p>
@@ -945,10 +939,8 @@ function CreateProjectModeDialog({
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(720px,calc(100svh-24px))] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-3 pt-4 sm:px-6 sm:pb-4 sm:pt-5">
 						<div className="min-w-0">
-							<Dialog.Title className="text-[18px] font-semibold text-foreground">
-								Import to Agent Orchestrator
-							</Dialog.Title>
-							<Dialog.Description className="mt-1 text-[13px] font-medium text-muted-foreground">
+							<Dialog.Title className="text-sm font-medium text-foreground">Import to Agent Orchestrator</Dialog.Title>
+							<Dialog.Description className="mt-1 text-[13px] text-muted-foreground">
 								What are you importing?
 							</Dialog.Description>
 						</div>
@@ -1080,10 +1072,10 @@ function CreateProjectFolderDialog({
 							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
 						</button>
 						<div className="min-w-0 flex-1">
-							<Dialog.Title className="text-[18px] font-semibold text-foreground">
+							<Dialog.Title className="text-sm font-medium text-foreground">
 								{isWorkspace ? "Import workspace" : "Import project"}
 							</Dialog.Title>
-							<Dialog.Description className="mt-1 max-w-[520px] text-[13px] font-medium leading-5 text-muted-foreground">
+							<Dialog.Description className="mt-1 max-w-[520px] text-[13px] leading-5 text-muted-foreground">
 								{isWorkspace
 									? "Pick a folder that contains your Git repositories. Each repo inside it joins the workspace."
 									: "Import a single Git repository as one project."}
