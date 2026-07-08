@@ -349,4 +349,19 @@ describe("SessionView", () => {
 		expect(screen.getByRole("dialog", { name: /inspector/i })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
+
+	// Regression: the mobile Sheet was rendered with showCloseButton={false} and no
+	// other in-sheet affordance, so on a phone (no Esc key, topbar buried under the
+	// portaled overlay) the only dismiss path was a thin, undiscoverable backdrop
+	// strip — the inspector held the user captive. It must expose a visible Close
+	// control that flips the store closed.
+	it("gives the mobile inspector Sheet a visible Close control that dismisses it", () => {
+		vi.mocked(useIsMobile).mockReturnValue(true);
+		useUiStore.setState({ isInspectorOpen: true });
+		render(<SessionView sessionId="sess-1" />);
+
+		const closeButton = screen.getByRole("button", { name: /close inspector/i });
+		fireEvent.click(closeButton);
+		expect(useUiStore.getState().isInspectorOpen).toBe(false);
+	});
 });

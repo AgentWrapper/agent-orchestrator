@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
@@ -241,6 +242,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							className="h-[88vh] gap-0 p-0"
 						>
 							<SheetTitle className="sr-only">Session inspector</SheetTitle>
+							{/* Mobile needs its own visible dismiss control: there's no Esc key
+							    on a phone, and the desktop topbar toggle (⌘⇧B) sits under this
+							    Sheet's portaled overlay, so backdrop-tap was the only way out —
+							    a thin, undiscoverable strip that trapped users. A labeled Close
+							    button drives the same store flag as every other toggle. */}
+							<div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
+								<span className="font-mono text-[11px] uppercase tracking-wide text-passive">Inspector</span>
+								<button
+									type="button"
+									aria-label="Close inspector"
+									onClick={() => toggleInspector()}
+									className="grid size-10 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground"
+								>
+									<X className="size-4" aria-hidden="true" />
+								</button>
+							</div>
 							<div className="min-h-0 flex-1 overflow-hidden">{inspector}</div>
 						</SheetContent>
 					</Sheet>
