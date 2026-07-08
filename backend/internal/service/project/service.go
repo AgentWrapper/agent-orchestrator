@@ -38,16 +38,19 @@ type Manager interface {
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
 }
 
-// SessionTeardowner is the narrow session-service surface project removal
-// needs: stop live project sessions and reclaim managed terminal workspaces.
-type SessionTeardowner interface {
+// SessionOps is the narrow session-service surface the project use-cases need:
+// stop live project sessions (removal) and answer whether a project currently
+// has a live orchestrator (so a sessionPrefix change that would strand its
+// canonical branch can be refused — see #113).
+type SessionOps interface {
 	TeardownProject(ctx context.Context, project domain.ProjectID) error
+	HasActiveOrchestrator(ctx context.Context, project domain.ProjectID) (bool, error)
 }
 
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
 	store          Store
-	sessions       SessionTeardowner
+	sessions       SessionOps
 	clock          func() time.Time
 	telemetry      ports.EventSink
 	defaultHarness domain.AgentHarness
@@ -66,7 +69,7 @@ type Deps struct {
 	// When empty, the service falls back to config.DefaultAgent.
 	DefaultHarness domain.AgentHarness
 	Store          Store
-	Sessions       SessionTeardowner
+	Sessions       SessionOps
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
 }
@@ -298,7 +301,30 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
+
+	// The orchestrator's canonical branch is derived from the resolved session
+	// prefix (ao/<prefix>-orchestrator) and pinned when the orchestrator spawns.
+	// Changing the prefix out from under a live orchestrator strands that branch:
+	// replacement-verification then demands ao/<new-prefix>-orchestrator while the
+	// running worktree is still on ao/<old-prefix>-orchestrator, so every respawn
+	// 500s until the prefix is reverted (#113). Refuse the change while an
+	// orchestrator is live; a no-op prefix or any other config edit is unaffected.
+	oldPrefix := resolveSessionPrefix(row)
 	row.Config = in.Config
+	newPrefix := resolveSessionPrefix(row)
+	if newPrefix != oldPrefix && m.sessions != nil {
+		live, err := m.sessions.HasActiveOrchestrator(ctx, id)
+		if err != nil {
+			return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to check orchestrator state")
+		}
+		if live {
+			return Project{}, apierr.Conflict(
+				"SESSION_PREFIX_LOCKED",
+				"Cannot change sessionPrefix while this project has a live orchestrator: the orchestrator's canonical branch is pinned to the current prefix and a mismatch breaks respawn. Stop the orchestrator first, then change the prefix.",
+				map[string]any{"currentPrefix": oldPrefix, "requestedPrefix": newPrefix},
+			)
+		}
+	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}

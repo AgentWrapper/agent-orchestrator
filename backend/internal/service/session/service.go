@@ -20,6 +20,9 @@ import (
 type Store interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
+	// HasActiveOrchestrator answers whether a project has a live orchestrator
+	// without materializing or enriching session rows (see #113).
+	HasActiveOrchestrator(ctx context.Context, project domain.ProjectID) (bool, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
@@ -330,7 +333,15 @@ func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Ses
 	}
 	expectedBranch := "ao/" + serviceSessionPrefix(project) + "-orchestrator"
 	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
+		// A live sessionPrefix change desyncs the pinned canonical branch from the
+		// prefix-derived expectation (#113). SetConfig now refuses that change, but
+		// if the state is already stranded, surface an actionable operator error
+		// instead of an opaque 500.
+		return apierr.Conflict(
+			"ORCHESTRATOR_BRANCH_MISMATCH",
+			fmt.Sprintf("Orchestrator replacement verification failed: new session %s is on branch %q but the project's canonical branch is %q. The sessionPrefix likely changed under a live orchestrator; revert the project's sessionPrefix so its derived branch matches the running orchestrator's branch %q (or stop the orchestrator and clear its stale worktree) before respawning.", sess.ID, sess.Metadata.Branch, expectedBranch, sess.Metadata.Branch),
+			map[string]any{"sessionBranch": sess.Metadata.Branch, "expectedBranch": expectedBranch},
+		)
 	}
 	return nil
 }
@@ -512,6 +523,15 @@ func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID)
 	}
 	_, err = s.Cleanup(ctx, project)
 	return err
+}
+
+// HasActiveOrchestrator reports whether the project currently has a live
+// (non-terminated) orchestrator session. Used by the project service to refuse
+// a sessionPrefix change that would strand a running orchestrator's canonical
+// branch (#113). It delegates to the store's EXISTS probe rather than List so
+// the check never loads or enriches session read models just to answer yes/no.
+func (s *Service) HasActiveOrchestrator(ctx context.Context, projectID domain.ProjectID) (bool, error) {
+	return s.store.HasActiveOrchestrator(ctx, projectID)
 }
 
 // List returns sessions as enriched display models after applying API filters.

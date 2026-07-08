@@ -68,6 +68,15 @@ func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domai
 	return out, nil
 }
 
+func (f *fakeStore) HasActiveOrchestrator(_ context.Context, p domain.ProjectID) (bool, error) {
+	for _, r := range f.sessions {
+		if r.ProjectID == p && r.Kind == domain.KindOrchestrator && !r.IsTerminated {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (f *fakeStore) ListAllSessions(_ context.Context) ([]domain.SessionRecord, error) {
 	out := make([]domain.SessionRecord, 0, len(f.sessions))
 	for _, r := range f.sessions {
@@ -376,6 +385,37 @@ func TestSpawnOrchestratorCleanRetiresActiveOrchestratorsBeforeSpawn(t *testing.
 	}
 	if len(fc.killed) != 0 {
 		t.Fatalf("interactive Kill must not be used for replacement: killed=%v", fc.killed)
+	}
+}
+
+// TestSpawnOrchestratorBranchMismatchSurfacesActionableError guards #113: when a
+// stranded state already exists (the newly spawned orchestrator lands on the
+// old prefix-derived branch while config expects the new one), verification must
+// fail with a typed, actionable operator error — not an opaque 500.
+func TestSpawnOrchestratorBranchMismatchSurfacesActionableError(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{SessionPrefix: "lb"},
+	}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "lb-20",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{Branch: "ao/learn-breakt-orchestrator"},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err == nil {
+		t.Fatal("expected a branch-mismatch verification error")
+	}
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want a typed *apierr.Error", err)
+	}
+	if apiErr.Code != "ORCHESTRATOR_BRANCH_MISMATCH" {
+		t.Fatalf("code = %q, want ORCHESTRATOR_BRANCH_MISMATCH", apiErr.Code)
 	}
 }
 
