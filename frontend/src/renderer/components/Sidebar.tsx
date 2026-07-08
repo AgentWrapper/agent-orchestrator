@@ -67,6 +67,7 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import { Button } from "./ui/button";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
@@ -434,6 +435,7 @@ function ProjectItem({
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
@@ -475,22 +477,21 @@ function ProjectItem({
 		}
 	};
 
-	const removeProject = async () => {
+	const removeProject = () => {
 		setRemoveError(null);
-		const confirmed = window.confirm(
-			`Remove project ${workspace.name}? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.`,
-		);
-		if (!confirmed) return;
+		setConfirmOpen(true);
+	};
 
+	const handleConfirmRemove = async () => {
 		setIsRemoving(true);
 		try {
 			await onRemoveProject(workspace.id);
+			setConfirmOpen(false);
 			// The route for a removed project no longer resolves; fall back home.
 			if (selection.activeProjectId === workspace.id) selection.goHome();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Could not remove project";
 			setRemoveError(message);
-			window.alert(message);
 		} finally {
 			setIsRemoving(false);
 		}
@@ -617,6 +618,30 @@ function ProjectItem({
 					))}
 				</SidebarMenuSub>
 			)}
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={(open) => {
+					if (!isRemoving) setConfirmOpen(open);
+				}}
+				size="lg"
+				title={`Remove project`}
+				description={
+					<>
+						<p className="text-lg font-medium text-foreground">
+							This will remove <strong>{workspace.name}</strong>
+						</p>
+						<p className="mt-1.5 text-sm text-muted-foreground">
+							This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored
+							history on disk.
+						</p>
+					</>
+				}
+				confirmLabel={isRemoving ? "Removing…" : "Remove"}
+				destructive
+				busy={isRemoving}
+				error={removeError}
+				onConfirm={handleConfirmRemove}
+			/>
 		</SidebarMenuItem>
 	);
 }

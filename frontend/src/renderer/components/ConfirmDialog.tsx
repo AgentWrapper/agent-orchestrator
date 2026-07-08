@@ -1,0 +1,76 @@
+import * as Dialog from "@radix-ui/react-dialog";
+import { Loader2, TriangleAlert } from "lucide-react";
+import { Button } from "./ui/button";
+
+type ConfirmDialogProps = {
+	open: boolean;
+	title: string;
+	description: React.ReactNode;
+	confirmLabel: string;
+	destructive?: boolean;
+	busy?: boolean;
+	error?: string | null;
+	onConfirm: () => void;
+	onOpenChange: (open: boolean) => void;
+	size?: "default" | "sm" | "lg";
+};
+
+export function ConfirmDialog({
+	open,
+	title,
+	description,
+	confirmLabel,
+	destructive,
+	busy,
+	error,
+	onConfirm,
+	onOpenChange,
+	size = "default",
+}: ConfirmDialogProps) {
+	return (
+		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-125 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
+					<div className="flex gap-2">
+						{destructive && (
+							<div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/15">
+								<TriangleAlert className="size-5 text-destructive" aria-hidden="true" />
+							</div>
+						)}
+						<div className="min-w-0 flex-1">
+							<Dialog.Title className="text-lg font-semibold text-foreground">{title}</Dialog.Title>
+							<Dialog.Description asChild>
+								<div className="mt-2">{description}</div>
+							</Dialog.Description>
+						</div>
+					</div>
+					{error && <div className="mt-3 text-[12px] text-destructive">{error}</div>}
+					<div className="mt-4 flex justify-end gap-2">
+						<Button
+							className="bg-transparent border border-gray-600 hover:border-gray-100"
+							onClick={() => onOpenChange(false)}
+							disabled={busy}
+							size={size}
+						>
+							Cancel
+						</Button>
+						<Button
+							className={
+								destructive
+									? "border-destructive bg-destructive text-destructive-foreground hover:opacity-90"
+									: ""
+							}
+							onClick={onConfirm}
+							disabled={busy}
+							size={size}
+						>
+							{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+							{confirmLabel}
+						</Button>
+					</div>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
