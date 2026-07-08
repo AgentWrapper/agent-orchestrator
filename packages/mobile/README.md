@@ -9,8 +9,22 @@ your AO server's HTTP API over your LAN or Tailscale.
 ```bash
 cd packages/mobile
 npm install
-npm start          # then press i (iOS), a (Android), or scan the QR in Expo Go
+npm start          # then press i (iOS), a (Android), w (web), or scan the QR in Expo Go
 ```
+
+## Web
+
+The app also runs in a browser (a quick look without a device):
+
+```bash
+npm run web        # expo start --web, then open http://localhost:8081
+```
+
+Connect it to a daemon reachable from the browser - on the same machine that is
+Host `localhost` + the API port (see below). Caveat: the in-app **terminal** and
+the **static preview browser** use `react-native-webview`, which has no web
+implementation, so those two screens do not render on web - use a device or
+simulator for them.
 
 ## Connect
 
