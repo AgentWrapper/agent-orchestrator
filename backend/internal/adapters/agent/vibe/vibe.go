@@ -92,7 +92,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	cmd = []string{binary, "--trust", "--output", "streaming"}
+	cmd = make([]string, 0, 6)
+	cmd = append(cmd, binary, "--trust", "--output", "streaming")
 	appendWorkdirFlag(&cmd, cfg.WorkspacePath)
 	appendAgentFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "-p", cfg.Prompt)
