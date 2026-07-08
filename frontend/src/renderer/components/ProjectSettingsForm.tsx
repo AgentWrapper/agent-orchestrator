@@ -30,6 +30,7 @@ import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
+import { RelaunchSessionsDialog } from "./RelaunchSessionsDialog";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
@@ -116,7 +117,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
+	const [relaunchOpen, setRelaunchOpen] = useState(false);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
+	const initialPermissions = config.agentConfig?.permissions ?? "";
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const agentCatalog = agentsQuery.data;
@@ -174,6 +177,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				body: { displayName, config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
+			const permissionChanged = form.permissions !== initialPermissions;
 			if (
 				form.orchestratorAgent !== initialOrchestratorAgent ||
 				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
@@ -183,10 +187,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				} catch (error) {
 					return {
 						replacementError: error instanceof Error ? error.message : "Could not replace orchestrator",
+						permissionChanged,
 					};
 				}
 			}
-			return { replacementError: null };
+			return { replacementError: null, permissionChanged };
 		},
 		onSuccess: (result) => {
 			void captureRendererEvent("ao.renderer.settings_save_succeeded", { project_id: projectId });
@@ -195,6 +200,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
+			if (result.permissionChanged) setRelaunchOpen(true);
 		},
 		onError: () => {
 			void captureRendererEvent("ao.renderer.settings_save_failed", { project_id: projectId });
@@ -202,6 +208,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	});
 
 	return (
+		<>
 		<form
 			className="flex w-full flex-col gap-(--size-settings-section-gap)"
 			onSubmit={(event) => {
@@ -385,6 +392,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</SettingsSection>
 			)}
 		</form>
+		<RelaunchSessionsDialog
+			open={relaunchOpen}
+			projectId={projectId}
+			onOpenChange={setRelaunchOpen}
+			onDone={onSaved}
+		/>
+	</>
 	);
 }
 
