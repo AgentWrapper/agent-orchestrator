@@ -530,6 +530,39 @@ func TestResizeLargestWins(t *testing.T) {
 	}
 }
 
+// TestResizeMatchesSingleLargestClient: with a wide-but-short client and a
+// narrow-but-tall one, the PTY must match ONE client's grid exactly (the larger
+// by area) — never an independent per-axis max. A synthesized wide-AND-tall grid
+// (120x48 here) has no client behind it and mis-renders for both: the desktop
+// grows phantom rows, the phone phantom columns. This is the regression that made
+// the desktop terminal "also get weird" while co-viewing.
+func TestResizeMatchesSingleLargestClient(t *testing.T) {
+	f := startServe(t, 111)
+	defer f.cancel()
+
+	wide := newTestClient(t, f.addr) // desktop-like: wide, short (area 3600)
+	defer wide.close()
+	tall := newTestClient(t, f.addr) // phone-like: narrow, tall (area 2640)
+	defer tall.close()
+
+	syncResize(t, wide, 120, 30)
+	f.pty.waitResizes(t, 1)
+	// The smaller-area client asks for MORE rows than the wide one; a per-axis max
+	// would bump the grid to 120x48. Area-based selection must keep it at 120x30.
+	syncResize(t, tall, 55, 48)
+
+	got := f.pty.resizeSnapshot()
+	last := got[len(got)-1]
+	if last.Cols != 120 || last.Rows != 30 {
+		t.Fatalf("grid = %+v, want the larger single client {120 30}", last)
+	}
+	for _, r := range got {
+		if r.Cols == 120 && r.Rows == 48 {
+			t.Fatal("PTY was sized to a synthesized per-axis-max grid {120 48}; it must match one client exactly")
+		}
+	}
+}
+
 // TestGetOutputReq: MsgGetOutputReq returns MsgGetOutputRes with ring.Tail(n).
 func TestGetOutputReq(t *testing.T) {
 	f := startServe(t, 104)

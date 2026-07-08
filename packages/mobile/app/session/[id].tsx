@@ -33,34 +33,57 @@ const TERMINAL_ENHANCE_JS = `
 
   // Report xterm's REAL grid size (measured by the FitAddon from the actual
   // rendered cell) back to RN through fressh's own debug channel, so RN can tell
-  // the PTY the exact cols/rows xterm is using - no font/DPR guessing.
-  function postDims(sz) {
+  // the PTY the exact cols/rows xterm is using — no font/DPR guessing.
+  // Report the phone's NATURAL fit (what would fill the screen at the current
+  // font) WITHOUT resizing the terminal. The render grid is driven by the daemon
+  // (the shared PTY's authoritative size), which we scale to fit below; we report
+  // this fit only so the daemon can size the PTY to the phone when it is the sole
+  // viewer. proposeDimensions measures without applying, unlike fit().
+  function reportFit() {
     try {
-      var T = window.terminal; if (!T) return;
-      var c = (sz && sz.cols) || T.cols, r = (sz && sz.rows) || T.rows;
-      if (window.ReactNativeWebView && c > 0 && r > 0) {
+      var F = window.fitAddon; if (!F || !F.proposeDimensions) return;
+      var d = F.proposeDimensions();
+      if (d && d.cols > 0 && d.rows > 0 && window.ReactNativeWebView) {
         window.ReactNativeWebView.postMessage(
-          JSON.stringify({ type: 'debug', message: 'FRESSH_DIMS ' + c + ' ' + r }));
+          JSON.stringify({ type: 'debug', message: 'FRESSH_DIMS ' + d.cols + ' ' + d.rows }));
       }
     } catch (_) {}
   }
 
-  // When the keyboard/rotation resizes the terminal, keep it pinned to the bottom
-  // (latest output) instead of jumping to the top.
+  // Scale the whole terminal so its full width (cols x cell) fits the screen. The
+  // daemon may hold the grid wider than the phone (a co-viewing desktop drives the
+  // size), so instead of clipping/garbling we shrink uniformly to fit; vertical
+  // history still scrolls. Never scales up past 1 (a phone-sized grid stays crisp).
+  function applyScale() {
+    try {
+      var root = document.querySelector('.xterm');
+      var screen = document.querySelector('.xterm-screen');
+      var host = document.getElementById('terminal') || document.body;
+      if (!root || !screen || !host) return;
+      root.style.transformOrigin = 'top left';
+      var natW = screen.offsetWidth;           // cols x cellWidth (unscaled)
+      var contW = host.clientWidth || window.innerWidth;
+      if (!natW || !contW) return;
+      var scale = Math.min(1, contW / natW);
+      root.style.transform = scale < 1 ? 'scale(' + scale + ')' : 'none';
+    } catch (_) {}
+  }
+
+  // When the grid changes, keep it pinned to the bottom (latest output).
   function pinBottom() { try { window.terminal.scrollToBottom(); } catch (_) {} }
   (function wire() {
     if (window.terminal && window.terminal.onResize && window.fitAddon) {
-      window.terminal.onResize(function (sz) { setTimeout(pinBottom, 0); postDims(sz); });
-      // Re-fit whenever the WebView's box changes (keyboard show/hide, rotation).
-      // fit() updates xterm to the real fit; onResize above then reports the dims.
+      // The grid changes only when the daemon tells RN the authoritative size and
+      // RN calls resize(); re-fit-to-width and pin on every such change.
+      window.terminal.onResize(function () { setTimeout(function () { applyScale(); pinBottom(); }, 0); });
+      // On box changes (keyboard/rotation) re-report the fit and re-scale, but do
+      // NOT fit() — the daemon owns the grid; fitting would fight it.
       try {
         var host = document.getElementById('terminal') || document.body;
-        var ro = new ResizeObserver(function () {
-          try { window.fitAddon.fit(); } catch (_) {}
-        });
+        var ro = new ResizeObserver(function () { reportFit(); applyScale(); });
         ro.observe(host);
       } catch (_) {}
-      postDims(); // report the initial (boot-fit) dims immediately
+      reportFit(); applyScale();
     } else {
       setTimeout(wire, 200);
     }
@@ -227,6 +250,11 @@ export default function TerminalScreen() {
 	// Last grid size reported by the WebView's FitAddon, so we can send it to the
 	// PTY the moment the terminal opens (dims may arrive before or after open).
 	const lastDimsRef = useRef<{ cols: number; rows: number } | null>(null);
+	// The authoritative grid the daemon told us the shared PTY is actually using
+	// (driven by the largest/primary client — e.g. a co-viewing desktop). We render
+	// THIS grid (scaled to fit), not the phone's own fit, so the display matches the
+	// PTY and a full-screen TUI doesn't mis-render. Null until the daemon reports it.
+	const authRef = useRef<{ cols: number; rows: number } | null>(null);
 	// The REAL keyboard input. The WebView can't show/control a keyboard reliably,
 	// so this hidden RN TextInput is what raises the keyboard and captures typing,
 	// which we forward to the PTY over the mux. Focus it to type, blur it to hide.
@@ -339,6 +367,15 @@ export default function TerminalScreen() {
 					if (/not found/i.test(msg)) setNotFound(true);
 					else setBanner(msg);
 				},
+				onTerminalResize: (tid, cols, rows) => {
+					if (tid !== id) return;
+					// The daemon's authoritative grid: render exactly this (the webview
+					// scales it to fit), so the phone mirrors the shared PTY instead of
+					// fitting to its own screen and mis-drawing a wider grid.
+					authRef.current = { cols, rows };
+					setSize({ cols, rows });
+					xtermRef.current?.resize({ cols, rows });
+				},
 			});
 			muxRef.current = mux;
 			mux.connect();
@@ -379,15 +416,19 @@ export default function TerminalScreen() {
 		};
 	}, [cfg, id]);
 
-	// The WebView's FitAddon measures the real cell size and reports the resulting
-	// cols/rows back through fressh's debug->logger.log channel. We forward those
-	// exact dims to the PTY so the display and the PTY always agree, regardless of
-	// font, DPR, or accessibility text scale.
+	// The WebView reports the phone's NATURAL fit (proposeDimensions, measure-only).
+	// We forward it to the daemon as this client's requested size — used only when
+	// the phone is the sole viewer (a co-viewing desktop, being primary, wins). The
+	// render grid comes back via onTerminalResize; until it does, render the fit so
+	// the terminal isn't blank.
 	const applyDims = useCallback(
 		(cols: number, rows: number) => {
 			lastDimsRef.current = { cols, rows };
-			setSize((prev) => (prev && prev.cols === cols && prev.rows === rows ? prev : { cols, rows }));
 			if (openedRef.current) muxRef.current?.resize(id, cols, rows, projectId);
+			if (!authRef.current) {
+				setSize({ cols, rows });
+				xtermRef.current?.resize({ cols, rows });
+			}
 		},
 		[id, projectId],
 	);
@@ -411,6 +452,10 @@ export default function TerminalScreen() {
 	);
 
 	const onInitialized = useCallback(() => {
+		// A fresh xterm (first mount, or a remount after a font-zoom) starts at its
+		// default grid — restore the daemon's authoritative grid onto it so it keeps
+		// mirroring the shared PTY rather than snapping to the default.
+		if (authRef.current) xtermRef.current?.resize(authRef.current);
 		// Guard against a second open if the WebView re-fires onInitialized (e.g.
 		// remount on orientation change) - that would attach the PTY twice.
 		if (openedRef.current) return;

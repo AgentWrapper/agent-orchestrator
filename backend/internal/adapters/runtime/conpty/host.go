@@ -74,37 +74,44 @@ type host struct {
 	shutdownC    chan struct{} // closed when Shutdown is called
 }
 
-// applyLargestLocked sizes the shared PTY to the LARGEST grid across all clients
-// that have reported one, and resizes only when that maximum changes. There is a
-// single PTY with one grid, so when several clients view it at once (e.g. the
-// desktop app and the phone) the largest must win: a small viewer can never
-// shrink the grid a larger one needs, which is what produced the "stripped-down"
-// desktop view when a phone attached. Called on every client resize and on every
-// disconnect, so the grid grows to fit a newly-attached large client and shrinks
-// back to the remaining largest client when it leaves. Callers must hold h.mu.
+// applyLargestLocked sizes the shared PTY to a SINGLE client's grid — the
+// largest by area — and resizes only when that choice changes. There is one PTY
+// with one grid, so when several clients view it at once (e.g. the desktop app
+// and the phone) the largest wins: a small viewer can never shrink the grid a
+// larger one needs, which is what produced the "stripped-down" desktop view when
+// a phone attached.
+//
+// Crucially this matches ONE client's cols AND rows as a pair, rather than taking
+// an independent max of each axis. A per-axis max would synthesize a grid no
+// client actually has — a wide-but-short desktop (120x30) plus a narrow-but-tall
+// phone (55x48) would yield 120x48 — and that phantom grid mis-renders for every
+// client (the desktop draws its footer at a row it can't show; the phone gets
+// columns it can't fit). Matching one client exactly keeps that client (the
+// largest — normally the desktop) pixel-correct; only smaller clients scale.
+//
+// Called on every client resize and on every disconnect, so the grid follows a
+// newly-attached larger client and falls back to the remaining largest one when
+// it leaves. Callers must hold h.mu.
 func (h *host) applyLargestLocked() {
-	maxCols, maxRows := 0, 0
+	bestCols, bestRows, bestArea := 0, 0, 0
 	for _, cs := range h.clients {
 		if !cs.sized {
 			continue
 		}
-		if cs.cols > maxCols {
-			maxCols = cs.cols
-		}
-		if cs.rows > maxRows {
-			maxRows = cs.rows
+		if area := cs.cols * cs.rows; area > bestArea {
+			bestArea, bestCols, bestRows = area, cs.cols, cs.rows
 		}
 	}
 	// No client has reported a size yet: leave the PTY at its current grid (the
 	// initial size set when the ConPTY was created).
-	if maxCols == 0 || maxRows == 0 {
+	if bestCols == 0 || bestRows == 0 {
 		return
 	}
-	if maxCols == h.curCols && maxRows == h.curRows {
+	if bestCols == h.curCols && bestRows == h.curRows {
 		return
 	}
-	h.curCols, h.curRows = maxCols, maxRows
-	_ = h.cfg.PTY.Resize(maxCols, maxRows)
+	h.curCols, h.curRows = bestCols, bestRows
+	_ = h.cfg.PTY.Resize(bestCols, bestRows)
 }
 
 // run is the main event loop.
