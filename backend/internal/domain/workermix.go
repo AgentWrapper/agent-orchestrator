@@ -32,6 +32,13 @@ func (e WorkerMixEntry) key() BucketKey {
 	return BucketKey{Harness: e.Harness, Model: strings.TrimSpace(e.Model)}
 }
 
+// BucketKey returns the normalized identity of this mix bucket for consumers
+// outside the domain package that need to correlate selection with runtime
+// health.
+func (e WorkerMixEntry) BucketKey() BucketKey {
+	return e.key()
+}
+
 // BucketKey identifies one agent/model bucket. It keys the running-session
 // counts the deficit selector consumes.
 type BucketKey struct {

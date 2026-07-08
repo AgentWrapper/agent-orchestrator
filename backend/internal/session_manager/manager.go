@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -62,6 +63,10 @@ var (
 	// Codex spawn). Passing it would hang the agent, so spawn fails loudly
 	// instead. The API maps it to a 400.
 	ErrModelHarnessMismatch = errors.New("session: model not valid for harness")
+	// ErrWorkerMixBucketDown means the weighted worker mix selected an
+	// agent/model bucket that this daemon has already failed to launch. AO must
+	// not silently substitute a different bucket for that spawn attempt.
+	ErrWorkerMixBucketDown = errors.New("session: worker mix bucket is down")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -176,6 +181,16 @@ type Manager struct {
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
 	logger      *slog.Logger
+	telemetry   ports.EventSink
+
+	mixMu      sync.Mutex
+	mixDown    map[domain.BucketKey]workerMixBucketDown
+	mixSkipped map[domain.BucketKey]int
+}
+
+type workerMixBucketDown struct {
+	Reason    string
+	ChangedAt time.Time
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -229,6 +244,9 @@ type Deps struct {
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
+	// Telemetry receives worker-mix bucket down/recovery alerts. Nil disables
+	// these events while preserving log alerts.
+	Telemetry ports.EventSink
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -250,7 +268,10 @@ func New(d Deps) *Manager {
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
 		},
-		logger: d.Logger,
+		logger:     d.Logger,
+		telemetry:  d.Telemetry,
+		mixDown:    map[domain.BucketKey]workerMixBucketDown{},
+		mixSkipped: map[domain.BucketKey]int{},
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -280,6 +301,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
+	var mixBucket *domain.BucketKey
 	// A configured worker mix distributes worker spawns across weighted
 	// agent/model buckets. It applies only to a worker spawn that names no
 	// explicit harness; an explicit --agent (e.g. the haiku deploy pool) always
@@ -291,13 +313,21 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		if err != nil {
 			return domain.SessionRecord{}, fmt.Errorf("spawn: worker mix: %w", err)
 		}
+		m.applyWorkerMixSkipped(running)
 		if pick, ok := project.Config.WorkerMix.Select(running); ok {
+			key := pick.BucketKey()
 			cfg.Harness = pick.Harness
 			// A per-spawn model still wins; only fill the bucket's model when the
 			// spawn named none, so the recorded model matches the chosen bucket.
 			if strings.TrimSpace(cfg.Model) == "" {
 				cfg.Model = pick.Model
+			} else {
+				key.Model = strings.TrimSpace(cfg.Model)
 			}
+			if m.recordWorkerMixBucketSkippedIfDown(key) {
+				return domain.SessionRecord{}, fmt.Errorf("spawn: worker mix selected %s: %w", formatBucketKey(key), ErrWorkerMixBucketDown)
+			}
+			mixBucket = &key
 		}
 	}
 	// A per-project role override picks the harness when the spawn names none,
@@ -320,6 +350,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	agentConfig, err := effectiveAgentConfig(cfg.Kind, project.Config, cfg.Model, cfg.Harness)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	}
+	var actualBucket *domain.BucketKey
+	if cfg.Kind == domain.KindWorker {
+		key := domain.BucketKey{Harness: cfg.Harness, Model: strings.TrimSpace(cfg.Model)}
+		actualBucket = &key
 	}
 
 	if err := m.validateRuntimePrerequisites(); err != nil {
@@ -374,6 +409,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
@@ -389,6 +425,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -398,6 +435,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.validateAgentBinary(argv); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	runtimeToken, err := newRuntimeToken()
@@ -415,6 +453,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -431,6 +470,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 	}
 
@@ -441,6 +481,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
+	m.markWorkerMixBucketRecovered(actualBucket)
 	return m.getRecord(ctx, id)
 }
 
@@ -596,6 +637,104 @@ func (m *Manager) runningWorkerBuckets(ctx context.Context, projectID domain.Pro
 		counts[domain.BucketKey{Harness: rec.Harness, Model: strings.TrimSpace(rec.Metadata.Model)}]++
 	}
 	return counts, nil
+}
+
+func (m *Manager) applyWorkerMixSkipped(counts map[domain.BucketKey]int) {
+	m.mixMu.Lock()
+	defer m.mixMu.Unlock()
+	for k, skipped := range m.mixSkipped {
+		if skipped > 0 {
+			counts[k] += skipped
+		}
+	}
+}
+
+func (m *Manager) workerMixBucketDown(key domain.BucketKey) bool {
+	m.mixMu.Lock()
+	defer m.mixMu.Unlock()
+	_, ok := m.mixDown[key]
+	return ok
+}
+
+func (m *Manager) recordWorkerMixBucketSkippedIfDown(key domain.BucketKey) bool {
+	m.mixMu.Lock()
+	down, ok := m.mixDown[key]
+	if !ok {
+		m.mixMu.Unlock()
+		return false
+	}
+	m.mixSkipped[key]++
+	skipped := m.mixSkipped[key]
+	m.mixMu.Unlock()
+	m.logger.Warn("worker mix bucket skipped",
+		"bucket", formatBucketKey(key), "skipped", skipped, "reason", down.Reason)
+	return true
+}
+
+func (m *Manager) markWorkerMixBucketDown(key *domain.BucketKey, err error) {
+	if key == nil || err == nil {
+		return
+	}
+	reason := err.Error()
+	m.mixMu.Lock()
+	_, alreadyDown := m.mixDown[*key]
+	m.mixDown[*key] = workerMixBucketDown{Reason: reason, ChangedAt: m.clock()}
+	m.mixSkipped[*key]++
+	skipped := m.mixSkipped[*key]
+	m.mixMu.Unlock()
+	if alreadyDown {
+		m.logger.Warn("worker mix bucket still down",
+			"bucket", formatBucketKey(*key), "skipped", skipped, "reason", reason)
+		return
+	}
+	m.logger.Warn("worker mix bucket down",
+		"bucket", formatBucketKey(*key), "skipped", skipped, "reason", reason)
+	m.emitWorkerMixBucketEvent("ao.worker_mix.bucket_down", ports.TelemetryLevelWarn, *key, reason)
+}
+
+func (m *Manager) markWorkerMixBucketRecovered(key *domain.BucketKey) {
+	if key == nil {
+		return
+	}
+	m.mixMu.Lock()
+	_, wasDown := m.mixDown[*key]
+	delete(m.mixDown, *key)
+	delete(m.mixSkipped, *key)
+	m.mixMu.Unlock()
+	if wasDown {
+		m.logger.Info("worker mix bucket recovered", "bucket", formatBucketKey(*key))
+		m.emitWorkerMixBucketEvent("ao.worker_mix.bucket_recovered", ports.TelemetryLevelInfo, *key, "")
+	}
+}
+
+func (m *Manager) emitWorkerMixBucketEvent(name string, level ports.TelemetryLevel, key domain.BucketKey, reason string) {
+	if m.telemetry == nil {
+		return
+	}
+	payload := map[string]any{
+		"component": "session_manager",
+		"bucket":    formatBucketKey(key),
+		"harness":   string(key.Harness),
+		"model":     strings.TrimSpace(key.Model),
+	}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	m.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       name,
+		Source:     "session_manager",
+		OccurredAt: m.clock(),
+		Level:      level,
+		Payload:    payload,
+	})
+}
+
+func formatBucketKey(key domain.BucketKey) string {
+	model := strings.TrimSpace(key.Model)
+	if model == "" {
+		return string(key.Harness)
+	}
+	return string(key.Harness) + ":" + model
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {

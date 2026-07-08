@@ -111,6 +111,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		DataDir:   cfg.DataDir,
 		RunFile:   cfg.RunFilePath,
 		Logger:    log,
+		Telemetry: telemetry,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

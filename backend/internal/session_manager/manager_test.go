@@ -289,6 +289,19 @@ func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreC
 	return []string{"resume"}, true, nil
 }
 
+type modelFailAgent struct {
+	recordingAgent
+	failModel string
+	err       error
+}
+
+func (a *modelFailAgent) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) ([]string, error) {
+	if cfg.Config.Model == a.failModel {
+		return nil, a.err
+	}
+	return a.recordingAgent.GetLaunchCommand(ctx, cfg)
+}
+
 type launchTitleAgent struct {
 	recordingAgent
 }
@@ -909,6 +922,99 @@ func TestSpawn_WorkerMixConvergesDeficitBased(t *testing.T) {
 	// the launched agent gets the configured model.
 	if claudeModel != "opus" {
 		t.Fatalf("claude bucket model = %q, want opus", claudeModel)
+	}
+}
+
+func TestSpawn_WorkerMixMarksFailedBucketDownWithoutSameAttemptSubstitution(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 60},
+			{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 40},
+		},
+	}}
+	agent := &modelFailAgent{failModel: "gpt-5.5-codex", err: errors.New("400 model not available")}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil || !strings.Contains(err.Error(), "400 model not available") {
+		t.Fatalf("first spawn err = %v, want exact bucket launch failure", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("failed codex bucket must not substitute claude in the same attempt; sessions=%v", st.sessions)
+	}
+	downKey := domain.BucketKey{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"}
+	if !m.workerMixBucketDown(downKey) {
+		t.Fatal("failed codex model bucket was not marked down")
+	}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("second spawn should use the healthy claude bucket's own turn: %v", err)
+	}
+	if got := st.sessions["mer-2"].Harness; got != domain.HarnessClaudeCode {
+		t.Fatalf("second spawn harness = %q, want claude-code", got)
+	}
+	if got := st.sessions["mer-2"].Metadata.Model; got != "opus" {
+		t.Fatalf("second spawn model = %q, want opus", got)
+	}
+
+	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrWorkerMixBucketDown) {
+		t.Fatalf("third spawn err = %v, want ErrWorkerMixBucketDown for the down bucket's next slot", err)
+	}
+	if len(st.sessions) != 1 {
+		t.Fatalf("down bucket slot must reduce capacity, not create another session; sessions=%v", st.sessions)
+	}
+
+	agent.failModel = ""
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"}); err != nil {
+		t.Fatalf("explicit successful codex bucket spawn should recover bucket: %v", err)
+	}
+	if m.workerMixBucketDown(downKey) {
+		t.Fatal("successful exact bucket spawn did not mark bucket recovered")
+	}
+}
+
+func TestSpawn_WorkerMixExplicitModelMarksActualBucketDown(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{Harness: domain.HarnessCodex, Model: "gpt-5.4-codex", Weight: 100}},
+	}}
+	agent := &modelFailAgent{failModel: "gpt-5.5-codex", err: errors.New("400 model not available")}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if err == nil || !strings.Contains(err.Error(), "400 model not available") {
+		t.Fatalf("spawn err = %v, want explicit model launch failure", err)
+	}
+	actualKey := domain.BucketKey{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"}
+	configuredKey := domain.BucketKey{Harness: domain.HarnessCodex, Model: "gpt-5.4-codex"}
+	if !m.workerMixBucketDown(actualKey) {
+		t.Fatal("explicit launch bucket was not marked down")
+	}
+	if m.workerMixBucketDown(configuredKey) {
+		t.Fatal("configured mix bucket was marked down instead of actual explicit model bucket")
+	}
+
+	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if !errors.Is(err, ErrWorkerMixBucketDown) {
+		t.Fatalf("repeat explicit model spawn err = %v, want ErrWorkerMixBucketDown", err)
+	}
+
+	agent.failModel = ""
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"}); err != nil {
+		t.Fatalf("explicit successful exact bucket spawn should recover bucket: %v", err)
+	}
+	if m.workerMixBucketDown(actualKey) {
+		t.Fatal("successful exact explicit bucket spawn did not mark bucket recovered")
 	}
 }
 
