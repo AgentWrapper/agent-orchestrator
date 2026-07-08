@@ -30,6 +30,20 @@ func setMouseOnArgs(id string) []string {
 	return []string{"set-option", "-t", id, "mouse", "on"}
 }
 
+// setWindowSizeLargestArgs makes tmux size the session's window to the LARGEST
+// attached client rather than the most recently active one (the default is
+// "latest"). A session can be viewed by several clients at once — e.g. the
+// desktop app and the phone. Under "latest", a small phone attaching (or
+// becoming active on a session switch) shrinks the shared window for the desktop
+// too, giving the desktop a stripped-down view. "largest" ignores smaller
+// viewers while a bigger one is attached, so a secondary client can never strip
+// down the primary's view; when the big client detaches, tmux recomputes and the
+// window follows the remaining largest client. Pane-targeting, so no `=` prefix
+// (see setStatusOffArgs).
+func setWindowSizeLargestArgs(id string) []string {
+	return []string{"set-option", "-t", id, "window-size", "largest"}
+}
+
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
 // requests exact-name matching so a session "foo" does not accidentally match
 // "foobar" (tmux otherwise does unique-prefix matching).
