@@ -120,7 +120,9 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // Agents whose full-screen TUI keeps its own transcript and scrolls it only by
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
 // PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
-const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode"]);
+// kilocode is a fork of opencode and shares its TUI surface, so it scrolls the
+// same way.
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode"]);
 
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
 	if (state === "reattaching") return "Terminal disconnected — reattaching…";
