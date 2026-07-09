@@ -79,3 +79,54 @@ func TestListPRFactsForSessionProjectsAllPRsNewestFirst(t *testing.T) {
 		t.Fatalf("no-PR session = %d facts, want 0", len(got))
 	}
 }
+
+func TestGetPRByNumberReturnsLatestActivePR(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	write := func(pr domain.PullRequest) {
+		t.Helper()
+		if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+			t.Fatalf("write %s: %v", pr.URL, err)
+		}
+	}
+	write(domain.PullRequest{
+		URL:        "https://github.com/acme/old/pull/42",
+		SessionID:  r.ID,
+		Number:     42,
+		Merged:     true,
+		Repo:       "acme/old",
+		UpdatedAt:  now.Add(2 * time.Second),
+		ObservedAt: now.Add(2 * time.Second),
+	})
+	write(domain.PullRequest{
+		URL:        "https://github.com/acme/widgets/pull/42",
+		SessionID:  r.ID,
+		Number:     42,
+		Repo:       "acme/widgets",
+		UpdatedAt:  now,
+		ObservedAt: now,
+	})
+
+	got, ok, err := s.GetPRByNumber(ctx, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("GetPRByNumber ok=false, want true")
+	}
+	if got.URL != "https://github.com/acme/widgets/pull/42" || got.Repo != "acme/widgets" {
+		t.Fatalf("GetPRByNumber = %+v, want active acme/widgets PR", got)
+	}
+
+	_, ok, err = s.GetPRByNumber(ctx, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("GetPRByNumber missing ok=true, want false")
+	}
+}

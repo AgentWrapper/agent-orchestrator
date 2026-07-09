@@ -623,6 +623,51 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/prs/{id}/close:
+    post:
+      operationId: closePR
+      parameters:
+      - description: PR number.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: PR number.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClosePRResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Close a pull request
+      tags:
+      - prs
   /api/v1/prs/{id}/merge:
     post:
       operationId: mergePR
@@ -1654,6 +1699,16 @@ components:
       required:
       - sessionId
       - reason
+      type: object
+    ClosePRResponse:
+      properties:
+        ok:
+          type: boolean
+        prNumber:
+          type: integer
+      required:
+      - ok
+      - prNumber
       type: object
     ControllersSessionView:
       properties:

@@ -16,12 +16,18 @@ import (
 type fakePRService struct {
 	mergeResult   prsvc.MergeResult
 	mergeErr      error
+	closeResult   prsvc.CloseResult
+	closeErr      error
 	resolveResult prsvc.ResolveResult
 	resolveErr    error
 }
 
 func (f *fakePRService) Merge(_ context.Context, _ string) (prsvc.MergeResult, error) {
 	return f.mergeResult, f.mergeErr
+}
+
+func (f *fakePRService) Close(_ context.Context, _ string) (prsvc.CloseResult, error) {
+	return f.closeResult, f.closeErr
 }
 
 func (f *fakePRService) ResolveComments(_ context.Context, _ string, _ []string) (prsvc.ResolveResult, error) {
@@ -36,11 +42,18 @@ func newPRTestServer(t *testing.T, svc prsvc.ActionManager) *httptest.Server {
 	return srv
 }
 
-// ---- Nil service → 503 SCM_NOT_CONFIGURED ----
+// ---- Nil service → 501 NOT_IMPLEMENTED ----
 
 func TestPRsRoutes_NilService_MergeReturns501(t *testing.T) {
 	srv := newPRTestServer(t, nil)
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+}
+
+func TestPRsRoutes_NilService_CloseReturns501(t *testing.T) {
+	srv := newPRTestServer(t, nil)
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/close", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
@@ -104,6 +117,48 @@ func TestPRsRoutes_Merge_422(t *testing.T) {
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "PR_PRECONDITIONS_UNMET")
+}
+
+// ---- Close: 200 ----
+
+func TestPRsRoutes_Close_200(t *testing.T) {
+	svc := &fakePRService{closeResult: prsvc.CloseResult{PRNumber: 42}}
+	srv := newPRTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/close", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		OK       bool `json:"ok"`
+		PRNumber int  `json:"prNumber"`
+	}
+	mustJSON(t, body, &resp)
+	if !resp.OK || resp.PRNumber != 42 {
+		t.Errorf("resp = %+v, want {ok:true prNumber:42}", resp)
+	}
+}
+
+// ---- Close: 404 ----
+
+func TestPRsRoutes_Close_404(t *testing.T) {
+	svc := &fakePRService{closeErr: prsvc.ErrPRNotFound}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/99/close", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PR_NOT_FOUND")
+}
+
+// ---- Close: 409 ----
+
+func TestPRsRoutes_Close_409(t *testing.T) {
+	svc := &fakePRService{closeErr: prsvc.ErrPRNotMergeable}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/close", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusConflict, "PR_NOT_MERGEABLE")
 }
 
 // ---- ResolveComments: 200 ----

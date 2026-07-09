@@ -535,6 +535,12 @@ type MergePRResponse struct {
 	Method   string `json:"method"`
 }
 
+// ClosePRResponse is the body of POST /api/v1/prs/{id}/close (200).
+type ClosePRResponse struct {
+	OK       bool `json:"ok"`
+	PRNumber int  `json:"prNumber"`
+}
+
 // ResolveCommentsRequest is the optional body of POST /api/v1/prs/{id}/resolve-comments.
 type ResolveCommentsRequest struct {
 	CommentIDs []string `json:"commentIds,omitempty"`

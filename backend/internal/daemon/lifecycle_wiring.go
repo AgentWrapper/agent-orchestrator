@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -80,14 +81,14 @@ type sessionLifecycle interface {
 // store + LCM, the per-session agent resolver, and the agent messenger. The
 // returned service is mounted at httpd APIDeps.Sessions. It also returns the
 // manager so the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, prsvc.ActionManager, reviewsvc.Manager, sessionLifecycle, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
 	}
 	agents, err := buildAgentResolver(defaultAgent, log)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	ws, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
@@ -99,7 +100,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		RepoResolver: projectRepoResolver{store: store},
 	})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,
@@ -114,6 +115,10 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
 		logSCMProviderDisabled(log, err)
+	}
+	var prActions prsvc.ActionManager
+	if scmProvider != nil {
+		prActions = prsvc.NewActionService(prsvc.ActionDeps{Lookup: store, SCM: scmProvider})
 	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:   mgr,
@@ -131,7 +136,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	// writer.
 	reviewers, err := reviewer.NewResolver()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
 	reviewEngine := reviewcore.New(reviewcore.Deps{
 		Store:    store,
@@ -141,7 +146,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Launcher: reviewcore.NewLauncher(reviewers, runtime),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
-	return sessionSvc, reviewSvc, mgr, nil
+	return sessionSvc, prActions, reviewSvc, mgr, nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

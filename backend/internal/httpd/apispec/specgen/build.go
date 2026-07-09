@@ -187,6 +187,7 @@ var schemaNames = map[string]string{
 	"ControllersMarkAllNotificationsReadResponse": "MarkAllNotificationsReadResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
+	"ControllersClosePRResponse":         "ClosePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
 	// httpd/controllers — review wire envelopes
@@ -760,6 +761,18 @@ func prOperations() []operation {
 			pathParams: []any{controllers.PRIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.MergePRResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/prs/{id}/close", id: "closePR", tag: "prs",
+			summary:    "Close a pull request",
+			pathParams: []any{controllers.PRIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ClosePRResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},

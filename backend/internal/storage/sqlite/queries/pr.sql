@@ -67,6 +67,14 @@ ON CONFLICT (url) DO UPDATE SET
 -- name: GetPR :one
 SELECT * FROM pr WHERE url = ?;
 
+-- name: GetPRByNumber :one
+SELECT * FROM pr
+WHERE number = ?
+ORDER BY
+    CASE WHEN pr_state NOT IN ('merged', 'closed') THEN 0 ELSE 1 END,
+    updated_at DESC
+LIMIT 1;
+
 -- name: ListPRsBySession :many
 SELECT * FROM pr
 WHERE session_id = ?

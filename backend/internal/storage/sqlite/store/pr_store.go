@@ -240,6 +240,18 @@ func (s *Store) GetPR(ctx context.Context, url string) (domain.PullRequest, bool
 	return prRowFromGen(p), true, nil
 }
 
+// GetPRByNumber returns the active/latest PR facts for a provider PR number.
+func (s *Store) GetPRByNumber(ctx context.Context, number int) (domain.PullRequest, bool, error) {
+	p, err := s.qr.GetPRByNumber(ctx, int64(number))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.PullRequest{}, false, nil
+	}
+	if err != nil {
+		return domain.PullRequest{}, false, fmt.Errorf("get pr number %d: %w", number, err)
+	}
+	return prRowFromGen(p), true, nil
+}
+
 // ListPRsBySession returns every PR owned by a session, newest first.
 func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error) {
 	rows, err := s.qr.ListPRsBySession(ctx, sessionID)

@@ -152,12 +152,15 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, prActions, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
 	if svc == nil {
 		t.Fatal("startSession returned nil session service")
+	}
+	if prActions == nil {
+		t.Fatal("startSession returned nil PR action service")
 	}
 	if reviewSvc == nil {
 		t.Fatal("startSession returned nil review service")
@@ -185,7 +188,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, _, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
