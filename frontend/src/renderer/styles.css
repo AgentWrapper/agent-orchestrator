@@ -1324,32 +1324,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	text-align: center;
 }
 
-.inspector-empty--browser {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 9px;
-	padding: 48px 18px;
-	text-align: center;
-}
-
-.inspector-empty--browser svg {
-	width: 30px;
-	height: 30px;
-	color: var(--fg-passive);
-}
-
-.inspector-empty--browser p {
-	font-size: 12.5px;
-	color: var(--fg-muted);
-}
-
-.inspector-empty--browser span {
-	font-size: 11.5px;
-	color: var(--fg-passive);
-	line-height: 1.5;
-}
-
 .inspector-kv {
 	display: flex;
 	flex-direction: column;
@@ -1520,6 +1494,21 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	background: var(--bg);
+}
+
+/* Maximized browser overlay: a fixed layer over the whole app window (portaled
+   to <body>, so it covers the sidebar + topbar too, not just the session area).
+   The panel goes edge-to-edge, so drop its border/radius. */
+.browser-popout-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	background: var(--bg);
+}
+
+.browser-popout-overlay .browser-panel {
+	border: 0;
+	border-radius: 0;
 }
 
 .browser-panel__toolbar {
