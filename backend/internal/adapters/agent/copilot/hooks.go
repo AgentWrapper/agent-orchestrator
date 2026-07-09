@@ -91,9 +91,9 @@ var copilotManagedHooks = []copilotHookSpec{
 //   - .github/hooks/ao.json for normalized activity-state signals.
 //   - .github/agents/ao-<session>.agent.md for an explicit per-session role.
 //
-// The launch command also points COPILOT_CUSTOM_INSTRUCTIONS_DIRS at AO's prompt
-// artifact directory. Avoid writing a repository-root AGENTS.md here so AO does
-// not compete with project-owned instructions.
+// The launch command selects that profile with --agent=ao-<session>. Avoid
+// writing a repository-root AGENTS.md here so AO does not compete with
+// project-owned instructions.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err

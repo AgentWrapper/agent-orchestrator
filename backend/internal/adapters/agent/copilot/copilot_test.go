@@ -41,14 +41,14 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandAddsCustomInstructionsDir(t *testing.T) {
+func TestGetLaunchCommandUsesSessionCustomAgentForSystemPrompt(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
-	t.Setenv(copilotCustomInstructionsEnvVar, "/user/instructions")
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
 		Prompt:           "-fix this",
+		SessionID:        "mer-1",
 		SystemPrompt:     "follow AO rules",
 		SystemPromptFile: promptFile,
 	})
@@ -56,17 +56,9 @@ func TestGetLaunchCommandAddsCustomInstructionsDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir := filepath.Dir(promptFile)
-	want := []string{"env", "COPILOT_CUSTOM_INSTRUCTIONS_DIRS=" + dir + ",/user/instructions", "copilot", "--allow-all", "--interactive", "-fix this"}
+	want := []string{"copilot", "--allow-all", "--agent=ao-mer-1", "--interactive", "-fix this"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "follow AO rules\n" {
-		t.Fatalf("AGENTS.md = %q, want inline prompt", data)
 	}
 }
 
@@ -162,7 +154,7 @@ func TestGetPromptDeliveryStrategyIsAfterStart(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandUsesCustomInstructionsNotSystemPromptFlag(t *testing.T) {
+func TestGetLaunchCommandDoesNotUseUnsupportedSystemPromptFlags(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 
@@ -178,9 +170,6 @@ func TestGetLaunchCommandUsesCustomInstructionsNotSystemPromptFlag(t *testing.T)
 		if contains(cmd, disallowed) {
 			t.Fatalf("command %#v unexpectedly contains unsupported Copilot system prompt flag %q", cmd, disallowed)
 		}
-	}
-	if !contains(cmd, "COPILOT_CUSTOM_INSTRUCTIONS_DIRS="+filepath.Dir(promptFile)) {
-		t.Fatalf("command %#v does not configure Copilot custom instructions", cmd)
 	}
 }
 
@@ -343,7 +332,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 }
 
-func TestGetRestoreCommandAddsCustomInstructionsDir(t *testing.T) {
+func TestGetRestoreCommandSelectsSessionCustomAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 	if err := os.WriteFile(promptFile, []byte("restore AO rules"), 0o600); err != nil {
@@ -363,17 +352,9 @@ func TestGetRestoreCommandAddsCustomInstructionsDir(t *testing.T) {
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
-	dir := filepath.Dir(promptFile)
-	want := []string{"env", "COPILOT_CUSTOM_INSTRUCTIONS_DIRS=" + dir, "copilot", "--agent=ao-mer-1", "--resume", "uuid-123"}
+	want := []string{"copilot", "--agent=ao-mer-1", "--resume", "uuid-123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "restore AO rules\n" {
-		t.Fatalf("AGENTS.md = %q, want file prompt", data)
 	}
 }
 
