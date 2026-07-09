@@ -68,7 +68,6 @@ import { useUiStore } from "../stores/ui-store";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import { ResizeHandle } from "./ResizeHandle";
 import { Button } from "./ui/button";
-import { ResizeHandle } from "./ResizeHandle";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
