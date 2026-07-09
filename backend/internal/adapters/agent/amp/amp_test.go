@@ -44,12 +44,12 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if s != ports.PromptDeliveryInCommand {
-		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryInCommand)
+	if s != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryAfterStart)
 	}
 }
 
-func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
+func TestGetLaunchCommandBypassIgnoresPromptForInteractiveLaunch(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
@@ -59,7 +59,7 @@ func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"amp", "--permission-mode", "bypassPermissions", "--", "-add a health check"}
+	want := []string{"amp", "--permission-mode", "bypassPermissions"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -110,7 +110,7 @@ func TestGetLaunchCommandIgnoresInlineSystemPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"amp", "--", "do the thing"}
+	want := []string{"amp"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
