@@ -38,10 +38,10 @@ export function InstallDownloads() {
 		<section className="ao-install-downloads" aria-label="Download Agent Orchestrator">
 			<div className="ao-install-downloads__header">
 				<div className="ao-install-downloads__copy">
-					<div className="ao-install-downloads__eyebrow">Recommended install</div>
-					<div className="ao-install-downloads__title">Desktop app from GitHub Releases</div>
+					<div className="ao-install-downloads__eyebrow">Manual downloads</div>
+					<div className="ao-install-downloads__title">Latest desktop release assets</div>
 					<div className="ao-install-downloads__description">
-						Bundles the daemon, dashboard, plugins, and auto-updates. No global CLI is required.
+						Use these direct links if you prefer to install without the terminal bootstrap script.
 					</div>
 				</div>
 				<a className="ao-install-downloads__release" href={RELEASE_BASE}>

@@ -44,7 +44,28 @@ If you plan to use GitLab or Linear, install and authenticate their CLIs or cred
 
 ## Install AO
 
-Download the desktop app for your platform. This is the supported default path after the GitHub workspace installer change.
+Install the desktop app from the terminal, or download the release asset for your platform.
+
+<div className="ao-compact-tabs ao-install-script-tabs">
+
+<Tabs items={["macOS / Linux", "Windows PowerShell"]}>
+	<Tab value="macOS / Linux">
+
+```bash
+curl -fsSL https://aoagents.dev/install.sh | sh
+```
+
+	</Tab>
+	<Tab value="Windows PowerShell">
+
+```powershell
+irm https://aoagents.dev/install.ps1 | iex
+```
+
+	</Tab>
+</Tabs>
+
+</div>
 
 <InstallDownloads />
 

@@ -1192,6 +1192,18 @@ export function LandingHero() {
 							</span>
 						</a>
 					</div>
+					<div className="gsap-reveal mx-auto mt-4 flex w-full max-w-[560px] items-start gap-3 rounded-[6px] border border-white/10 bg-white/[0.035] px-4 py-3 text-left shadow-[0_16px_44px_-36px_rgba(130,170,255,0.35)] sm:items-center">
+						<span className="shrink-0 pt-[2px] font-mono text-[13px] text-[color:var(--fg-dim)] sm:pt-0">$</span>
+						<code className="min-w-0 flex-1 break-words font-mono text-[12px] leading-5 text-[#b9c9ff] [overflow-wrap:anywhere] sm:overflow-x-auto sm:whitespace-nowrap sm:text-[13px] sm:leading-none sm:[scrollbar-width:none]">
+							curl -fsSL https://aoagents.dev/install.sh | sh
+						</code>
+						<a
+							href="/docs/installation"
+							className="shrink-0 text-[12px] font-semibold text-[color:var(--fg-muted)] transition-colors hover:text-[color:var(--fg)]"
+						>
+							Install
+						</a>
+					</div>
 				</div>
 
 				<div className="gsap-reveal mx-auto mt-20 flex max-w-[1200px] items-center gap-4 px-1 text-left">
