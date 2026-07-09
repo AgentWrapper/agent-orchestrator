@@ -257,6 +257,7 @@ export default function TerminalScreen() {
 	const [browserOpen, setBrowserOpen] = useState(false);
 	const [preview, setPreview] = useState<{ entry: string; url: string } | null>(null);
 	const previewWebRef = useRef<WebView>(null);
+	const webIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const autoOpenedRef = useRef<string | null>(null);
 
 	const { sessions, orchestrators, restore } = useApp();
@@ -483,6 +484,16 @@ export default function TerminalScreen() {
 		setBrowserOpen(true);
 	}, [browserOpen, preview]);
 
+	// Reload the preview: native reloads the WebView; web re-assigns the iframe src.
+	const reloadPreview = useCallback(() => {
+		if (Platform.OS === "web") {
+			const f = webIframeRef.current;
+			if (f) f.src = f.src;
+		} else {
+			previewWebRef.current?.reload();
+		}
+	}, []);
+
 	const confirmKill = useCallback(() => {
 		const doKill = async () => {
 			try {
@@ -573,6 +584,11 @@ export default function TerminalScreen() {
 		);
 	}
 
+	// The terminal and preview render inside a native WebView, which the web target
+	// can't run - react-native-webview resolves to a stub that just prints "React
+	// Native WebView does not support this platform." Gate both off web.
+	const isWeb = Platform.OS === "web";
+
 	// The composer and key bar sit directly atop each other, so they share one
 	// bottom inset: reserve room above the keyboard, else the home-indicator inset.
 	const bottomPad = kbHeight > 0 ? 8 : insets.bottom > 0 ? insets.bottom : 8;
@@ -648,18 +664,31 @@ export default function TerminalScreen() {
 			)}
 
 			<View style={styles.termWrap}>
-				<XtermJsWebView
-					key={`term-${fontSize}`}
-					ref={xtermRef}
-					autoFit={false}
-					xtermOptions={xtermOptions}
-					webViewOptions={webViewOptions}
-					logger={logger}
-					onInitialized={onInitialized}
-					onData={onData}
-					style={{ flex: 1, backgroundColor: theme.bgBase }}
-				/>
-				{dead && (
+				{isWeb ? (
+					<View style={styles.deadOverlay}>
+						<View style={styles.deadIcon}>
+							<Feather name="smartphone" size={24} color={theme.textTertiary} />
+						</View>
+						<Text style={styles.deadTitle}>Terminal is phone-only</Text>
+						<Text style={styles.deadMsg}>
+							The live terminal renders in a native WebView, which the browser can't run. Open this session in
+							the app on your phone to interact with it.
+						</Text>
+					</View>
+				) : (
+					<XtermJsWebView
+						key={`term-${fontSize}`}
+						ref={xtermRef}
+						autoFit={false}
+						xtermOptions={xtermOptions}
+						webViewOptions={webViewOptions}
+						logger={logger}
+						onInitialized={onInitialized}
+						onData={onData}
+						style={{ flex: 1, backgroundColor: theme.bgBase }}
+					/>
+				)}
+				{!isWeb && dead && (
 					<View style={styles.deadOverlay}>
 						<View style={styles.deadIcon}>
 							<Feather name="power" size={24} color={theme.textTertiary} />
@@ -686,20 +715,29 @@ export default function TerminalScreen() {
 							<Text style={styles.browserPath} numberOfLines={1}>
 								{preview.entry}
 							</Text>
-							<Pressable hitSlop={8} onPress={() => previewWebRef.current?.reload()} style={styles.browserAction}>
+							<Pressable hitSlop={8} onPress={reloadPreview} style={styles.browserAction}>
 								<Feather name="rotate-cw" size={15} color={theme.blue} />
 							</Pressable>
 							<Pressable hitSlop={8} onPress={() => setBrowserOpen(false)} style={styles.browserAction}>
 								<Feather name="x" size={17} color={theme.textSecondary} />
 							</Pressable>
 						</View>
-						<WebView
-							ref={previewWebRef}
-							source={{ uri: preview.url }}
-							originWhitelist={["*"]}
-							style={styles.browserWeb}
-							onError={() => setBanner("Preview failed to load.")}
-						/>
+						{isWeb ? (
+							<iframe
+								ref={webIframeRef}
+								title="preview"
+								src={preview.url}
+								style={{ flex: 1, width: "100%", border: "none", backgroundColor: "#ffffff" }}
+							/>
+						) : (
+							<WebView
+								ref={previewWebRef}
+								source={{ uri: preview.url }}
+								originWhitelist={["*"]}
+								style={styles.browserWeb}
+								onError={() => setBanner("Preview failed to load.")}
+							/>
+						)}
 					</View>
 				)}
 			</View>
