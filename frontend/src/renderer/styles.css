@@ -126,6 +126,9 @@
 	--interactive-active: rgb(255 255 255 / 0.07);
 	--kanban-column-bg: rgb(255 255 255 / 0.018);
 	--kanban-pending-glow: rgb(255 255 255 / 0.02);
+	--scrollbar-thumb: rgb(255 255 255 / 0.12);
+	--scrollbar-thumb-hover: rgb(255 255 255 / 0.18);
+	--scrollbar-track: transparent;
 }
 
 :root[data-theme="light"] {
@@ -154,6 +157,9 @@
 	--interactive-active: rgb(0 0 0 / 0.07);
 	--kanban-column-bg: rgb(0 0 0 / 0.02);
 	--kanban-pending-glow: rgb(0 0 0 / 0.03);
+	--scrollbar-thumb: rgb(0 0 0 / 0.16);
+	--scrollbar-thumb-hover: rgb(0 0 0 / 0.24);
+	--scrollbar-track: transparent;
 	--term-bg: #fafafa;
 	--term-fg: #24292f;
 	--term-green: #1a7f37;
@@ -165,6 +171,28 @@
 
 * {
 	box-sizing: border-box;
+	scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+	display: none;
+}
+
+.ao-scrollbar-indicator {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 2147483647;
+	width: 5px;
+	border-radius: 999px;
+	background: var(--scrollbar-thumb);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+}
+
+.ao-scrollbar-indicator.is-visible {
+	opacity: 1;
 }
 
 html,
@@ -333,14 +361,6 @@ select {
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--fg-muted);
-}
-
-:root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.12);
-}
-
-:root[data-theme="light"] .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.2);
 }
 
 @keyframes status-pulse {

@@ -232,8 +232,8 @@ export function Sidebar({
 				</div>
 			</SidebarHeader>
 
-			<SidebarContent className="gap-0 pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				<SidebarGroup className="p-0">
+			<SidebarContent className="gap-0 !overflow-hidden pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				<SidebarGroup className="min-h-0 flex-1 p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
 						<SidebarGroupLabel className="h-auto rounded-none p-0 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-passive">
@@ -243,7 +243,7 @@ export function Sidebar({
 					</div>
 
 					{/* Tree (project-sidebar__tree) */}
-					<SidebarGroupContent>
+					<SidebarGroupContent className="min-h-0 flex-1 overflow-auto">
 						{workspaceError ? (
 							<div className="px-2 py-3 group-data-[collapsible=icon]:hidden">
 								<p className="text-[12px] text-foreground">Could not load projects.</p>
