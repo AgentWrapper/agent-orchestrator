@@ -142,7 +142,7 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
 	} else if nonEmpty {
-		if _, err := moveStrayPathAside(path); err != nil {
+		if err := moveStrayPathAside(path); err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
 	}
@@ -574,7 +574,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		if cfg.Path == "" {
 			return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: refusing to restore %q: path exists and is not a registered worktree", path)
 		}
-		if _, err := moveStrayPathAside(path); err != nil {
+		if err := moveStrayPathAside(path); err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
 	}
@@ -1144,7 +1144,7 @@ func pathExistsNonEmpty(path string) (bool, error) {
 	return false, fmt.Errorf("gitworktree: inspect path %q: %w", path, err)
 }
 
-func moveStrayPathAside(path string) (string, error) {
+func moveStrayPathAside(path string) error {
 	for i := 0; i < 100; i++ {
 		candidate := path + ".stray"
 		if i > 0 {
@@ -1153,14 +1153,14 @@ func moveStrayPathAside(path string) (string, error) {
 		if _, err := os.Lstat(candidate); err == nil {
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("gitworktree: inspect stray destination %q: %w", candidate, err)
+			return fmt.Errorf("gitworktree: inspect stray destination %q: %w", candidate, err)
 		}
 		if err := os.Rename(path, candidate); err != nil {
-			return "", fmt.Errorf("gitworktree: move stray path %q aside to %q: %w", path, candidate, err)
+			return fmt.Errorf("gitworktree: move stray path %q aside to %q: %w", path, candidate, err)
 		}
-		return candidate, nil
+		return nil
 	}
-	return "", fmt.Errorf("gitworktree: move stray path %q aside: no available destination", path)
+	return fmt.Errorf("gitworktree: move stray path %q aside: no available destination", path)
 }
 
 func moveUnavailablePathAside(path string) error {
@@ -1174,7 +1174,7 @@ func moveUnavailablePathAside(path string) error {
 		}
 		return nil
 	}
-	if _, err := moveStrayPathAside(path); err != nil {
+	if err := moveStrayPathAside(path); err != nil {
 		return fmt.Errorf("%w: %w", ErrWorkspaceUnavailable, err)
 	}
 	return nil

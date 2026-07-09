@@ -635,7 +635,8 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	}
 
 	ws := workspaceInfo(rec)
-	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil && !errors.Is(err, ports.ErrWorkspaceUnavailable) {
+	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil &&
+		!errors.Is(err, ports.ErrWorkspaceUnavailable) {
 		return fmt.Errorf("retire replacement %s: stash: %w", id, err)
 	}
 	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
@@ -658,7 +659,8 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 
 func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
 	for _, row := range rows {
-		if _, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row)); err != nil && !errors.Is(err, ports.ErrWorkspaceUnavailable) {
+		if _, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row)); err != nil &&
+			!errors.Is(err, ports.ErrWorkspaceUnavailable) {
 			return fmt.Errorf("retire replacement %s repo %s: stash: %w", rec.ID, row.RepoName, err)
 		}
 	}
