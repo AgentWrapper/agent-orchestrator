@@ -182,17 +182,6 @@ ao doctor --fix
 </Step>
 </Steps>
 
-## Windows Setup
-
-Windows support is in progress. Use the process runtime instead of tmux:
-
-```yaml title="agent-orchestrator.yaml"
-defaults:
-  runtime: process
-```
-
-Use Slack, Discord, webhook, or another network notifier for alerts. Desktop notifications and iTerm2 integration are not available on Windows.
-
 ## Common Install Issues
 
 <Accordions>
@@ -205,7 +194,8 @@ Use Slack, Discord, webhook, or another network notifier for alerts. Desktop not
 		authenticated.
 	</Accordion>
 	<Accordion title="tmux is missing">
-		Install tmux on macOS or Linux, or set `defaults.runtime: process` if you are on Windows or running in a container.
+		Install tmux on macOS or Linux. On Windows, use the process runtime instead; the Windows desktop installer does not
+		require tmux.
 	</Accordion>
 	<Accordion title="No agent runtime is detected">
 		Install one supported agent CLI and run it once outside AO so it can complete its own sign-in flow.
