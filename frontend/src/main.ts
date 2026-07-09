@@ -11,6 +11,7 @@ import {
 	protocol,
 	shell,
 	WebContentsView,
+	webContents,
 	type OpenDialogOptions,
 } from "electron";
 import {
@@ -228,6 +229,44 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
 
+// Role-based menu installed on Windows where the native menu bar is hidden. The
+// bar stays out of sight, but the roles keep their accelerators alive (Reload,
+// DevTools, zoom, full screen, edit commands) and each acts on the *focused*
+// webContents — including a BrowserView panel — matching native menu behaviour.
+function buildWindowsAppMenu(): Menu {
+	return Menu.buildFromTemplate([
+		{
+			label: "Edit",
+			submenu: [
+				{ role: "undo" },
+				{ role: "redo" },
+				{ type: "separator" },
+				{ role: "cut" },
+				{ role: "copy" },
+				{ role: "paste" },
+				{ role: "selectAll" },
+			],
+		},
+		{
+			label: "View",
+			submenu: [
+				{ role: "reload" },
+				{ role: "toggleDevTools" },
+				{ type: "separator" },
+				{ role: "resetZoom" },
+				{ role: "zoomIn" },
+				{ role: "zoomOut" },
+				{ type: "separator" },
+				{ role: "togglefullscreen" },
+			],
+		},
+		{
+			label: "Window",
+			submenu: [{ role: "minimize" }, { role: "close" }],
+		},
+	]);
+}
+
 function createWindow(): void {
 	browserViewHost?.dispose();
 	browserViewHost = null;
@@ -247,6 +286,9 @@ function createWindow(): void {
 		...(process.platform === "win32"
 			? {
 					titleBarStyle: "hidden" as const,
+					// Hide the native menu bar. A role-based menu is still installed (for
+					// accelerators) below; the visible menu is painted by WindowTitlebar.
+					autoHideMenuBar: true,
 					titleBarOverlay: { color: "#0f1014", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
 				}
 			: {
@@ -265,21 +307,14 @@ function createWindow(): void {
 		},
 	});
 
-	// On Windows the app paints its own title bar (WindowTitlebar), so drop
-	// Electron's default application menu — otherwise its File/Edit/View/… strip
-	// renders below the frame. macOS/Linux keep their native menus. Removing the
-	// menu also drops its accelerators, so re-bind DevTools + reload by key.
+	// On Windows the app paints its own title bar (WindowTitlebar), so the native
+	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
+	// installed so its accelerators keep working and act on the focused pane;
+	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
+	// keep their native menus.
 	if (process.platform === "win32") {
-		Menu.setApplicationMenu(null);
-		mainWindow.webContents.on("before-input-event", (_event, input) => {
-			if (input.type !== "keyDown") return;
-			const key = input.key.toLowerCase();
-			if (key === "f12" || (input.control && input.shift && key === "i")) {
-				mainWindow?.webContents.toggleDevTools();
-			} else if (isDev && (key === "f5" || (input.control && key === "r"))) {
-				mainWindow?.webContents.reload();
-			}
-		});
+		Menu.setApplicationMenu(buildWindowsAppMenu());
+		mainWindow.setMenuBarVisibility(false);
 	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or
@@ -940,7 +975,10 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 ipcMain.handle("menu:action", (_event, action: string) => {
 	const win = mainWindow;
 	if (!win) return;
-	const wc = win.webContents;
+	// Edit/reload/zoom/devtools mirror native menu roles: act on whichever
+	// webContents holds focus (e.g. a BrowserView panel), falling back to the
+	// shell window. Window-level actions below stay on the shell window itself.
+	const wc = webContents.getFocusedWebContents() ?? win.webContents;
 	switch (action) {
 		case "edit.undo":
 			return wc.undo();
