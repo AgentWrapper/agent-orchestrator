@@ -975,10 +975,11 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 ipcMain.handle("menu:action", (_event, action: string) => {
 	const win = mainWindow;
 	if (!win) return;
-	// Edit/reload/zoom/devtools mirror native menu roles: act on whichever
-	// webContents holds focus (e.g. a BrowserView panel), falling back to the
-	// shell window. Window-level actions below stay on the shell window itself.
-	const wc = webContents.getFocusedWebContents() ?? win.webContents;
+	// Clicking this shell-painted menu moves focus off the panel, so prefer the last-focused panel, else the focused contents, else the shell.
+	const focused = webContents.getFocusedWebContents();
+	const wc =
+		(focused && focused !== win.webContents ? focused : browserViewHost?.getLastFocusedPanelContents()) ??
+		win.webContents;
 	switch (action) {
 		case "edit.undo":
 			return wc.undo();
