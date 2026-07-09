@@ -15,7 +15,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -91,13 +90,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that prompted workers receive their task
+// GetPromptDeliveryStrategy reports that prompted sessions receive their task
 // after the interactive Crush UI starts.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if cfg.Prompt != "" && cfg.Kind != domain.KindOrchestrator {
+	if cfg.Prompt != "" {
 		return ports.PromptDeliveryAfterStart, nil
 	}
 	return ports.PromptDeliveryInCommand, nil

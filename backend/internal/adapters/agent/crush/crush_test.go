@@ -103,19 +103,31 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	}
 }
 
-func TestGetPromptDeliveryStrategyPromptedWorkerIsAfterStart(t *testing.T) {
-	plugin := &Plugin{}
-
-	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
-		Kind:   domain.KindWorker,
-		Prompt: "fix this",
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestGetPromptDeliveryStrategyPromptedSessionsAreAfterStart(t *testing.T) {
+	tests := []struct {
+		name string
+		kind domain.SessionKind
+	}{
+		{name: "worker", kind: domain.KindWorker},
+		{name: "orchestrator", kind: domain.KindOrchestrator},
 	}
 
-	if got != ports.PromptDeliveryAfterStart {
-		t.Fatalf("unexpected prompt delivery strategy: got %v, want %v", got, ports.PromptDeliveryAfterStart)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{}
+
+			got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+				Kind:   tt.kind,
+				Prompt: "fix this",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != ports.PromptDeliveryAfterStart {
+				t.Fatalf("unexpected prompt delivery strategy: got %v, want %v", got, ports.PromptDeliveryAfterStart)
+			}
+		})
 	}
 }
 
