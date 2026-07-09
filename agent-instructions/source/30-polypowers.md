@@ -89,13 +89,17 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    comes in exactly two forms: the user says so in the session, or the session
    runs in **autonomous mode** (`POLYPOWERS_AUTOMERGE=1` set by the
    orchestrator, or a queue invoked with `--merge`). In autonomous mode the
-   agent merges **only after the full gate**: final-review verdict clean, CI
-   green, all current-head inline review threads resolved — then immediately
-   runs `/cleanup-merge` and `/deploy-verify`. A repo fragment may forbid
-   autonomous merge outright, or mark **sensitive paths** — when the PR diff
-   touches a marked path, autonomous mode parks the merge-ready PR for a human
-   instead of merging, stating which path triggered it. Fragments may never
-   grant autonomy implicitly.
+   agent merges **only after the full gate**: a `final-review` commit status
+   with `state=success` on the current PR head SHA and description
+   `verdict=clean reviewer_family=<family> head=<full-head-sha>`, CI green,
+   and all current-head inline review threads resolved — then immediately runs
+   `/cleanup-merge` and `/deploy-verify`. A stale `final-review` status from a
+   previous head SHA, a verbal "merge-ready" claim, a PR comment, or ao's native
+   `/sessions/{id}/reviews` state does **not** count as the final-review gate.
+   A repo fragment may forbid autonomous merge outright, or mark **sensitive
+   paths** — when the PR diff touches a marked path, autonomous mode parks the
+   merge-ready PR for a human instead of merging, stating which path triggered
+   it. Fragments may never grant autonomy implicitly.
 7. **Specs go through the OpenSpec tooling.** Canonical `openspec/specs/` is
    read-only outside checkbox/date/gap-note edits; every requirement change is
    `/opsx:propose` → `/opsx:apply` → `/opsx:archive`, validated. No
@@ -142,12 +146,39 @@ sensitive-path membership is never a reason to skip working a ticket.
 - `/bug-hunt` — parallel multi-reviewer hunt (`--high|--medium|--security`,
   `--scope`); dedupes, files survivors; fixes go through `/fix-bug`.
 - `/final-review` — the pre-merge gate: independent cross-family review loop +
-  optional PR-integrated reviewer, monitored to a verdict.
+  optional PR-integrated reviewer, monitored to a verdict, then writes the
+  authoritative `final-review` commit status on the exact reviewed head SHA.
+  The clean status is the only machine-readable final-review verdict the merge
+  gate may consume.
 - `/address-issue-queue` — unattended batch runner; parks blockers, continues.
   (`/ship-feature-queue`, `/ship-task-queue`, `/fix-bug-queue` forward here.)
 - `/cleanup-merge` — post-merge: close beads, archive OpenSpec, remove
   worktree, delete branch. `/deploy-verify` — deploy + verify live.
 - `/sync-issues-to-beads` — GH → beads backfill (see Tracking above).
+
+## Final-review status contract
+
+`/final-review` emits its verdict as a GitHub commit status on the reviewed head
+SHA, using context `final-review`. A clean review writes `state=success`; a
+parked or non-clean review writes `state=failure`. The status description is the
+parseable contract: `verdict=<clean|parked> reviewer_family=<family>
+head=<full-head-sha>`.
+
+Merge gates and autonomous-merge paths check that status on the **current** PR
+head SHA. If the PR receives a new push, the old status is tied to the old SHA
+and no longer counts. This replaces the interim PR-comment protocol; do not use
+comments or free-form summaries as the gate.
+
+ao's native review API (`GET /sessions/{id}/reviews`, with states such as
+`ineligible` or `needs_review`) is a separate ao reviewer system. It is useful
+for ao's own review UI, but it is **not** `/final-review` and must never be read
+as the final-review merge verdict.
+
+Repos that carry `ops/final-review-status.mjs` use it as the status helper:
+`node ops/final-review-status.mjs set --repo <owner/repo> --sha
+<full-head-sha> --verdict <clean|parked> --reviewer-family <family>` after the
+review loop, and `node ops/final-review-status.mjs check --repo <owner/repo>
+--sha <current-head-sha>` in the merge gate.
 
 ## Session habits
 
@@ -157,7 +188,8 @@ in-progress work first; recommend 1–3 unclaimed items, not the full list.
 
 **End:** close/update beads and issues, run CI, `git pull --rebase && git
 push`, report. Merge only under rule 6's authorization (user's word, or
-autonomous mode with the gate satisfied) — never on your own initiative.
+autonomous mode with the SHA-current `final-review` status gate satisfied) —
+never on your own initiative.
 
 ## The identity contract — what skills defer to your agent identity
 
