@@ -350,6 +350,14 @@ export function WebTerminal(props: WebTerminalProps) {
 				});
 		};
 		term.attachCustomKeyEventHandler((event) => {
+			// xterm runs this handler for keydown, keypress AND keyup. Our
+			// copy/paste/shortcut handling must fire once per chord — on keydown
+			// only. Without this guard the keyup for Cmd/Ctrl+V re-matched the paste
+			// shortcut and pasted a second time (the native-paste suppression only
+			// guarded the browser paste event, not this keyup re-trigger); Alt+
+			// Backspace and the other normalized shortcuts double-fired the same way.
+			// Real KeyboardEvents always carry a type; a missing type stays processable.
+			if (event.type && event.type !== "keydown") return true;
 			if (isTerminalCopyShortcut(event)) {
 				if (copySelection()) {
 					consumeTerminalShortcut(event);
