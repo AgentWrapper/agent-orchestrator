@@ -49,7 +49,8 @@
 					"microphonePermission": false,
 					"recordAudioAndroid": false
 				}
-			]
+			],
+			"expo-secure-store"
 		],
 		"extra": {
 			"router": {}
