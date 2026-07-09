@@ -44,37 +44,9 @@ If you plan to use GitLab or Linear, install and authenticate their CLIs or cred
 
 ## Install AO
 
-The recommended way to install AO is the desktop build from GitHub Releases. Download the latest build for your platform, then open it:
+Download the desktop app for your platform. This is the supported default path after the GitHub workspace installer change.
 
-| Platform              | Download                                                                                                                       |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| macOS (Apple silicon) | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)        |
-| macOS (Intel)         | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)          |
-| Windows               | [.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)           |
-| Linux                 | [.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
-
-The desktop app owns the daemon, dashboard, and auto-updates, so a desktop install needs no CLI. Skip ahead to [Authenticate Your Tools](#authenticate-your-tools).
-
-<Callout type="warn" title="npm is the legacy path, no longer recommended">
-	The `@aoagents/ao` npm package is frozen and no longer receives updates. It ships the `ao` CLI for existing users; `ao
-	start` fetches and opens the same desktop build above. Use it only if you already run AO from the CLI:
-</Callout>
-
-<Tabs items={["npm", "pnpm", "yarn", "from source"]}>
-	<Tab value="npm">```bash npm install -g @aoagents/ao ```</Tab>
-	<Tab value="pnpm">```bash pnpm add -g @aoagents/ao ```</Tab>
-	<Tab value="yarn">```bash yarn global add @aoagents/ao ```</Tab>
-	<Tab value="from source">
-		```bash git clone https://github.com/AgentWrapper/agent-orchestrator cd agent-orchestrator pnpm install pnpm build
-		pnpm --filter @aoagents/ao link --global ```
-	</Tab>
-</Tabs>
-
-If you installed the CLI, confirm it is available (desktop users can skip this):
-
-```bash
-ao --version
-```
+<InstallDownloads />
 
 ## Authenticate Your Tools
 
@@ -98,6 +70,8 @@ The authenticated account must be able to read the repository, create branches, 
 ### Install and sign in to one agent
 
 AO launches an agent CLI inside each worker session. Start with the one you already use, then add more later if you want per-project or per-role choices.
+
+<div className="ao-compact-tabs">
 
 <Tabs items={["Claude Code", "Codex", "Cursor", "Aider", "OpenCode"]}>
 	<Tab value="Claude Code">
@@ -144,6 +118,8 @@ opencode --help
 
 </Tabs>
 
+</div>
+
 </Step>
 <Step>
 
@@ -151,7 +127,59 @@ opencode --help
 
 **Desktop app:** open Agent Orchestrator and add the repository you want it to manage. The app starts the daemon, dashboard, and an orchestrator session for the project.
 
-**CLI (legacy):** run `ao start` from a repository you want AO to manage:
+<details className="ao-legacy-cli-details">
+<summary>
+	<span className="ao-legacy-cli-summary-copy">
+		<span className="ao-legacy-cli-summary-title">Using the legacy CLI?</span>
+		<span className="ao-legacy-cli-summary-note">Install or verify the frozen <code>@aoagents/ao</code> package, then run <code>ao start</code>.</span>
+	</span>
+	<span className="ao-legacy-cli-summary-icon" aria-hidden="true" />
+</summary>
+
+<div className="ao-legacy-cli-details__content">
+
+<div className="ao-compact-tabs ao-legacy-install-tabs">
+
+<Tabs items={["npm", "pnpm", "yarn", "from source"]}>
+	<Tab value="npm">
+
+```bash
+npm install -g @aoagents/ao
+```
+
+	</Tab>
+	<Tab value="pnpm">
+
+```bash
+pnpm add -g @aoagents/ao
+```
+
+	</Tab>
+	<Tab value="yarn">
+
+```bash
+yarn global add @aoagents/ao
+```
+
+	</Tab>
+	<Tab value="from source">
+
+```bash
+git clone https://github.com/AgentWrapper/agent-orchestrator
+cd agent-orchestrator
+pnpm install
+pnpm build
+pnpm --filter @aoagents/ao link --global
+```
+
+	</Tab>
+</Tabs>
+
+</div>
+
+```bash
+ao --version
+```
 
 ```bash
 cd ~/code/my-repo
@@ -162,8 +190,12 @@ If there is no `agent-orchestrator.yaml`, AO creates one. You can also start fro
 
 ```bash
 ao start ~/code/my-repo
-ao start https://github.com/your-org/your-repo
+ao start https://github.com/org/repo
 ```
+
+</div>
+
+</details>
 
 </Step>
 <Step>
