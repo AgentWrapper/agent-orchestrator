@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { muxUrl, type ServerConfig } from "./config";
 
 // Mirrors AO's mux-protocol.ts (the bits we use).
@@ -120,16 +121,29 @@ export class MuxClient {
 		this.handlers.onStatus?.("connecting");
 		let ws: WebSocket;
 		try {
-			// The Go daemon's CORS guard 403s any non-loopback Origin before the WS
-			// upgrade. React Native's WebSocket (iOS SocketRocket) auto-sets Origin to
-			// the socket URL - e.g. the LAN/proxy address a phone points at - so the
-			// upgrade is rejected even though the REST API (fetch sends no Origin) works.
-			// Pin a loopback Origin so the upgrade passes. RN honors this third `options`
-			// arg; web browsers ignore it (and set Origin to the page), which is fine.
-			const WS = WebSocket as unknown as {
-				new (url: string, protocols?: string | string[], options?: { headers?: Record<string, string> }): WebSocket;
-			};
-			ws = new WS(muxUrl(this.cfg), undefined, { headers: { Origin: "http://localhost" } });
+			if (Platform.OS === "web") {
+				// Browsers always send the page's real Origin on a WebSocket
+				// upgrade and expose no API to override it, so the RN header
+				// workaround below does not apply. Passing its 3-arg form to a
+				// browser's native WebSocket isn't a harmless no-op either -
+				// verified it makes Chrome fail the handshake outright
+				// ("Sent non-empty 'Sec-WebSocket-Protocol' header but no
+				// response was received"). The daemon's CORS guard already
+				// allows loopback page origins (http://localhost:*), which is
+				// what every same-machine browser target sends; a remote LAN
+				// origin instead goes through ao-phone-proxy.js's Origin rewrite.
+				ws = new WebSocket(muxUrl(this.cfg));
+			} else {
+				// The Go daemon's CORS guard 403s any non-loopback Origin before the WS
+				// upgrade. React Native's WebSocket (iOS SocketRocket) auto-sets Origin to
+				// the socket URL - e.g. the LAN/proxy address a phone points at - so the
+				// upgrade is rejected even though the REST API (fetch sends no Origin) works.
+				// Pin a loopback Origin so the upgrade passes; RN honors this third `options` arg.
+				const WS = WebSocket as unknown as {
+					new (url: string, protocols?: string | string[], options?: { headers?: Record<string, string> }): WebSocket;
+				};
+				ws = new WS(muxUrl(this.cfg), undefined, { headers: { Origin: "http://localhost" } });
+			}
 		} catch (e) {
 			this.handlers.onStatus?.("error", String(e));
 			this.scheduleReconnect();
