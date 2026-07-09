@@ -232,9 +232,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
 						<div className="text-center">
 							<div className="text-terminal">Agent Orchestrator</div>
-							<div className="mt-2 text-terminal-dim">
-								No session selected. Pick a worker to attach its terminal.
-							</div>
+							<div className="mt-2 text-terminal-dim">No session selected. Pick a worker to attach its terminal.</div>
 						</div>
 					</div>
 				)}

@@ -132,9 +132,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						Mark all
 					</button>
 				</div>
-				{actionError ? (
-					<div className="border-b border-border px-3 py-2 text-xs text-error">{actionError}</div>
-				) : null}
+				{actionError ? <div className="border-b border-border px-3 py-2 text-xs text-error">{actionError}</div> : null}
 				{notificationsQuery.isError && unreadCount === 0 ? (
 					<div className="px-3 py-8 text-center text-control text-muted-foreground">Could not load notifications.</div>
 				) : unreadCount === 0 ? (

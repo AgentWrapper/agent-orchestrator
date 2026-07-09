@@ -1,10 +1,6 @@
 import { ChevronLeft, Maximize2, Minimize2, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
-import {
-	TERMINAL_FONT_SIZE_DEFAULT,
-	TERMINAL_FONT_SIZE_MAX,
-	TERMINAL_FONT_SIZE_MIN,
-} from "../lib/design-tokens";
+import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
@@ -118,7 +114,9 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 					>
 						-
 					</button>
-					<span className="w-font-size-label text-center text-xs font-semibold text-muted-foreground">{fontSize}px</span>
+					<span className="w-font-size-label text-center text-xs font-semibold text-muted-foreground">
+						{fontSize}px
+					</span>
 					<button
 						aria-label="Increase terminal font size"
 						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"

@@ -71,13 +71,13 @@
 	   ═══════════════════════════════════════════════════════════════ */
 
 	--font-family-base:
-		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans",
-		"Helvetica Neue", sans-serif;
+		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue",
+		sans-serif;
 	--font-family-mono:
-		"JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono",
-		"FiraCode Nerd Font", "MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font",
-		"Hack Nerd Font Mono", "Hack Nerd Font", "Symbols Nerd Font Mono", "Symbols Nerd Font",
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+		"JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono", "FiraCode Nerd Font",
+		"MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font", "Hack Nerd Font Mono", "Hack Nerd Font",
+		"Symbols Nerd Font Mono", "Symbols Nerd Font", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		"Liberation Mono", "Courier New", monospace;
 
 	/* Scale — dense UI chrome uses half-steps between base sizes */
 	--font-size-2xs: 10.5px; /* uppercase meta, board footers */

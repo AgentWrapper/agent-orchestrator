@@ -45,7 +45,10 @@ export function TitlebarNav() {
 	if (!isMac) return null;
 
 	return (
-		<div className="fixed top-0 left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1" style={noDragStyle}>
+		<div
+			className="fixed top-0 left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1"
+			style={noDragStyle}
+		>
 			<TitlebarButton
 				label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 				onClick={toggleSidebar}

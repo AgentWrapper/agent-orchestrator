@@ -40,4 +40,5 @@ export const topbarHeaderClass =
 
 export const topbarHeaderMacClass = "pl-titlebar-content-offset";
 
-export const topbarProjectLabelClass = "text-brand font-semibold tracking-tight leading-none text-foreground whitespace-nowrap";
+export const topbarProjectLabelClass =
+	"text-brand font-semibold tracking-tight leading-none text-foreground whitespace-nowrap";

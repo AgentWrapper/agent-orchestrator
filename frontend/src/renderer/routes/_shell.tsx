@@ -247,7 +247,12 @@ function ShellLayout() {
 					className="min-h-0 flex-1"
 					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
 					open={isSidebarOpen}
-					style={{ "--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))", "--sidebar-width-icon": "var(--size-sidebar-icon)" } as CSSProperties}
+					style={
+						{
+							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
+							"--sidebar-width-icon": "var(--size-sidebar-icon)",
+						} as CSSProperties
+					}
 				>
 					<Sidebar
 						daemonStatus={daemonStatus}

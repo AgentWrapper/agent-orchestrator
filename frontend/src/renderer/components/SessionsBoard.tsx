@@ -345,7 +345,9 @@ function ZoneColumn({
 	return (
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
-			style={{ background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)` }}
+			style={{
+				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
+			}}
 		>
 			<div className="flex shrink-0 items-center gap-2.25 px-3.75 pb-2.75 pt-3.5">
 				<span

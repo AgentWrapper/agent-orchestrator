@@ -71,8 +71,8 @@ export function MigrationPopup() {
 						Import projects from your earlier AO?
 					</Dialog.Title>
 					<Dialog.Description className="mt-2 text-control leading-body text-muted-foreground">
-						We found an existing install at <span className="font-mono text-caption text-foreground">{legacyRoot}</span>.
-						Importing brings in your projects. Your old files are never modified, and you can do this later.
+						We found an existing install at <span className="font-mono text-caption text-foreground">{legacyRoot}</span>
+						. Importing brings in your projects. Your old files are never modified, and you can do this later.
 					</Dialog.Description>
 					{error && (
 						<div className="mt-3 text-xs text-destructive">

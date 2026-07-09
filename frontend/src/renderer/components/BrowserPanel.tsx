@@ -56,7 +56,10 @@ export function BrowserPanelView({
 			className="flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background"
 			role="tabpanel"
 		>
-			<form className="flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5" onSubmit={submit}>
+			<form
+				className="flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				onSubmit={submit}
+			>
 				<Button
 					aria-label="Back"
 					disabled={!navState.canGoBack}

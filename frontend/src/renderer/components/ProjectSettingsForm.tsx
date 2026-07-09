@@ -356,9 +356,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
 					</span>
 				)}
-				{savedAt && !mutation.isPending && !mutation.isError && (
-					<span className="text-xs text-success">Saved.</span>
-				)}
+				{savedAt && !mutation.isPending && !mutation.isError && <span className="text-xs text-success">Saved.</span>}
 				{replacementError && !mutation.isPending && !mutation.isError && (
 					<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
 				)}
@@ -433,9 +431,7 @@ function ReadonlyRow({ label, value }: { label: string; value: string }) {
 
 function CenteredNote({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="grid h-full place-items-center bg-background p-6 text-center text-xs text-passive">
-			{children}
-		</div>
+		<div className="grid h-full place-items-center bg-background p-6 text-center text-xs text-passive">{children}</div>
 	);
 }
 

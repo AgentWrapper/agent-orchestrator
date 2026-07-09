@@ -223,7 +223,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("No Signal")).toBeInTheDocument();
 	});
 
@@ -254,7 +256,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText(label)).toBeInTheDocument();
 	});
 
@@ -268,7 +272,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
@@ -286,7 +292,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Working").closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Working")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
@@ -303,7 +311,9 @@ describe("SessionInspector Activity section", () => {
 		expect(activitySection().getByText(/Created worktree/)).toBeInTheDocument();
 		expect(activitySection().getByText("Opened")).toBeInTheDocument();
 		expect(activitySection().getByText("PR #7")).toBeInTheDocument();
-		const activityRow = activitySection().getByText("Idle").closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("CI Failed")).toBeInTheDocument();
 		expect(within(activityRow).getByText("Changes Requested")).toBeInTheDocument();
 	});
