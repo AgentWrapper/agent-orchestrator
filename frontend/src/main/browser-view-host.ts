@@ -86,6 +86,8 @@ export type BrowserViewHost = {
 	dispose: () => void;
 	destroy: (viewId: string) => void;
 	destroyAll: () => void;
+	// webContents of the most recently focused browser panel (or null); the titlebar menu targets it for Edit/Reload/Zoom/DevTools.
+	getLastFocusedPanelContents: () => WebContents | null;
 };
 
 type BrowserEntry = {
@@ -157,6 +159,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const entries = new Map<string, BrowserEntry>();
 	const viewIdsByWebContentsId = new Map<number, string>();
 	const ipcDisposers: Array<() => void> = [];
+	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
+	let lastFocusedViewId: string | null = null;
+	const forgetIfFocused = (viewId: string): void => {
+		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
+	};
 
 	const ensure = (viewId: string): BrowserEntry => {
 		const existing = entries.get(viewId);
@@ -180,6 +187,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
+		view.webContents.on("focus", () => {
+			lastFocusedViewId = viewId;
+		});
 		return entry;
 	};
 
@@ -189,6 +199,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!visible) {
 			entry.view.setVisible?.(false);
 			entry.view.setBounds(OFFSCREEN_BOUNDS);
+			forgetIfFocused(viewId);
 			return;
 		}
 		// The renderer measures the slot in page-zoomed CSS pixels, while
@@ -219,6 +230,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		cancelAnnotation(options, entry, "navigation");
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
+		forgetIfFocused(viewId);
 		await entry.view.webContents.loadURL("about:blank");
 		entry.view.webContents.clearHistory();
 		return pushNavState(options, entry);
@@ -229,6 +241,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!entry) return;
 		entries.delete(viewId);
 		viewIdsByWebContentsId.delete(entry.view.webContents.id);
+		forgetIfFocused(viewId);
 		// When the window is already gone (dispose fired from mainWindow "closed"),
 		// Electron has torn down contentView and the child WebContentsViews. Touching
 		// them throws "Object has been destroyed", so just drop our reference.
@@ -340,6 +353,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			for (const viewId of [...entries.keys()]) {
 				destroy(viewId);
 			}
+		},
+		getLastFocusedPanelContents: () => {
+			if (lastFocusedViewId === null) return null;
+			const entry = entries.get(lastFocusedViewId);
+			if (!entry) return null;
+			// Stored narrowed as BrowserWebContents but is a full WebContents at runtime.
+			const contents = entry.view.webContents as unknown as WebContents;
+			return contents.isDestroyed() ? null : contents;
 		},
 	};
 }
