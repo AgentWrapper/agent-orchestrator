@@ -45,6 +45,11 @@ type ProjectConfig struct {
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// OrchestratorPrompt, when set, replaces the built-in orchestrator standing
+	// instructions for this project's orchestrator sessions. The confidentiality
+	// guard is still appended. Empty = built-in default. Used literally.
+	OrchestratorPrompt string `json:"orchestratorPrompt,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -75,6 +80,10 @@ type RoleOverride struct {
 
 // DefaultBranchName is the base branch used when a project configures none.
 const DefaultBranchName = "main"
+
+// maxOrchestratorPromptBytes bounds the per-project orchestrator prompt so it
+// stays well within process-arg limits when injected into an agent launch.
+const maxOrchestratorPromptBytes = 64 * 1024
 
 // DefaultProjectConfig returns the config a project has when it sets nothing:
 // branch "main". Every other field defaults to its zero value (no
@@ -131,6 +140,9 @@ func (c ProjectConfig) Validate() error {
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {
 		return err
+	}
+	if n := len(c.OrchestratorPrompt); n > maxOrchestratorPromptBytes {
+		return fmt.Errorf("orchestratorPrompt: %d bytes exceeds max %d", n, maxOrchestratorPromptBytes)
 	}
 	return nil
 }

@@ -37,6 +37,14 @@ export type BrowserViewModel = {
 	reload: () => Promise<void>;
 	stop: () => Promise<void>;
 	destroy: () => void;
+	/**
+	 * "native" in Electron (a window-level WebContentsView paints into the slot);
+	 * "web" in a plain browser, where there is no WebContentsView so the panel
+	 * renders an <iframe> at `iframeSrc` (remounted when `iframeKey` changes).
+	 */
+	mode: "native" | "web";
+	iframeSrc: string;
+	iframeKey: number;
 };
 
 const EMPTY_NAV_STATE: BrowserNavState = {
@@ -70,7 +78,21 @@ function visibleSlotRect(node: HTMLElement): BrowserRect {
 	return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
-export function useBrowserView({
+// A plain browser has no window.ao bridge, so the native WebContentsView never
+// exists there. Detected once per call; `window.ao` is present for the whole
+// lifetime of an Electron renderer and absent for the whole lifetime of the web
+// app, so the branch below is stable across renders (rules-of-hooks safe).
+function hasNativeBrowser(): boolean {
+	return typeof window !== "undefined" && !!window.ao?.browser;
+}
+
+export function useBrowserView(options: UseBrowserViewOptions): BrowserViewModel {
+	const native = useNativeBrowserView(options);
+	const web = useWebBrowserView(options, !hasNativeBrowser());
+	return hasNativeBrowser() ? native : web;
+}
+
+function useNativeBrowserView({
 	sessionId,
 	active,
 	poppedOut,
@@ -312,5 +334,106 @@ export function useBrowserView({
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
 		destroy,
+		mode: "native",
+		iframeSrc: "",
+		iframeKey: 0,
+	};
+}
+
+// Add a scheme to a user- or preview-supplied URL so it is loadable in an
+// <iframe>. Only http/https can be framed from the web app's http(s) origin
+// (file:// is cross-origin-blocked), so anything else resolves to "" and the
+// panel keeps its empty state. Bare hosts default to http for localhost-like
+// targets (the `ao preview` dev-server case) and https otherwise, mirroring the
+// native host's withDefaultScheme.
+export function normalizeWebPreviewURL(raw: string): string {
+	const trimmed = raw.trim();
+	if (trimmed === "") return "";
+	const hasScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed);
+	const isLocal = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])(?::\d+)?(?:[/?#]|$)/i.test(trimmed);
+	const candidate = hasScheme ? trimmed : `${isLocal ? "http" : "https"}://${trimmed}`;
+	try {
+		const url = new URL(candidate);
+		return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+	} catch {
+		return "";
+	}
+}
+
+// Web-app fallback: no WebContentsView, so preview lives in an <iframe>. Tracks
+// the navigated URL and a reload nonce; the panel renders the iframe. Cross-
+// origin framing hides history/title, so back/forward/stop are inert and the
+// URL bar reflects only what we navigated to. `enabled` is false in Electron so
+// this hook stays inert while the native one drives the real view.
+function useWebBrowserView(
+	{ sessionId, previewUrl, previewRevision }: UseBrowserViewOptions,
+	enabled: boolean,
+): BrowserViewModel {
+	const [url, setUrl] = useState("");
+	const [iframeKey, setIframeKey] = useState(0);
+	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
+	const slotRef = useCallback(() => {}, []);
+
+	const navigate = useCallback(async (next: string) => {
+		const normalized = normalizeWebPreviewURL(next);
+		if (!normalized) return;
+		setUrl(normalized);
+		setIframeKey((key) => key + 1);
+	}, []);
+
+	const clear = useCallback(async () => {
+		setUrl("");
+	}, []);
+
+	const reload = useCallback(async () => {
+		setIframeKey((key) => key + 1);
+	}, []);
+
+	// Reset when the session changes so one worker's preview never leaks into the
+	// next (mirrors the native ensure()-per-session lifecycle).
+	useEffect(() => {
+		if (!enabled) return;
+		setUrl("");
+		previewTriggerRef.current = null;
+	}, [enabled, sessionId]);
+
+	// Drive the iframe from `ao preview` exactly like the native path.
+	useEffect(() => {
+		if (!enabled) return;
+		const target = previewUrl?.trim() ?? "";
+		const revision = typeof previewRevision === "number" ? previewRevision : null;
+		const previous = previewTriggerRef.current;
+		if (previous?.revision === revision && previous.target === target) return;
+		if (revision !== null && previous?.revision === revision) return;
+		previewTriggerRef.current = { revision, target };
+		if (target) {
+			void navigate(target);
+		} else if ((revision !== null && revision > 0) || previous?.target) {
+			void clear();
+		}
+	}, [clear, enabled, navigate, previewRevision, previewUrl]);
+
+	const navState: BrowserNavState = {
+		viewId: url ? "web" : "",
+		url,
+		title: url,
+		canGoBack: false,
+		canGoForward: false,
+		isLoading: false,
+	};
+
+	return {
+		viewId: url ? "web" : "",
+		navState,
+		slotRef,
+		navigate,
+		goBack: async () => {},
+		goForward: async () => {},
+		reload,
+		stop: async () => {},
+		destroy: () => setUrl(""),
+		mode: "web",
+		iframeSrc: url,
+		iframeKey,
 	};
 }

@@ -294,6 +294,10 @@ type fakeWorkspace struct {
 	stashErr        error
 	applyErr        error
 	forceDestroyErr error
+	// worktreeMissing makes Exists report the worktree directory as absent,
+	// simulating a worktree removed out from under a live runtime.
+	worktreeMissing bool
+	existsErr       error
 	// stashCalls counts StashUncommitted invocations.
 	stashCalls int
 	// calls records the sequence of workspace method calls for ordering assertions.
@@ -380,6 +384,9 @@ func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) 
 		return ports.WorkspaceInfo{Path: cfg.Path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: cfg.RepoPath}, nil
 	}
 	return w.Create(ctx, cfg)
+}
+func (w *fakeWorkspace) Exists(_ context.Context, _ ports.WorkspaceInfo) (bool, error) {
+	return !w.worktreeMissing, w.existsErr
 }
 func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo) error {
 	entry := "ForceDestroy:" + string(info.SessionID)
@@ -1308,6 +1315,40 @@ func TestCleanup_WorkspaceProjectDirtyRowsAreSkipped(t *testing.T) {
 	}
 }
 
+// TestCleanup_SkipsWorktreeSharedWithLiveSession locks the guard against the
+// orchestrator-worktree stomp: orchestrator worktrees are a per-project
+// singleton keyed on project+prefix, so a terminated orchestrator row shares its
+// WorkspacePath with the active one. Cleanup must NOT reclaim that shared path —
+// destroying it deletes the live agent's working directory out from under it.
+func TestCleanup_SkipsWorktreeSharedWithLiveSession(t *testing.T) {
+	m, st, _, ws := newManager()
+	const shared = "/ws/mer/orchestrator/mer-orchestrator"
+	// A terminated orchestrator row and the live one resolve to the SAME worktree.
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: shared, Branch: "ao/mer-orchestrator"})
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: shared, Branch: "ao/mer-orchestrator", RuntimeHandleID: "mer-2"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("Destroy calls = %d, want 0 (shared live worktree must be preserved)", ws.destroyed)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none (path is in use)", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want [mer-1]", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "workspace in use by an active session" {
+		t.Fatalf("reason = %q", res.Skipped[0].Reason)
+	}
+}
+
 func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	m, st, _, _ := newManager()
 	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
@@ -1540,6 +1581,42 @@ func TestSpawnWorker_WorkspaceProjectPromptListsRepos(t *testing.T) {
 	}
 	if strings.Contains(systemPrompt, "When spawning workers") {
 		t.Fatalf("worker prompt should not include orchestrator-specific spawn guidance:\n%s", systemPrompt)
+	}
+}
+
+func TestBuildSystemPrompt_OrchestratorUsesConfiguredPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{OrchestratorPrompt: "CUSTOM ORCHESTRATOR RULES"}}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	sp, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
+	if err != nil {
+		t.Fatalf("buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(sp, "CUSTOM ORCHESTRATOR RULES") {
+		t.Fatalf("system prompt missing configured prompt:\n%s", sp)
+	}
+	if strings.Contains(sp, "You are the human-facing coordinator") {
+		t.Fatalf("configured prompt must REPLACE the built-in role:\n%s", sp)
+	}
+	if !strings.Contains(sp, "Standing-instruction confidentiality") {
+		t.Fatalf("guard must still be appended:\n%s", sp)
+	}
+}
+
+func TestBuildSystemPrompt_OrchestratorFallsBackWhenUnset(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	sp, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
+	if err != nil {
+		t.Fatalf("buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(sp, "You are the human-facing coordinator for project mer") {
+		t.Fatalf("expected built-in coordinator prompt:\n%s", sp)
 	}
 }
 
@@ -3055,6 +3132,58 @@ func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
 	}
 	if ws.stashCalls != 0 || lcm.terminated["s2"] != 0 || rt.destroyed != 0 {
 		t.Fatalf("adopt should be a no-op: stash=%d term=%d destroy=%d", ws.stashCalls, lcm.terminated["s2"], rt.destroyed)
+	}
+}
+
+// TestReconcileLive_AliveButMissingWorktreeRelaunches locks the guard against
+// blind-adopting a live session whose worktree was removed out from under it (a
+// sibling orchestrator session sharing the project worktree path was torn down,
+// an external `git worktree prune`, etc.). The running shell's cwd is a deleted
+// inode and cannot be healed in place, so reconcileLive must kill the orphan
+// runtime and record a shutdown-saved marker (with no preserve ref — uncommitted
+// work died with the directory) so RestoreAll re-creates the worktree from the
+// branch and relaunches the agent. It must NOT adopt.
+func TestReconcileLive_AliveButMissingWorktreeRelaunches(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"s4": true}}
+	ws := &fakeWorkspace{worktreeMissing: true} // live runtime, but its worktree dir is gone
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	rec := domain.SessionRecord{
+		ID: "s4", ProjectID: "p1", IsTerminated: false,
+		Metadata: domain.SessionMetadata{Branch: "ao/sky-orchestrator", WorkspacePath: "/wt/s4", RuntimeHandleID: "s4"},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	// The orphaned (live) runtime must be killed: its shell sits on a deleted inode.
+	if len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "s4" {
+		t.Fatalf("destroyedIDs = %v, want [s4] (orphan runtime killed)", rt.destroyedIDs)
+	}
+	// Marked terminated + a restore marker so RestoreAll re-provisions and relaunches.
+	if lcm.terminated["s4"] != 1 {
+		t.Fatalf("MarkTerminated(s4) = %d, want 1", lcm.terminated["s4"])
+	}
+	rows := st.worktrees["s4"]
+	if len(rows) != 1 {
+		t.Fatalf("session_worktrees marker for s4 = %+v, want one row", rows)
+	}
+	// Nothing to capture from a deleted directory.
+	if ws.stashCalls != 0 {
+		t.Fatalf("StashUncommitted calls = %d, want 0 (directory is gone)", ws.stashCalls)
+	}
+	// The stale worktree registration must be cleared so RestoreAll recreates clean.
+	foundForceDestroy := false
+	for _, c := range ws.calls {
+		if c == "ForceDestroy:s4" {
+			foundForceDestroy = true
+		}
+	}
+	if !foundForceDestroy {
+		t.Fatalf("reconcileLive must ForceDestroy to clear the stale registration; calls = %v", ws.calls)
 	}
 }
 

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { useBrowserView, type BrowserNavState } from "./useBrowserView";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { normalizeWebPreviewURL, useBrowserView, type BrowserNavState } from "./useBrowserView";
 
 type Listener = (state: BrowserNavState) => void;
 
@@ -371,5 +371,67 @@ describe("useBrowserView", () => {
 		rerender({ terminated: true });
 		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("normalizeWebPreviewURL", () => {
+	it("adds a scheme (http for localhost, https otherwise) and rejects unframable targets", () => {
+		expect(normalizeWebPreviewURL("localhost:5173")).toBe("http://localhost:5173/");
+		expect(normalizeWebPreviewURL("127.0.0.1:8080/app")).toBe("http://127.0.0.1:8080/app");
+		expect(normalizeWebPreviewURL("http://localhost:3000/")).toBe("http://localhost:3000/");
+		expect(normalizeWebPreviewURL("example.com")).toBe("https://example.com/");
+		// file:// can't be framed from an http(s) origin; junk stays empty.
+		expect(normalizeWebPreviewURL("file:///tmp/x.html")).toBe("");
+		expect(normalizeWebPreviewURL("   ")).toBe("");
+	});
+});
+
+describe("useBrowserView (web fallback, no window.ao)", () => {
+	let savedAo: typeof window.ao;
+	beforeEach(() => {
+		savedAo = window.ao;
+		// A plain browser has no bridge, so the hook must fall back to the iframe.
+		window.ao = undefined as unknown as typeof window.ao;
+	});
+	afterEach(() => {
+		window.ao = savedAo;
+	});
+
+	it("runs in web mode and loads a manually entered URL into the iframe", async () => {
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		expect(result.current.mode).toBe("web");
+		expect(result.current.iframeSrc).toBe("");
+
+		await act(async () => {
+			await result.current.navigate("localhost:5173");
+		});
+		expect(result.current.iframeSrc).toBe("http://localhost:5173/");
+		expect(result.current.navState.url).toBe("http://localhost:5173/");
+	});
+
+	it("auto-loads the ao preview URL into the iframe", async () => {
+		const { result } = renderHook(() =>
+			useBrowserView({
+				sessionId: "sess-1",
+				active: true,
+				poppedOut: false,
+				previewUrl: "http://localhost:4173/",
+				previewRevision: 1,
+			}),
+		);
+		await waitFor(() => expect(result.current.iframeSrc).toBe("http://localhost:4173/"));
+	});
+
+	it("remounts the iframe with a fresh key on reload", async () => {
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await act(async () => {
+			await result.current.navigate("localhost:5173");
+		});
+		const firstKey = result.current.iframeKey;
+		await act(async () => {
+			await result.current.reload();
+		});
+		expect(result.current.iframeKey).not.toBe(firstKey);
+		expect(result.current.iframeSrc).toBe("http://localhost:5173/");
 	});
 });

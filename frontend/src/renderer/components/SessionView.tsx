@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionInspector, type InspectorView } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
+import { Sheet, SheetContent, SheetTitle } from "./ui/sheet";
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useIsMobile } from "../hooks/use-mobile";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -43,6 +45,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const { theme } = useUiStore();
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
+	const isMobile = useIsMobile();
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
@@ -98,8 +101,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// remounts) so a freshly mounted panel reflects the store on its own,
 	// without an imperative fix-up in the mount commit. Afterwards the
 	// imperative API owns the size, so this must never track live open state.
+	// `|| isMobile`: below md the resizable group is unmounted (inspector lives in
+	// a bottom Sheet instead), so reset the cached default. Crossing the breakpoint
+	// back to desktop then remounts the panel fresh and re-derives this from the
+	// live store, keeping the mount-in-sync contract (no imperative call in the
+	// mount commit, no "Panel constraints not found" throw).
 	const inspectorDefaultSizeRef = useRef<string | null>(null);
-	if (!hasInspector) {
+	if (!hasInspector || isMobile) {
 		inspectorDefaultSizeRef.current = null;
 	} else if (inspectorDefaultSizeRef.current === null) {
 		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : "0%";
@@ -177,19 +185,94 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		);
 	}
 
+	const centerPane =
+		browserPoppedOut && session ? (
+			<BrowserPanelView
+				active
+				browserView={browserView}
+				onTogglePopOut={setBrowserPoppedOut}
+				poppedOut
+				session={session}
+			/>
+		) : (
+			<CenterPane
+				daemonReady={daemonStatus.state === "ready" || import.meta.env.VITE_AO_API_BASE_URL != null}
+				onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
+				session={session}
+				terminalTarget={terminalTarget}
+				theme={theme}
+			/>
+		);
+
+	// Shared by the desktop rail and the mobile Sheet — same inspector + props.
+	const inspector = (
+		<SessionInspector
+			browserPoppedOut={browserPoppedOut}
+			isInspectorVisible={isInspectorOpen}
+			onOpenReviewerTerminal={({ handleId, harness }) => setTerminalTarget({ kind: "reviewer", handleId, harness })}
+			onToggleBrowserPopOut={setBrowserPoppedOut}
+			onViewChange={setInspectorView}
+			view={inspectorView}
+			browserView={browserView}
+			session={session}
+		/>
+	);
+
+	// Below md the resizable split clips both panes (~390px): the terminal goes
+	// full-width and the inspector moves into a bottom Sheet, driven by the same
+	// store flag as the desktop rail (topbar toggle, ⌘⇧B, and the `ao preview`
+	// auto-reveal all flip isInspectorOpen). The rrp group is unmounted here, so
+	// its imperative effects no-op safely (inspectorRef stays null) — including
+	// when the viewport crosses the breakpoint at runtime.
+	if (isMobile) {
+		return (
+			<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+				<div className="min-h-0 flex-1">{centerPane}</div>
+				{hasInspector ? (
+					<Sheet
+						open={isInspectorOpen}
+						onOpenChange={(open) => {
+							if (open !== isInspectorOpen) toggleInspector();
+						}}
+					>
+						<SheetContent
+							side="bottom"
+							showCloseButton={false}
+							aria-describedby={undefined}
+							className="h-[88vh] gap-0 p-0"
+						>
+							<SheetTitle className="sr-only">Session inspector</SheetTitle>
+							{/* Mobile needs its own visible dismiss control: there's no Esc key
+							    on a phone, and the desktop topbar toggle (⌘⇧B) sits under this
+							    Sheet's portaled overlay, so backdrop-tap was the only way out —
+							    a thin, undiscoverable strip that trapped users. A labeled Close
+							    button drives the same store flag as every other toggle. */}
+							<div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
+								<span className="font-mono text-[11px] uppercase tracking-wide text-passive">Inspector</span>
+								<button
+									type="button"
+									aria-label="Close inspector"
+									onClick={() => toggleInspector()}
+									className="grid size-10 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground"
+								>
+									<X className="size-4" aria-hidden="true" />
+								</button>
+							</div>
+							<div className="min-h-0 flex-1 overflow-hidden">{inspector}</div>
+						</SheetContent>
+					</Sheet>
+				) : null}
+			</div>
+		);
+	}
+
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
-					<CenterPane
-						daemonReady={daemonStatus.state === "ready"}
-						onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
-						session={session}
-						terminalTarget={terminalTarget}
-						theme={theme}
-					/>
+					{centerPane}
 				</ResizablePanel>
 				{hasInspector ? (
 					<>
@@ -211,43 +294,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						>
 							{/* Stable content width while the panel animates (yyork pattern):
                   the pane clips instead of reflowing the inspector mid-collapse. */}
-							<div className="h-full min-w-[280px]">
-								<SessionInspector
-									browserPoppedOut={browserPoppedOut}
-									isInspectorVisible={isInspectorOpen}
-									onOpenReviewerTerminal={({ handleId, harness }) =>
-										setTerminalTarget({ kind: "reviewer", handleId, harness })
-									}
-									onToggleBrowserPopOut={setBrowserPoppedOut}
-									onViewChange={setInspectorView}
-									view={inspectorView}
-									browserView={browserView}
-									session={session}
-								/>
-							</div>
+							<div className="h-full min-w-[280px]">{inspector}</div>
 						</ResizablePanel>
 					</>
 				) : null}
 			</ResizablePanelGroup>
-			{/* Maximized browser: a fixed overlay across the whole app window,
-          portaled to <body> so it escapes the shell layout (covering the
-          sidebar + topbar, not just the session area) and sits outside any
-          `[data-panel]` column, so the native WebContentsView is not clamped
-          and fills the entire window. */}
-			{browserPoppedOut && session
-				? createPortal(
-						<div className="browser-popout-overlay">
-							<BrowserPanelView
-								active
-								browserView={browserView}
-								onTogglePopOut={setBrowserPoppedOut}
-								poppedOut
-								session={session}
-							/>
-						</div>,
-						document.body,
-					)
-				: null}
 		</div>
 	);
 }

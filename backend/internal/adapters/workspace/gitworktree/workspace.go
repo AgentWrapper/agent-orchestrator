@@ -559,6 +559,25 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 }
 
+// Exists reports whether the worktree directory is present on disk. It is a
+// side-effect-free probe used to detect a worktree removed out from under a live
+// runtime before its path is handed to a shell (which would otherwise fail with
+// a getcwd ENOENT). An absent directory is reported as (false, nil), not an error.
+func (w *Workspace) Exists(_ context.Context, info ports.WorkspaceInfo) (bool, error) {
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return false, err
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("gitworktree: stat worktree %q: %w", path, err)
+	}
+	return fi.IsDir(), nil
+}
+
 func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, bool, error) {
 	records, err := w.listRecords(ctx, repo)
 	if err != nil {

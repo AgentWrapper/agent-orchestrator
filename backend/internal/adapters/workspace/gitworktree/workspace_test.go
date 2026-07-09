@@ -275,6 +275,29 @@ func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
 	}
 }
 
+// TestExistsReportsWorktreePresence locks the side-effect-free probe used to
+// detect a worktree removed out from under a live runtime: present directory ->
+// true, absent directory -> (false, nil) rather than an error.
+func TestExistsReportsWorktreePresence(t *testing.T) {
+	root := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": root}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	present := filepath.Join(root, "proj", "live")
+	if err := os.MkdirAll(present, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	missing := filepath.Join(root, "proj", "gone")
+
+	if ok, err := ws.Exists(context.Background(), ports.WorkspaceInfo{ProjectID: "proj", Path: present}); err != nil || !ok {
+		t.Fatalf("Exists(present) = %v, %v; want true, nil", ok, err)
+	}
+	if ok, err := ws.Exists(context.Background(), ports.WorkspaceInfo{ProjectID: "proj", Path: missing}); err != nil || ok {
+		t.Fatalf("Exists(missing) = %v, %v; want false, nil", ok, err)
+	}
+}
+
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join
 // in managedPath cleans `..` segments before validateManagedPath sees them, so a
 // session id of "../other" would stay inside managedRoot while jumping projects.

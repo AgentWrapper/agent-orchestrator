@@ -92,7 +92,8 @@ func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return s.Create(ctx, cfg)
 }
-func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
+func (s *stubWorkspace) Exists(context.Context, ports.WorkspaceInfo) (bool, error) { return true, nil }
+func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error   { return nil }
 func (s *stubWorkspace) StashUncommitted(_ context.Context, _ ports.WorkspaceInfo) (string, error) {
 	return "", nil
 }

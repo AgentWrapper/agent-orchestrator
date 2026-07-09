@@ -374,6 +374,46 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("shortcut paste", "paste");
 	});
 
+	// Regression: xterm invokes the custom key handler for keydown AND keyup, so a
+	// single Cmd+V pasted twice — once per event — because the shortcut match only
+	// checks key+modifiers. The handler must act on keydown only and defer keyup.
+	it("pastes only on keydown, not again on the keyup of the same Cmd+V chord", async () => {
+		const onInput = vi.fn();
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("chord paste");
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const base = {
+			key: "v",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+		};
+		const keydown = {
+			...base,
+			type: "keydown",
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const keyup = {
+			...base,
+			type: "keyup",
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+
+		// keydown handles the paste; keyup for the still-held chord must be deferred
+		// to xterm untouched, not re-trigger the paste.
+		expect(state.lastTerminal!.keyHandler!(keydown)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(keyup)).toBe(true);
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+		expect(keyup.preventDefault).not.toHaveBeenCalled();
+		expect(window.ao!.clipboard.readText).toHaveBeenCalledTimes(1);
+		expect(onInput).toHaveBeenCalledTimes(1);
+		expect(onInput).toHaveBeenCalledWith("chord paste", "paste");
+	});
+
 	it("supports classic Windows terminal copy and paste shortcuts", async () => {
 		const onInput = vi.fn();
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("insert paste");

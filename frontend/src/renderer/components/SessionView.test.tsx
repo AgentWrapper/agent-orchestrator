@@ -2,6 +2,7 @@ import type { ReactNode, Ref } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
+import { useIsMobile } from "../hooks/use-mobile";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
@@ -93,6 +94,8 @@ vi.mock("../lib/shell-context", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => ({ data: workspaces, isLoading: false }),
 }));
+// Default to desktop; the mobile test overrides per-case (beforeEach resets it).
+vi.mock("../hooks/use-mobile", () => ({ useIsMobile: vi.fn(() => false) }));
 
 // jsdom has no layout engine, so the real react-resizable-panels would never
 // produce meaningful sizes — record the props SessionView passes and expose a
@@ -170,6 +173,7 @@ describe("SessionView", () => {
 		useUiStore.setState({ isInspectorOpen: true });
 		panels.clear();
 		browserDestroy.mockReset();
+		vi.mocked(useIsMobile).mockReturnValue(false);
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
@@ -333,5 +337,33 @@ describe("SessionView", () => {
 		} finally {
 			delete worker.previewUrl;
 		}
+	});
+
+	// Below md the resizable split clips both panes, so the inspector moves into a
+	// bottom Sheet and the rrp group is unmounted (its imperative effects no-op).
+	it("renders the inspector in a bottom Sheet, not the resizable split, below md", () => {
+		vi.mocked(useIsMobile).mockReturnValue(true);
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
+		// Inspector content lives in a Radix dialog (the bottom Sheet) over the terminal.
+		expect(screen.getByRole("dialog", { name: /inspector/i })).toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+	});
+
+	// Regression: the mobile Sheet was rendered with showCloseButton={false} and no
+	// other in-sheet affordance, so on a phone (no Esc key, topbar buried under the
+	// portaled overlay) the only dismiss path was a thin, undiscoverable backdrop
+	// strip — the inspector held the user captive. It must expose a visible Close
+	// control that flips the store closed.
+	it("gives the mobile inspector Sheet a visible Close control that dismisses it", () => {
+		vi.mocked(useIsMobile).mockReturnValue(true);
+		useUiStore.setState({ isInspectorOpen: true });
+		render(<SessionView sessionId="sess-1" />);
+
+		const closeButton = screen.getByRole("button", { name: /close inspector/i });
+		fireEvent.click(closeButton);
+		expect(useUiStore.getState().isInspectorOpen).toBe(false);
 	});
 });

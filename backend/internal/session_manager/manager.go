@@ -877,6 +877,7 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 		return nil
 	}
+	ws := workspaceInfo(rec)
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
 		alive, err := m.runtime.IsAlive(ctx, handle)
@@ -885,7 +886,28 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 		}
 		if alive {
-			return nil // adopt: the session survived the crash.
+			// A live runtime is normally adopted as-is — but only if its worktree
+			// is still on disk. If the worktree was removed out from under it (a
+			// sibling session sharing the path was torn down, an external
+			// `git worktree prune`, etc.), the running shell's cwd is a deleted
+			// inode that cannot be healed in place. Kill the orphan and fall
+			// through to the restore path: it re-creates the worktree from the
+			// branch and relaunches the agent fresh.
+			exists, err := m.workspace.Exists(ctx, ws)
+			if err != nil {
+				// A failed probe is not proof the worktree is gone: leave as-is.
+				return fmt.Errorf("reconcile %s: workspace probe: %w", rec.ID, err)
+			}
+			if exists {
+				return nil // adopt: survived the crash with its worktree intact.
+			}
+			m.logger.Warn("reconcile: live session lost its worktree; relaunching into a fresh one", "sessionID", rec.ID)
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				m.logger.Warn("reconcile: destroy orphaned runtime failed", "sessionID", rec.ID, "error", err)
+			}
+			// No uncommitted work to capture — it died with the directory — so the
+			// marker carries an empty preserve ref.
+			return m.markSavedAndTeardown(ctx, rec, ws, "")
 		}
 	}
 	if err := m.saveAndTeardownOne(ctx, rec, false); err != nil {
@@ -893,6 +915,32 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		if mErr := m.lcm.MarkTerminated(ctx, rec.ID); mErr != nil {
 			return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, mErr)
 		}
+	}
+	return nil
+}
+
+// markSavedAndTeardown records the shutdown-saved marker (carrying preserveRef,
+// which may be empty), marks the session terminated, and force-removes its
+// worktree so RestoreAll re-creates it clean and replays the ref. It mirrors the
+// tail of saveAndTeardownOne and is shared by reconcileLive's two teardown
+// branches (dead runtime, and live runtime whose worktree vanished).
+func (m *Manager) markSavedAndTeardown(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, preserveRef string) error {
+	row := domain.SessionWorktreeRecord{
+		SessionID:    rec.ID,
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       rec.Metadata.Branch,
+		WorktreePath: rec.Metadata.WorkspacePath,
+		PreservedRef: preserveRef,
+		State:        "removed",
+	}
+	if err := m.store.UpsertSessionWorktree(ctx, row); err != nil {
+		return fmt.Errorf("reconcile %s: upsert worktree marker: %w", rec.ID, err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, err)
+	}
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		m.logger.Warn("reconcile: force destroy failed after marker", "sessionID", rec.ID, "error", err)
 	}
 	return nil
 }
@@ -1398,6 +1446,12 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	if err != nil {
 		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
 	}
+	// Orchestrator worktrees are a per-project singleton keyed on project+prefix,
+	// so a terminated orchestrator row shares its WorkspacePath with the active
+	// one. Never reclaim a path a non-terminated session still maps to: doing so
+	// deletes the live agent's working directory out from under it (the running
+	// shell then fails with a getcwd ENOENT).
+	livePaths := liveWorkspacePaths(recs)
 	result := CleanupResult{Cleaned: make([]domain.SessionID, 0, len(recs)), Skipped: []CleanupSkip{}}
 	for _, rec := range recs {
 		if !rec.IsTerminated {
@@ -1405,6 +1459,10 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		}
 		ws := workspaceInfo(rec)
 		if ws.Path == "" {
+			continue
+		}
+		if livePaths[ws.Path] {
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace in use by an active session"})
 			continue
 		}
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
@@ -1452,6 +1510,23 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 		return m.store.ListAllSessions(ctx)
 	}
 	return m.store.ListSessions(ctx, project)
+}
+
+// liveWorkspacePaths is the set of workspace paths held by non-terminated
+// sessions. A path in this set is in active use and must not be reclaimed, even
+// if a terminated session also references it (orchestrator worktrees are shared
+// per project).
+func liveWorkspacePaths(recs []domain.SessionRecord) map[string]bool {
+	live := make(map[string]bool)
+	for _, rec := range recs {
+		if rec.IsTerminated {
+			continue
+		}
+		if p := rec.Metadata.WorkspacePath; p != "" {
+			live[p] = true
+		}
+	}
+	return live
 }
 
 // ---- helpers ----
@@ -1515,6 +1590,14 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	switch kind {
 	case domain.KindOrchestrator:
 		base = orchestratorPrompt(projectID)
+		// A per-project override replaces the built-in role prompt. Tolerate a
+		// missing/unreadable project (keep the built-in) so prompt generation
+		// never fails on a config lookup.
+		if rec, ok, err := m.store.GetProject(ctx, string(projectID)); err == nil && ok {
+			if custom := strings.TrimSpace(rec.Config.OrchestratorPrompt); custom != "" {
+				base = custom
+			}
+		}
 	case domain.KindWorker:
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
 		if err != nil {

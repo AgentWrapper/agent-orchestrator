@@ -27,7 +27,7 @@ func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 
 	want := []string{
 		"claude",
-		"--permission-mode", "bypassPermissions",
+		"--dangerously-skip-permissions",
 		"--", "-add a health check",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -45,7 +45,7 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 		{"default omits flag (defers to settings.json)", ports.PermissionModeDefault, nil, "--permission-mode"},
 		{"accept-edits", ports.PermissionModeAcceptEdits, []string{"--permission-mode", "acceptEdits"}, ""},
 		{"auto", ports.PermissionModeAuto, []string{"--permission-mode", "auto"}, ""},
-		{"bypass-permissions", ports.PermissionModeBypassPermissions, []string{"--permission-mode", "bypassPermissions"}, ""},
+		{"bypass-permissions", ports.PermissionModeBypassPermissions, []string{"--dangerously-skip-permissions"}, "--permission-mode"},
 		{"empty omits permission flags", "", nil, "--permission-mode"},
 	}
 
@@ -381,7 +381,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
 	// The hook-captured native id wins over the derived fallback.
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1"}
+	want := []string{"claude", "--dangerously-skip-permissions", "--resume", "claude-native-1"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -401,7 +401,7 @@ func TestGetRestoreCommandReappendsSystemPrompt(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--append-system-prompt", "You are an orchestrator.", "--resume", "claude-native-1"}
+	want := []string{"claude", "--dangerously-skip-permissions", "--append-system-prompt", "You are an orchestrator.", "--resume", "claude-native-1"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -417,7 +417,7 @@ func TestGetRestoreCommandFallsBackToDerivedUUID(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", claudeSessionUUID("sess-r")}
+	want := []string{"claude", "--dangerously-skip-permissions", "--resume", claudeSessionUUID("sess-r")}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -471,7 +471,7 @@ func TestGetLaunchCommandExplicitPermissionsOverrideConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsSubsequence(cmd, []string{"--permission-mode", "bypassPermissions"}) {
+	if !contains(cmd, "--dangerously-skip-permissions") {
 		t.Fatalf("explicit Permissions should win; got %#v", cmd)
 	}
 }

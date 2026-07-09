@@ -21,7 +21,11 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
 
-	if (!window.ao) {
+	// Electron attaches the live PTY via window.ao's bridge; a plain browser
+	// normally can't, so it shows a static surface. But when an explicit API base
+	// is configured (LAN-exposed), the terminal attaches over the proxied /mux
+	// websocket instead — no Electron bridge needed.
+	if (!window.ao && import.meta.env.VITE_AO_API_BASE_URL == null) {
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		const lines =
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);

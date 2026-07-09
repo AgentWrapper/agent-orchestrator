@@ -5,9 +5,47 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestBuildProjectConfig_OrchestratorPrompt(t *testing.T) {
+	cfg, err := buildProjectConfig(projectSetConfigOptions{}, "## role\nhi")
+	if err != nil {
+		t.Fatalf("buildProjectConfig: %v", err)
+	}
+	if cfg.OrchestratorPrompt != "## role\nhi" {
+		t.Fatalf("OrchestratorPrompt = %q", cfg.OrchestratorPrompt)
+	}
+}
+
+func TestBuildProjectConfig_PromptWithConfigJSONConflicts(t *testing.T) {
+	if _, err := buildProjectConfig(projectSetConfigOptions{configJSON: `{"defaultBranch":"x"}`}, "p"); err == nil {
+		t.Fatal("expected error combining prompt with --config-json")
+	}
+}
+
+func TestReadOrchestratorPrompt(t *testing.T) {
+	if got, err := readOrchestratorPrompt(strings.NewReader(""), ""); err != nil || got != "" {
+		t.Fatalf("empty path: got %q err %v", got, err)
+	}
+	if got, err := readOrchestratorPrompt(strings.NewReader("from stdin"), "-"); err != nil || got != "from stdin" {
+		t.Fatalf("stdin: got %q err %v", got, err)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prompt.md")
+	if err := os.WriteFile(p, []byte("from file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readOrchestratorPrompt(strings.NewReader(""), p); err != nil || got != "from file" {
+		t.Fatalf("file: got %q err %v", got, err)
+	}
+	if _, err := readOrchestratorPrompt(strings.NewReader(""), filepath.Join(dir, "nope.md")); err == nil {
+		t.Fatal("missing file should error")
+	}
+}
 
 type projectCapture struct {
 	method string
@@ -82,7 +120,7 @@ func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 		trackerIntake:   true,
 		trackerRepo:     "acme/demo",
 		trackerAssignee: "alice",
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

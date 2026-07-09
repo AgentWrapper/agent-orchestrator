@@ -121,6 +121,13 @@ type Workspace interface {
 	Create(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	Destroy(ctx context.Context, info WorkspaceInfo) error
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
+	// Exists reports whether the workspace directory is still present on disk.
+	// It is a side-effect-free probe: callers use it to detect a worktree that
+	// was removed out from under a live runtime (e.g. a sibling session sharing
+	// the path was torn down, or an external `git worktree prune`) before
+	// handing its path to a shell, which would otherwise fail with a getcwd
+	// ENOENT. Returns false (not an error) when the directory is absent.
+	Exists(ctx context.Context, info WorkspaceInfo) (bool, error)
 	// ForceDestroy removes the worktree unconditionally, bypassing the
 	// dirty-worktree refusal that Destroy enforces. It is only safe to call
 	// AFTER the session's uncommitted work has been captured via StashUncommitted.

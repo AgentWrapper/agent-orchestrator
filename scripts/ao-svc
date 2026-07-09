@@ -1,0 +1,30 @@
+#!/bin/zsh
+# Stop/start the AO LAN web UI launchd job. Reversible.
+# (The daemon is intentionally NOT supervised here: a launchd-spawned daemon
+# can't read ~/Desktop project repos due to macOS TCC. Start it from a terminal.)
+#   ao-svc down     # bootout the lan-web job (clean stop, no respawn)
+#   ao-svc up       # bootstrap the lan-web job
+#   ao-svc status   # show which jobs are loaded
+set -u
+dom="gui/$(id -u)"
+LA="$HOME/Library/LaunchAgents"
+services=(dev.agent-orchestrator.lan-web)
+
+case "${1:-status}" in
+  down)
+    for s in $services; do
+      launchctl bootout "$dom/$s" 2>/dev/null && echo "down: $s" || echo "down: $s (not loaded)"
+    done
+    ;;
+  up)
+    for s in $services; do
+      launchctl bootstrap "$dom" "$LA/$s.plist" 2>/dev/null && echo "up:   $s" || echo "up:   $s (already loaded / failed)"
+    done
+    ;;
+  status)
+    launchctl list | grep agent-orchestrator || echo "(no agent-orchestrator jobs loaded)"
+    ;;
+  *)
+    echo "usage: ao-svc {up|down|status}" >&2; exit 2
+    ;;
+esac
