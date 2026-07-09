@@ -53,6 +53,7 @@ type commander interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 }
@@ -473,6 +474,12 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
 		return apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	}
+	if len([]rune(displayName)) > 20 {
+		return apierr.Invalid("DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
+	}
+	if s.manager != nil {
+		return toAPIError(s.manager.Rename(ctx, id, displayName))
 	}
 	renamed, err := s.store.RenameSession(ctx, id, displayName, time.Now().UTC())
 	if err != nil {

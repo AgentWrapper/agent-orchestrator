@@ -226,6 +226,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		spawnCfg := ports.SpawnConfig{
 			ProjectID:        domain.ProjectID(project.ID),
 			IssueID:          issueID,
+			IssueTitle:       issue.Title,
 			Kind:             domain.KindWorker,
 			Prompt:           BuildIssuePrompt(issue),
 			IntakePoolBypass: bypassPool,

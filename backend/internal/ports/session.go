@@ -14,11 +14,15 @@ var ErrSessionNotFound = errors.New("session not found")
 type SpawnConfig struct {
 	ProjectID domain.ProjectID
 	IssueID   domain.IssueID
-	Kind      domain.SessionKind
-	Harness   domain.AgentHarness
-	Branch    string
-	Prompt    string
-	Model     string
+	// IssueTitle is the tracker title for IssueID when the daemon already has
+	// it (for example tracker intake). It feeds daemon-owned semantic naming but
+	// is not delivered to the worker prompt.
+	IssueTitle string
+	Kind       domain.SessionKind
+	Harness    domain.AgentHarness
+	Branch     string
+	Prompt     string
+	Model      string
 	// IntakePoolBypass marks tracker-intake workers that should not consume the
 	// normal per-project intake pool/cap.
 	IntakePoolBypass bool

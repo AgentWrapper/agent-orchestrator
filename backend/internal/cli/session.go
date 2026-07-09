@@ -123,6 +123,7 @@ type claimPRResponse struct {
 type sessionListEntry struct {
 	ID             string     `json:"id"`
 	ProjectID      string     `json:"projectId"`
+	Name           string     `json:"name,omitempty"`
 	Role           string     `json:"role"`
 	Status         string     `json:"status,omitempty"`
 	IssueID        string     `json:"issueId,omitempty"`
@@ -663,6 +664,7 @@ func sessionListEntries(sessions []sessionDTO) []sessionListEntry {
 		entries = append(entries, sessionListEntry{
 			ID:             sess.ID,
 			ProjectID:      sess.ProjectID,
+			Name:           sess.DisplayName,
 			Role:           sessionRole(sess),
 			Status:         sess.Status,
 			IssueID:        sess.IssueID,
@@ -742,6 +744,9 @@ func writeSessionList(cmd *cobra.Command, sessions []sessionDTO, hiddenTerminate
 
 func sessionLineParts(sess sessionDTO) []string {
 	parts := []string{}
+	if sess.DisplayName != "" {
+		parts = append(parts, sess.DisplayName)
+	}
 	if !sess.Activity.LastActivityAt.IsZero() {
 		parts = append(parts, "("+formatSessionAge(time.Since(sess.Activity.LastActivityAt))+")")
 	}

@@ -129,6 +129,67 @@ func TestFuguManifestAndLaunchCommandMirrorCodex(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandUsesLaunchTitleAsRenameCommand(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	workspace := canonicalTempDir(t)
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		LaunchTitle:   "ao #146 naming\nforever",
+		Prompt:        "do the real task",
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--", "/rename ao #146 naming forever"}) {
+		t.Fatalf("command %#v missing launch-title rename command", cmd)
+	}
+	if contains(cmd, "do the real task") {
+		t.Fatalf("command %#v should not include the real prompt when launch title consumes the argv prompt slot", cmd)
+	}
+}
+
+func TestFuguLaunchTitleUsesRenameCommand(t *testing.T) {
+	plugin := NewFugu()
+	plugin.resolvedBinary = "codex-fugu"
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		LaunchTitle: "ao #146 naming",
+		Prompt:      "do the real task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--", "/rename ao #146 naming"}) {
+		t.Fatalf("fugu command %#v missing launch-title rename command", cmd)
+	}
+}
+
+func TestGetPromptDeliveryStrategyUsesAfterStartForTitledCodexPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+		LaunchTitle: "ao #146 naming",
+		Prompt:      "do the real task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want %q", got, ports.PromptDeliveryAfterStart)
+	}
+
+	got, err = plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+		LaunchTitle: "ao #146 naming",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryInCommand {
+		t.Fatalf("strategy without prompt = %q, want %q", got, ports.PromptDeliveryInCommand)
+	}
+}
+
 func TestGetLaunchCommandWithoutWorkspaceOmitsTrustFlag(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 

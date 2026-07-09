@@ -94,6 +94,7 @@ const (
 	// misconfigured project cannot hang spawn/restore by pointing at a device,
 	// procfs stream, or accidentally huge file.
 	maxRoleInstructionsFileBytes = 256 * 1024
+	maxSessionDisplayNameRunes   = 20
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -132,6 +133,7 @@ type Store interface {
 	// config into the launch command. ok=false means the project is unknown.
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
+	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
@@ -382,6 +384,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.validateRuntimePrerequisites(); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
+	cfg.DisplayName = launchTitle(project, cfg)
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
@@ -438,7 +441,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
-		LaunchTitle:   launchTitle(project, cfg),
+		LaunchTitle:   cfg.DisplayName,
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
@@ -480,10 +483,18 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
+	if err := m.deliverLaunchTitle(ctx, agent, handle, cfg.DisplayName); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		_ = m.workspace.Destroy(ctx, ws)
+		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(mixBucket, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch title: %w", id, err)
+	}
+
 	if err := m.deliverInitialPrompt(ctx, agent, handle, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
-		LaunchTitle:   launchTitle(project, cfg),
+		LaunchTitle:   cfg.DisplayName,
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
@@ -1684,6 +1695,51 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 	return nil
 }
 
+// Rename updates AO's durable display name and, when the session is live under
+// a harness that supports slash-title commands, updates the native app title too.
+func (m *Manager) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
+	displayName = normalizeDisplayName(displayName)
+	if displayName == "" {
+		return fmt.Errorf("rename %s: display name required", id)
+	}
+	if len([]rune(displayName)) > maxSessionDisplayNameRunes {
+		return fmt.Errorf("rename %s: display name must be %d characters or fewer", id, maxSessionDisplayNameRunes)
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("rename %s: %w", id, err)
+	}
+	if !ok {
+		return fmt.Errorf("rename %s: %w", id, ErrNotFound)
+	}
+	if !rec.IsTerminated && rec.Metadata.RuntimeHandleID != "" {
+		if agent, ok := m.agents.Agent(rec.Harness); ok {
+			if command, ok := titleCommand(agent, displayName); ok {
+				outcome, err := m.guard.Deliver(ctx, id, command)
+				if err != nil {
+					return fmt.Errorf("rename %s: title command: %w", id, err)
+				}
+				switch outcome {
+				case sessionguard.SuppressedNotFound:
+					return fmt.Errorf("rename %s: %w", id, ErrNotFound)
+				case sessionguard.SuppressedTerminated:
+					return fmt.Errorf("rename %s: %w", id, ErrTerminated)
+				case sessionguard.SuppressedAwaitingUser:
+					return fmt.Errorf("rename %s: %w", id, ErrAwaitingDecision)
+				}
+			}
+		}
+	}
+	renamed, err := m.store.RenameSession(ctx, id, displayName, m.clock())
+	if err != nil {
+		return fmt.Errorf("rename %s: %w", id, err)
+	}
+	if !renamed {
+		return fmt.Errorf("rename %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
 // harnessNudgeSafe reports whether the session's harness is safe to nudge with
 // an Enter-only re-send (see ports.ActivitySignaler): it must emit BOTH a
 // prompt-submit signal (else the loop wastes its budget never observing active)
@@ -1933,20 +1989,131 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 }
 
 func launchTitle(project domain.ProjectRecord, cfg ports.SpawnConfig) string {
-	if title := strings.TrimSpace(cfg.DisplayName); title != "" {
-		return title
+	if title := normalizeDisplayName(cfg.DisplayName); title != "" {
+		return capRunes(title, maxSessionDisplayNameRunes)
 	}
 	if cfg.Kind == domain.KindOrchestrator {
-		name := strings.TrimSpace(project.DisplayName)
+		name := normalizeDisplayName(project.DisplayName)
 		if name == "" {
-			name = strings.TrimSpace(project.ID)
+			name = normalizeDisplayName(project.ID)
 		}
 		if name == "" {
 			name = string(cfg.ProjectID)
 		}
-		return name + " Orchestrator"
+		return orchestratorDisplayName(name, maxSessionDisplayNameRunes)
+	}
+	if cfg.Kind == domain.KindWorker && cfg.IssueID != "" {
+		return workerDisplayName(project, cfg.IssueID, cfg.IssueTitle)
 	}
 	return ""
+}
+
+func workerDisplayName(project domain.ProjectRecord, issueID domain.IssueID, title string) string {
+	head := strings.TrimSpace(sessionPrefix(project))
+	if issue := issueNumber(issueID); issue != "" {
+		if head != "" {
+			head += " "
+		}
+		head += "#" + issue
+	}
+	if head == "" {
+		return ""
+	}
+	if slug := slugifyTitle(title); slug != "" {
+		return capNamePreservingHead(head, slug, maxSessionDisplayNameRunes)
+	}
+	return head
+}
+
+func issueNumber(id domain.IssueID) string {
+	s := strings.TrimSpace(string(id))
+	if s == "" {
+		return ""
+	}
+	if i := strings.LastIndexByte(s, '#'); i >= 0 && i+1 < len(s) {
+		return s[i+1:]
+	}
+	if i := strings.LastIndexByte(s, '/'); i >= 0 && i+1 < len(s) {
+		return s[i+1:]
+	}
+	if i := strings.LastIndexByte(s, ':'); i >= 0 && i+1 < len(s) {
+		return s[i+1:]
+	}
+	return s
+}
+
+func slugifyTitle(title string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(title)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash && b.Len() > 0 {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func orchestratorDisplayName(projectName string, limit int) string {
+	const suffix = " Orchestrator"
+	projectName = normalizeDisplayName(projectName)
+	if projectName == "" {
+		return ""
+	}
+	if limit <= 0 {
+		return projectName + suffix
+	}
+	suffixRunes := len([]rune(suffix))
+	nameLimit := limit - suffixRunes
+	if nameLimit <= 0 {
+		return capRunes(projectName+suffix, limit)
+	}
+	return capRunes(projectName, nameLimit) + suffix
+}
+
+func capNamePreservingHead(head, slug string, limit int) string {
+	head = strings.TrimSpace(head)
+	slug = strings.Trim(slug, "- ")
+	if head == "" || slug == "" {
+		return capRunes(head, limit)
+	}
+	if limit <= 0 {
+		return head
+	}
+	full := head + " " + slug
+	if len([]rune(full)) <= limit {
+		return full
+	}
+	headRunes := len([]rune(head))
+	// The head is the stable identity. If it already consumes the cap, keep it
+	// intact and omit the trailing slug.
+	if headRunes+1 >= limit {
+		return head
+	}
+	slugLimit := limit - headRunes - 1
+	return head + " " + strings.TrimRight(string([]rune(slug)[:slugLimit]), "-")
+}
+
+func capRunes(s string, limit int) string {
+	s = normalizeDisplayName(s)
+	if limit <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit])
+}
+
+func normalizeDisplayName(s string) string {
+	return strings.Join(strings.Fields(domain.SanitizeControlChars(s)), " ")
 }
 
 // buildSpawnTexts returns the user-facing prompt and the system prompt to
@@ -2191,6 +2358,27 @@ func (m *Manager) deliverInitialPrompt(ctx context.Context, agent ports.Agent, h
 		return nil
 	}
 	return m.runtime.SendMessage(ctx, handle, domain.SanitizeControlChars(cfg.Prompt))
+}
+
+func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, title string) error {
+	command, ok := titleCommand(agent, title)
+	if !ok {
+		return nil
+	}
+	return m.runtime.SendMessage(ctx, handle, command)
+}
+
+func titleCommand(agent ports.Agent, title string) (string, bool) {
+	commander, ok := agent.(ports.AgentTitleCommander)
+	if !ok {
+		return "", false
+	}
+	command, ok := commander.InHarnessTitleCommand(title)
+	if !ok {
+		return "", false
+	}
+	command = strings.TrimSpace(domain.SanitizeControlChars(command))
+	return command, command != ""
 }
 
 // runtimeEnv is spawnEnv plus the hook PATH pin: the session's PATH puts the

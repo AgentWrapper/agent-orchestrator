@@ -20,6 +20,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -111,11 +112,35 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
 
-	if cfg.Prompt != "" {
+	if command, ok := p.InHarnessTitleCommand(cfg.LaunchTitle); ok {
+		cmd = append(cmd, "--", command)
+	} else if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
 
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy sends the real prompt after startup when the argv
+// prompt slot is used for AO's launch-time title command.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if command, ok := p.InHarnessTitleCommand(cfg.LaunchTitle); ok && command != "" && cfg.Prompt != "" {
+		return ports.PromptDeliveryAfterStart, nil
+	}
+	return ports.PromptDeliveryInCommand, nil
+}
+
+// InHarnessTitleCommand returns the Codex slash command that renames the active
+// native session title.
+func (p *Plugin) InHarnessTitleCommand(title string) (string, bool) {
+	title = strings.Join(strings.Fields(domain.SanitizeControlChars(title)), " ")
+	if title == "" {
+		return "", false
+	}
+	return "/rename " + title, true
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Codex

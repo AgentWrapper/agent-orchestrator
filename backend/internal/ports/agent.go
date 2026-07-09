@@ -70,6 +70,12 @@ type AgentModelValidator interface {
 	ValidateModel(ctx context.Context, model string) error
 }
 
+// AgentTitleCommander is the optional capability for interactive harnesses
+// that accept a TUI slash command to set their native title.
+type AgentTitleCommander interface {
+	InHarnessTitleCommand(title string) (command string, ok bool)
+}
+
 // AgentBinaryResolver is the optional capability adapters expose when their
 // binary can be checked without constructing a real session launch command.
 type AgentBinaryResolver interface {

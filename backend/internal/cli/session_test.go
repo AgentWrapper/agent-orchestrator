@@ -135,7 +135,7 @@ func TestSessionList_ProjectFilterAndDefaultFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session ls failed: %v\nstderr=%s", err, errOut)
 	}
-	if !strings.Contains(out, "demo:") || !strings.Contains(out, "demo-1") {
+	if !strings.Contains(out, "demo:") || !strings.Contains(out, "demo-1") || !strings.Contains(out, "Current Name") {
 		t.Fatalf("output missing worker session:\n%s", out)
 	}
 	if strings.Contains(out, "demo-2") {
@@ -174,7 +174,7 @@ func TestSessionList_JSONOutputDecodes(t *testing.T) {
 	if len(got.Data) != 1 {
 		t.Fatalf("len(data) = %d, want 1; data=%#v", len(got.Data), got.Data)
 	}
-	if got.Data[0].ID != "demo-1" || got.Data[0].ProjectID != "demo" || got.Data[0].Role != "worker" {
+	if got.Data[0].ID != "demo-1" || got.Data[0].ProjectID != "demo" || got.Data[0].Role != "worker" || got.Data[0].Name != "Current Name" {
 		t.Fatalf("unexpected JSON entry: %#v", got.Data[0])
 	}
 }

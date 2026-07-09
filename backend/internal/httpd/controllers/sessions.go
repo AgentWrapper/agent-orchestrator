@@ -328,6 +328,10 @@ func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_REQUIRED", "displayName is required", nil)
 		return
 	}
+	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
+		return
+	}
 	if err := c.Svc.Rename(r.Context(), sessionID(r), displayName); err != nil {
 		envelope.WriteError(w, r, err)
 		return

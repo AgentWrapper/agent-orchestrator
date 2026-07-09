@@ -215,6 +215,16 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.Launch
 	return ports.PromptDeliveryInCommand, nil
 }
 
+// InHarnessTitleCommand returns the Claude Code slash command that renames the
+// active native session title.
+func (p *Plugin) InHarnessTitleCommand(title string) (string, bool) {
+	title = claudeLaunchTitle(title)
+	if title == "" {
+		return "", false
+	}
+	return "/rename " + title, true
+}
+
 // PreLaunch is an optional capability the spawn engine invokes (via type
 // assertion) immediately before creating the session. Claude Code shows a
 // blocking "do you trust this folder?" dialog the first time it runs in any

@@ -21,11 +21,13 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions  map[domain.SessionID]domain.SessionRecord
-	pr        map[domain.SessionID]domain.PRFacts
-	projects  map[string]domain.ProjectRecord
-	num       int
-	deleteErr error
+	sessions           map[domain.SessionID]domain.SessionRecord
+	pr                 map[domain.SessionID]domain.PRFacts
+	projects           map[string]domain.ProjectRecord
+	num                int
+	deleteErr          error
+	updateSessionCalls int
+	renameSessionCalls int
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
@@ -52,8 +54,20 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 	return rec, nil
 }
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	f.updateSessionCalls++
 	f.sessions[rec.ID] = rec
 	return nil
+}
+func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error) {
+	f.renameSessionCalls++
+	rec, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	rec.DisplayName = displayName
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return true, nil
 }
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
@@ -311,6 +325,13 @@ func (a *launchTitleAgent) GetPromptDeliveryStrategy(_ context.Context, cfg port
 		return ports.PromptDeliveryAfterStart, nil
 	}
 	return ports.PromptDeliveryInCommand, nil
+}
+func (a *launchTitleAgent) InHarnessTitleCommand(title string) (string, bool) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "", false
+	}
+	return "/rename " + title, true
 }
 
 type singleAgent struct{ agent ports.Agent }
@@ -1239,11 +1260,82 @@ func TestSpawn_ForwardsDisplayNameAsLaunchTitleAndDeliversPromptAfterStart(t *te
 	if got := agent.lastLaunch.Prompt; got != "implement\x1b issue 53" {
 		t.Fatalf("launch prompt = %q, want preserved task prompt in config", got)
 	}
-	if got, want := rt.sent, []string{"implement issue 53"}; !reflect.DeepEqual(got, want) {
+	if got, want := rt.sent, []string{"/rename #53 title-sync", "implement issue 53"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("post-start prompt delivery = %#v, want %#v", got, want)
 	}
 	if got := st.sessions["mer-1"].Metadata.Prompt; got != "implement\x1b issue 53" {
 		t.Fatalf("metadata prompt = %q, want original task prompt", got)
+	}
+}
+
+func TestSpawn_NormalizesDisplayNameBeforeTitleDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		DisplayName: "  #53\ntitle\t sync\x1b  ",
+		Prompt:      "implement issue 53",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantName := "#53 title sync"
+	if got := st.sessions["mer-1"].DisplayName; got != wantName {
+		t.Fatalf("stored displayName = %q, want %q", got, wantName)
+	}
+	if got := agent.lastLaunch.LaunchTitle; got != wantName {
+		t.Fatalf("LaunchTitle = %q, want %q", got, wantName)
+	}
+	if got, want := rt.sent, []string{"/rename " + wantName, "implement issue 53"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
+	}
+}
+
+func TestSpawn_ComputesWorkerNameFromIssueTitleAndReappliesInHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["agent-orchestrator"] = domain.ProjectRecord{
+		ID: "agent-orchestrator",
+		Config: domain.ProjectConfig{
+			SessionPrefix: "ao",
+			Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+		},
+	}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:  "agent-orchestrator",
+		IssueID:    "github:polymath-ventures/agent-orchestrator#146",
+		IssueTitle: "Naming, done forever: one semantic name on every surface, every agent, every harness",
+		Kind:       domain.KindWorker,
+		Prompt:     "/address-issue 146",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantName := "ao #146 naming-done"
+	if got := st.sessions["agent-orchestrator-1"].DisplayName; got != wantName {
+		t.Fatalf("stored displayName = %q, want %q", got, wantName)
+	}
+	if got := agent.lastLaunch.LaunchTitle; got != wantName {
+		t.Fatalf("LaunchTitle = %q, want %q", got, wantName)
+	}
+	if got, want := rt.sent, []string{"/rename " + wantName, "/address-issue 146"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
 	}
 }
 
@@ -1262,6 +1354,34 @@ func TestSpawn_DerivesOrchestratorLaunchTitleFromProject(t *testing.T) {
 	}
 	if got := agent.lastLaunch.LaunchTitle; got != "Mercury Orchestrator" {
 		t.Fatalf("orchestrator LaunchTitle = %q, want project display name", got)
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != "Mercury Orchestrator" {
+		t.Fatalf("orchestrator displayName = %q, want project display name", got)
+	}
+}
+
+func TestSpawn_CapsOrchestratorNameButPreservesRoleSuffix(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", DisplayName: "Mercury Mission Control\nOps", Config: testRoleAgents()}
+	agent := &launchTitleAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+	wantName := "Mercury Orchestrator"
+	if got := agent.lastLaunch.LaunchTitle; got != wantName {
+		t.Fatalf("orchestrator LaunchTitle = %q, want %q", got, wantName)
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != wantName {
+		t.Fatalf("orchestrator displayName = %q, want %q", got, wantName)
+	}
+	if got := len([]rune(wantName)); got != maxSessionDisplayNameRunes {
+		t.Fatalf("test fixture length = %d, want cap %d", got, maxSessionDisplayNameRunes)
 	}
 }
 
@@ -1285,10 +1405,83 @@ func TestSpawn_InCommandHarnessDoesNotPostStartPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(rt.sent) != 0 {
-		t.Fatalf("in-command harness received post-start prompt: %#v", rt.sent)
+		t.Fatalf("agent without title command received post-start sends: %#v", rt.sent)
 	}
 	if got := agent.lastLaunch.Prompt; got != "implement issue 53" {
 		t.Fatalf("launch prompt = %q, want in-command prompt preserved", got)
+	}
+}
+
+func TestRename_RejectsOverlongName(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	if err := m.Rename(ctx, "mer-1", strings.Repeat("x", 21)); err == nil {
+		t.Fatal("Rename() overlong name succeeded, want error")
+	}
+}
+
+func TestRename_LiveSessionUpdatesStoreAndHarnessTitle(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	messenger := &fakeMessenger{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: messenger, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+
+	if err := m.Rename(ctx, "mer-1", "  New Name  "); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != "New Name" {
+		t.Fatalf("displayName = %q, want trimmed name", got)
+	}
+	if len(rt.sent) != 0 {
+		t.Fatalf("rename bypassed guarded messenger and wrote to runtime directly: %#v", rt.sent)
+	}
+	if got, want := messenger.msgs, []string{"/rename New Name"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("guarded sends = %#v, want %#v", got, want)
+	}
+	if st.renameSessionCalls != 1 {
+		t.Fatalf("RenameSession calls = %d, want 1", st.renameSessionCalls)
+	}
+	if st.updateSessionCalls != 0 {
+		t.Fatalf("UpdateSession calls = %d, want 0", st.updateSessionCalls)
+	}
+}
+
+func TestRename_NormalizesDisplayNameBeforeStoreAndHarnessTitle(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	messenger := &fakeMessenger{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: messenger, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+
+	if err := m.Rename(ctx, "mer-1", "  New\nName\tNow\x1b  "); err != nil {
+		t.Fatal(err)
+	}
+
+	wantName := "New Name Now"
+	if got := st.sessions["mer-1"].DisplayName; got != wantName {
+		t.Fatalf("displayName = %q, want %q", got, wantName)
+	}
+	if got, want := messenger.msgs, []string{"/rename " + wantName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("guarded sends = %#v, want %#v", got, want)
 	}
 }
 

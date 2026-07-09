@@ -57,6 +57,9 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	if want := "/address-issue 12"; call.Prompt != want {
 		t.Fatalf("prompt = %q, want exactly %q", call.Prompt, want)
 	}
+	if call.IssueTitle != "Fix login" {
+		t.Fatalf("IssueTitle = %q, want issue title for daemon naming", call.IssueTitle)
+	}
 	if len(tracker.filters) != 1 {
 		t.Fatalf("tracker filters = %d, want 1", len(tracker.filters))
 	}
