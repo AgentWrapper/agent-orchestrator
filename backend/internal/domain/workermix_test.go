@@ -160,3 +160,39 @@ func TestWorkerMixSelectIgnoresForeignBuckets(t *testing.T) {
 		t.Fatalf("select = %+v ok=%v, want codex (foreign buckets ignored)", got, ok)
 	}
 }
+
+func TestRoutingHarnessForIssueLabels(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels []string
+		want   AgentHarness
+		ok     bool
+	}{
+		{"codex", []string{"bug", "agent:codex"}, HarnessCodex, true},
+		{"fugu alias", []string{"agent:fugu"}, HarnessCodexFugu, true},
+		{"codex fugu alias", []string{"agent:codex-fugu"}, HarnessCodexFugu, true},
+		{"claude", []string{"Agent:Claude"}, HarnessClaudeCode, true},
+		{"unknown ignored", []string{"agent:goose"}, "", false},
+		{"whitespace padded ignored", []string{" agent:codex "}, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := RoutingHarnessForIssueLabels(tt.labels)
+			if ok != tt.ok || got != tt.want {
+				t.Fatalf("RoutingHarnessForIssueLabels(%v) = (%q,%v), want (%q,%v)", tt.labels, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestIssueLabelsBypassWorkerPool(t *testing.T) {
+	if !IssueLabelsBypassWorkerPool([]string{"feature", "NoPool"}) {
+		t.Fatal("nopool label should bypass worker pool")
+	}
+	if IssueLabelsBypassWorkerPool([]string{"no-pool"}) {
+		t.Fatal("only exact nopool label should bypass worker pool")
+	}
+	if IssueLabelsBypassWorkerPool([]string{" nopool "}) {
+		t.Fatal("whitespace-padded label should not bypass worker pool")
+	}
+}

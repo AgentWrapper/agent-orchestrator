@@ -28,6 +28,35 @@ const PERMISSION_MODE_OPTIONS = [
 
 const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
 
+const ISSUE_LABEL_GROUPS = [
+	{
+		title: "Opt-out labels",
+		scope: "Per-project with a global default.",
+		labels: [
+			{ name: "no-ao", meaning: "Never dispatch automatically." },
+			{ name: "deferred", meaning: "Parked for future work." },
+			{ name: "charter", meaning: "Excludes charter and charter:* work." },
+			{ name: "charter-audit", meaning: "Audit work handled outside intake." },
+			{ name: "human-review", meaning: "Needs a person before automation." },
+		],
+	},
+	{
+		title: "Agent routing labels",
+		scope: "Per ticket; consumes the normal project pool unless nopool is also present.",
+		labels: [
+			{ name: "agent:codex", meaning: "Dispatch on codex." },
+			{ name: "agent:fugu", meaning: "Dispatch on codex-fugu." },
+			{ name: "agent:codex-fugu", meaning: "Accepted optional alias for codex-fugu." },
+			{ name: "agent:claude", meaning: "Dispatch on claude-code." },
+		],
+	},
+	{
+		title: "Pool escape labels",
+		scope: "Per ticket; bypasses the normal project pool cap.",
+		labels: [{ name: "nopool", meaning: "Launch outside MaxConcurrent capacity." }],
+	},
+] as const;
+
 // MIX_OPTIONS are the agent/model buckets a worker-mix row can select. Each is a
 // flattened agent+model pair (issue #62: "type a % and select a model"). Fable is
 // intentionally offered — a user may explicitly weight it in; the no-default rule
@@ -374,6 +403,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
+			<LabelReferenceCard />
+
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
@@ -392,6 +423,40 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				)}
 			</div>
 		</form>
+	);
+}
+
+function LabelReferenceCard() {
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle role="heading" aria-level={2} className="text-[13px]">
+					Issue labels
+				</CardTitle>
+			</CardHeader>
+			<CardContent className="flex flex-col gap-4">
+				<p className="text-[12px] leading-5 text-muted-foreground">
+					Opt-out labels are per-project settings with a global default. Routing and pool-escape labels are read from
+					each ticket during dispatch.
+				</p>
+				{ISSUE_LABEL_GROUPS.map((group) => (
+					<section key={group.title} className="flex flex-col gap-2">
+						<div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+							<h3 className="text-[12px] font-medium text-foreground">{group.title}</h3>
+							<span className="text-[11px] text-muted-foreground">{group.scope}</span>
+						</div>
+						<div className="divide-y divide-border rounded-md border border-border">
+							{group.labels.map((label) => (
+								<div key={label.name} className="grid grid-cols-[minmax(130px,0.45fr)_1fr] gap-3 px-3 py-2">
+									<code className="break-words text-[12px] text-foreground">{label.name}</code>
+									<span className="text-[12px] leading-5 text-muted-foreground">{label.meaning}</span>
+								</div>
+							))}
+						</div>
+					</section>
+				))}
+			</CardContent>
+		</Card>
 	);
 }
 

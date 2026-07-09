@@ -743,6 +743,7 @@ func TestSessionLaunchedHarnessMetadataRoundTripsResumeIDs(t *testing.T) {
 		domain.HarnessCodex:      "codex-native",
 		domain.HarnessClaudeCode: "claude-native",
 	}
+	rec.Metadata.IntakePoolBypass = true
 	created, err := s.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatal(err)
@@ -757,6 +758,9 @@ func TestSessionLaunchedHarnessMetadataRoundTripsResumeIDs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Metadata.AgentSessionIDs, rec.Metadata.AgentSessionIDs) {
 		t.Fatalf("agent session ids = %v, want %v", got.Metadata.AgentSessionIDs, rec.Metadata.AgentSessionIDs)
+	}
+	if !got.Metadata.IntakePoolBypass {
+		t.Fatal("IntakePoolBypass did not round-trip")
 	}
 }
 

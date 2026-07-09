@@ -52,6 +52,15 @@ type BucketKey struct {
 // means the single Worker.Harness behavior is used unchanged (back-compat).
 type WorkerMix []WorkerMixEntry
 
+const poolEscapeIssueLabel = "nopool"
+
+var issueRoutingLabelHarnesses = map[string]AgentHarness{
+	"agent:codex":      HarnessCodex,
+	"agent:fugu":       HarnessCodexFugu,
+	"agent:codex-fugu": HarnessCodexFugu,
+	"agent:claude":     HarnessClaudeCode,
+}
+
 // Validate rejects a mix that could not be honored deterministically: an unknown
 // harness, a cross-provider model, an out-of-range weight, a duplicate bucket, or
 // weights that do not sum to 100. An empty mix is valid — the feature is off and
@@ -120,4 +129,35 @@ func (mix WorkerMix) Select(running map[BucketKey]int) (WorkerMixEntry, bool) {
 		return WorkerMixEntry{}, false
 	}
 	return mix[best], true
+}
+
+// RoutingHarnessForIssueLabels maps ao's per-ticket routing labels onto the
+// explicit harness intake must pass to Spawn. Unknown agent:* labels are ignored
+// rather than treated as errors so future labels can exist before this daemon
+// understands them. Whitespace-padded labels are ignored; tracker adapters
+// should preserve provider label names exactly.
+func RoutingHarnessForIssueLabels(labels []string) (AgentHarness, bool) {
+	for _, label := range labels {
+		if label != strings.TrimSpace(label) {
+			continue
+		}
+		if h, ok := issueRoutingLabelHarnesses[strings.ToLower(label)]; ok {
+			return h, true
+		}
+	}
+	return "", false
+}
+
+// IssueLabelsBypassWorkerPool reports whether a ticket is allowed to spawn
+// outside the project's normal intake pool/cap.
+func IssueLabelsBypassWorkerPool(labels []string) bool {
+	for _, label := range labels {
+		if label != strings.TrimSpace(label) {
+			continue
+		}
+		if strings.EqualFold(label, poolEscapeIssueLabel) {
+			return true
+		}
+	}
+	return false
 }

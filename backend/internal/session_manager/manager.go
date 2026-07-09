@@ -314,7 +314,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		}
 	}
 	defer unlockSpawn()
-	if cfg.Kind == domain.KindWorker && project.Config.TrackerIntake.MaxConcurrent > 0 {
+	if cfg.Kind == domain.KindWorker && !cfg.IntakePoolBypass && project.Config.TrackerIntake.MaxConcurrent > 0 {
 		live, err := m.liveWorkerCount(ctx, cfg.ProjectID)
 		if err != nil {
 			return domain.SessionRecord{}, fmt.Errorf("spawn: worker cap: %w", err)
@@ -497,7 +497,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt, Model: strings.TrimSpace(cfg.Model)}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt, Model: strings.TrimSpace(cfg.Model), IntakePoolBypass: cfg.IntakePoolBypass}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -650,6 +650,9 @@ func (m *Manager) liveWorkerCount(ctx context.Context, projectID domain.ProjectI
 	count := 0
 	for _, rec := range recs {
 		if rec.Kind != domain.KindWorker || rec.IsTerminated {
+			continue
+		}
+		if rec.Metadata.IntakePoolBypass {
 			continue
 		}
 		count++
@@ -1033,7 +1036,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model, IntakePoolBypass: meta.IntakePoolBypass}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
@@ -1194,7 +1197,7 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 		_ = m.lcm.MarkTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
 	}
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.lcm.MarkTerminated(ctx, id)
@@ -1261,7 +1264,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	// Persist the RESTORED worktree path/branch: a changed session prefix or
 	// managed root can restore to a different path, and a stale one would break
 	// later terminal/workspace/cleanup operations.
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
@@ -1910,6 +1913,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Harness:     cfg.Harness,
 		DisplayName: cfg.DisplayName,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		Metadata:    domain.SessionMetadata{IntakePoolBypass: cfg.IntakePoolBypass},
 	}
 }
 

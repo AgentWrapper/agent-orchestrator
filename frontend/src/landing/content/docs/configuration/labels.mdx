@@ -1,0 +1,42 @@
+---
+title: Issue labels
+description: Configure the GitHub labels AO uses to opt out, route agents, and bypass intake pool limits.
+---
+
+AO acts on a small, explicit GitHub label taxonomy during tracker intake.
+
+## Opt-out labels
+
+Opt-out labels are the work gate. They are configured per project in tracker
+intake settings; when a project leaves the list unset, AO uses the global
+default below. Any matching label wins over routing and pool-escape labels.
+
+| Label           | Meaning                                             |
+| --------------- | --------------------------------------------------- |
+| `no-ao`         | Never dispatch automatically.                       |
+| `deferred`      | Parked for future work.                             |
+| `charter`       | Excludes the bare label and the `charter:*` family. |
+| `charter-audit` | Audit work handled outside intake.                  |
+| `human-review`  | Needs a person before automation.                   |
+
+## Agent routing labels
+
+Routing labels pin one ticket to a specific worker harness. They bypass the
+weighted worker mix for that ticket, but they still consume normal project
+capacity unless `nopool` is also present. A pinned harness does not substitute to
+another harness if unavailable.
+
+| Label              | Harness                                  |
+| ------------------ | ---------------------------------------- |
+| `agent:codex`      | `codex`                                  |
+| `agent:fugu`       | `codex-fugu`                             |
+| `agent:codex-fugu` | Accepted optional alias for `codex-fugu` |
+| `agent:claude`     | `claude-code`                            |
+
+## Pool escape labels
+
+Pool escape labels change only capacity treatment.
+
+| Label    | Meaning                                            |
+| -------- | -------------------------------------------------- |
+| `nopool` | Launch this ticket outside the project intake cap. |

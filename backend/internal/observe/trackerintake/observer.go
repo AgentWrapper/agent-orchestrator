@@ -169,10 +169,6 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		o.logger.Warn("tracker intake: skipping project with invalid config", "project", project.ID, "err", err)
 		return true
 	}
-	if cfg.MaxConcurrent > 0 && liveWorkers >= cfg.MaxConcurrent {
-		o.logger.Debug("tracker intake: project at concurrency cap, deferring", "project", project.ID, "live", liveWorkers, "cap", cfg.MaxConcurrent)
-		return false
-	}
 	repo, ok := trackerRepo(project, cfg)
 	if !ok {
 		o.logger.Warn("tracker intake: skipping project without tracker scope", "project", project.ID, "provider", cfg.Provider, "origin", project.RepoOriginURL)
@@ -212,10 +208,6 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		if ctx.Err() != nil {
 			return true
 		}
-		if cfg.MaxConcurrent > 0 && liveWorkers+spawnedThisPass >= cfg.MaxConcurrent {
-			o.logger.Debug("tracker intake: reached concurrency cap mid-pass, deferring remaining issues", "project", project.ID, "cap", cfg.MaxConcurrent)
-			break
-		}
 		if issue.State != domain.IssueOpen {
 			continue
 		}
@@ -226,15 +218,25 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		if issueID == "" || seen[issueID] {
 			continue
 		}
+		bypassPool := domain.IssueLabelsBypassWorkerPool(issue.Labels)
+		if !bypassPool && cfg.MaxConcurrent > 0 && liveWorkers+spawnedThisPass >= cfg.MaxConcurrent {
+			o.logger.Debug("tracker intake: reached concurrency cap, deferring issue", "project", project.ID, "issue", issueID, "cap", cfg.MaxConcurrent)
+			continue
+		}
 		spawnCfg := ports.SpawnConfig{
-			ProjectID: domain.ProjectID(project.ID),
-			IssueID:   issueID,
-			Kind:      domain.KindWorker,
-			Prompt:    BuildIssuePrompt(issue),
+			ProjectID:        domain.ProjectID(project.ID),
+			IssueID:          issueID,
+			Kind:             domain.KindWorker,
+			Prompt:           BuildIssuePrompt(issue),
+			IntakePoolBypass: bypassPool,
 		}
 		var pickKey domain.BucketKey
 		havePick := false
-		if len(mix) > 0 {
+		if harness, ok := domain.RoutingHarnessForIssueLabels(issue.Labels); ok {
+			spawnCfg.Harness = harness
+			pickKey = domain.BucketKey{Harness: harness}
+			havePick = true
+		} else if len(mix) > 0 {
 			if pick, ok := mix.Select(running); ok {
 				spawnCfg.Harness = pick.Harness
 				spawnCfg.Model = pick.Model
@@ -257,7 +259,9 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			running[pickKey]++
 		}
 		seen[issueID] = true
-		spawnedThisPass++
+		if !bypassPool {
+			spawnedThisPass++
+		}
 	}
 	return spawnFailed
 }
@@ -369,10 +373,9 @@ func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
 	return seen
 }
 
-// liveWorkersByProject counts live (non-terminated) worker sessions per project.
-// The count feeds the per-project MaxConcurrent cap shared by intake and manual
-// spawns, so a bulk assignment burst or repeated CLI spawn cannot exceed the
-// configured worker pool size.
+// liveWorkersByProject counts live (non-terminated) worker sessions that consume
+// the normal per-project MaxConcurrent cap. nopool sessions bypass that pool,
+// but still participate in worker-mix balancing via runningWorkerBucketsByProject.
 func liveWorkersByProject(sessions []domain.SessionRecord) map[string]int {
 	counts := make(map[string]int)
 	for _, sess := range sessions {
@@ -380,6 +383,9 @@ func liveWorkersByProject(sessions []domain.SessionRecord) map[string]int {
 			continue
 		}
 		if sess.Kind != domain.KindWorker {
+			continue
+		}
+		if sess.Metadata.IntakePoolBypass {
 			continue
 		}
 		counts[string(sess.ProjectID)]++

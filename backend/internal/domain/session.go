@@ -34,6 +34,9 @@ type SessionMetadata struct {
 	// Model is the per-session model override supplied at spawn. Empty means
 	// restore should keep resolving the model from project/role config.
 	Model string `json:"model,omitempty"`
+	// IntakePoolBypass marks tracker-intake workers spawned from a nopool issue.
+	// They are intentionally excluded from the normal intake MaxConcurrent cap.
+	IntakePoolBypass bool `json:"intakePoolBypass,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.

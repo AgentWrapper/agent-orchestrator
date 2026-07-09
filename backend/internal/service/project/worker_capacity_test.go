@@ -139,12 +139,12 @@ func TestWorkerCapacityReportsMaxConcurrentWhenTrackerIntakeDisabled(t *testing.
 	}
 }
 
-func TestWorkerCapacityFreeCapacityCountsAllLiveWorkers(t *testing.T) {
+func TestWorkerCapacityFreeCapacityCountsCapConsumingLiveWorkers(t *testing.T) {
 	svc := project.NewWorkerCapacity(workerCapacityStore{
 		project: domain.ProjectRecord{
 			ID: "ao",
 			Config: domain.ProjectConfig{
-				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 3},
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 4},
 				WorkerMix:     domain.WorkerMix{{Harness: domain.HarnessCodex, Weight: 100}},
 			},
 		},
@@ -152,6 +152,7 @@ func TestWorkerCapacityFreeCapacityCountsAllLiveWorkers(t *testing.T) {
 			{ID: "intake", ProjectID: "ao", IssueID: "github:polymath-ventures/agent-orchestrator#1", Kind: domain.KindWorker, Harness: domain.HarnessCodex},
 			{ID: "manual", ProjectID: "ao", IssueID: "manual-1", Kind: domain.KindWorker, Harness: domain.HarnessCodex},
 			{ID: "ad-hoc", ProjectID: "ao", Kind: domain.KindWorker, Harness: domain.HarnessCodex},
+			{ID: "urgent", ProjectID: "ao", IssueID: "github:polymath-ventures/agent-orchestrator#2", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Metadata: domain.SessionMetadata{IntakePoolBypass: true}},
 		},
 	}, workerCapacityHealth{snapshot: agenthealth.Snapshot{
 		Harnesses: []agenthealth.HarnessHealth{{ID: string(domain.HarnessCodex), Label: "Codex", Health: agenthealth.HealthHealthy}},
@@ -161,10 +162,10 @@ func TestWorkerCapacityFreeCapacityCountsAllLiveWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WorkerCapacity: %v", err)
 	}
-	if got.ActiveWorkers != 3 {
-		t.Fatalf("ActiveWorkers = %d, want 3", got.ActiveWorkers)
+	if got.ActiveWorkers != 4 {
+		t.Fatalf("ActiveWorkers = %d, want 4", got.ActiveWorkers)
 	}
-	if got.FreeAvailableCapacity == nil || *got.FreeAvailableCapacity != 0 {
-		t.Fatalf("FreeAvailableCapacity = %#v, want 0", got.FreeAvailableCapacity)
+	if got.FreeAvailableCapacity == nil || *got.FreeAvailableCapacity != 1 {
+		t.Fatalf("FreeAvailableCapacity = %#v, want 1", got.FreeAvailableCapacity)
 	}
 }

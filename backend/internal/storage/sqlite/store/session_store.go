@@ -317,6 +317,7 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 			AgentSessionID:    row.AgentSessionID,
 			Prompt:            row.Prompt,
 			Model:             row.Model,
+			IntakePoolBypass:  intakePoolBypass(row.LaunchedHarnesses),
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
 			LaunchedHarnesses: launchedHarnesses(row.LaunchedHarnesses),
@@ -383,8 +384,9 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 }
 
 type launchedHarnessesPayload struct {
-	Harnesses       []domain.AgentHarness          `json:"harnesses,omitempty"`
-	AgentSessionIDs map[domain.AgentHarness]string `json:"agentSessionIds,omitempty"`
+	Harnesses        []domain.AgentHarness          `json:"harnesses,omitempty"`
+	AgentSessionIDs  map[domain.AgentHarness]string `json:"agentSessionIds,omitempty"`
+	IntakePoolBypass bool                           `json:"intakePoolBypass,omitempty"`
 }
 
 // launchedHarnessPayload serialises the launched harness set and optional
@@ -392,15 +394,16 @@ type launchedHarnessesPayload struct {
 // used a comma-separated list; launchedHarnesses still accepts that legacy form.
 func launchedHarnessPayload(meta domain.SessionMetadata) string {
 	ids := normalizedAgentSessionIDs(meta.AgentSessionIDs, meta.LaunchedHarnesses, "", "")
-	if len(meta.LaunchedHarnesses) == 0 && len(ids) == 0 {
+	if len(meta.LaunchedHarnesses) == 0 && len(ids) == 0 && !meta.IntakePoolBypass {
 		return ""
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && !meta.IntakePoolBypass {
 		return harnessCSV(meta.LaunchedHarnesses)
 	}
 	data, err := json.Marshal(launchedHarnessesPayload{
-		Harnesses:       normalizedHarnesses(meta.LaunchedHarnesses),
-		AgentSessionIDs: ids,
+		Harnesses:        normalizedHarnesses(meta.LaunchedHarnesses),
+		AgentSessionIDs:  ids,
+		IntakePoolBypass: meta.IntakePoolBypass,
 	})
 	if err != nil {
 		return harnessCSV(meta.LaunchedHarnesses)
@@ -422,6 +425,11 @@ func launchedHarnesses(s string) []domain.AgentHarness {
 		return payload.Harnesses
 	}
 	return parseHarnessCSV(s)
+}
+
+func intakePoolBypass(s string) bool {
+	payload, ok := parseLaunchedHarnessesPayload(s)
+	return ok && payload.IntakePoolBypass
 }
 
 func launchedHarnessSessionIDs(s string, current domain.AgentHarness, currentID string) map[domain.AgentHarness]string {

@@ -19,6 +19,9 @@ type SpawnConfig struct {
 	Branch    string
 	Prompt    string
 	Model     string
+	// IntakePoolBypass marks tracker-intake workers that should not consume the
+	// normal per-project intake pool/cap.
+	IntakePoolBypass bool
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).
 	DisplayName string

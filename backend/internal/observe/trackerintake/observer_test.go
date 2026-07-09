@@ -344,9 +344,10 @@ func TestPollHonorsMaxConcurrentAgainstLiveWorkers(t *testing.T) {
 	}
 }
 
-func TestPollDefersWhenAlreadyAtMaxConcurrent(t *testing.T) {
-	// Two live workers already exist and the cap is 2: no new spawn, and the
-	// tracker is never even queried for this project.
+func TestPollDefersNormalIssuesWhenAlreadyAtMaxConcurrent(t *testing.T) {
+	// Two live cap-consuming workers already exist and the cap is 2: normal issues are
+	// deferred. The tracker is still queried so later nopool issues in the result
+	// set can escape the cap.
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -373,8 +374,8 @@ func TestPollDefersWhenAlreadyAtMaxConcurrent(t *testing.T) {
 	if len(spawner.calls) != 0 {
 		t.Fatalf("spawn calls = %d, want 0 (already at cap)", len(spawner.calls))
 	}
-	if len(tracker.repos) != 0 {
-		t.Fatalf("tracker queried %d times, want 0 when already at cap", len(tracker.repos))
+	if len(tracker.repos) != 1 {
+		t.Fatalf("tracker queried %d times, want 1 so nopool issues can be discovered", len(tracker.repos))
 	}
 }
 
@@ -431,11 +432,12 @@ func TestLiveWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) {
 		{ID: "c", ProjectID: "demo", Kind: domain.KindOrchestrator, IssueID: "github:acme/demo#3"},
 		{ID: "d", ProjectID: "demo", Kind: domain.KindWorker},
 		{ID: "manual", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "47"},
+		{ID: "urgent", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#4", Metadata: domain.SessionMetadata{IntakePoolBypass: true}},
 		{ID: "e", ProjectID: "other", Kind: domain.KindWorker, IssueID: "github:acme/other#1"},
 	}
 	counts := liveWorkersByProject(sessions)
 	if counts["demo"] != 3 {
-		t.Fatalf("demo live workers = %d, want 3", counts["demo"])
+		t.Fatalf("demo cap-consuming live workers = %d, want 3 (nopool sessions do not consume cap)", counts["demo"])
 	}
 	if counts["other"] != 1 {
 		t.Fatalf("other live workers = %d, want 1", counts["other"])
@@ -796,6 +798,138 @@ func TestPollWorkerMixRespectsConcurrencyCap(t *testing.T) {
 		if c.Harness == "" {
 			t.Fatalf("spawn %d harness empty; mix must have selected one", i)
 		}
+	}
+}
+
+func TestPollRoutingLabelOverridesWorkerMixWithinCap(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 2},
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Weight: 100},
+			},
+		},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "pinned", State: domain.IssueOpen, Labels: []string{"agent:claude"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "capped", State: domain.IssueOpen},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want 2 within cap", len(spawner.calls))
+	}
+	if spawner.calls[0].Harness != domain.HarnessClaudeCode {
+		t.Fatalf("pinned issue harness = %q, want claude-code", spawner.calls[0].Harness)
+	}
+	if spawner.calls[1].Harness != domain.HarnessCodex {
+		t.Fatalf("mixed issue harness = %q, want codex", spawner.calls[1].Harness)
+	}
+}
+
+func TestPollRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Weight: 50},
+				{Harness: domain.HarnessCodexFugu, Weight: 50},
+			},
+		},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "pinned codex", State: domain.IssueOpen, Labels: []string{"agent:codex"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want 2", len(spawner.calls))
+	}
+	if spawner.calls[0].Harness != domain.HarnessCodex {
+		t.Fatalf("pinned issue harness = %q, want codex", spawner.calls[0].Harness)
+	}
+	if spawner.calls[1].Harness != domain.HarnessCodexFugu {
+		t.Fatalf("mixed issue harness = %q, want fugu because pinned codex consumed its bucket", spawner.calls[1].Harness)
+	}
+}
+
+func TestPollNoPoolRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Weight: 50},
+				{Harness: domain.HarnessCodexFugu, Weight: 50},
+			},
+		},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "urgent pinned codex", State: domain.IssueOpen, Labels: []string{"nopool", "agent:codex"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want 2", len(spawner.calls))
+	}
+	if spawner.calls[0].Harness != domain.HarnessCodex || !spawner.calls[0].IntakePoolBypass {
+		t.Fatalf("nopool pinned issue = harness %q bypass %t, want codex bypass", spawner.calls[0].Harness, spawner.calls[0].IntakePoolBypass)
+	}
+	if spawner.calls[1].Harness != domain.HarnessCodexFugu {
+		t.Fatalf("mixed issue harness = %q, want fugu because nopool pinned codex still counts for mix balance", spawner.calls[1].Harness)
+	}
+}
+
+func TestPollNoPoolBypassesMaxConcurrentWithoutOpeningNormalCapacity(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 1},
+				WorkerMix:     domain.WorkerMix{{Harness: domain.HarnessCodex, Weight: 100}},
+			},
+		}},
+		sessions: []domain.SessionRecord{
+			{ID: "demo-live", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#100"},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "normal capped", State: domain.IssueOpen},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "urgent", State: domain.IssueOpen, Labels: []string{"nopool", "agent:fugu"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "normal still capped", State: domain.IssueOpen},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want only the nopool issue despite cap", len(spawner.calls))
+	}
+	call := spawner.calls[0]
+	if call.IssueID != "github:acme/demo#2" || call.Harness != domain.HarnessCodexFugu {
+		t.Fatalf("nopool spawn = issue %q harness %q, want issue #2 on codex-fugu", call.IssueID, call.Harness)
+	}
+	if !call.IntakePoolBypass {
+		t.Fatal("nopool spawn did not carry IntakePoolBypass")
 	}
 }
 

@@ -121,6 +121,7 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 	for _, count := range running {
 		capacity.ActiveWorkers += count
 	}
+	capConsumingWorkers := capConsumingWorkerCount(sessions)
 
 	keys := capacityKeys(targets, running)
 	for _, key := range keys {
@@ -167,7 +168,7 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 			usable = 0
 		}
 		capacity.AvailableCapacity = &usable
-		free := usable - float64(capacity.ActiveWorkers)
+		free := usable - float64(capConsumingWorkers)
 		if free < 0 {
 			free = 0
 		}
@@ -198,6 +199,17 @@ func runningWorkerBuckets(sessions []domain.SessionRecord) map[domain.BucketKey]
 		out[key]++
 	}
 	return out
+}
+
+func capConsumingWorkerCount(sessions []domain.SessionRecord) int {
+	count := 0
+	for _, rec := range sessions {
+		if rec.Kind != domain.KindWorker || rec.IsTerminated || rec.Metadata.IntakePoolBypass {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func capacityKeys(targets, running map[domain.BucketKey]int) []domain.BucketKey {

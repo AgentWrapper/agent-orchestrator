@@ -925,6 +925,33 @@ func TestSpawn_RejectsWorkerWhenProjectAtConcurrencyCap(t *testing.T) {
 	}
 }
 
+func TestSpawn_AllowsIntakePoolBypassWhenProjectAtConcurrencyCap(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+		TrackerIntake: domain.TrackerIntakeConfig{MaxConcurrent: 1},
+	}}
+	st.sessions["mer-live"] = domain.SessionRecord{
+		ID:        "mer-live",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IntakePoolBypass: true})
+	if err != nil {
+		t.Fatalf("bypass spawn failed: %v", err)
+	}
+	if !st.sessions[rec.ID].Metadata.IntakePoolBypass {
+		t.Fatalf("bypass metadata was not persisted: %#v", st.sessions[rec.ID].Metadata)
+	}
+}
+
 func TestSpawn_CountsInFlightSeedRowsAgainstConcurrencyCap(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{

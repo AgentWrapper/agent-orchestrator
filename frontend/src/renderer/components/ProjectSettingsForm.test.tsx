@@ -411,6 +411,36 @@ describe("ProjectSettingsForm", () => {
 		});
 	});
 
+	it("documents every ao issue label group beside tracker intake settings", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("heading", { name: "Issue labels" })).toBeInTheDocument();
+		expect(screen.getByText("Opt-out labels")).toBeInTheDocument();
+		for (const label of ["no-ao", "deferred", "charter", "charter-audit", "human-review"]) {
+			expect(screen.getByText(label)).toBeInTheDocument();
+		}
+		expect(screen.getByText("Agent routing labels")).toBeInTheDocument();
+		for (const label of ["agent:codex", "agent:fugu", "agent:codex-fugu", "agent:claude"]) {
+			expect(screen.getByText(label)).toBeInTheDocument();
+		}
+		expect(screen.getByText("Pool escape labels")).toBeInTheDocument();
+		expect(screen.getByText("nopool")).toBeInTheDocument();
+		expect(screen.getByText(/Opt-out labels are per-project settings with a global default/i)).toBeInTheDocument();
+	});
+
 	it("saves intake with no assignee (opt-out-by-default) and honors opt-out label edits", async () => {
 		getMock.mockResolvedValue({
 			data: {
