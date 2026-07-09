@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
@@ -130,36 +130,44 @@ beforeEach(() => {
 
 describe("ShellTopbar status pill", () => {
 	it.each([
-		["working", "Working"],
-		["needs_input", "Needs input"],
-		["ci_failed", "CI failed"],
-		["no_signal", "No signal"],
-		["mergeable", "Ready"],
-		["merged", "Done"],
-		["unknown", "Unknown"],
-	] as const)("renders %s status as %s", (status, label) => {
-		renderTopbar(sessionWith({ status }));
+		["active", "Working"],
+		["idle", "Idle"],
+		["waiting_input", "Input Needed"],
+		["exited", "Exited"],
+	] as const)("renders %s activity as %s", (state: SessionActivityState, label) => {
+		renderTopbar(sessionWith({ activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" } }));
 
 		expect(screen.getByText(label)).toBeInTheDocument();
 	});
 
-	it("prefers displayStatus override over coarse status", () => {
-		renderTopbar(sessionWith({ status: "ci_failed", displayStatus: "done" }));
+	it.each([
+		["ci_failed", "ci_failed", "idle", "Idle", "CI failed"],
+		["mergeable", "mergeable", "active", "Working", "Ready"],
+		["merged", "done", "exited", "Exited", "Done"],
+		["changes_requested", "needs_you", "waiting_input", "Input Needed", "Needs input"],
+	] as const)(
+		"ignores coarse %s/%s topbar status in favor of activity",
+		(status, displayStatus, state, label, hidden) => {
+			renderTopbar(
+				sessionWith({
+					status,
+					displayStatus,
+					activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" },
+				}),
+			);
 
-		expect(screen.getByText("Done")).toBeInTheDocument();
-		expect(screen.queryByText("CI failed")).not.toBeInTheDocument();
-	});
+			expect(screen.getByText(label)).toBeInTheDocument();
+			expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+		},
+	);
 
-	it("derives pill from session status, not activity state", () => {
-		renderTopbar(
-			sessionWith({
-				status: "ci_failed",
-				activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
-			}),
-		);
+	it("uses a compact unknown state when activity is missing or unknown", () => {
+		const first = renderTopbar(sessionWith({ activity: undefined }));
+		expect(screen.getByText("Unknown")).toBeInTheDocument();
 
-		expect(screen.getByText("CI failed")).toBeInTheDocument();
-		expect(screen.queryByText("Working")).not.toBeInTheDocument();
+		first.unmount();
+		renderTopbar(sessionWith({ activity: { state: "unknown", lastActivityAt: "" } }));
+		expect(screen.getByText("Unknown")).toBeInTheDocument();
 	});
 });
 

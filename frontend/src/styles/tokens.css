@@ -158,6 +158,7 @@
 	   RADIUS
 	   ═══════════════════════════════════════════════════════════════ */
 
+	--radius-xs: 3px; /* inline rename inputs, hairline controls */
 	--radius-sm: 4px; /* chips, tiny controls — absorb old 5px */
 	--radius-md: 6px; /* default controls — absorb old 7px */
 	--radius-lg: 8px; /* cards, larger buttons */
@@ -174,6 +175,8 @@
 	/* ═══════════════════════════════════════════════════════════════
 	   LAYOUT — fixed chrome dimensions (not spacing scale)
 	   ═══════════════════════════════════════════════════════════════ */
+
+	--ring-width-focus: 3px; /* select trigger focus ring */
 
 	--size-hairline: 1px;
 	--size-icon-2xs: 12px;

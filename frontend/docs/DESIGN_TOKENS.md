@@ -1,6 +1,6 @@
 # Design Tokens
 
-Single source of truth for the Agent Orchestrator renderer (excluding landing).  
+Single source of truth for the Agent Orchestrator renderer (excluding landing).
 Companion files: `DESIGN_AUDIT.md` (audit), `src/styles/tokens.css` (variables), `src/renderer/MIGRATION_GAPS.md` (migration status).
 
 **Wired:** `tokens.css` is imported from `src/renderer/styles.css`. Components use Tailwind semantic utilities + `var(--*)` arbitrary values.
@@ -77,7 +77,7 @@ Standard scale (remapped for dense UI):
 | `text-heading`    | `--font-size-heading`    | 21   |
 | `text-heading-lg` | `--font-size-heading-lg` | 22   |
 
-Prefer these utilities over `text-[length:var(--font-size-*)]` in components.
+Prefer the `text-*` utilities above over arbitrary length classes that reference `--font-size-*` CSS variables.
 
 ## Overlay & terminal
 
@@ -152,6 +152,7 @@ Prefer `size-icon-*` over `h-3.5 w-3.5` / `h-4 w-4` in components.
 | ----------------- | ---------------------- | --- | -------------------------- |
 | `h-control-form`  | `--size-control-form`  | 32  | Buttons, inputs, select sm |
 | `h-control-board` | `--size-control-board` | 36  | Select default             |
+| `ring-focus`      | `--ring-width-focus`   | 3px | Select trigger focus ring  |
 
 ## Layout `@utility` helpers
 
@@ -190,7 +191,7 @@ Prefer `size-icon-*` over `h-3.5 w-3.5` / `h-4 w-4` in components.
 
 ## Radius in Tailwind
 
-`@theme` maps `--radius-sm` … `--radius-panel` to `rounded-sm` … `rounded-panel`.
+`@theme` maps `--radius-xs` … `--radius-panel` to `rounded-xs` … `rounded-panel`.
 
 ## Breakpoints
 
@@ -255,6 +256,7 @@ See `tokens.css` for toolbar, inspector, and control sizes.
 
 | Token            | Value | Use                    |
 | ---------------- | ----- | ---------------------- |
+| `--radius-xs`    | 3px   | Inline rename inputs   |
 | `--radius-sm`    | 4px   | Small chips            |
 | `--radius-md`    | 6px   | Default controls       |
 | `--radius-lg`    | 8px   | Larger buttons / cards |

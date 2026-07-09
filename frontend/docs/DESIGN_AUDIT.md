@@ -1,6 +1,6 @@
 # Design Audit — Agent Orchestrator Frontend (Renderer)
 
-**Scope:** `frontend/src/renderer` (excluding landing).  
+**Scope:** `frontend/src/renderer` (excluding landing).
 **Date:** 2026-07-09 (post-migration)
 
 ## Executive summary

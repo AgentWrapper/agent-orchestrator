@@ -661,7 +661,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 					<input
 						aria-label={`Rename ${session.title}`}
 						autoFocus
-						className="min-w-0 flex-1 rounded-0.75 border border-accent bg-transparent px-1 py-px text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
+						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
 						maxLength={MAX_DISPLAY_NAME_LEN}
 						onBlur={() => void commit()}
 						onChange={(e) => setDraft(e.target.value)}

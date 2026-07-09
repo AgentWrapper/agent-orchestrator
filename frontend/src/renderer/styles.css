@@ -32,6 +32,7 @@
 	--text-heading-lg: var(--font-size-heading-lg);
 
 	/* Radius — align Tailwind rounded-* with token scale */
+	--radius-xs: var(--radius-xs);
 	--radius-sm: var(--radius-sm);
 	--radius-md: var(--radius-md);
 	--radius-lg: var(--radius-lg);
@@ -69,6 +70,9 @@
 	--z-index-chrome: var(--z-chrome);
 	--z-index-titlebar: var(--z-titlebar);
 	--z-index-overlay: var(--z-overlay);
+
+	/* Ring width — ring-focus for dense control focus rings */
+	--ring-width-focus: var(--ring-width-focus);
 
 	/* Elevation — align Tailwind shadow-* with token scale */
 	--shadow-sm: var(--elevation-sm);
