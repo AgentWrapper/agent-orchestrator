@@ -647,6 +647,68 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	height: 28px;
 }
 
+/* Windows custom title bar (WindowTitlebar): the app paints the logo + menu on
+ * one row while Electron overlays the native min/max/close buttons on the right.
+ * Height must match TITLEBAR_HEIGHT + the Window Controls Overlay height in
+ * main.ts so the native buttons line up. The whole strip is the window-drag
+ * region; interactive children opt out with -webkit-app-region: no-drag. */
+.window-titlebar {
+	display: flex;
+	height: 36px;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 8px;
+	padding: 0 10px;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg);
+	-webkit-app-region: drag;
+	user-select: none;
+}
+
+.window-titlebar__logo {
+	width: 20px;
+	height: 20px;
+	object-fit: contain;
+}
+
+.window-titlebar__title {
+	margin-right: 6px;
+	font-size: 12.5px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	color: var(--fg);
+	white-space: nowrap;
+}
+
+.window-titlebar__menus {
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	-webkit-app-region: no-drag;
+}
+
+.window-titlebar__menu-btn {
+	height: 24px;
+	padding: 0 8px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	line-height: 1;
+	color: var(--fg-muted);
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease;
+}
+
+.window-titlebar__menu-btn:hover,
+.window-titlebar__menu-btn[data-active] {
+	background: color-mix(in srgb, var(--fg) 8%, transparent);
+	color: var(--fg);
+}
+
+.window-titlebar__menu {
+	min-width: 200px;
+}
+
 /* macOS: the full-width header starts its content past the lights + fixed
  * cluster: cluster right edge 79 + 3×28 + 2×2 = 167px, + the header's 13px
  * group gap = 180px. */

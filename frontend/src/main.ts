@@ -4,6 +4,7 @@ import {
 	clipboard,
 	dialog,
 	ipcMain,
+	Menu,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
@@ -140,6 +141,11 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
+// Height (px) of the custom Windows title bar. Must stay in sync with the Window
+// Controls Overlay height passed to BrowserWindow and the .window-titlebar height
+// in styles.css, so the native min/max/close buttons line up with the app's bar.
+const TITLEBAR_HEIGHT = 36;
+
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
@@ -233,12 +239,24 @@ function createWindow(): void {
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
-		titleBarStyle: "hiddenInset",
-		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
-		// line — so lights + nav cluster + header content share one row. macOS
-		// draws the 12pt disc 2pt below the given y (measured: center = y + 8),
-		// hence 20, not 22.
-		trafficLightPosition: { x: 14, y: 20 },
+		// Windows goes frameless with a Window Controls Overlay: Electron still draws
+		// native min/max/close on the right, while the renderer paints its own
+		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
+		// inset traffic-light chrome. Overlay colours are re-synced to the active
+		// theme from the renderer via the window:setOverlay IPC.
+		...(process.platform === "win32"
+			? {
+					titleBarStyle: "hidden" as const,
+					titleBarOverlay: { color: "#0f1014", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
+				}
+			: {
+					titleBarStyle: "hiddenInset" as const,
+					// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav
+					// center line — so lights + nav cluster + header content share one
+					// row. macOS draws the 12pt disc 2pt below the given y (measured:
+					// center = y + 8), hence 20, not 22.
+					trafficLightPosition: { x: 14, y: 20 },
+				}),
 		webPreferences: {
 			preload: preloadPath(),
 			contextIsolation: true,
@@ -246,6 +264,23 @@ function createWindow(): void {
 			sandbox: true,
 		},
 	});
+
+	// On Windows the app paints its own title bar (WindowTitlebar), so drop
+	// Electron's default application menu — otherwise its File/Edit/View/… strip
+	// renders below the frame. macOS/Linux keep their native menus. Removing the
+	// menu also drops its accelerators, so re-bind DevTools + reload by key.
+	if (process.platform === "win32") {
+		Menu.setApplicationMenu(null);
+		mainWindow.webContents.on("before-input-event", (_event, input) => {
+			if (input.type !== "keyDown") return;
+			const key = input.key.toLowerCase();
+			if (key === "f12" || (input.control && input.shift && key === "i")) {
+				mainWindow?.webContents.toggleDevTools();
+			} else if (isDev && (key === "f5" || (input.control && key === "r"))) {
+				mainWindow?.webContents.reload();
+			}
+		});
+	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or
 	// navigate the privileged window away from the app origin. External links go to
@@ -887,6 +922,69 @@ ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
+
+// Re-tint the native window-button overlay (min/max/close) to match the active
+// theme; the renderer calls this on theme change. No-op unless the window was
+// created with a titleBarOverlay (Windows only).
+ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolColor: string }) => {
+	if (process.platform !== "win32" || !mainWindow) return;
+	try {
+		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
+	} catch {
+		// Window has no overlay on this platform; ignore.
+	}
+});
+
+// Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
+// action the native default menu would have performed.
+ipcMain.handle("menu:action", (_event, action: string) => {
+	const win = mainWindow;
+	if (!win) return;
+	const wc = win.webContents;
+	switch (action) {
+		case "edit.undo":
+			return wc.undo();
+		case "edit.redo":
+			return wc.redo();
+		case "edit.cut":
+			return wc.cut();
+		case "edit.copy":
+			return wc.copy();
+		case "edit.paste":
+			return wc.paste();
+		case "edit.selectAll":
+			return wc.selectAll();
+		case "view.reload":
+			return wc.reload();
+		case "view.devtools":
+			return wc.toggleDevTools();
+		case "view.zoomIn":
+			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
+		case "view.zoomOut":
+			return wc.setZoomLevel(wc.getZoomLevel() - 0.5);
+		case "view.zoomReset":
+			return wc.setZoomLevel(0);
+		case "view.fullscreen":
+			return win.setFullScreen(!win.isFullScreen());
+		case "window.minimize":
+			return win.minimize();
+		case "window.maximize":
+			return win.isMaximized() ? win.unmaximize() : win.maximize();
+		case "window.close":
+			return win.close();
+		case "app.quit":
+			return app.quit();
+		case "help.about":
+			void dialog.showMessageBox(win, {
+				type: "info",
+				title: "About Agent Orchestrator",
+				message: "Agent Orchestrator",
+				detail: `Version ${app.getVersion()}`,
+				buttons: ["OK"],
+			});
+			return;
+	}
+});
 ipcMain.handle("telemetry:getBootstrap", () =>
 	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
 );

@@ -60,6 +60,12 @@ if (typeof window !== "undefined") {
 			chooseDirectory: async () => null,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 		},
+		window: {
+			setOverlay: async () => undefined,
+		},
+		menu: {
+			action: async () => undefined,
+		},
 		clipboard: {
 			writeText: async () => undefined,
 			readText: async () => "",

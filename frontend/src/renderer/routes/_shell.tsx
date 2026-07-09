@@ -7,6 +7,7 @@ import { OrchestratorReplacementDialog } from "../components/OrchestratorReplace
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
+import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
@@ -248,6 +249,9 @@ function ShellLayout() {
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
+				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
+            the chrome the frameless window drops. Renders null on macOS/Linux. */}
+				<WindowTitlebar />
 				<ShellTopbar />
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
