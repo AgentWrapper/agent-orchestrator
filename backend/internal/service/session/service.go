@@ -85,6 +85,20 @@ type scmProvider interface {
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
 }
 
+// issueTitles resolves a tracker issue's title so the daemon can compute the
+// semantic `<repoKey> #<issue> <slug>` session name. Tracker intake already
+// carries the title it just read; this exists for the spawn paths that don't
+// (the CLI and the HTTP API), so the name is computed identically no matter who
+// asked for the session.
+type issueTitles interface {
+	Title(ctx context.Context, project domain.ProjectRecord, issue domain.IssueID) (string, error)
+}
+
+// issueTitleLookupTimeout bounds the tracker call on the spawn path. The title
+// only decorates a display name, so a slow tracker must not hold up session
+// creation.
+const issueTitleLookupTimeout = 5 * time.Second
+
 // Service is the controller-facing session service. It delegates command-side
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
@@ -102,6 +116,9 @@ type Service struct {
 	// the no_signal downgrade: a hook-less harness staying silent forever is
 	// normal, not a broken pipeline. nil means "unknown": never downgrade.
 	signalCapable func(domain.AgentHarness) bool
+	// issueTitles resolves issue titles for the semantic session name. nil
+	// means no lookup: names degrade to the head-only `<repoKey> #<issue>`.
+	issueTitles issueTitles
 }
 
 // New wires a controller-facing session service over an internal session Manager.
@@ -123,11 +140,14 @@ type Deps struct {
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
 	SignalCapable func(domain.AgentHarness) bool
+	// IssueTitles resolves tracker issue titles for the computed session name.
+	// Left nil, names fall back to `<repoKey> #<issue>` with no slug.
+	IssueTitles issueTitles
 }
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry, issueTitles: d.IssueTitles}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -150,6 +170,7 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("count sessions: %w", err)
 	}
+	cfg.IssueTitle = s.resolveIssueTitle(ctx, project, cfg)
 	rec, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		s.emitSpawnFailed(cfg, err, s.now().Sub(start).Milliseconds())
@@ -160,6 +181,31 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		s.emitFirstSessionSpawned(rec, project)
 	}
 	return s.toSession(ctx, rec)
+}
+
+// resolveIssueTitle returns the tracker title to use for the session's computed
+// name. Every spawn path funnels through Spawn — tracker intake, the CLI, and
+// the HTTP API — but only intake already knows the title, so this fills the gap
+// for the other two rather than making each caller fetch it.
+//
+// The title is cosmetic: it only supplies the slug in `<repoKey> #<issue>
+// <slug>`. A tracker outage, a missing credential, or an issue id this daemon
+// cannot map therefore degrades to the head-only name instead of failing the
+// spawn.
+func (s *Service) resolveIssueTitle(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig) string {
+	if existing := strings.TrimSpace(cfg.IssueTitle); existing != "" {
+		return existing
+	}
+	if s.issueTitles == nil || strings.TrimSpace(string(cfg.IssueID)) == "" {
+		return ""
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, issueTitleLookupTimeout)
+	defer cancel()
+	title, err := s.issueTitles.Title(lookupCtx, project, cfg.IssueID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(title)
 }
 
 // requireProject verifies the project is registered before any spawn write

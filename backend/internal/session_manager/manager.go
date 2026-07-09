@@ -125,6 +125,10 @@ type runtimeController interface {
 	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
+	// GetOutput captures the pane's last lines. Spawn uses it to tell a pane
+	// that exists from one whose harness has actually drawn its UI, before
+	// typing into it.
+	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
 // Store is the persistence surface needed by the internal session Manager.
@@ -185,9 +189,12 @@ type Manager struct {
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
-	logger      *slog.Logger
-	telemetry   ports.EventSink
-	spawnMu     sync.Mutex
+	// paneReady bounds the wait for a new pane to render before spawn types
+	// into it. New fills in the defaults; tests in this package shrink them.
+	paneReady paneReadyConfig
+	logger    *slog.Logger
+	telemetry ports.EventSink
+	spawnMu   sync.Mutex
 
 	mixMu      sync.Mutex
 	mixDown    map[domain.BucketKey]workerMixBucketDown
@@ -216,12 +223,37 @@ type sendConfirmConfig struct {
 	maxAttempts int
 }
 
+// paneReadyConfig bounds how long spawn waits for a freshly created pane to
+// render before typing into it. New fills in the defaults; tests shrink them.
+type paneReadyConfig struct {
+	// pollInterval is the gap between pane captures.
+	pollInterval time.Duration
+	// deadline caps the total wait. Exceeding it writes anyway.
+	deadline time.Duration
+}
+
 // Production sendConfirm bounds: 3 Enters total (1 from Send + 2 re-sends),
 // each given 2s to flip the session active, polled every 300ms.
 const (
 	sendConfirmPollInterval    = 300 * time.Millisecond
 	sendConfirmAttemptDeadline = 2 * time.Second
 	sendConfirmMaxAttempts     = 3
+)
+
+// Production paneReady bounds: agent TUIs draw their first frame well inside a
+// second; 15s is slack for a cold binary on a loaded host, not a real budget.
+// fallbackWorkerDisplayName names a worker whose project yields no prefix and
+// whose spawn carried no issue. Only reachable with an empty project id; it
+// exists so the launch title is never empty.
+const fallbackWorkerDisplayName = "worker"
+
+const (
+	paneReadyPollInterval = 100 * time.Millisecond
+	paneReadyDeadline     = 15 * time.Second
+	// paneReadyCaptureLines is how much of the pane to capture. Any output at
+	// all means the harness process has written to the pty, so one line is
+	// enough to distinguish "pane exists" from "harness has started drawing".
+	paneReadyCaptureLines = 1
 )
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -273,6 +305,10 @@ func New(d Deps) *Manager {
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
+		},
+		paneReady: paneReadyConfig{
+			pollInterval: paneReadyPollInterval,
+			deadline:     paneReadyDeadline,
 		},
 		logger:     d.Logger,
 		telemetry:  d.Telemetry,
@@ -483,12 +519,30 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
+	// The harness title is cosmetic and the prompt already reached the agent
+	// through argv, so a failed title write must not tear down a session that is
+	// otherwise working — AO keeps its own DisplayName and Rename can re-issue
+	// the command later.
+	//
+	// But for argv-prompt harnesses this write is the only thing that touches
+	// the pane during spawn. If the harness died between Create and here, a
+	// blanket "cosmetic" would hand back a live-looking session that never ran.
+	// So the failure is forgiven only against a pane we can prove is still
+	// alive; anything else rolls back exactly as it did before.
 	if err := m.deliverLaunchTitle(ctx, agent, handle, cfg.DisplayName); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
-		_ = m.workspace.Destroy(ctx, ws)
-		m.rollbackSpawnSeedRow(ctx, id)
-		m.markWorkerMixBucketDown(mixBucket, err)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch title: %w", id, err)
+		if alive, aliveErr := m.runtime.IsAlive(ctx, handle); alive && aliveErr == nil {
+			m.logger.Warn("spawn: could not set the harness title; session keeps AO's display name",
+				"sessionID", id, "displayName", cfg.DisplayName, "error", err)
+		} else {
+			_ = m.runtime.Destroy(ctx, handle)
+			_ = m.workspace.Destroy(ctx, ws)
+			m.rollbackSpawnSeedRow(ctx, id)
+			m.markWorkerMixBucketDown(mixBucket, err)
+			if aliveErr != nil {
+				err = errors.Join(err, fmt.Errorf("pane liveness probe: %w", aliveErr))
+			}
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch title, and the pane is not alive: %w", id, err)
+		}
 	}
 
 	if err := m.deliverInitialPrompt(ctx, agent, handle, ports.LaunchConfig{
@@ -2002,12 +2056,16 @@ func launchTitle(project domain.ProjectRecord, cfg ports.SpawnConfig) string {
 		}
 		return orchestratorDisplayName(name, maxSessionDisplayNameRunes)
 	}
-	if cfg.Kind == domain.KindWorker && cfg.IssueID != "" {
+	if cfg.Kind == domain.KindWorker {
 		return workerDisplayName(project, cfg.IssueID, cfg.IssueTitle)
 	}
 	return ""
 }
 
+// workerDisplayName builds `<repoKey> #<issue> <slug>`, dropping whichever
+// parts it lacks. It never returns empty: an empty launch title is what lets a
+// harness fall back to inventing its own random codename, which is the surface
+// issue #146 set out to remove.
 func workerDisplayName(project domain.ProjectRecord, issueID domain.IssueID, title string) string {
 	head := strings.TrimSpace(sessionPrefix(project))
 	if issue := issueNumber(issueID); issue != "" {
@@ -2017,12 +2075,12 @@ func workerDisplayName(project domain.ProjectRecord, issueID domain.IssueID, tit
 		head += "#" + issue
 	}
 	if head == "" {
-		return ""
+		return fallbackWorkerDisplayName
 	}
 	if slug := slugifyTitle(title); slug != "" {
 		return capNamePreservingHead(head, slug, maxSessionDisplayNameRunes)
 	}
-	return head
+	return capRunes(head, maxSessionDisplayNameRunes)
 }
 
 func issueNumber(id domain.IssueID) string {
@@ -2285,8 +2343,10 @@ func orchestratorPrompt(project domain.ProjectID) string {
 You are the human-facing coordinator for project %s. Coordinate work for the human, keep the project moving, and avoid doing implementation yourself unless it is necessary.
 
 Spawn worker sessions for implementation with:
-`+"`ao spawn --project %s --name \"<label, max 20 chars>\" --prompt \"/address-issue <issue-id>\"`"+`
-Both --project and --name are required.
+`+"`ao spawn --project %s --issue <issue-id> --prompt \"/address-issue <issue-id>\"`"+`
+Both --project and --issue are required.
+
+Never pass --name. AO names the session itself, from the project and the issue's own title, and applies that name to the dashboard and to the agent's app title. A hand-written --name overrides that and is how sessions end up with labels nobody can trace back to a ticket.
 
 Dispatch every worker with exactly `+"`/address-issue <issue-id>`"+` and nothing more — never a hand-written task description. `+"`/address-issue`"+` is the self-sufficient router: it resolves the repo, reads the issue, claims it, does the work, reviews it, and writes durable progress back to the ticket, so a resumed or replacement worker picks up from the issue alone. Context lives in the ticket, never in the spawn prompt. If the work isn't tracked yet, file it as an issue first, then dispatch its id.
 
@@ -2357,6 +2417,9 @@ func (m *Manager) deliverInitialPrompt(ctx context.Context, agent ports.Agent, h
 	if strategy != ports.PromptDeliveryAfterStart {
 		return nil
 	}
+	// Same boot race as the title write. Harnesses that can carry the prompt in
+	// argv already returned PromptDeliveryInCommand and never reach here.
+	m.awaitPaneReady(ctx, handle)
 	return m.runtime.SendMessage(ctx, handle, domain.SanitizeControlChars(cfg.Prompt))
 }
 
@@ -2365,7 +2428,49 @@ func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, han
 	if !ok {
 		return nil
 	}
+	m.awaitPaneReady(ctx, handle)
 	return m.runtime.SendMessage(ctx, handle, command)
+}
+
+// awaitPaneReady blocks until the pane has produced output, or the deadline
+// lapses.
+//
+// runtime.Create returns as soon as the pane exists, which is before the
+// harness has drawn its TUI. Keystrokes sent into that gap are not queued by an
+// input box that does not exist yet: they land in whatever the harness reads
+// first, which is how a worker's `/rename` and its `/address-issue` prompt
+// arrived concatenated and the task never ran (issue #146). Any output at all
+// means the harness process has written to the pty and is reading input.
+//
+// Best-effort by design. A harness that prints nothing, or a runtime that
+// cannot capture, must not hold a spawn open — so the write goes out after the
+// deadline and the worst case is the race we had before, not a failed spawn.
+func (m *Manager) awaitPaneReady(ctx context.Context, handle ports.RuntimeHandle) {
+	if m.paneReady.deadline <= 0 || m.paneReady.pollInterval <= 0 {
+		return
+	}
+	// The deadline rides a real timer rather than m.clock(): the sleep between
+	// polls is real time either way, so a frozen injected clock would never
+	// reach the deadline and this would spin until ctx died.
+	waitCtx, cancel := context.WithTimeout(ctx, m.paneReady.deadline)
+	defer cancel()
+	ticker := time.NewTicker(m.paneReady.pollInterval)
+	defer ticker.Stop()
+	for {
+		out, err := m.runtime.GetOutput(waitCtx, handle, paneReadyCaptureLines)
+		if err == nil && strings.TrimSpace(out) != "" {
+			return
+		}
+		select {
+		case <-waitCtx.Done():
+			if ctx.Err() == nil {
+				m.logger.Warn("spawn: pane produced no output before the readiness deadline; writing anyway",
+					"handle", handle.ID, "deadline", m.paneReady.deadline, "error", err)
+			}
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func titleCommand(agent ports.Agent, title string) (string, bool) {

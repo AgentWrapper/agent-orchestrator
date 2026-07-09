@@ -97,13 +97,19 @@ ao spawn --project <project> --agent claude-code --model haiku --name "deploy #<
 
 ## Naming
 
-Session names are the live work log:
+Session names are the live work log, and **ao owns them**. The daemon computes
+`<repoKey> #<issue> <slug>` from the project and the issue's own title, and
+applies it to both the dashboard and the agent's in-harness app title.
 
-1. The orchestrator names itself `<project> Orch` within the ao display-name cap.
-2. Any legitimate non-intake spawn gets `--name "#<issue> <slug>"` within the
-   display-name cap.
-3. Spawn prompts tell workers to self-rename on claim and on queue transitions.
-4. Never rename the tmux session itself; its name is the ao session id.
+1. Spawn every worker with `--issue <n>` and **never** with `--name`. An
+   explicit name overrides the computed one, which is how sessions end up with
+   labels nobody can trace back to a ticket.
+2. Do not tell workers to rename themselves. Agent-side renaming is the drift
+   this policy used to create; ao does it now, deterministically, at launch.
+3. `--name` stays available for a session with no ticket to be named after — a
+   deploy run, say — where an explicit label is the only sensible name.
+4. The orchestrator's own name is computed too: `<project> Orchestrator`.
+5. Never rename the tmux session itself; its name is the ao session id.
 
 ## Hard lines
 

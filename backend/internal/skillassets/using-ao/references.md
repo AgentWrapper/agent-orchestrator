@@ -5,7 +5,7 @@ Natural-language-to-command mappings for common AO tasks.
 | You want to... | Command |
 |---|---|
 | Show me this webpage / open this page | `ao preview "<url>"` |
-| Spawn a worker on issue N | `ao spawn --project <p> --issue N --name "<=20 chars>" --prompt "..."` |
+| Spawn a worker on issue N | `ao spawn --project <p> --issue N --prompt "/address-issue N"` (AO names it) |
 | Message a running agent | `ao send --session <id> --message "..."` |
 | Kill a session | `ao session kill <id>` |
 | List sessions | `ao session ls` |

@@ -90,7 +90,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			opts.harness = harness
 
-			name := resolveSpawnDisplayName(opts.name, opts.prompt)
+			name := resolveSpawnDisplayName(opts.name)
 			if !opts.skipAgentCheck && opts.harness != "" {
 				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
 					return err
@@ -165,7 +165,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.model, "model", "", "Model override for this session (default: project/role agentConfig.model or agent default)")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
-	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (default: derived from --prompt, max 20 characters)")
+	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (default: computed by the daemon as `<repoKey> #<issue> <slug>`, max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
@@ -321,33 +321,13 @@ func projectHasWorkerMix(project projectDetails) bool {
 	return project.Config != nil && len(project.Config.WorkerMix) > 0
 }
 
-func resolveSpawnDisplayName(explicit, prompt string) string {
-	if name := strings.TrimSpace(explicit); name != "" {
-		return name
-	}
-	return deriveDisplayNameFromPrompt(prompt)
-}
-
-func deriveDisplayNameFromPrompt(prompt string) string {
-	fields := strings.Fields(strings.TrimSpace(prompt))
-	if len(fields) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, field := range fields {
-		next := strings.Trim(field, " \t\r\n.,;:!?()[]{}\"'")
-		if next == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			next = " " + next
-		}
-		if utf8.RuneCountInString(b.String()+next) > maxDisplayNameLen {
-			break
-		}
-		b.WriteString(next)
-	}
-	return b.String()
+// resolveSpawnDisplayName returns only an explicitly requested name. An empty
+// result is meaningful: it tells the daemon to compute the semantic
+// `<repoKey> #<issue> <slug>` name itself. Deriving a name from the prompt here
+// would forge an "explicit" name that outranks that computation, which is how
+// every orchestrator-dispatched worker ended up called `/address-issue <id>`.
+func resolveSpawnDisplayName(explicit string) string {
+	return strings.TrimSpace(explicit)
 }
 
 func (c *commandContext) preflightSpawnAgentAuth(ctx context.Context, cmd *cobra.Command, agentID string) error {

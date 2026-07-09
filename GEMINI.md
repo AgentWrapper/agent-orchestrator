@@ -295,29 +295,25 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
 - **Pool:** deploy-only work runs on the cheap haiku pool:
   `ao spawn --model haiku`.
 
-### Session self-naming
+### Session naming — ao owns it
 
-For ao-hosted sessions, keep your session's names in sync with the current work
-item so the dashboard and the Claude Code session list read like a live work
-log. Workers set both surfaces on claiming a work item and again on every queue
-item transition. Your ao session id is
-`SID="${AO_SESSION_ID:-$(tmux display-message -p '#S')}"` (ao injects the env
-var; tmux is the fallback). Derive `<slug>` from the issue title: lowercase
-`[a-z0-9-]` only, everything else stripped — never interpolate a raw title into
-a shell command.
+**Do not name your own session.** ao computes `<repoKey> #<issue> <slug>` from
+the project and the issue's own title, and applies it to both surfaces — the ao
+display name (dashboard, `ao session get`, `ao session ls`) and the harness's
+in-harness app title — at launch, for every harness. A session dispatched with
+`ao spawn --issue <n>` is already named correctly before your first turn.
 
-- **ao display name:** `ao session rename "$SID" "#<issue> <slug>"` — 20-char
-  cap (enforced at spawn/API; the CLI rename path currently skips the
-  check, so never rely on a longer name sticking). Visible in the
-  dashboard and `ao session get`; the `ao session ls` table doesn't show
-  it yet (gap tracked in GH #28).
-- **Claude Code session title** (claude-code harness only):
-  `tmux send-keys -t "$SID" -l '/rename #<issue> <short-desc>'` then
-  `tmux send-keys -t "$SID" Enter` — verified safe mid-turn. This title is
-  intentionally uncapped and should use the descriptive work-item text, not
-  only ao's 20-char display name. Other harnesses have no Claude Code title
-  surface; ao display name is their only naming surface and must not be
-  faked.
+- **Never hand-type a rename into a pane** (`tmux send-keys '/rename …'`). That
+  is the drift that produced double-renames and, when it raced a booting TUI,
+  swallowed the worker's prompt entirely.
+- **Never pass `ao spawn --name`** for a session that has an issue; an explicit
+  name overrides ao's computed one.
+- If your session's bound work item genuinely changes (a queue advancing
+  between issues), use `ao session rename "$SID" "<name>"` — it updates the
+  display name **and** re-issues the in-harness title through the daemon, so
+  there is still exactly one code path. Your ao session id is
+  `SID="${AO_SESSION_ID:-$(tmux display-message -p '#S')}"`. The name is capped
+  at 20 characters on every path, so a longer one will not stick.
 - **Never rename the tmux session itself** — its name IS the ao session id and
   ao addresses the pane by it.
 

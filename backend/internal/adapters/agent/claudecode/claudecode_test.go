@@ -197,7 +197,12 @@ func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandUsesLaunchTitleAsRenameCommand(t *testing.T) {
+// The argv prompt slot belongs to the prompt, never to the title. Spending it
+// on `/rename` forced the real prompt onto a post-start send-keys write that
+// races the booting TUI, which is how issue #146's workers came up with their
+// prompt and rename concatenated and never ran the task. The title is delivered
+// in-harness after start instead; losing that send costs a name, not a worker.
+func TestGetLaunchCommandBakesPromptNotRename(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		LaunchTitle: "#53 launch-time\nClaude\tCode\x1b title",
@@ -207,42 +212,41 @@ func TestGetLaunchCommandUsesLaunchTitleAsRenameCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"claude", "--", "/rename #53 launch-time Claude Code title"}
+	want := []string{"claude", "--", "do the real task"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
 }
 
-func TestGetPromptDeliveryStrategyUsesAfterStartForTitledClaudePrompt(t *testing.T) {
+func TestGetLaunchCommandWithTitleAndNoPromptOmitsPositional(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{LaunchTitle: "#53 titled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--") {
+		t.Fatalf("command %#v should carry no positional when there is no prompt", cmd)
+	}
+}
+
+// One delivery path for the prompt (argv) and one for the title (in-harness),
+// regardless of whether a title is set.
+func TestGetPromptDeliveryStrategyIsAlwaysInCommand(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 
-	got, err := p.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
-		LaunchTitle: "#53 title-sync",
-		Prompt:      "do the real task",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != ports.PromptDeliveryAfterStart {
-		t.Fatalf("strategy = %q, want %q", got, ports.PromptDeliveryAfterStart)
-	}
-
-	got, err = p.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
-		LaunchTitle: "#53 title-sync",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != ports.PromptDeliveryInCommand {
-		t.Fatalf("promptless titled launch strategy = %q, want %q", got, ports.PromptDeliveryInCommand)
-	}
-
-	got, err = p.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{Prompt: "do the real task"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != ports.PromptDeliveryInCommand {
-		t.Fatalf("untitled launch strategy = %q, want %q", got, ports.PromptDeliveryInCommand)
+	for _, cfg := range []ports.LaunchConfig{
+		{LaunchTitle: "#53 title-sync", Prompt: "do the real task"},
+		{LaunchTitle: "#53 title-sync"},
+		{Prompt: "do the real task"},
+		{},
+	} {
+		got, err := p.GetPromptDeliveryStrategy(context.Background(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != ports.PromptDeliveryInCommand {
+			t.Fatalf("strategy for %#v = %q, want %q", cfg, got, ports.PromptDeliveryInCommand)
+		}
 	}
 }
 

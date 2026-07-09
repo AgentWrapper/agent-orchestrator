@@ -192,9 +192,11 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
 
-	if title := claudeLaunchTitle(cfg.LaunchTitle); title != "" {
-		cmd = append(cmd, "--", "/rename "+title)
-	} else if cfg.Prompt != "" {
+	// Claude Code has exactly one startup slot. It belongs to the prompt: the
+	// prompt is the session's whole purpose, and argv delivery is atomic. The
+	// launch title goes in via the in-harness `/rename` after the TUI is up
+	// (see AgentTitleCommander), where a dropped write costs only a name.
+	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
 
@@ -202,15 +204,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 }
 
 // GetPromptDeliveryStrategy reports how AO should deliver the initial task.
-// When AO asks Claude Code to set a launch title, the launch command consumes
-// Claude's one startup slash-command slot with `/rename <title>`, so any real
-// task prompt must be pasted after the TUI starts.
+// Always in the launch command: nothing else competes for the startup slot.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
-	}
-	if claudeLaunchTitle(cfg.LaunchTitle) != "" && cfg.Prompt != "" {
-		return ports.PromptDeliveryAfterStart, nil
 	}
 	return ports.PromptDeliveryInCommand, nil
 }

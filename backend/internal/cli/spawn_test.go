@@ -205,7 +205,7 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	if !strings.Contains(out, "spawned session demo-11") {
 		t.Fatalf("output missing spawn: %s", out)
 	}
-	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "Fix failing tests in" {
+	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "" {
 		t.Fatalf("spawn request = %#v", req)
 	}
 	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
@@ -813,5 +813,74 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 	}
 	if req.ProjectID != "demo" || req.Harness != "codex" {
 		t.Fatalf("spawn request = %#v", req)
+	}
+}
+
+// The orchestrator dispatches every worker with `--prompt "/address-issue <id>"`
+// and no --name. Deriving the display name from that prompt produced the
+// `/address-issue 148` session names issue #146 exists to kill: an empty
+// DisplayName is what lets the daemon compute the semantic `<repoKey> #<issue>
+// <slug>` name instead.
+func TestSpawnEmptyNameDoesNotDeriveFromPrompt(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"claude-code"}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("claude-code"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-16","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+	t.Setenv("AO_PROJECT_ID", "demo")
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--issue", "148", "--prompt", "/address-issue 148")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.DisplayName != "" {
+		t.Fatalf("DisplayName = %q, want empty so the daemon computes the semantic name", req.DisplayName)
+	}
+}
+
+func TestSpawnExplicitNameStillWins(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"claude-code"}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("claude-code"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-16","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+	t.Setenv("AO_PROJECT_ID", "demo")
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--name", "deploy probe", "--prompt", "/address-issue 148")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.DisplayName != "deploy probe" {
+		t.Fatalf("DisplayName = %q, want the explicit --name to win", req.DisplayName)
 	}
 }

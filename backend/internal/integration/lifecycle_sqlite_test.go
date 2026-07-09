@@ -48,6 +48,12 @@ func (s *stubRuntime) SendMessage(_ context.Context, _ ports.RuntimeHandle, msg 
 	return nil
 }
 
+// GetOutput reports a pane that has already drawn, so spawn's pane-readiness
+// wait returns on its first read rather than burning its deadline.
+func (s *stubRuntime) GetOutput(context.Context, ports.RuntimeHandle, int) (string, error) {
+	return "harness ready >", nil
+}
+
 // wasDestroyed reports whether Destroy was called with the given handle ID.
 func (s *stubRuntime) wasDestroyed(handleID string) bool {
 	for _, id := range s.destroyedHandles {

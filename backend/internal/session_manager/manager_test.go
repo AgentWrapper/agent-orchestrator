@@ -221,6 +221,13 @@ type fakeRuntime struct {
 	aliveByHandle map[string]bool
 	aliveErr      error
 	destroyedIDs  []string
+	// blankReads is how many GetOutput calls return empty before the pane
+	// "renders"; getOutputCallsAtSend records how many reads had happened when
+	// each SendMessage went out, so a test can prove the write waited.
+	blankReads           int
+	outputErr            error
+	getOutputCalls       int
+	getOutputCallsAtSend []int
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -247,7 +254,22 @@ func (r *fakeRuntime) SendMessage(_ context.Context, _ ports.RuntimeHandle, msg 
 		return r.sendErr
 	}
 	r.sent = append(r.sent, msg)
+	r.getOutputCallsAtSend = append(r.getOutputCallsAtSend, r.getOutputCalls)
 	return nil
+}
+
+// GetOutput models a pane that prints nothing until the harness TUI has drawn:
+// the first blankReads calls return empty, then it reports output. outputErr
+// models a runtime that cannot capture at all.
+func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
+	r.getOutputCalls++
+	if r.outputErr != nil {
+		return "", r.outputErr
+	}
+	if r.getOutputCalls <= r.blankReads {
+		return "", nil
+	}
+	return "harness ready >", nil
 }
 
 type fakeAgent struct{}
@@ -316,12 +338,26 @@ func (a *modelFailAgent) GetLaunchCommand(ctx context.Context, cfg ports.LaunchC
 	return a.recordingAgent.GetLaunchCommand(ctx, cfg)
 }
 
+// launchTitleAgent mirrors the real claude-code/codex adapters: the argv slot
+// always carries the prompt, and the title is applied by the in-harness rename
+// after start. Their only post-start write is the title.
 type launchTitleAgent struct {
 	recordingAgent
 }
 
-func (a *launchTitleAgent) GetPromptDeliveryStrategy(_ context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if strings.TrimSpace(cfg.LaunchTitle) != "" && cfg.Prompt != "" {
+func (a *launchTitleAgent) GetPromptDeliveryStrategy(_ context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	return ports.PromptDeliveryInCommand, nil
+}
+
+// afterStartTitleAgent is a title-capable harness that cannot carry the prompt
+// in argv, so both writes happen after start. It keeps deliverInitialPrompt's
+// AfterStart branch covered now that the shipped adapters no longer use it.
+type afterStartTitleAgent struct {
+	launchTitleAgent
+}
+
+func (a *afterStartTitleAgent) GetPromptDeliveryStrategy(_ context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if cfg.Prompt != "" {
 		return ports.PromptDeliveryAfterStart, nil
 	}
 	return ports.PromptDeliveryInCommand, nil
@@ -1234,7 +1270,7 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 }
 
-func TestSpawn_ForwardsDisplayNameAsLaunchTitleAndDeliversPromptAfterStart(t *testing.T) {
+func TestSpawn_ForwardsDisplayNameAsLaunchTitleAndPromptInArgv(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	agent := &launchTitleAgent{}
@@ -1260,8 +1296,9 @@ func TestSpawn_ForwardsDisplayNameAsLaunchTitleAndDeliversPromptAfterStart(t *te
 	if got := agent.lastLaunch.Prompt; got != "implement\x1b issue 53" {
 		t.Fatalf("launch prompt = %q, want preserved task prompt in config", got)
 	}
-	if got, want := rt.sent, []string{"/rename #53 title-sync", "implement issue 53"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("post-start prompt delivery = %#v, want %#v", got, want)
+	// The prompt goes in argv, so the title is the only post-start write.
+	if got, want := rt.sent, []string{"/rename #53 title-sync"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
 	}
 	if got := st.sessions["mer-1"].Metadata.Prompt; got != "implement\x1b issue 53" {
 		t.Fatalf("metadata prompt = %q, want original task prompt", got)
@@ -1295,7 +1332,7 @@ func TestSpawn_NormalizesDisplayNameBeforeTitleDelivery(t *testing.T) {
 	if got := agent.lastLaunch.LaunchTitle; got != wantName {
 		t.Fatalf("LaunchTitle = %q, want %q", got, wantName)
 	}
-	if got, want := rt.sent, []string{"/rename " + wantName, "implement issue 53"}; !reflect.DeepEqual(got, want) {
+	if got, want := rt.sent, []string{"/rename " + wantName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("post-start sends = %#v, want %#v", got, want)
 	}
 }
@@ -1334,8 +1371,12 @@ func TestSpawn_ComputesWorkerNameFromIssueTitleAndReappliesInHarness(t *testing.
 	if got := agent.lastLaunch.LaunchTitle; got != wantName {
 		t.Fatalf("LaunchTitle = %q, want %q", got, wantName)
 	}
-	if got, want := rt.sent, []string{"/rename " + wantName, "/address-issue 146"}; !reflect.DeepEqual(got, want) {
+	// The title is the only post-start write; the prompt rides argv.
+	if got, want := rt.sent, []string{"/rename " + wantName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("post-start sends = %#v, want %#v", got, want)
+	}
+	if got := agent.lastLaunch.Prompt; got != "/address-issue 146" {
+		t.Fatalf("launch prompt = %q, want the prompt delivered in argv", got)
 	}
 }
 
@@ -1990,7 +2031,11 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"You are the human-facing coordinator for project mer",
 		// GH #118: the spawn example teaches router-only dispatch, not a
 		// hand-written task description.
-		`ao spawn --project mer --name "<label, max 20 chars>" --prompt "/address-issue <issue-id>"`,
+		// GH #146: it dispatches by --issue and never passes --name, so the
+		// daemon computes the semantic name instead of the orchestrator
+		// inventing a label that outranks it.
+		`ao spawn --project mer --issue <issue-id> --prompt "/address-issue <issue-id>"`,
+		"Never pass --name",
 		"exactly `/address-issue <issue-id>`",
 		"`--agent <name>`",
 		"`ao spawn --help`",
@@ -3733,4 +3778,345 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 		m.flipped = true
 	}
 	return nil
+}
+
+// The regression guard for #147. The title used to reach the harness twice —
+// baked into argv as `-- /rename <title>` and sent again post-start — which
+// also forced the prompt onto a post-start write. The two writes concatenated
+// in the booting pane and the worker's task never ran.
+//
+// The argv half is asserted by the adapter tests (they must not spend the argv
+// slot on a rename). Here we pin the manager half: exactly one post-start
+// write, and it is the title. A prompt appearing here means the argv slot was
+// taken by something else again.
+func TestSpawn_DoesNotDoubleDeliverTitle(t *testing.T) {
+	st := newFakeStore()
+	st.projects["agent-orchestrator"] = domain.ProjectRecord{
+		ID:     "agent-orchestrator",
+		Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "agent-orchestrator", IssueID: "146", IssueTitle: "Naming",
+		Kind: domain.KindWorker, Prompt: "/address-issue 146",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := rt.sent, []string{"/rename ao #146 naming"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want exactly %#v", got, want)
+	}
+	// The adapter is handed both; its own tests assert it spends the argv slot
+	// on the prompt rather than a second rename.
+	if agent.lastLaunch.LaunchTitle == "" || agent.lastLaunch.Prompt != "/address-issue 146" {
+		t.Fatalf("launch config = %+v, want title and argv prompt both passed to the adapter", agent.lastLaunch)
+	}
+}
+
+// A worker with no issue must still get a deterministic name. An empty launch
+// title is what let claude-code invent a random codename ("wombat-coffeehouse").
+func TestSpawn_WorkerWithoutIssueUsesDeterministicName(t *testing.T) {
+	st := newFakeStore()
+	st.projects["agent-orchestrator"] = domain.ProjectRecord{
+		ID:     "agent-orchestrator",
+		Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "agent-orchestrator", Kind: domain.KindWorker, Prompt: "do a thing",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := st.sessions["agent-orchestrator-1"].DisplayName; got != "ao" {
+		t.Fatalf("stored displayName = %q, want the project prefix so no codename is invented", got)
+	}
+	if got, want := rt.sent, []string{"/rename ao"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
+	}
+}
+
+// tmux Create returns as soon as the pane exists, before the harness has drawn
+// its input. Bytes sent into that gap are what concatenated the rename and the
+// prompt in #146, so AO must wait for the pane to produce output first.
+func TestSpawn_WaitsForPaneReadyBeforeTitleSend(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{blankReads: 3}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 5 * time.Second}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rt.getOutputCallsAtSend) != 1 {
+		t.Fatalf("post-start sends = %#v, want exactly one", rt.sent)
+	}
+	if got := rt.getOutputCallsAtSend[0]; got <= rt.blankReads {
+		t.Fatalf("title sent after %d pane reads, want it to wait past the %d blank reads", got, rt.blankReads)
+	}
+}
+
+// A pane that never prints, or a runtime that cannot capture output, must not
+// hold a spawn open: the write goes out anyway and the name is best-effort.
+func TestSpawn_PaneReadyTimeoutStillCompletes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rt   *fakeRuntime
+	}{
+		{"pane never prints", &fakeRuntime{blankReads: 1 << 30}},
+		{"runtime cannot capture", &fakeRuntime{outputErr: errors.New("capture-pane: no such pane")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+			agent := &launchTitleAgent{}
+			m := New(Deps{
+				Runtime: tc.rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+				Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+				LookPath: func(string) (string, error) { return "/bin/true", nil },
+			})
+			m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 20 * time.Millisecond}
+
+			if _, err := m.Spawn(ctx, ports.SpawnConfig{
+				ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+			}); err != nil {
+				t.Fatalf("spawn must survive an unreadable pane: %v", err)
+			}
+			if got, want := tc.rt.sent, []string{"/rename titled"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("post-start sends = %#v, want %#v after the readiness deadline lapses", got, want)
+			}
+		})
+	}
+}
+
+// Harnesses that cannot carry the prompt in argv still deliver it after start,
+// and that write waits for the pane too.
+func TestSpawn_AfterStartHarnessDeliversTitleThenPromptOnceReady(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &afterStartTitleAgent{}
+	rt := &fakeRuntime{blankReads: 2}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 5 * time.Second}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "do\x1b task",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Control chars are stripped from a pasted prompt but preserved in metadata.
+	if got, want := rt.sent, []string{"/rename titled", "do task"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
+	}
+	if got := st.sessions["mer-1"].Metadata.Prompt; got != "do\x1b task" {
+		t.Fatalf("metadata prompt = %q, want the original prompt", got)
+	}
+	if got := rt.getOutputCallsAtSend[0]; got <= rt.blankReads {
+		t.Fatalf("first write happened after %d pane reads, want it to wait past %d", got, rt.blankReads)
+	}
+}
+
+// The title is cosmetic and, with the prompt delivered in argv, the agent is
+// already working by the time AO types it. Tearing the session down because a
+// send-keys write hiccuped would destroy a healthy worker over a display label
+// — the exact failure this issue's fix exists to avoid.
+func TestSpawn_TitleWriteFailureDoesNotDestroyTheSession(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &launchTitleAgent{}
+	// The pane is alive; only the cosmetic write failed.
+	rt := &fakeRuntime{sendErr: errors.New("tmux: send-keys failed"), aliveByHandle: map[string]bool{"h1": true}}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	})
+	if err != nil {
+		t.Fatalf("spawn must survive a failed title write to a live pane, got %v", err)
+	}
+	if rec.ID == "" {
+		t.Fatal("spawn returned no session record")
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times; a cosmetic title write must not roll back the session", rt.destroyed)
+	}
+	// The name still lands in AO's own store even though the harness never got it.
+	if got := st.sessions["mer-1"].DisplayName; got != "titled" {
+		t.Fatalf("stored displayName = %q, want it recorded regardless of the harness write", got)
+	}
+}
+
+// The prompt is not cosmetic. A harness that needs its prompt typed in and
+// never receives it is a worker with no task, so that failure still rolls back.
+func TestSpawn_PromptWriteFailureRollsBackTheSession(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &afterStartTitleAgent{}
+	rt := &fakeRuntime{sendErr: errors.New("tmux: send-keys failed")}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must fail when the prompt cannot be delivered")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	}
+}
+
+// The orchestrator's dispatch instructions are part of the naming contract. If
+// they tell it to pass a hand-written --name, that explicit name outranks the
+// daemon's computed `<repoKey> #<issue> <slug>` (launchTitle's first branch) and
+// the fix is bypassed on the very path issue #146 is about. And without --issue
+// the session is never bound to its work item, so there is no issue number to
+// name it after and no title to slugify.
+func TestOrchestratorPrompt_DispatchesByIssueAndLetsTheDaemonName(t *testing.T) {
+	prompt := orchestratorPrompt("agent-orchestrator")
+
+	spawnCmd := ""
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.Contains(line, "ao spawn --project") {
+			spawnCmd = line
+			break
+		}
+	}
+	if spawnCmd == "" {
+		t.Fatalf("orchestrator prompt has no `ao spawn` dispatch line:\n%s", prompt)
+	}
+	if strings.Contains(spawnCmd, "--name") {
+		t.Fatalf("dispatch line still passes --name; the daemon must own the name: %s", spawnCmd)
+	}
+	if !strings.Contains(spawnCmd, "--issue <issue-id>") {
+		t.Fatalf("dispatch line must pass --issue so the daemon can compute the name: %s", spawnCmd)
+	}
+	if !strings.Contains(spawnCmd, `--prompt "/address-issue <issue-id>"`) {
+		t.Fatalf("dispatch line must still dispatch the router and nothing else: %s", spawnCmd)
+	}
+	if !strings.Contains(prompt, "Never pass --name") {
+		t.Fatalf("orchestrator prompt must tell the orchestrator not to pass --name:\n%s", prompt)
+	}
+}
+
+// The readiness wait must not depend on the injectable clock: the sleep between
+// polls is real time, so a frozen clock would never reach a clock-derived
+// deadline and spawn would hang until the context died.
+func TestSpawn_PaneReadyDoesNotDependOnTheInjectedClock(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	frozen := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
+	rt := &fakeRuntime{blankReads: 1 << 30} // pane never renders
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+		Clock:    func() time.Time { return frozen },
+	})
+	m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 30 * time.Millisecond}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.Spawn(ctx, ports.SpawnConfig{
+			ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("spawn: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("spawn hung: the pane-readiness wait never reached its deadline under a frozen clock")
+	}
+	if got, want := rt.sent, []string{"/rename titled"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
+	}
+}
+
+// With the prompt delivered in argv, nothing else writes to the pane during a
+// claude-code/codex spawn — the title write is the only probe that touches it.
+// If the harness died between Create and that write, treating the failure as
+// cosmetic would hand back a "live" idle session that never ran a thing. A
+// title write that fails against a pane which is no longer alive must roll the
+// spawn back, exactly as it did before the write was made non-fatal.
+func TestSpawn_TitleWriteFailureOnDeadPaneRollsBack(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	// aliveByHandle has no entry for "h1": the pane is gone.
+	rt := &fakeRuntime{sendErr: errors.New("tmux: no such session")}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must fail when the title write reveals a dead pane")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	}
+	if _, ok := st.sessions["mer-1"]; ok {
+		t.Fatal("seed row survived a rolled-back spawn")
+	}
+}
+
+// A liveness probe that itself fails cannot prove the pane is healthy, so the
+// spawn must not be reported as successful on the strength of it.
+func TestSpawn_TitleWriteFailureWithUnknownLivenessRollsBack(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{sendErr: errors.New("tmux: send-keys failed"), aliveErr: errors.New("tmux: server gone")}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must fail when pane liveness cannot be established")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	}
 }

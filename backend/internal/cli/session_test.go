@@ -541,3 +541,33 @@ func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 		t.Fatalf("ghDir=%q out=%s", ghDir, out)
 	}
 }
+
+// `ao session ls` must surface the computed semantic name — the dashboard and
+// `session get` showed it while the list did not, so the list was the one
+// surface where a misnamed session stayed invisible (issue #146).
+func TestSessionList_ShowsDisplayName(t *testing.T) {
+	if got := sessionLineParts(sessionDTO{DisplayName: "ao #146 naming", Status: "idle", Kind: "worker"}); got[0] != "ao #146 naming" {
+		t.Fatalf("session ls line parts = %#v, want the display name first", got)
+	}
+	if got := sessionLineParts(sessionDTO{Status: "idle"}); len(got) != 1 || got[0] != "[idle]" {
+		t.Fatalf("session ls line parts = %#v, want no empty display-name column", got)
+	}
+}
+
+func TestSessionRename_RejectsOverlongName(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			t.Errorf("rename must be rejected locally, but the CLI issued %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "rename", "demo-1", "this name is far too long to fit")
+	if err == nil || !strings.Contains(err.Error(), "20 characters or fewer") {
+		t.Fatalf("err = %v, want a local cap rejection", err)
+	}
+}

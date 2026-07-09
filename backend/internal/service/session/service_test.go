@@ -220,9 +220,13 @@ type fakeCommander struct {
 	spawnRecord     domain.SessionRecord
 	spawned         bool
 	killsAtSpawn    int
+	// gotCfg is the config the service handed down, where the semantic-name
+	// inputs (IssueID, IssueTitle, DisplayName) have to arrive.
+	gotCfg ports.SpawnConfig
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	f.gotCfg = cfg
 	if f.spawnErr != nil {
 		return domain.SessionRecord{}, f.spawnErr
 	}
@@ -1176,4 +1180,108 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// --- issue-title resolution (issue #146) -----------------------------------
+
+type fakeIssueTitles struct {
+	title  string
+	err    error
+	calls  int
+	gotIss domain.IssueID
+}
+
+func (f *fakeIssueTitles) Title(_ context.Context, _ domain.ProjectRecord, issue domain.IssueID) (string, error) {
+	f.calls++
+	f.gotIss = issue
+	return f.title, f.err
+}
+
+func newTitleTestService(t *testing.T, titles issueTitles) (*Service, *fakeCommander) {
+	t.Helper()
+	store := newFakeStore()
+	store.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "git@github.com:acme/demo.git"}
+	mgr := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "demo-1", ProjectID: "demo", Kind: domain.KindWorker}}
+	svc := NewWithDeps(Deps{Manager: mgr, Store: store, IssueTitles: titles})
+	return svc, mgr
+}
+
+func TestSpawnResolvesIssueTitleWhenAbsent(t *testing.T) {
+	titles := &fakeIssueTitles{title: "Naming, done forever"}
+	svc, mgr := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", IssueID: "146", Kind: domain.KindWorker,
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if titles.calls != 1 || titles.gotIss != "146" {
+		t.Fatalf("resolver calls=%d issue=%q, want one lookup for 146", titles.calls, titles.gotIss)
+	}
+	if mgr.gotCfg.IssueTitle != "Naming, done forever" {
+		t.Fatalf("IssueTitle = %q, want the resolved tracker title", mgr.gotCfg.IssueTitle)
+	}
+}
+
+// Tracker intake already supplies IssueTitle; re-fetching it would burn a
+// tracker call per spawn for no gain.
+func TestSpawnKeepsProvidedIssueTitle(t *testing.T) {
+	titles := &fakeIssueTitles{title: "should not be used"}
+	svc, mgr := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", IssueID: "146", IssueTitle: "from intake", Kind: domain.KindWorker,
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if titles.calls != 0 {
+		t.Fatalf("resolver called %d times, want 0 when IssueTitle is already set", titles.calls)
+	}
+	if mgr.gotCfg.IssueTitle != "from intake" {
+		t.Fatalf("IssueTitle = %q, want the caller's title preserved", mgr.gotCfg.IssueTitle)
+	}
+}
+
+// The name is cosmetic. A tracker outage must degrade to the head-only
+// `<repoKey> #<issue>` name, never fail the spawn.
+func TestSpawnTitleLookupFailureStillSpawns(t *testing.T) {
+	titles := &fakeIssueTitles{err: errors.New("github: 503")}
+	svc, mgr := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", IssueID: "146", Kind: domain.KindWorker,
+	}); err != nil {
+		t.Fatalf("spawn must succeed despite tracker failure, got %v", err)
+	}
+	if mgr.gotCfg.IssueTitle != "" {
+		t.Fatalf("IssueTitle = %q, want empty after a failed lookup", mgr.gotCfg.IssueTitle)
+	}
+}
+
+func TestSpawnWithoutIssueSkipsTitleLookup(t *testing.T) {
+	titles := &fakeIssueTitles{title: "unused"}
+	svc, _ := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", Kind: domain.KindOrchestrator,
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if titles.calls != 0 {
+		t.Fatalf("resolver called %d times, want 0 without an issue id", titles.calls)
+	}
+}
+
+// A daemon wired without a tracker (or before credentials resolve) must still spawn.
+func TestSpawnWithoutTitleResolverStillSpawns(t *testing.T) {
+	svc, mgr := newTitleTestService(t, nil)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", IssueID: "146", Kind: domain.KindWorker,
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if mgr.gotCfg.IssueTitle != "" {
+		t.Fatalf("IssueTitle = %q, want empty with no resolver wired", mgr.gotCfg.IssueTitle)
+	}
 }

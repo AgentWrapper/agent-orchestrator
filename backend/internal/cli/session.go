@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 )
@@ -529,6 +530,12 @@ func (c *commandContext) renameSession(ctx context.Context, cmd *cobra.Command, 
 		}
 	}
 	name := strings.TrimSpace(displayName)
+	// Same cap as `ao spawn --name` and the PATCH handler. Checking it here too
+	// keeps every rename path reporting the limit the same way instead of
+	// surfacing it as a server error on one path and a usage error on another.
+	if utf8.RuneCountInString(name) > maxDisplayNameLen {
+		return usageError{fmt.Errorf("display name must be %d characters or fewer", maxDisplayNameLen)}
+	}
 	var res renameSessionResponse
 	if err := c.patchJSON(ctx, "sessions/"+url.PathEscape(id), sessionRenameRequest{DisplayName: name}, &res); err != nil {
 		return err

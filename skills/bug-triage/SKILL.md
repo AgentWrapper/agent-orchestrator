@@ -336,10 +336,12 @@ against upstream. There is no remote-patch script. Branch off `upstream/main`.
   spawn a worker session to do the work in its own worktree instead of pushing a
   guess:
 
+  Put the root cause, suggested approach, and build command in the issue first —
+  the worker reads them from there. Dispatch carries only the router, and
+  `--issue` is what lets AO name the session after the ticket:
+
   ```bash
-  ao spawn --project agent-orchestrator --prompt "Fix #<n>: <one-line problem statement>. \
-  Root cause: <file:line + mechanism>. Suggested approach: <approach>. Branch off upstream/main. \
-  Build with 'cd backend && go build ./... && go test ./...' before opening a PR against AgentWrapper/agent-orchestrator."
+  ao spawn --project agent-orchestrator --issue <n> --prompt "/address-issue <n>"
   ```
 
   Note the issue with which path you took (PR or spawned worker).

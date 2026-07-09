@@ -121,7 +121,11 @@ func Run() error {
 	// selected runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+	// One lazy tracker serves both the session service (issue titles for
+	// computed session names) and the intake loop, so a single token
+	// resolution covers both and neither blocks daemon readiness.
+	trackerAdapter := newLazyGitHubTracker(log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, trackerAdapter, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -130,7 +134,7 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, trackerAdapter, log)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 	agentSvc := agentsvc.New()
 	go func() {

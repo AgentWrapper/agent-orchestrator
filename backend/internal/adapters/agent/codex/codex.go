@@ -112,23 +112,21 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
 
-	if command, ok := p.InHarnessTitleCommand(cfg.LaunchTitle); ok {
-		cmd = append(cmd, "--", command)
-	} else if cfg.Prompt != "" {
+	// The argv prompt slot carries the prompt, never the title — see the
+	// matching comment in the claude-code adapter. The title is applied by the
+	// in-harness `/rename` once the TUI is up.
+	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
 
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy sends the real prompt after startup when the argv
-// prompt slot is used for AO's launch-time title command.
+// GetPromptDeliveryStrategy reports how AO should deliver the initial task.
+// Always in the launch command: nothing else competes for the startup slot.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
-	}
-	if command, ok := p.InHarnessTitleCommand(cfg.LaunchTitle); ok && command != "" && cfg.Prompt != "" {
-		return ports.PromptDeliveryAfterStart, nil
 	}
 	return ports.PromptDeliveryInCommand, nil
 }

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -24,13 +25,45 @@ import (
 // stays lazy so daemon readiness is not blocked by credential probing or a gh
 // CLI call, and no token is resolved until some enabled project is actually
 // polled.
-func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, logger *slog.Logger) <-chan struct{} {
+//
+// tracker is shared with the session service (which resolves issue titles for
+// computed session names), so one token resolution serves both.
+func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, tracker ports.Tracker, logger *slog.Logger) <-chan struct{} {
 	resolver := trackerintake.SingleTrackerResolver{
 		Provider: domain.TrackerProviderGitHub,
-		Adapter:  newLazyGitHubTracker(logger),
+		Adapter:  tracker,
 	}
 	observer := trackerintake.New(resolver, store, sessions, trackerintake.Config{Logger: logger})
 	return observer.Start(ctx)
+}
+
+// issueTitleResolver adapts the tracker port to the session service's title
+// lookup. The service holds an issue id (canonical from intake, or a bare
+// number from `ao spawn --issue`); this maps it back to a tracker id and
+// fetches just the title used for the `<repoKey> #<issue> <slug>` session name.
+type issueTitleResolver struct {
+	tracker ports.Tracker
+	logger  *slog.Logger
+}
+
+// Title returns the issue's tracker title. The caller treats any error as "no
+// slug" and still spawns, so failures are logged here rather than swallowed
+// silently — an unmappable id or an unauthenticated tracker shows up as a
+// degraded name, and this is the only place that can say why.
+func (r issueTitleResolver) Title(ctx context.Context, project domain.ProjectRecord, issue domain.IssueID) (string, error) {
+	id, ok := trackerintake.IssueTrackerID(project, issue)
+	if !ok {
+		r.logger.Debug("session name: issue id has no tracker mapping; using the issue number alone",
+			"project", project.ID, "issue", issue)
+		return "", fmt.Errorf("issue %q has no tracker mapping in project %s", issue, project.ID)
+	}
+	found, err := r.tracker.Get(ctx, id)
+	if err != nil {
+		r.logger.Warn("session name: issue title lookup failed; using the issue number alone",
+			"project", project.ID, "issue", issue, "error", err)
+		return "", err
+	}
+	return found.Title, nil
 }
 
 // ---------------------------------------------------------------------------
