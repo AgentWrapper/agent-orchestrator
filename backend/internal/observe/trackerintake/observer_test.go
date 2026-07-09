@@ -50,8 +50,12 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	if call.IssueID != "github:acme/demo#12" {
 		t.Fatalf("IssueID = %q, want canonical github id", call.IssueID)
 	}
-	if !strings.Contains(call.Prompt, "Fix login") || !strings.Contains(call.Prompt, "The login form submits twice.") {
-		t.Fatalf("prompt missing issue context:\n%s", call.Prompt)
+	// The spawn prompt is the router invocation only (GH #118); issue context
+	// (title, body) must NOT leak into it — the worker's skill reads the ticket.
+	// The canonical id still rides along in the session's IssueID env, asserted
+	// above.
+	if want := "/address-issue 12"; call.Prompt != want {
+		t.Fatalf("prompt = %q, want exactly %q", call.Prompt, want)
 	}
 	if len(tracker.filters) != 1 {
 		t.Fatalf("tracker filters = %d, want 1", len(tracker.filters))
@@ -438,24 +442,33 @@ func TestLiveWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) {
 	}
 }
 
-func TestBuildIssuePromptCapsLargeIssueBody(t *testing.T) {
+// TestBuildIssuePromptIsRouterInvocationOnly pins the permanent contract from
+// GH #118: an intake-spawned worker is handed EXACTLY `/address-issue <id>` and
+// nothing else. The router reads the issue itself, so no title/url/labels/body
+// dump and no "implement the change" footer may leak into the prompt — even for
+// a huge issue body that the old code would have truncated and appended.
+func TestBuildIssuePromptIsRouterInvocationOnly(t *testing.T) {
 	prompt := BuildIssuePrompt(domain.Issue{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#99"},
-		Title: "Large issue",
-		URL:   "https://github.com/acme/demo/issues/99",
-		Body:  strings.Repeat("body ", 2000),
+		ID:     domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#118"},
+		Title:  "Large issue",
+		URL:    "https://github.com/acme/demo/issues/118",
+		Labels: []string{"feature"},
+		Body:   strings.Repeat("body ", 2000),
 	})
-	if len(prompt) > maxIntakePromptLen {
-		t.Fatalf("prompt length = %d, want <= %d", len(prompt), maxIntakePromptLen)
+	if want := "/address-issue 118"; prompt != want {
+		t.Fatalf("prompt = %q, want exactly %q", prompt, want)
 	}
-	if !strings.Contains(prompt, "Issue content truncated") {
-		t.Fatalf("prompt missing truncation notice:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "https://github.com/acme/demo/issues/99") {
-		t.Fatalf("prompt missing issue URL:\n%s", prompt)
-	}
-	if !strings.HasSuffix(prompt, intakePromptFooter) {
-		t.Fatalf("prompt missing footer:\n%s", prompt)
+}
+
+// TestBuildIssuePromptRefFallsBackToNative covers a native id that carries no
+// "#N" suffix: the whole trimmed native is used verbatim so the worker still
+// gets a resolvable reference rather than an empty argument.
+func TestBuildIssuePromptRefFallsBackToNative(t *testing.T) {
+	prompt := BuildIssuePrompt(domain.Issue{
+		ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "  bare-id  "},
+	})
+	if want := "/address-issue bare-id"; prompt != want {
+		t.Fatalf("prompt = %q, want exactly %q", prompt, want)
 	}
 }
 

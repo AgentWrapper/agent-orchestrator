@@ -26,12 +26,6 @@ const (
 	// DefaultFailureBackoff suppresses repeated polls for a project after an
 	// intake failure. The observer retries automatically after this window.
 	DefaultFailureBackoff = 5 * time.Minute
-	// maxIntakePromptLen mirrors the session HTTP prompt limit. Intake uses the
-	// session service directly, so it must enforce the same boundary itself.
-	maxIntakePromptLen = 4096
-
-	intakePromptTruncationNotice = "\n\n[Issue content truncated to fit the session prompt limit. Open the linked issue for the full details.]\n"
-	intakePromptFooter           = "\nImplement the requested change in this repository, run the relevant checks, and open or update a pull request when ready."
 )
 
 // Store is the durable read surface the observer needs.
@@ -432,54 +426,30 @@ func CanonicalIssueID(id domain.TrackerID) domain.IssueID {
 	return domain.IssueID(string(provider) + ":" + native)
 }
 
-// BuildIssuePrompt turns normalized issue facts into the worker's initial task.
+// BuildIssuePrompt returns the worker's initial task: exactly the single-entry
+// router invocation `/address-issue <id>`, nothing more. The router is
+// self-sufficient — it resolves the repo, reads the issue itself, claims,
+// implements, reviews, and writes durable progress back to the ticket — so the
+// worker needs only the issue reference, never a dump of title/url/labels/body.
+// Keeping the prompt minimal is the permanent fix from GH #118: durable context
+// lives in the ticket (it survives session loss and lets a resumed worker pick
+// up from there), not in the spawn prompt.
 func BuildIssuePrompt(issue domain.Issue) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", CanonicalIssueID(issue.ID))
-	if issue.Title != "" {
-		fmt.Fprintf(&b, "Title: %s\n", issue.Title)
-	}
-	if issue.URL != "" {
-		fmt.Fprintf(&b, "URL: %s\n", issue.URL)
-	}
-	if len(issue.Labels) > 0 {
-		fmt.Fprintf(&b, "Labels: %s\n", strings.Join(issue.Labels, ", "))
-	}
-	if len(issue.Assignees) > 0 {
-		fmt.Fprintf(&b, "Assignees: %s\n", strings.Join(issue.Assignees, ", "))
-	}
-	body := strings.TrimSpace(issue.Body)
-	if body != "" {
-		fmt.Fprintf(&b, "\nBody:\n%s\n", body)
-	}
-	b.WriteString(intakePromptFooter)
-	return capIntakePrompt(b.String())
+	return "/address-issue " + intakeIssueRef(issue.ID)
 }
 
-func capIntakePrompt(prompt string) string {
-	if len(prompt) <= maxIntakePromptLen {
-		return prompt
+// intakeIssueRef reduces a canonical tracker id to the reference the
+// `/address-issue` skill consumes. GitHub's native form is "owner/repo#123" and
+// the skill wants the issue number (it resolves the repo itself from the
+// worker's environment), so everything after the last '#' is the reference. A
+// native id without a '#' is passed through trimmed, so bare native ids still
+// yield a resolvable argument instead of an empty one.
+func intakeIssueRef(id domain.TrackerID) string {
+	native := strings.TrimSpace(id.Native)
+	if i := strings.LastIndexByte(native, '#'); i >= 0 {
+		return native[i+1:]
 	}
-	prefix := strings.TrimSuffix(prompt, intakePromptFooter)
-	prefixBudget := maxIntakePromptLen - len(intakePromptTruncationNotice) - len(intakePromptFooter)
-	if prefixBudget <= 0 {
-		return truncateUTF8(prompt, maxIntakePromptLen)
-	}
-	return truncateUTF8(prefix, prefixBudget) + intakePromptTruncationNotice + intakePromptFooter
-}
-
-func truncateUTF8(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	cut := 0
-	for i := range s {
-		if i > maxBytes {
-			break
-		}
-		cut = i
-	}
-	return s[:cut]
+	return native
 }
 
 func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (domain.TrackerRepo, bool) {

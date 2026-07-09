@@ -1745,7 +1745,10 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"You are the human-facing coordinator for project mer",
-		`ao spawn --project mer --name "<label, max 20 chars>" --prompt "<clear worker task>"`,
+		// GH #118: the spawn example teaches router-only dispatch, not a
+		// hand-written task description.
+		`ao spawn --project mer --name "<label, max 20 chars>" --prompt "/address-issue <issue-id>"`,
+		"exactly `/address-issue <issue-id>`",
 		"`--agent <name>`",
 		"`ao spawn --help`",
 		"`ao send`",
@@ -1755,6 +1758,11 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
+	}
+	// The old "write a custom worker task" guidance must be gone (GH #118): it
+	// is exactly what trained orchestrators to hand workers long prompts.
+	if strings.Contains(systemPrompt, "<clear worker task>") {
+		t.Fatalf("system prompt still teaches custom worker prompts:\n%s", systemPrompt)
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing coordinator") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)

@@ -2107,8 +2107,10 @@ func orchestratorPrompt(project domain.ProjectID) string {
 You are the human-facing coordinator for project %s. Coordinate work for the human, keep the project moving, and avoid doing implementation yourself unless it is necessary.
 
 Spawn worker sessions for implementation with:
-`+"`ao spawn --project %s --name \"<label, max 20 chars>\" --prompt \"<clear worker task>\"`"+`
+`+"`ao spawn --project %s --name \"<label, max 20 chars>\" --prompt \"/address-issue <issue-id>\"`"+`
 Both --project and --name are required.
+
+Dispatch every worker with exactly `+"`/address-issue <issue-id>`"+` and nothing more — never a hand-written task description. `+"`/address-issue`"+` is the self-sufficient router: it resolves the repo, reads the issue, claims it, does the work, reviews it, and writes durable progress back to the ticket, so a resumed or replacement worker picks up from the issue alone. Context lives in the ticket, never in the spawn prompt. If the work isn't tracked yet, file it as an issue first, then dispatch its id.
 
 To run a worker on a specific agent, add `+"`--agent <name>`"+` (an alias for `+"`--harness`"+`) — for example `+"`--agent codex`"+` or `+"`--agent claude-code`"+`. If you omit it, the project's default worker agent is used. Run `+"`ao spawn --help`"+` for the full list of agents and every flag.
 
