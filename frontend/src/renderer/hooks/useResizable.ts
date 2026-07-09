@@ -79,6 +79,14 @@ export function useResizable({
 		if (pending !== null) apply(pending);
 	}, [apply]);
 
+	const discardPending = useCallback(() => {
+		if (frameRef.current !== null) {
+			window.cancelAnimationFrame(frameRef.current);
+			frameRef.current = null;
+		}
+		pendingWidthRef.current = null;
+	}, []);
+
 	// Restore persisted width on mount.
 	useEffect(() => {
 		const saved = Number(window.localStorage.getItem(storageKey));
@@ -109,8 +117,10 @@ export function useResizable({
 				const nextWidth = startWidth + sign * (e.clientX - startX);
 				if (collapseBelow !== undefined && onCollapse && nextWidth <= collapseBelow) {
 					collapsed = true;
-					flushPending();
-					window.localStorage.setItem(storageKey, String(Math.min(max, Math.max(min, startWidth))));
+					const preservedWidth = Math.min(max, Math.max(min, startWidth));
+					discardPending();
+					apply(preservedWidth);
+					window.localStorage.setItem(storageKey, String(preservedWidth));
 					onUp();
 					onCollapse();
 					return;
@@ -120,7 +130,7 @@ export function useResizable({
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
 		},
-		[applyOnFrame, collapseBelow, edge, flushPending, max, min, onCollapse, storageKey],
+		[apply, applyOnFrame, collapseBelow, discardPending, edge, flushPending, max, min, onCollapse, storageKey],
 	);
 
 	const onCollapsedPointerDown = useCallback(

@@ -511,4 +511,37 @@ describe("Sidebar", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("280px");
 		expect(window.localStorage.getItem("ao-sidebar-w")).toBe("280");
 	});
+
+	it("discards a queued narrow resize frame when collapsing", async () => {
+		let queuedFrame: FrameRequestCallback | undefined;
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			queuedFrame = callback;
+			return 1;
+		});
+		const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+		try {
+			renderSidebar();
+
+			const resizeHandle = document.querySelector(".resize-handle--right");
+			if (!(resizeHandle instanceof HTMLElement)) throw new Error("Resize handle not found");
+
+			fireEvent.pointerDown(resizeHandle, { clientX: 240 });
+			fireEvent.pointerMove(window, { clientX: 205 });
+			fireEvent.pointerMove(window, { clientX: 120 });
+
+			await waitFor(() => {
+				expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
+			});
+			expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe("240");
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+
+			queuedFrame?.(performance.now());
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+			cancelAnimationFrameSpy.mockRestore();
+		}
+	});
 });
