@@ -62,6 +62,7 @@ type harnessProbe struct {
 var doctorHarnesses = []harnessProbe{
 	{Name: "claude-code", BinaryName: "claude", VersionArg: "--version"},
 	{Name: "codex", BinaryName: "codex", VersionArg: "--version"},
+	{Name: "codex-fugu", BinaryName: "codex-fugu", VersionArg: "--version"},
 }
 
 func newDoctorCommand(ctx *commandContext) *cobra.Command {

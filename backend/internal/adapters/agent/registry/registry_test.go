@@ -72,6 +72,18 @@ func TestEveryHarnessReportsAuthStatus(t *testing.T) {
 	}
 }
 
+func TestHarnessedIncludesCodexFugu(t *testing.T) {
+	for _, ha := range Harnessed() {
+		if ha.Harness == "codex-fugu" {
+			if ha.Manifest.Name != "Codex Fugu" {
+				t.Fatalf("codex-fugu manifest name = %q, want Codex Fugu", ha.Manifest.Name)
+			}
+			return
+		}
+	}
+	t.Fatal("Harnessed() missing codex-fugu")
+}
+
 // workspaceFiles returns every regular file under root, relative to root.
 func workspaceFiles(t *testing.T, root string) []string {
 	t.Helper()
