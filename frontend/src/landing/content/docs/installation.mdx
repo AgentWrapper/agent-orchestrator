@@ -8,11 +8,12 @@ import { Tab, Tabs } from "fumadocs-ui/components/tabs";
 import { Step, Steps } from "fumadocs-ui/components/steps";
 import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
 
-This page gets your machine ready to run Agent Orchestrator. By the end, the `ao` command should be on your `PATH`, your source-control CLI should be authenticated, and `ao doctor` should be able to explain what is ready or missing.
+This page gets your machine ready to run Agent Orchestrator. By the end, the desktop app (or the legacy `ao` CLI) should be installed, your source-control CLI should be authenticated, and an agent CLI should be ready to do the coding.
 
 <Callout type="info" title="What AO installs">
-	The published package is `@aoagents/ao`. It provides the global `ao` command and includes the built-in CLI, dashboard,
-	and plugin packages.
+	The recommended install is the **desktop app** from GitHub Releases. It bundles the daemon, dashboard, and plugins,
+	and updates itself. The `@aoagents/ao` npm package is the legacy on-ramp: it ships the `ao` CLI, whose `ao start`
+	fetches and opens the same desktop app. The npm package is frozen and no longer updated.
 </Callout>
 
 ## Prerequisites
@@ -43,17 +44,33 @@ If you plan to use GitLab or Linear, install and authenticate their CLIs or cred
 
 ## Install AO
 
+The recommended way to install AO is the desktop build from GitHub Releases. Download the latest build for your platform, then open it:
+
+| Platform              | Download                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| macOS (Apple silicon) | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)        |
+| macOS (Intel)         | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)          |
+| Windows               | [.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)           |
+| Linux                 | [.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
+
+The desktop app owns the daemon, dashboard, and auto-updates, so a desktop install needs no CLI. Skip ahead to [Authenticate Your Tools](#authenticate-your-tools).
+
+<Callout type="warn" title="npm is the legacy path, no longer recommended">
+	The `@aoagents/ao` npm package is frozen and no longer receives updates. It ships the `ao` CLI for existing users; `ao
+	start` fetches and opens the same desktop build above. Use it only if you already run AO from the CLI:
+</Callout>
+
 <Tabs items={["npm", "pnpm", "yarn", "from source"]}>
 	<Tab value="npm">```bash npm install -g @aoagents/ao ```</Tab>
 	<Tab value="pnpm">```bash pnpm add -g @aoagents/ao ```</Tab>
 	<Tab value="yarn">```bash yarn global add @aoagents/ao ```</Tab>
 	<Tab value="from source">
-		```bash git clone https://github.com/ComposioHQ/agent-orchestrator cd agent-orchestrator pnpm install pnpm build
+		```bash git clone https://github.com/AgentWrapper/agent-orchestrator cd agent-orchestrator pnpm install pnpm build
 		pnpm --filter @aoagents/ao link --global ```
 	</Tab>
 </Tabs>
 
-Confirm the command is available:
+If you installed the CLI, confirm it is available (desktop users can skip this):
 
 ```bash
 ao --version
@@ -83,11 +100,48 @@ The authenticated account must be able to read the repository, create branches, 
 AO launches an agent CLI inside each worker session. Start with the one you already use, then add more later if you want per-project or per-role choices.
 
 <Tabs items={["Claude Code", "Codex", "Cursor", "Aider", "OpenCode"]}>
-	<Tab value="Claude Code">```bash npm install -g @anthropic-ai/claude-code claude ```</Tab>
-	<Tab value="Codex">```bash npm install -g @openai/codex codex ```</Tab>
-	<Tab value="Cursor">```bash curl https://cursor.com/install -fsS | bash agent --help ```</Tab>
-	<Tab value="Aider">```bash pip install aider-install aider-install aider --help ```</Tab>
-	<Tab value="OpenCode">```bash npm install -g opencode-ai opencode --help ```</Tab>
+	<Tab value="Claude Code">
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude
+```
+
+    </Tab>
+    <Tab value="Codex">
+
+```bash
+npm install -g @openai/codex
+codex
+```
+
+    </Tab>
+    <Tab value="Cursor">
+
+```bash
+curl https://cursor.com/install -fsS | bash
+agent --help
+```
+
+    </Tab>
+    <Tab value="Aider">
+
+```bash
+pip install aider-install
+aider-install
+aider --help
+```
+
+    </Tab>
+    <Tab value="OpenCode">
+
+```bash
+npm install -g opencode-ai
+opencode --help
+```
+
+    </Tab>
+
 </Tabs>
 
 </Step>
@@ -95,16 +149,16 @@ AO launches an agent CLI inside each worker session. Start with the one you alre
 
 ### Start AO in a repo
 
-Run `ao start` from a repository you want AO to manage:
+**Desktop app:** open Agent Orchestrator and add the repository you want it to manage. The app starts the daemon, dashboard, and an orchestrator session for the project.
+
+**CLI (legacy):** run `ao start` from a repository you want AO to manage:
 
 ```bash
 cd ~/code/my-repo
 ao start
 ```
 
-If there is no `agent-orchestrator.yaml`, AO creates one. It also starts the dashboard and an orchestrator session for the project.
-
-You can also start from a path or clone from a URL:
+If there is no `agent-orchestrator.yaml`, AO creates one. You can also start from a path or clone from a URL:
 
 ```bash
 ao start ~/code/my-repo

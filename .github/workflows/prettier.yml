@@ -1,17 +1,13 @@
 name: Prettier
 
 # Check-only: reports formatting issues without modifying the branch.
-# The job fails (and annotates unformatted files) when `prettier --check`
-# finds files that are not formatted, but it never writes, commits, or
-# pushes anything back to the PR. Developers run `npx prettier@3 --write .`
+# Runs on pull_request (so fork PRs are checked too) and only checks the
+# files the PR actually changed, so a PR can never go red for unformatted
+# files it did not touch. Developers run `npx prettier@3 --write <files>`
 # locally to fix the reported files.
 
 on:
-  push:
-    branches-ignore:
-      - main
-      - "entire/**"
-      - "worktree-**"
+  pull_request:
 
 jobs:
   format:
@@ -20,6 +16,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the merge-base with the PR base branch exists.
+          fetch-depth: 0
 
-      - name: Check formatting with Prettier
-        run: npx --yes prettier@3 --check .
+      - name: Check formatting of changed files with Prettier
+        run: |
+          git diff --name-only -z --diff-filter=d \
+            "origin/${{ github.base_ref }}...HEAD" \
+            | xargs -0 --no-run-if-empty npx --yes prettier@3 --check --ignore-unknown

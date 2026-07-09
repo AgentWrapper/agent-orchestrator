@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
@@ -14,6 +14,8 @@ import {
 } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { NotificationCenter } from "./NotificationCenter";
+import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -21,6 +23,12 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+
+const isLinux =
+	typeof navigator !== "undefined" &&
+	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
+		.toLowerCase()
+		.includes("linux");
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -84,11 +92,33 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const orchestratorStartupError = useUiStore((state) =>
+		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
+	);
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
+	const visibleSpawnError = spawnError ?? orchestratorStartupError;
+	// The board instance survives project-to-project navigation (same route,
+	// new param), so a spawn failure must not follow the user to another board.
+	useEffect(() => setSpawnError(null), [projectId]);
+	const previousProjectIdRef = useRef(projectId);
+	useEffect(() => {
+		const previousProjectId = previousProjectIdRef.current;
+		if (previousProjectId && previousProjectId !== projectId) {
+			setOrchestratorStartupError(previousProjectId, null);
+		}
+		previousProjectIdRef.current = projectId;
+	}, [projectId, setOrchestratorStartupError]);
+	useEffect(() => {
+		if (projectId && orchestrator && orchestratorStartupError) {
+			setOrchestratorStartupError(projectId, null);
+		}
+	}, [orchestrator, orchestratorStartupError, projectId, setOrchestratorStartupError]);
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -96,6 +126,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
 	const done = byZone.get("done") ?? [];
+	// First-run orientation replaces the empty column shells (only once the
+	// query has resolved, so the welcome never flashes over real data): the
+	// global board teaches the app before any project exists, and a fresh
+	// project board invites the first task instead of showing four zeros.
+	const isLoaded = workspaceQuery.isSuccess;
+	const showWelcome = !projectId && isLoaded && all.length === 0;
+	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Collapsed by default, like agent-orchestrator's done-bar: finished and
 	// killed sessions cost one quiet line under the board until expanded.
 	const [doneExpanded, setDoneExpanded] = useState(false);
@@ -115,14 +152,22 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			});
 			return;
 		}
+		setSpawnError(null);
+		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
 			const sessionId = await spawnOrchestrator(projectId, "board");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			setOrchestratorStartupError(projectId, null);
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
 			});
+		} catch (err) {
+			// Never fail silently: the daemon's message (e.g. a worktree/branch
+			// conflict) is the only actionable signal the user gets.
+			console.error("Failed to spawn orchestrator:", err);
+			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
 		} finally {
 			setIsSpawning(false);
 		}
@@ -150,6 +195,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			{isLinux ? <NotificationCenter /> : null}
+			{visibleSpawnError && !showProjectEmpty && (
+				<span className="dashboard-app-header__kill-error max-w-[320px] truncate" title={visibleSpawnError}>
+					{visibleSpawnError}
+				</span>
+			)}
 			<button
 				aria-label="New task"
 				className="dashboard-app-header__accent-btn"
@@ -177,15 +228,22 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							: "Spawn Orchestrator"}
 			</button>
 		</>
+	) : isLinux ? (
+		<NotificationCenter />
 	) : undefined;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead
-				title="Board"
-				subtitle="Live agent sessions flowing from work → review → merge."
-				actions={actions}
-			/>
+			{/* The first-launch welcome carries its own orientation; a "Board"
+			    header above it would describe a board that isn't rendered
+			    (review feedback on #2432). */}
+			{!showWelcome && (
+				<DashboardSubhead
+					title="Board"
+					subtitle="Live agent sessions flowing from work → review → merge."
+					actions={actions}
+				/>
+			)}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{projectId && health.state !== "ok" ? (
@@ -207,6 +265,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				) : null}
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
+				) : showWelcome ? (
+					<BoardWelcome />
+				) : showProjectEmpty ? (
+					<ProjectBoardEmpty
+						hasOrchestrator={orchestrator !== undefined}
+						isSpawning={isSpawning}
+						isProjectRestarting={isProjectRestarting}
+						onNewTask={() => setIsNewTaskOpen(true)}
+						onOpenOrchestrator={() => void openOrchestrator()}
+						spawnError={visibleSpawnError}
+					/>
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">
 						{COLUMNS.map((col) => (

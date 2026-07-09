@@ -214,6 +214,12 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
 	const showExitedState = state === "exited";
+	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
+	const emptyStateMessage = session
+		? session.kind === "orchestrator"
+			? "Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent."
+			: "Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent."
+		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-terminal">
@@ -238,10 +244,8 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				{showEmptyState && (
 					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-[13px]">
 						<div className="text-center">
-							<div className="text-[var(--term-fg)]">Agent Orchestrator</div>
-							<div className="mt-2 text-[var(--term-dim)]">
-								No session selected. Pick a worker to attach its terminal.
-							</div>
+							<div className="text-[var(--term-fg)]">{emptyStateTitle}</div>
+							<div className="mt-2 text-[var(--term-dim)]">{emptyStateMessage}</div>
 						</div>
 					</div>
 				)}

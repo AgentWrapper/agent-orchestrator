@@ -20,8 +20,8 @@ export default async function DocsSlugPage({ params }: PageProps) {
 			toc={page.data.toc}
 			full={page.data.full}
 			tableOfContent={{
-				style: "clerk",
-				single: false,
+				style: "normal",
+				single: true,
 			}}
 			editOnGithub={{
 				owner: "ComposioHQ",

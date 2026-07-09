@@ -1,5 +1,5 @@
 /*
- * AO Warm Terminal theme for Fumadocs
+ * AO Blue Terminal theme for Fumadocs
  * ====================================
  * CRITICAL: Fumadocs Tailwind utilities use --color-fd-* variables (NOT --fd-*).
  * We must override --color-fd-* to change colors. These are inside layer(fumadocs),
@@ -12,10 +12,15 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-	/* Docs primary accent = AMBER (matches dashboard Orchestrator button + active items) */
-	--docs-accent: var(--color-accent-amber);
-	--docs-accent-dim: var(--color-accent-amber-dim);
-	--docs-accent-border: var(--color-accent-amber-border);
+	/* Docs primary accent = landing blue */
+	--docs-accent: var(--color-accent);
+	--docs-accent-dim: var(--color-accent-dim);
+	--docs-accent-border: var(--color-accent-border);
+
+	/* Code surfaces — must read clearly above the page background. */
+	--docs-code-bg: #eef1f7;
+	--docs-code-border: rgba(28, 28, 31, 0.14);
+	--docs-inline-bg: #eef1f7;
 
 	--color-fd-background: var(--color-bg-base);
 	--color-fd-foreground: var(--color-text-primary);
@@ -25,7 +30,7 @@
 	--color-fd-popover-foreground: var(--color-text-primary);
 	--color-fd-card: var(--color-bg-surface);
 	--color-fd-card-foreground: var(--color-text-primary);
-	--color-fd-border: var(--color-border-default);
+	--color-fd-border: var(--color-border-subtle);
 	--color-fd-primary: var(--docs-accent);
 	--color-fd-primary-foreground: #ffffff;
 	--color-fd-secondary: var(--color-bg-elevated);
@@ -36,9 +41,14 @@
 }
 
 .dark {
-	--docs-accent: var(--color-accent-amber);
-	--docs-accent-dim: var(--color-accent-amber-dim);
-	--docs-accent-border: var(--color-accent-amber-border);
+	--docs-accent: var(--color-accent);
+	--docs-accent-dim: var(--color-accent-dim);
+	--docs-accent-border: var(--color-accent-border);
+
+	/* Lift code well above the pure-black docs background so snippets stand out. */
+	--docs-code-bg: #101216;
+	--docs-code-border: rgba(255, 255, 255, 0.1);
+	--docs-inline-bg: rgba(255, 255, 255, 0.06);
 
 	--color-fd-background: var(--color-bg-base);
 	--color-fd-foreground: var(--color-text-primary);
@@ -48,7 +58,7 @@
 	--color-fd-popover-foreground: var(--color-text-primary);
 	--color-fd-card: var(--color-bg-surface);
 	--color-fd-card-foreground: var(--color-text-primary);
-	--color-fd-border: var(--color-border-default);
+	--color-fd-border: var(--color-border-subtle);
 	--color-fd-primary: var(--docs-accent);
 	--color-fd-primary-foreground: var(--color-bg-base);
 	--color-fd-secondary: var(--color-bg-elevated);
@@ -80,19 +90,19 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   1c. SEMANTIC COLORS — override fumadocs info/warning/error colors to amber
+   1c. SEMANTIC COLORS — override fumadocs info/warning/error colors
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
 	--color-fd-info: var(--docs-accent);
-	--color-fd-warning: var(--color-accent-amber);
+	--color-fd-warning: var(--docs-accent);
 	--color-fd-success: #16a34a;
 	--color-fd-error: #dc2626;
 }
 
 .dark {
 	--color-fd-info: var(--docs-accent);
-	--color-fd-warning: var(--color-accent-amber);
+	--color-fd-warning: var(--docs-accent);
 	--color-fd-success: #22c55e;
 	--color-fd-error: #ef4444;
 }
@@ -100,10 +110,10 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    1c. FORCE WARM LINK COLORS — fumadocs uses text-fd-primary (accent blue)
        on too many elements. Override sidebar, TOC, and breadcrumb links
-       to warm gray. Only prose body links stay accent.
+       to neutral gray. Only prose body links stay accent.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Sidebar links: warm stone gray, not periwinkle (desktop + mobile) */
+/* Sidebar links: neutral gray (desktop + mobile) */
 #nd-sidebar a:not([data-active="true"]),
 #nd-sidebar button,
 #nd-sidebar-mobile a:not([data-active="true"]),
@@ -118,13 +128,15 @@
 	color: var(--color-text-primary) !important;
 }
 
-/* Sidebar active link: amber accent (desktop + mobile) */
+/* Sidebar active link: blue accent (desktop + mobile) */
 #nd-sidebar a[data-active="true"],
 #nd-sidebar-mobile a[data-active="true"] {
 	color: var(--docs-accent) !important;
+	background-color: var(--docs-accent-dim) !important;
+	border-radius: 6px;
 }
 
-/* TOC links: warm gray, not blue */
+/* TOC links: neutral gray by default */
 #nd-toc a,
 #nd-tocnav a {
 	color: var(--color-text-secondary) !important;
@@ -140,7 +152,12 @@
 	color: var(--docs-accent) !important;
 }
 
-/* Breadcrumb: warm gray */
+#nd-toc [class*="bg-fd-primary"] {
+	background-color: var(--docs-accent) !important;
+	box-shadow: 0 0 18px rgba(130, 170, 255, 0.35);
+}
+
+/* Breadcrumb: neutral gray */
 #nd-page nav a,
 #nd-page [aria-label="breadcrumb"] a {
 	color: var(--color-text-secondary) !important;
@@ -161,12 +178,12 @@
 	color: var(--color-text-primary) !important;
 }
 
-/* Step number circles: amber */
+/* Step number circles: blue */
 #nd-docs-layout .fd-step::before {
 	background: var(--docs-accent) !important;
 }
 
-/* Footer prev/next: warm gray, not blue */
+/* Footer prev/next: neutral gray by default */
 #nd-page footer a,
 #nd-page [class*="footer"] a {
 	color: var(--color-text-secondary) !important;
@@ -180,20 +197,34 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   2. TYPOGRAPHY — Geist 13px body, JetBrains Mono code (dashboard match)
+   2. TYPOGRAPHY — readable technical docs, compact chrome
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #nd-docs-layout {
 	font-family:
-		var(--font-geist-sans),
+		var(--font-inter),
 		ui-sans-serif,
 		system-ui,
 		-apple-system,
 		sans-serif;
-	font-size: 13px;
-	letter-spacing: -0.011em;
+	font-size: 16px;
+	line-height: 1.7;
+	letter-spacing: 0;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
+}
+
+#nd-page {
+	font-size: 16px;
+	line-height: 1.7;
+}
+
+#nd-page .prose {
+	color: var(--color-text-secondary);
+	font-size: 16px;
+	line-height: 1.72;
+	letter-spacing: 0;
+	max-width: 70ch;
 }
 
 #nd-docs-layout code,
@@ -202,15 +233,18 @@
 	font-family: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", monospace;
 }
 
-/* Sidebar — smaller text like dashboard */
+/* Sidebar — quiet app chrome, lighter than body typography */
 #nd-sidebar {
-	font-size: 12.5px;
+	font-size: 13px;
+	letter-spacing: 0;
 }
 
-/* TOC — compact */
+/* TOC — quiet secondary rail */
 #nd-toc,
 #nd-tocnav {
-	font-size: 11.5px;
+	font-size: 12px;
+	line-height: 1.6;
+	color: var(--color-text-tertiary);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -220,26 +254,48 @@
 #nd-docs-layout .prose h1 {
 	color: var(--color-text-primary);
 	font-weight: 700;
-	font-size: 1.65em;
-	letter-spacing: -0.02em;
+	font-size: clamp(2.35rem, 4vw, 3.25rem);
+	line-height: 1.08;
+	letter-spacing: 0;
+}
+
+#nd-docs-layout .prose :is(h1, h2, h3, h4, h5, h6)[id] {
+	scroll-margin-top: 88px;
 }
 
 #nd-docs-layout .prose h2 {
 	color: var(--color-text-primary);
-	font-weight: 680;
-	font-size: 1.3em;
-	letter-spacing: -0.015em;
+	font-weight: 700;
+	font-size: clamp(1.65rem, 2.4vw, 2rem);
+	line-height: 1.22;
+	letter-spacing: 0;
 }
 
 #nd-docs-layout .prose h3 {
 	color: var(--color-text-primary);
-	font-weight: 640;
-	font-size: 1.1em;
+	font-weight: 650;
+	font-size: 1.25rem;
+	line-height: 1.32;
+	letter-spacing: 0;
 }
 
 #nd-docs-layout .prose h4 {
 	color: var(--color-text-primary);
 	font-weight: 620;
+	letter-spacing: 0;
+}
+
+#nd-docs-layout .prose p,
+#nd-docs-layout .prose li {
+	color: var(--color-text-secondary);
+	font-size: 1rem;
+	line-height: 1.72;
+	letter-spacing: 0;
+}
+
+#nd-docs-layout .prose strong {
+	color: var(--color-text-primary);
+	font-weight: 650;
 }
 
 /* Heading anchors — strip card border/bg */
@@ -253,7 +309,7 @@
 	color: inherit;
 }
 
-/* Links — amber accent like dashboard */
+/* Links — blue accent like landing */
 #nd-docs-layout .prose a {
 	color: var(--docs-accent);
 	text-decoration: none;
@@ -264,9 +320,11 @@
 	text-underline-offset: 3px;
 }
 
-/* Tables — dashboard style: uppercase headers, dense */
+/* Tables — same calm rhythm as marketing surfaces */
 #nd-docs-layout .prose table {
-	font-size: 12.5px;
+	font-size: 14px;
+	line-height: 1.65;
+	border-color: var(--color-border-subtle);
 }
 
 #nd-docs-layout .prose th {
@@ -276,22 +334,23 @@
 	font-weight: 600;
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
-	padding: 0.5rem 0.75rem;
+	padding: 0.75rem 1rem;
 }
 
 #nd-docs-layout .prose td {
-	padding: 0.5rem 0.75rem;
+	padding: 0.8rem 1rem;
+	border-color: var(--color-border-subtle);
 }
 
 /* Inline code */
 #nd-docs-layout :not(pre) > code {
-	font-size: 0.85em;
-	padding: 0.12em 0.4em;
-	border-radius: 4px;
-	background-color: var(--color-bg-subtle);
-	border: 1px solid var(--color-border-subtle);
+	font-size: 0.84em;
+	padding: 0.18em 0.45em;
+	border-radius: 6px;
+	background-color: var(--docs-inline-bg);
+	border: 1px solid var(--docs-code-border);
 	color: var(--docs-accent);
-	font-weight: 450;
+	font-weight: 520;
 }
 
 /* No underlines in sidebar (desktop + mobile), TOC, or nav */
@@ -322,20 +381,21 @@
 #nd-docs-layout pre,
 pre.shiki,
 pre.shiki code {
-	background-color: var(--color-bg-inset, var(--color-bg-surface)) !important;
+	background-color: var(--docs-code-bg) !important;
 }
 
 #nd-docs-layout pre {
-	font-size: 12px;
-	line-height: 1.7;
+	font-size: 13px;
+	line-height: 1.75;
 	overflow-x: auto;
 	tab-size: 2;
 }
 
 #nd-docs-layout pre:not(figure *) {
-	border-radius: 6px;
-	border: 1px solid var(--color-border-subtle);
-	padding: 0.875rem 1rem;
+	border-radius: 10px;
+	border: 1px solid var(--docs-code-border);
+	padding: 1.25rem 1.4rem;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 #nd-docs-layout figure pre {
@@ -345,21 +405,72 @@ pre.shiki code {
 }
 
 #nd-docs-layout figure.shiki {
-	background-color: var(--color-bg-inset, var(--color-bg-surface)) !important;
-	border-color: var(--color-border-subtle) !important;
-	border-radius: 6px;
+	background-color: var(--docs-code-bg) !important;
+	border: 1px solid var(--docs-code-border) !important;
+	border-radius: 10px;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.dark #nd-docs-layout pre:not(figure *),
+.dark #nd-docs-layout figure.shiki {
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
 }
 
 /* Copy button fade on hover */
 #nd-docs-layout figure[data-rehype-pretty-code-figure] button,
 #nd-docs-layout [data-rehype-pretty-code-figure] button[aria-label] {
 	opacity: 0;
-	transition: opacity 0.15s ease;
+	transition:
+		opacity 0.15s ease,
+		color 0.15s ease,
+		background-color 0.15s ease,
+		border-color 0.15s ease;
 }
 
 #nd-docs-layout figure[data-rehype-pretty-code-figure]:hover button,
-#nd-docs-layout [data-rehype-pretty-code-figure]:hover button[aria-label] {
+#nd-docs-layout [data-rehype-pretty-code-figure]:hover button[aria-label],
+#nd-docs-layout figure[data-rehype-pretty-code-figure] button[data-checked="true"],
+#nd-docs-layout [data-rehype-pretty-code-figure] button[aria-label][data-checked="true"] {
 	opacity: 1;
+}
+
+#nd-docs-layout figure[data-rehype-pretty-code-figure] button[data-checked="true"],
+#nd-docs-layout [data-rehype-pretty-code-figure] button[aria-label][data-checked="true"] {
+	color: var(--docs-accent) !important;
+	background-color: var(--docs-accent-dim) !important;
+}
+
+#nd-docs-layout [role="tablist"] {
+	scrollbar-width: none;
+}
+
+#nd-docs-layout [role="tablist"]::-webkit-scrollbar {
+	display: none;
+}
+
+#nd-docs-layout [role="tab"] {
+	transition:
+		color 0.15s ease,
+		border-color 0.15s ease,
+		background-color 0.15s ease;
+}
+
+#nd-docs-layout [role="tabpanel"] {
+	min-height: 180px;
+	transition: opacity 0.14s ease;
+}
+
+#nd-docs-layout [role="tabpanel"][data-state="active"] {
+	opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	#nd-docs-layout figure[data-rehype-pretty-code-figure] button,
+	#nd-docs-layout [data-rehype-pretty-code-figure] button[aria-label],
+	#nd-docs-layout [role="tab"],
+	#nd-docs-layout [role="tabpanel"] {
+		transition: none;
+	}
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -367,19 +478,20 @@ pre.shiki code {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #nd-docs-layout [data-callout] {
-	border-radius: 6px;
+	border-radius: 8px;
 	border-left-width: 3px;
-	padding: 0.625rem 0.875rem;
-	margin: 1.25rem 0;
-	font-size: 12.5px;
+	padding: 0.875rem 1rem;
+	margin: 1.5rem 0;
+	font-size: 14px;
+	line-height: 1.6;
 }
 
-/* Force info callout to amber (fumadocs uses --color-fd-info internally) */
+/* Force info callout to blue (fumadocs uses --color-fd-info internally) */
 #nd-docs-layout [data-callout][data-type="info"] {
 	--callout-color: var(--docs-accent) !important;
 }
 
-/* Edit on GitHub button — force amber colors */
+/* Edit on GitHub button — force blue colors */
 #nd-docs-layout a[href*="github.com"][href*="/blob/"] {
 	color: var(--color-text-secondary) !important;
 }
@@ -411,24 +523,113 @@ pre.shiki code {
 
 [data-search-dialog] {
 	--color-fd-background: var(--color-bg-elevated);
-	--color-fd-border: var(--color-border-default);
+	--color-fd-border: var(--color-border-subtle);
 	--color-fd-card: var(--color-bg-surface);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   8. DENSITY — tighter spacing to match dashboard
+   8. RHYTHM — docs breathe without becoming a landing page
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #nd-docs-layout .prose > * + * {
-	margin-top: 1em;
+	margin-top: 1.35em;
 }
 
+/* Whitespace-driven section breaks (Notion/Framer style) — no dividing strokes. */
 #nd-docs-layout .prose > h2 {
-	margin-top: 2em;
+	margin-top: 3.25em;
+	margin-bottom: 0.85em;
 }
 
 #nd-docs-layout .prose > h3 {
-	margin-top: 1.5em;
+	margin-top: 2.4em;
+	margin-bottom: 0.6em;
+}
+
+/* Generous, even breathing room around code blocks and callouts. */
+#nd-docs-layout .prose > figure,
+#nd-docs-layout .prose > pre,
+#nd-docs-layout .prose > [data-callout] {
+	margin-top: 1.75em;
+	margin-bottom: 1.75em;
+}
+
+/* Roomier page gutters so the docs read premium and uncramped. */
+#nd-docs-layout #nd-page {
+	padding-top: 1rem;
+}
+
+#nd-docs-layout #nd-page article {
+	padding-block: 1.5rem 4rem;
+}
+
+/* Titled code-block caption — quiet chrome that matches the snippet surface.
+   The outer figure already supplies the border, so the caption only needs a
+   divider beneath it. */
+#nd-docs-layout figure[data-rehype-pretty-code-figure] figcaption {
+	padding: 0.6rem 1.1rem;
+	border-bottom: 1px solid var(--docs-code-border);
+	background: color-mix(in srgb, var(--docs-code-bg) 70%, var(--color-bg-base));
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	letter-spacing: 0.04em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8b. CLEAN AESTHETIC — Notion / Framer feel: soft surfaces, calm interactions
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Link cards (Where To Go Next, etc.) — soft surface with a quiet hover lift. */
+#nd-docs-layout a[data-card] {
+	border: 1px solid var(--color-border-subtle);
+	border-radius: 12px;
+	background: var(--color-fd-card);
+	transition:
+		border-color 0.18s ease,
+		background-color 0.18s ease,
+		transform 0.18s ease,
+		box-shadow 0.18s ease;
+}
+
+#nd-docs-layout a[data-card]:hover {
+	border-color: var(--docs-accent-border);
+	background: color-mix(in srgb, var(--color-fd-card) 88%, var(--docs-accent));
+	transform: translateY(-2px);
+	box-shadow: 0 12px 32px -22px rgba(0, 0, 0, 0.55);
+}
+
+/* Inline prose links — animated underline rather than a static one. */
+#nd-docs-layout .prose a:not([data-card]) {
+	transition: color 0.16s ease;
+}
+
+/* Sidebar + TOC items — smooth, calm hover transitions. */
+#nd-sidebar a,
+#nd-sidebar button,
+#nd-sidebar-mobile a,
+#nd-toc a,
+#nd-tocnav a,
+#nd-page footer a {
+	transition:
+		color 0.16s ease,
+		background-color 0.16s ease !important;
+}
+
+/* Sidebar resting items get a faint hover surface (Notion-like). */
+#nd-sidebar a:not([data-active="true"]):hover,
+#nd-sidebar-mobile a:not([data-active="true"]):hover {
+	background-color: var(--color-bg-subtle) !important;
+	border-radius: 6px;
+}
+
+/* Remove the stray horizontal dividers in the sidebar chrome (the footer
+   "stroke" above the social row, etc.) — keep it clean and whitespace-separated. */
+#nd-sidebar [class*="border-t"],
+#nd-sidebar [class*="border-b"],
+#nd-sidebar hr {
+	border-top-width: 0 !important;
+	border-bottom-width: 0 !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -456,7 +657,7 @@ pre.shiki code {
 	padding: 0.75rem 1.5rem;
 	border-bottom: 1px solid var(--color-border-subtle);
 	background: var(--color-bg-inset);
-	color: var(--color-accent-amber);
+	color: var(--docs-accent);
 	font-family: var(--font-mono);
 	font-size: 0.6875rem;
 	font-weight: 600;
@@ -515,7 +716,7 @@ pre.shiki code {
 }
 
 #nd-docs-layout .docs-missing-primary {
-	background: var(--color-accent-amber);
+	background: var(--docs-accent);
 	color: #1a1918;
 }
 

@@ -129,6 +129,7 @@ const (
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
 	Config      AgentConfig
+	DataDir     string
 	IssueID     string
 	Kind        domain.SessionKind
 	Permissions PermissionMode

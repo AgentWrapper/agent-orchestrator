@@ -62,7 +62,7 @@ func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 
 	_, errOut, err := executeCLI(t, Deps{
-		In:           strings.NewReader(`{"notification_type":"idle_prompt"}`),
+		In:           strings.NewReader(`{"notification_type":"permission_prompt"}`),
 		ProcessAlive: func(int) bool { return true },
 	}, "hooks", "claude-code", "notification")
 	if err != nil {
@@ -73,6 +73,24 @@ func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	}
 	if got := capturedState(t, capture); got != "waiting_input" {
 		t.Errorf("state = %q, want waiting_input", got)
+	}
+}
+
+func TestHooks_IdlePromptReportsIdle(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"sessionId":"ao-7","state":"idle"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"notification_type":"idle_prompt"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "notification")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if got := capturedState(t, capture); got != "idle" {
+		t.Errorf("state = %q, want idle (idle_prompt is not a blocking request)", got)
 	}
 }
 

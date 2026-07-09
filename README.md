@@ -96,50 +96,79 @@ The desktop app is the main control surface: projects on the left, active sessio
 
 AO ships adapters for 23 worker agent harnesses:
 
-<img src="frontend/src/landing/public/docs/logos/claude-code.svg" width="16" valign="middle" /> `claude-code` · <img src="frontend/src/landing/public/docs/logos/codex.svg" width="16" valign="middle" /> `codex` · <img src="frontend/src/landing/public/docs/logos/aider.png" width="16" valign="middle" /> `aider` · <img src="frontend/src/landing/public/docs/logos/opencode.svg" width="16" valign="middle" /> `opencode` · <img src="frontend/src/landing/public/docs/logos/grok.png" width="16" valign="middle" /> `grok` · <img src="frontend/src/landing/public/docs/logos/droid.png" width="16" valign="middle" /> `droid` · `amp` · `agy` · <img src="frontend/src/landing/public/docs/logos/crush.png" width="16" valign="middle" /> `crush` · <img src="frontend/src/landing/public/docs/logos/cursor.svg" width="16" valign="middle" /> `cursor` · <img src="frontend/src/landing/public/docs/logos/qwen.png" width="16" valign="middle" /> `qwen` · <img src="frontend/src/landing/public/docs/logos/copilot.png" width="16" valign="middle" /> `copilot` · <img src="frontend/src/landing/public/docs/logos/goose.png" width="16" valign="middle" /> `goose` · `auggie` · <img src="frontend/src/landing/public/docs/logos/continue.png" width="16" valign="middle" /> `continue` · <img src="frontend/src/landing/public/docs/logos/devin.png" width="16" valign="middle" /> `devin` · `cline` · <img src="frontend/src/landing/public/docs/logos/kimi.png" width="16" valign="middle" /> `kimi` · <img src="frontend/src/landing/public/docs/logos/kiro.png" width="16" valign="middle" /> `kiro` · <img src="frontend/src/landing/public/docs/logos/kilocode.png" width="16" valign="middle" /> `kilocode` · <img src="frontend/src/landing/public/docs/logos/vibe.png" width="16" valign="middle" /> `vibe` · <img src="frontend/src/landing/public/docs/logos/pi.png" width="16" valign="middle" /> `pi` · `autohand`
+<p>
+  <a href="https://ao-agents.com/docs/plugins/agents/claude-code"><img src="frontend/src/landing/public/docs/logos/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents/codex"><img src="frontend/src/landing/public/docs/logos/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents/aider"><img src="frontend/src/landing/public/docs/logos/aider.png" alt="" width="16" height="16" valign="middle" /> <code>aider</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents/opencode"><img src="frontend/src/landing/public/docs/logos/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/grok.png" alt="" width="16" height="16" valign="middle" /> <code>grok</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/droid.png" alt="" width="16" height="16" valign="middle" /> <code>droid</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><code>amp</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><code>agy</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/crush.png" alt="" width="16" height="16" valign="middle" /> <code>crush</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents/cursor"><img src="frontend/src/landing/public/docs/logos/cursor.svg" alt="" width="16" height="16" valign="middle" /> <code>cursor</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/qwen.png" alt="" width="16" height="16" valign="middle" /> <code>qwen</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/copilot.png" alt="" width="16" height="16" valign="middle" /> <code>copilot</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/goose.png" alt="" width="16" height="16" valign="middle" /> <code>goose</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><code>auggie</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/continue.png" alt="" width="16" height="16" valign="middle" /> <code>continue</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/devin.png" alt="" width="16" height="16" valign="middle" /> <code>devin</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><code>cline</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/kimi.png" alt="" width="16" height="16" valign="middle" /> <code>kimi</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/kiro.png" alt="" width="16" height="16" valign="middle" /> <code>kiro</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/kilocode.png" alt="" width="16" height="16" valign="middle" /> <code>kilocode</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/vibe.png" alt="" width="16" height="16" valign="middle" /> <code>vibe</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><img src="frontend/src/landing/public/docs/logos/pi.png" alt="" width="16" height="16" valign="middle" /> <code>pi</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents"><code>autohand</code></a>
+</p>
 
 Reviewer agents are configured separately. The current reviewer harnesses are:
 
-<img src="frontend/src/landing/public/docs/logos/claude-code.svg" width="16" valign="middle" /> `claude-code` · <img src="frontend/src/landing/public/docs/logos/codex.svg" width="16" valign="middle" /> `codex` · <img src="frontend/src/landing/public/docs/logos/opencode.svg" width="16" valign="middle" /> `opencode`
+<p>
+  <a href="https://ao-agents.com/docs/plugins/agents/claude-code"><img src="frontend/src/landing/public/docs/logos/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents/codex"><img src="frontend/src/landing/public/docs/logos/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
+  <a href="https://ao-agents.com/docs/plugins/agents/opencode"><img src="frontend/src/landing/public/docs/logos/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a>
+</p>
 
 **If it runs in a terminal, it runs on Agent Orchestrator.**
 
 ## Install
 
-The fastest path is the same flow used by the installation docs:
+Download the latest desktop build for your platform:
+
+| Platform              | Download                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| macOS (Apple silicon) | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)        |
+| macOS (Intel)         | [.zip](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)          |
+| Windows               | [.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)           |
+| Linux                 | [.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
+
+After installing, open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. See the [installation guide](https://ao-agents.com/docs/installation) for agent CLI setup and troubleshooting.
+
+<details>
+<summary>Install via npm (legacy CLI, no longer recommended)</summary>
+
+The `@aoagents/ao` npm package is frozen and no longer receives updates. It ships the `ao` CLI for existing users; `ao start` fetches and opens the same desktop build linked above. Prefer the desktop download for a fresh setup.
 
 ```bash
 npm install -g @aoagents/ao
 ao start
 ```
 
-Run `ao start` from the repository you want AO to manage. See the [installation guide](https://aoagents.dev/docs/installation) for pnpm, yarn, source installs, agent CLI setup, and troubleshooting.
-
-You can also download the latest desktop build for your platform:
-
-| Platform | Download                                                                                          |
-| -------- | ------------------------------------------------------------------------------------------------- |
-| Windows  | [Setup.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)                   |
-| macOS    | [Agent Orchestrator.dmg](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)      |
-| Linux    | [Agent Orchestrator.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
+</details>
 
 ## Witness AO's Journey on X
 
 <table>
   <tr>
-    <td width="33%" align="center">
+    <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2026329204405723180">
         <img src="screenshots/tweet2.png" height="330" alt="Agent Orchestrator journey screenshot one" />
       </a>
     </td>
-    <td width="37.5%" align="center">
+    <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2025986105485733945">
         <img src="screenshots/tweet1.png" height="330" alt="Agent Orchestrator journey screenshot two" />
-      </a>
-    </td>
-    <td width="29.5%" align="center">
-      <a href="https://x.com/agent_wrapper/status/2024885035774738700">
-        <img src="screenshots/tweet3.png" height="330" alt="Agent Orchestrator journey screenshot three" />
       </a>
     </td>
   </tr>

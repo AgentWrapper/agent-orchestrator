@@ -143,6 +143,14 @@ func TestReviewSubmitUsesSessionFlag(t *testing.T) {
 	}
 }
 
+func TestReviewSubmitTooManyArgsIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "mer-2")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
 func TestReviewSubmitMissingVerdictIsUsageError(t *testing.T) {
 	setConfigEnv(t)
 	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "--run", "run-1")

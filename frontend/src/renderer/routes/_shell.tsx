@@ -1,6 +1,7 @@
-import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef } from "react";
+import { NotificationRuntime } from "../components/NotificationCenter";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -39,21 +40,32 @@ function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
 }
 
+const isLinux =
+	typeof navigator !== "undefined" &&
+	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
+		.toLowerCase()
+		.includes("linux");
+
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
 // the old single <App>, with selection now owned by the router (route params)
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
 	const navigate = useNavigate();
+	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const isSessionRoute =
+		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
+		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 
 	const updateWorkspaces = useCallback(
@@ -69,6 +81,7 @@ function ShellLayout() {
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+			asWorkspace?: boolean;
 		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
@@ -83,6 +96,7 @@ function ShellLayout() {
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,
+					asWorkspace: input.asWorkspace || undefined,
 					config: {
 						worker: { agent: input.workerAgent },
 						orchestrator: { agent: input.orchestratorAgent },
@@ -104,13 +118,16 @@ function ShellLayout() {
 			const workspace: WorkspaceSummary = {
 				id: data.project.id,
 				name: data.project.name,
+				kind: data.project.kind === "workspace" ? "workspace" : "single_repo",
 				path: data.project.path,
+				workspaceRepos: data.project.workspaceRepos,
 				type: "main",
 				orchestratorAgent: input.orchestratorAgent as WorkspaceSummary["orchestratorAgent"],
 				sessions: [],
 			};
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
+			setOrchestratorStartupError(workspace.id, null);
 			try {
 				const sessionId = await spawnOrchestrator(workspace.id, "project_add");
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -121,10 +138,11 @@ function ShellLayout() {
 			} catch (spawnError) {
 				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
-				throw new Error(`Project added, but orchestrator did not start: ${message}`);
+				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
+				setOrchestratorStartupError(workspace.id, startupMessage);
 			}
 		},
-		[navigate, queryClient, updateWorkspaces],
+		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
 	);
 
 	const removeProject = useCallback(
@@ -213,6 +231,7 @@ function ShellLayout() {
 
 	return (
 		<ShellProvider value={{ daemonStatus, createProject }}>
+			<NotificationRuntime />
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the
@@ -232,7 +251,7 @@ function ShellLayout() {
 				>
 					<Sidebar
 						daemonStatus={daemonStatus}
-						underTopbar
+						underTopbar={isLinux ? isSessionRoute : true}
 						onCreateProject={createProject}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}

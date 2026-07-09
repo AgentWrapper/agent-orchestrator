@@ -1,0 +1,33 @@
+{
+	"expo": {
+		"name": "AO",
+		"slug": "ao-mobile",
+		"version": "1.0.0",
+		"orientation": "portrait",
+		"icon": "./assets/icon.png",
+		"userInterfaceStyle": "dark",
+		"backgroundColor": "#0a0b0d",
+		"scheme": "aomobile",
+		"splash": {
+			"image": "./assets/splash-icon.png",
+			"resizeMode": "contain",
+			"backgroundColor": "#0a0b0d"
+		},
+		"ios": {
+			"supportsTablet": true,
+			"bundleIdentifier": "aoagents.ao",
+			"config": { "usesNonExemptEncryption": false }
+		},
+		"android": {
+			"package": "aoagents.ao",
+			"adaptiveIcon": {
+				"backgroundColor": "#0a0b0d",
+				"foregroundImage": "./assets/android-icon-foreground.png"
+			},
+			"predictiveBackGestureEnabled": false
+		},
+		"web": { "favicon": "./assets/favicon.png", "bundler": "metro" },
+		"plugins": ["expo-router", ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]],
+		"extra": { "router": {} }
+	}
+}
