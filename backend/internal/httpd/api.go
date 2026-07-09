@@ -31,6 +31,7 @@ type APIDeps struct {
 	CDC                cdc.Source
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
+	Mobile             *controllers.MobileController
 }
 
 // API owns one controller per resource and is the single Register call the

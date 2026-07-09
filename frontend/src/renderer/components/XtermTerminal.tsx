@@ -169,13 +169,12 @@ type XtermInternal = Terminal & {
 	};
 };
 
-// We never scroll locally (scrollback:0). Instead we synthesize SGR mouse-wheel
-// reports and write them to the pane; tmux (with `mouse on`, set by the runtime
-// adapter) acts on them and scrolls its scrollback via copy-mode. With
-// scrollback:0 xterm would otherwise convert the wheel into cursor-arrow keys
-// (its alt-buffer fallback), which move the agent's cursor rather than scrolling.
-// SGR button 64 = wheel up, 65 = down; reports are 1-based and a single cell is
-// enough for a borderless single pane.
+// For mouse-tracking panes we synthesize SGR mouse-wheel reports and write them
+// to the pane; tmux (with `mouse on`, set by the runtime adapter) acts on them
+// and scrolls its scrollback via copy-mode. Left to itself xterm would convert
+// the wheel into cursor-arrow keys (its alt-buffer fallback), which move the
+// agent's cursor rather than scrolling. SGR button 64 = wheel up, 65 = down;
+// reports are 1-based and a single cell is enough for a borderless single pane.
 const SGR_WHEEL_UP = 64;
 const SGR_WHEEL_DOWN = 65;
 
@@ -258,13 +257,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// background, the way VS Code's terminal does; without it dim colors
 				// render washed out.
 				minimumContrastRatio: 4.5,
-				// The pane PTY runs a full-screen alt-buffer app (tmux attach) that
-				// owns scrollback itself, so xterm's own buffer never accumulates
-				// history (the alt screen doesn't feed scrollback) and wheel events
-				// are forwarded as mouse reports instead of scrolling locally. 0 also
-				// stops FitAddon reserving ~14px on the right for a scrollbar that can
-				// never appear.
-				scrollback: 0,
+				// Alt-buffer panes (tmux attach, mouse-tracking agent TUIs) never feed
+				// this buffer — the alt screen doesn't accumulate scrollback — so this
+				// only matters for normal-buffer panes that print their transcript and
+				// rely on the terminal's scrollback (codex, a plain shell). Keep it > 0
+				// so that history survives to be scrolled locally (see the wheel
+				// handler's normal-buffer branch). The scrollbar itself is hidden in
+				// CSS so FitAddon's ~14px reservation doesn't shift the grid.
+				scrollback: 5000,
 				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
 			});
 		} catch (error) {
@@ -503,23 +503,33 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				wheelAccumPx -= lines * rowHeight;
 			}
 			if (lines === 0) return false;
-			// The SGR wheel path exists to drive tmux/zellij copy-mode on
-			// macOS/Linux. It cannot scroll a full-screen TUI that keeps its own
-			// transcript and only scrolls on PageUp/PageDown (opencode): the report
-			// is either consumed by the mux or handed to an app that ignores it.
-			// Send page keys for such apps (paneScrollsByKeyboard), on Windows
-			// (conpty has no mux, so SGR reaches the app and is ignored), and for
-			// any pane app with mouse tracking fully off.
-			if (
-				callbacksRef.current.paneScrollsByKeyboard ||
-				isWindowsPlatform() ||
-				term.modes.mouseTrackingMode === "none"
-			) {
+			// A full-screen TUI that keeps its own transcript and scrolls it only by
+			// keyboard (opencode) ignores wheel/mouse reports on every platform; route
+			// its wheel to page keys. Kept first so opencode is unaffected by the
+			// buffer-aware paths below.
+			if (callbacksRef.current.paneScrollsByKeyboard) {
 				emitUserInput(pageKeyReport(lines), "wheel");
 				return false;
 			}
-			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
-			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
+			// A normal-buffer pane with mouse tracking off (codex, a plain shell)
+			// prints its transcript and relies on the terminal's own scrollback — the
+			// way it scrolls in a raw terminal. Scroll xterm's viewport locally; the
+			// pane never sees these bytes. Requires scrollback > 0 (see Terminal opts).
+			if (term.modes.mouseTrackingMode === "none" && term.buffer.active.type === "normal") {
+				term.scrollLines(lines);
+				return false;
+			}
+			// Mouse tracking on: the pane (tmux/zellij copy-mode, or any app that
+			// tracks the mouse) acts on SGR wheel reports. On Windows conpty this
+			// reaches the app directly; under a mux it drives copy-mode.
+			if (term.modes.mouseTrackingMode !== "none") {
+				const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
+				emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
+				return false;
+			}
+			// Alt-buffer pane with mouse tracking off and no keyboard-scroll hint:
+			// no scrollback to move locally, so fall back to page keys.
+			emitUserInput(pageKeyReport(lines), "wheel");
 			return false;
 		});
 		const pasteInput = (event: ClipboardEvent) => {

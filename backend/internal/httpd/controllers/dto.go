@@ -545,3 +545,14 @@ type ResolveCommentsResponse struct {
 	OK       bool `json:"ok"`
 	Resolved int  `json:"resolved"`
 }
+
+// MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
+// regenerate endpoints. Password is populated only transiently, on enable and
+// regenerate responses (empty otherwise) — it is never persisted in plaintext.
+type MobileStatusResponse struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Password string `json:"password"`
+	Warning  string `json:"warning"`
+}

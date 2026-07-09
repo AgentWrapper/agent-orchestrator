@@ -120,7 +120,14 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // Agents whose full-screen TUI keeps its own transcript and scrolls it only by
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
 // PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
-const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode"]);
+// kilocode is a fork of opencode and shares its TUI surface, so it scrolls the
+// same way.
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode"]);
+
+// Whether the given provider's TUI is one of the keyboard-scroll agents above.
+export function providerScrollsByKeyboard(provider?: string): boolean {
+	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
+}
 
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
 	if (state === "reattaching") return "Terminal disconnected — reattaching…";
@@ -207,6 +214,12 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
 	const showExitedState = state === "exited";
+	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
+	const emptyStateMessage = session
+		? session.kind === "orchestrator"
+			? "Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent."
+			: "Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent."
+		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-terminal">
@@ -225,16 +238,14 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					fontSize={fontSize}
 					onError={handleInitError}
 					onReady={handleReady}
-					paneScrollsByKeyboard={provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false}
+					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}
 				/>
 				{showEmptyState && (
 					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-[13px]">
 						<div className="text-center">
-							<div className="text-[var(--term-fg)]">Agent Orchestrator</div>
-							<div className="mt-2 text-[var(--term-dim)]">
-								No session selected. Pick a worker to attach its terminal.
-							</div>
+							<div className="text-[var(--term-fg)]">{emptyStateTitle}</div>
+							<div className="mt-2 text-[var(--term-dim)]">{emptyStateMessage}</div>
 						</div>
 					</div>
 				)}

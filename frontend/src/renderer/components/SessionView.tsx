@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
@@ -182,23 +183,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
-					{browserPoppedOut && session ? (
-						<BrowserPanelView
-							active
-							browserView={browserView}
-							onTogglePopOut={setBrowserPoppedOut}
-							poppedOut
-							session={session}
-						/>
-					) : (
-						<CenterPane
-							daemonReady={daemonStatus.state === "ready"}
-							onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
-							session={session}
-							terminalTarget={terminalTarget}
-							theme={theme}
-						/>
-					)}
+					<CenterPane
+						daemonReady={daemonStatus.state === "ready"}
+						onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
+						session={session}
+						terminalTarget={terminalTarget}
+						theme={theme}
+					/>
 				</ResizablePanel>
 				{hasInspector ? (
 					<>
@@ -238,6 +229,25 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
+			{/* Maximized browser: a fixed overlay across the whole app window,
+          portaled to <body> so it escapes the shell layout (covering the
+          sidebar + topbar, not just the session area) and sits outside any
+          `[data-panel]` column, so the native WebContentsView is not clamped
+          and fills the entire window. */}
+			{browserPoppedOut && session
+				? createPortal(
+						<div className="browser-popout-overlay">
+							<BrowserPanelView
+								active
+								browserView={browserView}
+								onTogglePopOut={setBrowserPoppedOut}
+								poppedOut
+								session={session}
+							/>
+						</div>,
+						document.body,
+					)
+				: null}
 		</div>
 	);
 }
