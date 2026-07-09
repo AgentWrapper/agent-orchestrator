@@ -7,7 +7,8 @@ import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
 	sessionIsActive,
-	type SessionActivityState,
+	workerDisplayStatus,
+	type WorkerDisplayStatus,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
