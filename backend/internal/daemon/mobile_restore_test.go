@@ -23,7 +23,8 @@ func (f *fakeLAN) Start(port int) (int, error) {
 func (f *fakeLAN) Stop(ctx context.Context) error { return nil }
 func (f *fakeLAN) Running() bool                  { return f.started }
 func (f *fakeLAN) BoundPort() int                 { return f.port }
-func (f *fakeLAN) SetPasswordHash(hash string)     { f.hash = hash }
+func (f *fakeLAN) SetPasswordHash(hash string)    { f.hash = hash }
+func (f *fakeLAN) PasswordHash() string           { return f.hash }
 
 func TestRestoreEnabledStartsListener(t *testing.T) {
 	dir := t.TempDir()

@@ -64,6 +64,7 @@ type LANController interface {
 	Running() bool
 	BoundPort() int
 	SetPasswordHash(hash string)
+	PasswordHash() string
 }
 
 // BridgeService is the production mobileBridge. It persists state and drives
@@ -95,13 +96,31 @@ func (b *BridgeService) Status() MobileStatusResponse {
 }
 
 func (b *BridgeService) enableWithPassword(pw string) (MobileStatusResponse, error) {
+	// Snapshot state so we can roll back the in-memory side effects (armed hash,
+	// running listener) if we fail before durable state is written. Otherwise a
+	// failed enable would leave a LAN listener open on 0.0.0.0 with the new
+	// password while persisted state/UI still say the bridge is off.
+	prevHash := b.LAN.PasswordHash()
+	wasRunning := b.LAN.Running()
+
 	// The persisted password is plaintext; the auth hash is derived in memory.
 	b.LAN.SetPasswordHash(mobilebridge.HashPassword(pw))
 	port, err := b.LAN.Start(b.DefaultPort)
 	if err != nil {
+		b.LAN.SetPasswordHash(prevHash) // Start failed: undo the hash swap.
 		return MobileStatusResponse{}, err
 	}
 	if err := mobilebridge.Save(b.ConfigPath, mobilebridge.State{Enabled: true, Password: pw, LastPort: port}); err != nil {
+		// Persist failed after the listener came up. Roll back so reality matches
+		// the unchanged persisted state (and the UI's "enable failed"). A rotate on
+		// an already-running listener (wasRunning) keeps serving on the prior hash;
+		// a fresh enable tears the listener back down.
+		if !wasRunning {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = b.LAN.Stop(ctx)
+		}
+		b.LAN.SetPasswordHash(prevHash)
 		return MobileStatusResponse{}, err
 	}
 	return b.Status(), nil

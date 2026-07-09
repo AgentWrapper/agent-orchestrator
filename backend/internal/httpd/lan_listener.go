@@ -100,6 +100,13 @@ func (m *LANManager) SetPasswordHash(hash string) {
 	m.state.setHash(hash)
 }
 
+// PasswordHash returns the current connection password hash. Used to snapshot the
+// prior hash before an enable/regenerate so a failed persist can be rolled back.
+// Satisfies controllers.LANController.
+func (m *LANManager) PasswordHash() string {
+	return m.state.currentHash()
+}
+
 func (m *LANManager) Start(port int) (int, error) {
 	m.mu.Lock()
 	if m.srv != nil {
