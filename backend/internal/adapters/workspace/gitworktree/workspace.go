@@ -42,6 +42,7 @@ var (
 	ErrBranchCheckedOutElsewhere = ports.ErrWorkspaceBranchCheckedOutElsewhere
 	ErrBranchNotFetched          = ports.ErrWorkspaceBranchNotFetched
 	ErrBranchInvalid             = ports.ErrWorkspaceBranchInvalid
+	ErrWorkspaceUnavailable      = ports.ErrWorkspaceUnavailable
 )
 
 // RepoResolver maps a project to the absolute path of its source git repo.
@@ -137,6 +138,13 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 		return ports.WorkspaceInfo{}, err
 	} else if ok {
 		return info, nil
+	}
+	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
+		return ports.WorkspaceInfo{}, err
+	} else if nonEmpty {
+		if err := moveStrayPathAside(path); err != nil {
+			return ports.WorkspaceInfo{}, err
+		}
 	}
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -319,6 +327,19 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	if err != nil {
 		return err
 	}
+	available, err := w.isUsableWorktreePath(ctx, path)
+	if err != nil {
+		return err
+	}
+	if !available {
+		if err := moveUnavailablePathAside(path); err != nil {
+			return err
+		}
+		if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+			return fmt.Errorf("gitworktree: worktree prune: %w", err)
+		}
+		return nil
+	}
 	// --force bypasses git's dirty check; errors here are advisory (the path may
 	// already be gone). We proceed to prune regardless.
 	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
@@ -350,6 +371,13 @@ func (w *Workspace) StashUncommitted(ctx context.Context, info ports.WorkspaceIn
 	}
 	if info.SessionID == "" {
 		return "", errors.New("gitworktree: session id is required for StashUncommitted")
+	}
+	available, err := w.isUsableWorktreePath(ctx, info.Path)
+	if err != nil {
+		return "", err
+	}
+	if !available {
+		return "", fmt.Errorf("%w: %q", ErrWorkspaceUnavailable, info.Path)
 	}
 
 	// Early exit for clean worktrees: nothing to preserve.
@@ -546,7 +574,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		if cfg.Path == "" {
 			return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: refusing to restore %q: path exists and is not a registered worktree", path)
 		}
-		if _, err := moveStrayPathAside(path); err != nil {
+		if err := moveStrayPathAside(path); err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
 	}
@@ -814,6 +842,35 @@ func (w *Workspace) isDirty(ctx context.Context, path string) (bool, error) {
 		return false, fmt.Errorf("gitworktree: status %q: %w", path, err)
 	}
 	return strings.TrimSpace(string(out)) != "", nil
+}
+
+func (w *Workspace) isUsableWorktreePath(ctx context.Context, path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("gitworktree: inspect worktree path %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return false, nil
+	}
+	out, err := w.run(ctx, w.binary, isInsideWorktreeArgs(path)...)
+	if err != nil {
+		if isNotGitWorktreeError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("gitworktree: inspect worktree %q: %w", path, err)
+	}
+	return strings.TrimSpace(string(out)) == "true", nil
+}
+
+func isNotGitWorktreeError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not a git repository") ||
+		strings.Contains(msg, "not a git worktree") ||
+		strings.Contains(msg, "cannot change to") ||
+		strings.Contains(msg, "no such file or directory")
 }
 
 func (w *Workspace) listRecords(ctx context.Context, repo string) ([]worktreeRecord, error) {
@@ -1087,7 +1144,7 @@ func pathExistsNonEmpty(path string) (bool, error) {
 	return false, fmt.Errorf("gitworktree: inspect path %q: %w", path, err)
 }
 
-func moveStrayPathAside(path string) (string, error) {
+func moveStrayPathAside(path string) error {
 	for i := 0; i < 100; i++ {
 		candidate := path + ".stray"
 		if i > 0 {
@@ -1096,14 +1153,31 @@ func moveStrayPathAside(path string) (string, error) {
 		if _, err := os.Lstat(candidate); err == nil {
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("gitworktree: inspect stray destination %q: %w", candidate, err)
+			return fmt.Errorf("gitworktree: inspect stray destination %q: %w", candidate, err)
 		}
 		if err := os.Rename(path, candidate); err != nil {
-			return "", fmt.Errorf("gitworktree: move stray path %q aside to %q: %w", path, candidate, err)
+			return fmt.Errorf("gitworktree: move stray path %q aside to %q: %w", path, candidate, err)
 		}
-		return candidate, nil
+		return nil
 	}
-	return "", fmt.Errorf("gitworktree: move stray path %q aside: no available destination", path)
+	return fmt.Errorf("gitworktree: move stray path %q aside: no available destination", path)
+}
+
+func moveUnavailablePathAside(path string) error {
+	nonEmpty, err := pathExistsNonEmpty(path)
+	if err != nil {
+		return err
+	}
+	if !nonEmpty {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("%w: remove stale path %q: %w", ErrWorkspaceUnavailable, path, err)
+		}
+		return nil
+	}
+	if err := moveStrayPathAside(path); err != nil {
+		return fmt.Errorf("%w: %w", ErrWorkspaceUnavailable, err)
+	}
+	return nil
 }
 
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, error) {
