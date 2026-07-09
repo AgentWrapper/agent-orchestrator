@@ -360,6 +360,36 @@ describe("Sidebar", () => {
 		);
 	});
 
+	it("does not run single-repo Git setup recovery for workspace imports", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi
+			.fn()
+			.mockRejectedValueOnce(
+				codedError("This folder is not a Git repository.", "NOT_A_GIT_REPO"),
+			) as unknown as CreateProjectHandler;
+		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({ path: "/repo/workspace", repos: [] });
+		renderSidebar({ onCreateProject, onInitializeProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a folder/i }));
+		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+		expect(window.confirm).not.toHaveBeenCalledWith(setupConfirmMessage("/repo/workspace"));
+		expect(onInitializeProject).not.toHaveBeenCalled();
+		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
+			path: "/repo/workspace",
+			mode: "workspace",
+		});
+	});
+
 	it("shows detected repository validation when workspace import fails", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;

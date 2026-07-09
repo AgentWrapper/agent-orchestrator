@@ -263,7 +263,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 				<SelectTrigger id={id} className="h-8 w-full text-[13px]" aria-invalid={invalid || undefined}>
 					<SelectValue placeholder={placeholder} />
 				</SelectTrigger>
-				<SelectContent position="popper" align="start" sideOffset={4} className="!max-h-80">
+				<SelectContent position="popper" side="bottom" align="start" sideOffset={4} className="!max-h-80">
 					{options.map((agent) => (
 						<SelectItem
 							key={agent.id}
