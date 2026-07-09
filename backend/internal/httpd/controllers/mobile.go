@@ -18,6 +18,9 @@ type mobileBridge interface {
 	Regenerate() (MobileStatusResponse, error)
 }
 
+// MobileController exposes the Connect Mobile bridge control endpoints
+// (status/enable/disable/regenerate) over the loopback API, delegating to a
+// mobileBridge and stamping the unencrypted-LAN warning onto every response.
 type MobileController struct{ Bridge mobileBridge }
 
 // withWarning stamps the constant unencrypted-LAN warning onto any bridge
@@ -29,9 +32,12 @@ func withWarning(res MobileStatusResponse) MobileStatusResponse {
 	return res
 }
 
+// Status returns the current bridge status.
 func (c *MobileController) Status(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, withWarning(c.Bridge.Status()))
 }
+
+// Enable turns the bridge on and returns the resulting status (with password).
 func (c *MobileController) Enable(w http.ResponseWriter, r *http.Request) {
 	res, err := c.Bridge.Enable()
 	if err != nil {
@@ -40,6 +46,8 @@ func (c *MobileController) Enable(w http.ResponseWriter, r *http.Request) {
 	}
 	envelope.WriteJSON(w, http.StatusOK, withWarning(res))
 }
+
+// Disable turns the bridge off and returns the resulting status.
 func (c *MobileController) Disable(w http.ResponseWriter, r *http.Request) {
 	if err := c.Bridge.Disable(); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "MOBILE_DISABLE", err.Error(), nil)
@@ -47,6 +55,8 @@ func (c *MobileController) Disable(w http.ResponseWriter, r *http.Request) {
 	}
 	envelope.WriteJSON(w, http.StatusOK, withWarning(c.Bridge.Status()))
 }
+
+// Regenerate rotates the connection password and returns the resulting status.
 func (c *MobileController) Regenerate(w http.ResponseWriter, r *http.Request) {
 	res, err := c.Bridge.Regenerate()
 	if err != nil {
@@ -77,6 +87,8 @@ type BridgeService struct {
 
 func (b *BridgeService) currentHost() string { return mobilebridge.AutopickLANIP() }
 
+// Status reports the current bridge state, host, and port. The plaintext
+// password is included only while the bridge is enabled (loopback route only).
 func (b *BridgeService) Status() MobileStatusResponse {
 	st, _ := mobilebridge.Load(b.ConfigPath)
 	enabled := st.Enabled && b.LAN.Running()
@@ -126,6 +138,8 @@ func (b *BridgeService) enableWithPassword(pw string) (MobileStatusResponse, err
 	return b.Status(), nil
 }
 
+// Enable generates a fresh password, arms the auth hash, and starts the LAN
+// listener, persisting the enabled state.
 func (b *BridgeService) Enable() (MobileStatusResponse, error) {
 	pw, err := mobilebridge.GeneratePassword()
 	if err != nil {
@@ -134,6 +148,8 @@ func (b *BridgeService) Enable() (MobileStatusResponse, error) {
 	return b.enableWithPassword(pw)
 }
 
+// Regenerate rotates the connection password on the running listener, which
+// drops the currently paired phone (it authenticates against the new hash).
 func (b *BridgeService) Regenerate() (MobileStatusResponse, error) {
 	pw, err := mobilebridge.GeneratePassword()
 	if err != nil {
@@ -142,6 +158,7 @@ func (b *BridgeService) Regenerate() (MobileStatusResponse, error) {
 	return b.enableWithPassword(pw) // rotate → drops current phone (new hash)
 }
 
+// Disable stops the LAN listener and persists the disabled state.
 func (b *BridgeService) Disable() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

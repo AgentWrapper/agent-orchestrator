@@ -5,9 +5,9 @@ Status: Accepted
 
 ## Context
 
-The daemon binds `127.0.0.1` only. AGENTS.md carries a hard rule: *"The daemon is
+The daemon binds `127.0.0.1` only. AGENTS.md carries a hard rule: _"The daemon is
 a loopback-only sidecar. Do not make the bind host configurable or expose it beyond
-`127.0.0.1`."* That rule keeps the Loopback Listener safe **without authentication**
+`127.0.0.1`."_ That rule keeps the Loopback Listener safe **without authentication**
 — the OS guarantees nothing off-box can reach it.
 
 We want a physical phone to use the app over the local network. The only prior

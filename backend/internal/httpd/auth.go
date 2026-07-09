@@ -16,7 +16,7 @@ import (
 // atomically on regenerate so an in-flight request never sees a torn value.
 type authState struct{ hash atomic.Pointer[string] }
 
-func (a *authState) setHash(h string)     { a.hash.Store(&h) }
+func (a *authState) setHash(h string) { a.hash.Store(&h) }
 func (a *authState) currentHash() string {
 	if p := a.hash.Load(); p != nil {
 		return *p

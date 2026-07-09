@@ -4,7 +4,7 @@
 
 **Goal:** Let a physical phone use Agent Orchestrator over the local network through a second, on-demand, password-authenticated HTTP listener inside the daemon, without changing the existing loopback behaviour.
 
-**Architecture:** The daemon keeps its `127.0.0.1` **Loopback Listener** exactly as today (desktop/CLI, unauthenticated). A new **LAN Listener** binds `0.0.0.0` only while "Connect Mobile" is enabled; it wraps the *same* chi router in one extra `authMiddleware`. Auth is decided by *which socket the request arrived on*, not by inspecting the request. Transport is plaintext HTTP (home-network-only). The phone pairs by scanning a QR that carries only `host`+`port`, then types the rotating 8-char password (shown on the desktop) into a popup; the password rides as `Authorization: Bearer <pw>` on REST and the RN WebSocket.
+**Architecture:** The daemon keeps its `127.0.0.1` **Loopback Listener** exactly as today (desktop/CLI, unauthenticated). A new **LAN Listener** binds `0.0.0.0` only while "Connect Mobile" is enabled; it wraps the _same_ chi router in one extra `authMiddleware`. Auth is decided by _which socket the request arrived on_, not by inspecting the request. Transport is plaintext HTTP (home-network-only). The phone pairs by scanning a QR that carries only `host`+`port`, then types the rotating 8-char password (shown on the desktop) into a popup; the password rides as `Authorization: Bearer <pw>` on REST and the RN WebSocket.
 
 **Tech Stack:** Go (chi, coder/websocket), Electron + React + TanStack Router + shadcn/ui (typed daemon client), Expo/React Native (expo-camera, AsyncStorage).
 
@@ -17,7 +17,7 @@
 - Renderer clones agent-orchestrator's look; build UI from `frontend/src/renderer/components/ui/*` primitives (per DESIGN.md).
 - Password format: **8 chars, alphanumeric `[A-Za-z0-9]`**, generated with `crypto/rand`. Stored **hashed only** (SHA-256 hex is sufficient here — it is a rotating LAN enabler, not a human password; constant-time compare on the hash). Never persist the plaintext to disk.
 - Auth scheme everywhere: `Authorization: Bearer <password>`.
-- Default LAN port **3011**; ephemeral fallback if taken; the QR/status must always report the *actually-bound* port.
+- Default LAN port **3011**; ephemeral fallback if taken; the QR/status must always report the _actually-bound_ port.
 - Lockout: **per-source** (remote IP), threshold **5** failures → cooldown; reset on success. Never global.
 - Config file writes are **atomic** (temp + rename), like `runfile.Write`.
 
@@ -26,7 +26,8 @@
 ## File Structure
 
 **Backend (Go)**
-- `backend/internal/mobilebridge/config.go` — the `~/.ao/mobile/config.json` store (load/save/atomic), password gen + hash, state struct. *New package, no httpd deps.*
+
+- `backend/internal/mobilebridge/config.go` — the `~/.ao/mobile/config.json` store (load/save/atomic), password gen + hash, state struct. _New package, no httpd deps._
 - `backend/internal/mobilebridge/config_test.go`
 - `backend/internal/mobilebridge/netiface.go` — autopick LAN IP + enumerate candidates.
 - `backend/internal/mobilebridge/netiface_test.go`
@@ -42,6 +43,7 @@
 - `backend/internal/daemon/daemon.go` — **modify**: construct `LANManager`, wire it into the mobile controller, restore persisted enabled-state on boot.
 
 **Desktop (Electron/React)**
+
 - `frontend/src/renderer/components/ui/dialog.tsx` — **new** shadcn Dialog primitive (only `sheet.tsx` exists today).
 - `frontend/src/renderer/components/ConnectMobileButton.tsx` — the "Connect Mobile" button that opens the modal.
 - `frontend/src/renderer/components/ConnectMobileModal.tsx` — modal: enable/disable, QR, IP:port, password, regenerate, warning.
@@ -50,6 +52,7 @@
 - `frontend/src/renderer/lib/qr.ts` — tiny QR-SVG generator (self-contained; no external host per CSP) or a vendored generator.
 
 **Mobile (Expo)**
+
 - `packages/mobile/lib/config.ts` — **modify**: add `password` to `ServerConfig`, derive auth header helper.
 - `packages/mobile/lib/api.ts` — **modify**: attach `Authorization` header to every fetch.
 - `packages/mobile/lib/mux.ts` — **modify**: attach `Authorization` header to the WebSocket via RN's `headers` option.
@@ -59,6 +62,7 @@
 - `packages/mobile/package.json` / `app.json` — **modify**: add `expo-camera` + camera permission.
 
 **Docs**
+
 - `AGENTS.md` — **modify**: scope the loopback-only hard rule to the Loopback Listener.
 - `docs/architecture.md` — **modify**: one paragraph on the two-listener model.
 
@@ -69,10 +73,12 @@
 ### Task 1: mobilebridge config store (state + atomic persistence)
 
 **Files:**
+
 - Create: `backend/internal/mobilebridge/config.go`
 - Test: `backend/internal/mobilebridge/config_test.go`
 
 **Interfaces:**
+
 - Produces:
   - `type State struct { Enabled bool `json:"enabled"`; PasswordHash string `json:"passwordHash"`; LastPort int `json:"lastPort"` }`
   - `func Path(dataDir string) string` → `filepath.Join(dataDir, "mobile", "config.json")`
@@ -258,10 +264,12 @@ git commit -m "feat(mobile): mobilebridge config store + rotating password"
 ### Task 2: Autopick LAN IP
 
 **Files:**
+
 - Create: `backend/internal/mobilebridge/netiface.go`
 - Test: `backend/internal/mobilebridge/netiface_test.go`
 
 **Interfaces:**
+
 - Produces:
   - `func PrivateIPv4Candidates(ifaces []net.Interface, addrsOf func(net.Interface) ([]net.Addr, error)) []string` — pure, testable core; returns private, non-loopback, non-link-local IPv4s, skipping down/loopback/VPN(`utun`)/docker interfaces, in a stable preference order.
   - `func AutopickLANIP() string` — wraps the pure core with `net.Interfaces`; returns `""` if none.
@@ -394,10 +402,12 @@ git commit -m "feat(mobile): autopick private LAN IPv4"
 ### Task 3: Bearer auth middleware with per-source lockout
 
 **Files:**
+
 - Create: `backend/internal/httpd/auth.go`
 - Test: `backend/internal/httpd/auth_test.go`
 
 **Interfaces:**
+
 - Consumes: `mobilebridge.PasswordMatches` (Task 1).
 - Produces:
   - `type authState struct { hash atomic.Pointer[string] }` with `func (a *authState) setHash(h string)` and `func (a *authState) currentHash() string`.
@@ -597,10 +607,12 @@ git commit -m "feat(mobile): bearer auth middleware with per-source lockout"
 ### Task 4: LANManager — start/stop a second listener at runtime
 
 **Files:**
+
 - Create: `backend/internal/httpd/lan_listener.go`
 - Test: `backend/internal/httpd/lan_listener_test.go`
 
 **Interfaces:**
+
 - Consumes: `authMiddleware`, `authState`, `newLockout` (Task 3); the shared `http.Handler` router built by `NewRouterWithControl`.
 - Produces:
   - `type LANManager struct { ... }`
@@ -796,11 +808,13 @@ git commit -m "feat(mobile): runtime-controlled LAN listener manager"
 ### Task 5: Mobile control service + DTOs
 
 **Files:**
+
 - Create: `backend/internal/httpd/controllers/mobile.go`
 - Test: `backend/internal/httpd/controllers/mobile_test.go`
 - Modify: `backend/internal/httpd/controllers/dto.go`
 
 **Interfaces:**
+
 - Consumes: `mobilebridge` (Task 1/2), `LANManager` + `authState` (Task 3/4).
 - Produces (DTOs in `dto.go`):
   - `type MobileStatusResponse struct { Enabled bool `json:"enabled"`; Host string `json:"host"`; Port int `json:"port"`; Password string `json:"password"`; Warning string `json:"warning"` }`
@@ -1005,10 +1019,12 @@ git commit -m "feat(mobile): mobile control endpoints + bridge service"
 ### Task 6: Register routes on the LOOPBACK router + regenerate API artifacts
 
 **Files:**
-- Modify: `backend/internal/httpd/router.go` (add `mountMobile` — these control routes live on the loopback router so the *desktop* drives them; the phone never enables/disables itself).
+
+- Modify: `backend/internal/httpd/router.go` (add `mountMobile` — these control routes live on the loopback router so the _desktop_ drives them; the phone never enables/disables itself).
 - Modify: `backend/internal/httpd/apispec/specgen/build.go` (register the 4 operations + `MobileStatusResponse` schema name).
 
 **Interfaces:**
+
 - Consumes: `MobileController` (Task 5).
 - Produces: routes `GET /api/v1/mobile/status`, `POST /api/v1/mobile/enable`, `POST /api/v1/mobile/disable`, `POST /api/v1/mobile/regenerate`, each gated by `localControlRequest` (desktop/loopback only — the phone must not toggle its own access).
 
@@ -1046,11 +1062,13 @@ Expected: FAIL — route not mounted / helper undefined.
 - [ ] **Step 4: Verify + regenerate artifacts**
 
 Run:
+
 ```bash
 cd backend && go test ./internal/httpd/ -run TestMobile -v
 cd .. && npm run api        # regenerate OpenAPI + frontend TS types
 npm run frontend:typecheck
 ```
+
 Expected: tests PASS; `npm run api` updates spec + `frontend/src/api/*` with the new types; typecheck PASS.
 
 - [ ] **Step 5: Commit**
@@ -1065,9 +1083,11 @@ git commit -m "feat(mobile): mount loopback-gated mobile control routes + regen 
 ### Task 7: Wire LANManager into the daemon + restore-on-boot
 
 **Files:**
+
 - Modify: `backend/internal/daemon/daemon.go`
 
 **Interfaces:**
+
 - Consumes: `httpd.NewLANManager`, `controllers.BridgeService`, `mobilebridge.Load/Path`.
 - Produces: a running daemon where (a) the loopback router serves as today, (b) a `LANManager` is constructed over the same handler + a shared `authState`, (c) the mobile controller drives it, (d) on boot, if persisted `State.Enabled` is true, the LAN listener is re-started with the persisted `PasswordHash` (no new password — the paired phone keeps working).
 
@@ -1103,10 +1123,13 @@ Expected: FAIL — `restoreMobileOnBoot`/`fakeLAN` undefined.
 - [ ] **Step 4: Verify end-to-end**
 
 Run:
+
 ```bash
 cd backend && go build ./... && go test ./... && go test -race ./internal/httpd/ ./internal/daemon/ ./internal/mobilebridge/
 ```
+
 Then a manual smoke:
+
 ```bash
 go run ./cmd/ao start &   # daemon up
 curl -s -XPOST localhost:3001/api/v1/mobile/enable | tee /tmp/enable.json   # returns password + port
@@ -1117,6 +1140,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:$PORT/api/v1/sessions 
 curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $PW" http://127.0.0.1:$PORT/api/v1/sessions  # expect 200
 curl -s -XPOST localhost:3001/api/v1/mobile/disable                                         # closes LAN socket
 ```
+
 Expected: build+tests PASS; unauth 401, authed 200; disable closes the port.
 
 - [ ] **Step 5: Commit**
@@ -1133,9 +1157,11 @@ git commit -m "feat(mobile): wire LAN listener into daemon with restore-on-boot"
 ### Task 8: shadcn Dialog primitive
 
 **Files:**
+
 - Create: `frontend/src/renderer/components/ui/dialog.tsx`
 
 **Interfaces:**
+
 - Produces: `Dialog`, `DialogTrigger`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter` — the standard shadcn Radix Dialog wrappers, styled to match the existing `sheet.tsx` tokens (only `sheet.tsx` exists; add `dialog.tsx` beside it).
 
 - [ ] **Step 1:** Copy the canonical shadcn `dialog.tsx` (Radix `@radix-ui/react-dialog`), matching class tokens used in `sheet.tsx`. Confirm `@radix-ui/react-dialog` is already a dep (it backs `sheet.tsx`); if not, add it.
@@ -1152,6 +1178,7 @@ git commit -m "feat(ui): add shadcn dialog primitive"
 ### Task 9: QR generator + Connect Mobile modal
 
 **Files:**
+
 - Create: `frontend/src/renderer/lib/qr.ts` (self-contained QR→SVG string; **no external host** per CSP).
 - Create: `frontend/src/renderer/components/ConnectMobileModal.tsx`
 - Create: `frontend/src/renderer/components/ConnectMobileModal.test.tsx`
@@ -1159,6 +1186,7 @@ git commit -m "feat(ui): add shadcn dialog primitive"
 - Modify: `frontend/src/renderer/components/GlobalSettingsForm.tsx`
 
 **Interfaces:**
+
 - Consumes: generated mobile client types (Task 6) via `api-client.ts`; `Dialog` (Task 8).
 - Produces:
   - `ConnectMobileButton` — a button rendered in `GlobalSettingsForm`; opens the modal.
@@ -1189,13 +1217,17 @@ Expected: FAIL — module not found.
 - [ ] **Step 4: Verify + demo**
 
 Run:
+
 ```bash
 cd frontend && npx vitest run src/renderer/components/ConnectMobileModal.test.tsx && npm run typecheck
 ```
+
 Then, per CLAUDE.md, demo it in-session:
+
 ```bash
 ao preview   # render the settings screen with Connect Mobile in the desktop browser panel
 ```
+
 Expected: test PASS, typecheck PASS, modal renders with QR + password + warning when enabled.
 
 - [ ] **Step 5: Commit**
@@ -1212,11 +1244,13 @@ git commit -m "feat(mobile): desktop Connect Mobile modal with QR, password, war
 ### Task 10: ServerConfig password + auth headers
 
 **Files:**
+
 - Modify: `packages/mobile/lib/config.ts`
 - Modify: `packages/mobile/lib/api.ts`
 - Modify: `packages/mobile/lib/mux.ts`
 
 **Interfaces:**
+
 - Produces:
   - `ServerConfig` gains `password: string`.
   - `function authHeaders(cfg: ServerConfig): Record<string,string>` in `config.ts` → `cfg.password ? { Authorization: `Bearer ${cfg.password}` } : {}`.
@@ -1250,12 +1284,14 @@ git commit -m "feat(mobile): send Authorization bearer on REST + mux"
 ### Task 11: QR scanning + pairing + password popup
 
 **Files:**
+
 - Create: `packages/mobile/lib/pairing.ts`
 - Create: `packages/mobile/app/pair.tsx`
 - Modify: `packages/mobile/app/(tabs)/settings.tsx`
 - Modify: `packages/mobile/package.json`, `packages/mobile/app.json`
 
 **Interfaces:**
+
 - Produces:
   - `function parsePairingPayload(raw: string): { host: string; port: string } | null` in `pairing.ts` — parse `{v,host,port}`, validate `v===1`, coerce `port` to string, reject anything else.
   - `app/pair.tsx` — an `expo-camera` scanner; on scan, `parsePairingPayload` → navigate back to settings with host/port filled.
@@ -1266,7 +1302,10 @@ git commit -m "feat(mobile): send Authorization bearer on REST + mux"
 ```ts
 import { parsePairingPayload } from "./pairing";
 test("parses a valid payload and rejects junk", () => {
-	expect(parsePairingPayload('{"v":1,"host":"192.168.1.42","port":3011}')).toEqual({ host: "192.168.1.42", port: "3011" });
+	expect(parsePairingPayload('{"v":1,"host":"192.168.1.42","port":3011}')).toEqual({
+		host: "192.168.1.42",
+		port: "3011",
+	});
 	expect(parsePairingPayload('{"v":2,"host":"x","port":1}')).toBeNull();
 	expect(parsePairingPayload("not json")).toBeNull();
 	expect(parsePairingPayload('{"host":"x"}')).toBeNull();
@@ -1278,10 +1317,12 @@ test("parses a valid payload and rejects junk", () => {
 - [ ] **Step 4: Verify**
 
 Run:
+
 ```bash
 cd packages/mobile && npm run typecheck
 npx expo prebuild --clean   # regenerate native projects with the camera permission (dev build)
 ```
+
 Then a device smoke: scan the desktop QR, enter the password from the desktop modal, confirm the session list and a terminal load over LAN.
 Expected: typecheck PASS; on-device pairing connects and the terminal streams.
 
@@ -1299,11 +1340,12 @@ git commit -m "feat(mobile): QR scan pairing + password popup"
 ### Task 12: Amend AGENTS.md + architecture note; retire the manual proxy
 
 **Files:**
+
 - Modify: `AGENTS.md`
 - Modify: `docs/architecture.md`
 - Modify: `packages/mobile/scripts/README.md` (mark `ao-phone-proxy.js` superseded by the built-in LAN listener)
 
-- [ ] **Step 1:** In `AGENTS.md`, change the hard rule from *"The daemon is a loopback-only sidecar. Do not make the bind host configurable or expose it beyond `127.0.0.1`."* to scope it to the **Loopback Listener**, and add the LAN Listener's rules:
+- [ ] **Step 1:** In `AGENTS.md`, change the hard rule from _"The daemon is a loopback-only sidecar. Do not make the bind host configurable or expose it beyond `127.0.0.1`."_ to scope it to the **Loopback Listener**, and add the LAN Listener's rules:
 
   > - The daemon's **primary (loopback) listener** stays bound to `127.0.0.1` and unauthenticated; do not change its bind or add auth to it.
   > - A **second, opt-in LAN listener** (Connect Mobile) may bind `0.0.0.0` **only** while enabled, **only** behind the bearer-password `authMiddleware`, serving the app API but never the loopback-gated control routes. Plaintext, home-network-only, by decision in `docs/adr/0001-lan-listener-for-mobile.md`.
@@ -1323,6 +1365,7 @@ git commit -m "docs(mobile): scope loopback-only rule to loopback listener; docu
 ## Self-Review
 
 **Spec coverage** — every decision maps to a task:
+
 - Second LAN listener inside daemon → Tasks 4, 7. Loopback unchanged → enforced by not touching the loopback `Server`; asserted implicitly (existing tests still pass in Task 7 Step 4).
 - On-demand off-by-default + persistence + restore-on-boot → Tasks 1, 5, 7.
 - Single rotating 8-char alnum password, hashed, constant-time → Task 1; rotate drops phone → Task 5 (`Regenerate` → new hash).

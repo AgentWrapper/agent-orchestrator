@@ -18,6 +18,10 @@ func skipInterface(i net.Interface) bool {
 	return false
 }
 
+// PrivateIPv4Candidates returns the private IPv4 addresses of the given
+// interfaces, skipping down/loopback/virtual interfaces (see skipInterface) and
+// non-private, loopback, or link-local addresses. addrsOf is injected so callers
+// (and tests) can supply the per-interface address lookup.
 func PrivateIPv4Candidates(ifaces []net.Interface, addrsOf func(net.Interface) ([]net.Addr, error)) []string {
 	var out []string
 	for _, i := range ifaces {
@@ -48,6 +52,9 @@ func PrivateIPv4Candidates(ifaces []net.Interface, addrsOf func(net.Interface) (
 	return out
 }
 
+// AutopickLANIP returns the first private IPv4 address of a suitable local
+// interface, or "" if none is found. It is a best-effort convenience for
+// surfacing the LAN address the phone should connect to.
 func AutopickLANIP() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {

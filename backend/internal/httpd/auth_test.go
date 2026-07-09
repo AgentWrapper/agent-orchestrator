@@ -69,7 +69,10 @@ func TestAuthLockoutResetsAfterCooldown(t *testing.T) {
 
 func TestAuthRejectsMissingAndWrong(t *testing.T) {
 	h, _ := newAuthUnderTest("secret12", time.Now)
-	for _, tc := range []struct{ name, auth string; want int }{
+	for _, tc := range []struct {
+		name, auth string
+		want       int
+	}{
 		{"missing", "", http.StatusUnauthorized},
 		{"wrong", "Bearer nope", http.StatusUnauthorized},
 		{"right", "Bearer secret12", http.StatusOK},

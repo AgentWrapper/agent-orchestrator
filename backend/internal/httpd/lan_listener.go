@@ -28,6 +28,9 @@ type LANManager struct {
 	bound int
 }
 
+// NewLANManager wraps handler in the LAN control-block and authMiddleware
+// (backed by the shared state) and returns a manager that can start/stop the
+// network-facing listener. Most callers want NewMobileLAN, which owns the state.
 func NewLANManager(handler http.Handler, state *authState, defaultPort int, log *slog.Logger) *LANManager {
 	lock := newLockout(5, time.Minute, time.Now)
 	return &LANManager{
@@ -107,6 +110,9 @@ func (m *LANManager) PasswordHash() string {
 	return m.state.currentHash()
 }
 
+// Start binds the network-facing listener on 0.0.0.0:port (falling back to an
+// ephemeral port if that port is in use) and serves the wrapped handler. It is
+// idempotent: a second call while running returns the already-bound port.
 func (m *LANManager) Start(port int) (int, error) {
 	m.mu.Lock()
 	if m.srv != nil {
@@ -122,6 +128,7 @@ func (m *LANManager) Start(port int) (int, error) {
 			m.mu.Unlock()
 			return 0, fmt.Errorf("bind LAN 0.0.0.0:%d: %w", port, err)
 		}
+		//nolint:gosec // G102: binding all interfaces is the deliberate purpose of the Connect Mobile LAN listener; it runs only while the bridge is enabled and behind authMiddleware.
 		if ln, err = net.Listen("tcp", "0.0.0.0:0"); err != nil {
 			m.mu.Unlock()
 			return 0, fmt.Errorf("bind LAN ephemeral: %w", err)
@@ -129,7 +136,13 @@ func (m *LANManager) Start(port int) (int, error) {
 		m.log.Warn("LAN port in use; bound ephemeral", "wanted", port, "bound", ln.Addr())
 	}
 	m.ln = ln
-	m.bound = ln.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		m.mu.Unlock()
+		_ = ln.Close()
+		return 0, fmt.Errorf("bind LAN: unexpected listener address type %T", ln.Addr())
+	}
+	m.bound = tcpAddr.Port
 	m.srv = &http.Server{Handler: m.handler, ReadHeaderTimeout: 10 * time.Second}
 	srv := m.srv
 	boundPort := m.bound
@@ -143,6 +156,8 @@ func (m *LANManager) Start(port int) (int, error) {
 	return boundPort, nil
 }
 
+// Stop gracefully shuts down the listener (honoring ctx) and clears the bound
+// state. It is a no-op if the listener is not running.
 func (m *LANManager) Stop(ctx context.Context) error {
 	m.mu.Lock()
 	srv := m.srv
@@ -154,12 +169,14 @@ func (m *LANManager) Stop(ctx context.Context) error {
 	return srv.Shutdown(ctx)
 }
 
+// Running reports whether the LAN listener is currently serving.
 func (m *LANManager) Running() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.srv != nil
 }
 
+// BoundPort returns the port the listener is bound to, or 0 when not running.
 func (m *LANManager) BoundPort() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

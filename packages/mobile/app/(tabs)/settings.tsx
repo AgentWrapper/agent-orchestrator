@@ -234,12 +234,7 @@ export default function SettingsScreen() {
 				)}
 			</ScrollView>
 
-			<Modal
-				visible={pwPromptOpen}
-				transparent
-				animationType="fade"
-				onRequestClose={() => setPwPromptOpen(false)}
-			>
+			<Modal visible={pwPromptOpen} transparent animationType="fade" onRequestClose={() => setPwPromptOpen(false)}>
 				<View style={styles.modalBackdrop}>
 					<View style={styles.modalCard}>
 						<Text style={styles.modalTitle}>Enter password</Text>
