@@ -46,6 +46,10 @@ func statusPorcelainArgs(path string) []string {
 	return []string{"-C", path, "status", "--porcelain"}
 }
 
+func isInsideWorktreeArgs(path string) []string {
+	return []string{"-C", path, "rev-parse", "--is-inside-work-tree"}
+}
+
 func worktreeListPorcelainArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "list", "--porcelain"}
 }

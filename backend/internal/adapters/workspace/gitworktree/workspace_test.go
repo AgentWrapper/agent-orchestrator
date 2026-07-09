@@ -35,6 +35,7 @@ func TestCommandArgs(t *testing.T) {
 		{"prune", worktreePruneArgs(repo), []string{"-C", repo, "worktree", "prune"}},
 		{"list", worktreeListPorcelainArgs(repo), []string{"-C", repo, "worktree", "list", "--porcelain"}},
 		{"status", statusPorcelainArgs(path), []string{"-C", path, "status", "--porcelain"}},
+		{"inside worktree", isInsideWorktreeArgs(path), []string{"-C", path, "rev-parse", "--is-inside-work-tree"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -399,6 +400,126 @@ func TestRestoreWithRepoPathMovesStrayPathAside(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(path, "keep.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("original path still has stray file: %v", err)
+	}
+}
+
+func TestCreateMovesUnregisteredNonEmptyPathAside(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	if err := mkdirFile(path, "agent-config.json"); err != nil {
+		t.Fatalf("seed stale path: %v", err)
+	}
+	var addPath string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "rev-parse"):
+			return []byte("commit"), nil
+		case strings.Contains(joined, "worktree add"):
+			if len(args) >= 2 {
+				addPath = args[len(args)-2]
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "proj-2",
+		Kind:      domain.KindOrchestrator,
+		Branch:    "ao/proj-orchestrator",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if addPath != path {
+		t.Fatalf("worktree add path = %q, want %q", addPath, path)
+	}
+	if _, err := os.Stat(filepath.Join(path+".stray", "agent-config.json")); err != nil {
+		t.Fatalf("stale path was not moved aside: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(path, "agent-config.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original stale file still present: %v", err)
+	}
+}
+
+func TestStashUncommittedUnavailablePathReturnsTypedError(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := mkdirFile(path, "agent-config.json"); err != nil {
+		t.Fatalf("seed stale path: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "rev-parse --is-inside-work-tree") {
+			return nil, errors.New("fatal: not a git repository")
+		}
+		t.Fatalf("unexpected git invocation: %v", args)
+		return nil, nil
+	}
+
+	_, err = ws.StashUncommitted(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess"})
+	if !errors.Is(err, ports.ErrWorkspaceUnavailable) {
+		t.Fatalf("StashUncommitted err = %v, want ErrWorkspaceUnavailable", err)
+	}
+}
+
+func TestForceDestroyMovesUnavailablePathAside(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := mkdirFile(path, "agent-config.json"); err != nil {
+		t.Fatalf("seed stale path: %v", err)
+	}
+	var removeCalled bool
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "rev-parse --is-inside-work-tree"):
+			return nil, errors.New("fatal: not a git repository")
+		case strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		case strings.Contains(joined, "worktree remove"):
+			removeCalled = true
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	err = ws.ForceDestroy(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess"})
+	if err != nil {
+		t.Fatalf("ForceDestroy: %v", err)
+	}
+	if removeCalled {
+		t.Fatal("ForceDestroy must not call git worktree remove for an unavailable non-git path")
+	}
+	if _, err := os.Stat(filepath.Join(path+".stray", "agent-config.json")); err != nil {
+		t.Fatalf("stale path was not moved aside: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(path, "agent-config.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original stale file still present: %v", err)
 	}
 }
 

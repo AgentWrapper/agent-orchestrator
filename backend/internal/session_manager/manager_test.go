@@ -2207,6 +2207,56 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 }
 
+func TestRetireForReplacementTreatsUnavailableWorktreeAsRecoverable(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	ws.stashErr = fmt.Errorf("stale path: %w", ports.ErrWorkspaceUnavailable)
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("stale orchestrator must be marked terminated after replacement retirement")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+	if rows := st.worktrees["mer-orch"]; len(rows) != 0 {
+		t.Fatalf("replacement retirement must clear restore markers for stale worktree, got %#v", rows)
+	}
+	wantOrder := []string{
+		"StashUncommitted:mer-orch",
+		"DeleteSessionWorktrees:mer-orch",
+		"ForceDestroy:mer-orch",
+	}
+	next := 0
+	for _, call := range sharedLog {
+		if next < len(wantOrder) && call == wantOrder[next] {
+			next++
+		}
+	}
+	if next != len(wantOrder) {
+		t.Fatalf("stale replacement retire order missing %v in log %v", wantOrder, sharedLog)
+	}
+}
+
 func TestRetireForReplacementWorkspaceProjectCapturesAndReleasesEveryRepo(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	var sharedLog []string

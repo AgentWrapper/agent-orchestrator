@@ -360,7 +360,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<span className="text-[12px] text-success">Saved.</span>
 				)}
 				{replacementError && !mutation.isPending && !mutation.isError && (
-					<span className="text-[12px] text-warning">Orchestrator restart failed: {replacementError}</span>
+					<span className="text-[12px] text-warning">Saved, but orchestrator restart failed: {replacementError}</span>
 				)}
 			</div>
 		</form>
