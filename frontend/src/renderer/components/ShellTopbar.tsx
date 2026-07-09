@@ -195,7 +195,22 @@ export function ShellTopbar() {
 						) : null}
 						{/* Kill control sits beside the orchestrator link for active workers —
 						    moved here from the inspector's Summary "Danger zone". */}
-						{!isOrchestrator && session && sessionIsActive(session) ? <TopbarKillButton session={session} /> : null}
+						{!isOrchestrator && session && sessionIsActive(session) ? (
+							<TopbarKillButton
+								session={session}
+								orchestratorId={orchestrator?.id}
+								onKilled={(workspaceId, orchestratorId) => {
+									if (orchestratorId) {
+										void navigate({
+											to: "/projects/$projectId/sessions/$sessionId",
+											params: { projectId: workspaceId, sessionId: orchestratorId },
+										});
+										return;
+									}
+									void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
+								}}
+							/>
+						) : null}
 						{!isOrchestrator && (
 							<button
 								aria-label="Open orchestrator"
@@ -245,10 +260,16 @@ export function ShellTopbar() {
 // button arms a one-step confirmation before firing POST /sessions/{id}/kill,
 // then invalidates the workspace query so the session drops into the board's
 // terminated group.
-export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
+export function TopbarKillButton({
+	session,
+	orchestratorId,
+	onKilled,
+}: {
+	session: WorkspaceSession;
+	orchestratorId?: string;
+	onKilled: (workspaceId: string, orchestratorId?: string) => void;
+}) {
 	const queryClient = useQueryClient();
-	const navigate = useNavigate();
-	const all = useWorkspaceQuery().data ?? [];
 	const [confirming, setConfirming] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -264,16 +285,7 @@ export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
 			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
 			setConfirming(false);
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			const projectId = session.workspaceId;
-			const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
-			if (orchestrator && projectId) {
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId, sessionId: orchestrator.id },
-				});
-			} else if (projectId) {
-				void navigate({ to: "/projects/$projectId", params: { projectId } });
-			}
+			onKilled(session.workspaceId, orchestratorId);
 		},
 		onError: (e) => {
 			void captureRendererEvent("ao.renderer.session_kill_failed", { project_id: session.workspaceId });
