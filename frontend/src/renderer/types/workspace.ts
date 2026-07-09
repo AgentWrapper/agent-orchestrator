@@ -184,7 +184,7 @@ export type WorkspaceRepoSummary = {
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
-	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
+	"working" | "needs_you" | "in_review" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
@@ -197,6 +197,9 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 			return "ci_failed";
 		case "no_signal":
 			return "no_signal";
+		case "pr_open":
+		case "draft":
+			return "in_review";
 		case "approved":
 		case "mergeable":
 			return "mergeable";
@@ -297,6 +300,7 @@ export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	working: "working",
 	needs_you: "needs you",
+	in_review: "in review",
 	mergeable: "mergeable",
 	ci_failed: "ci failed",
 	no_signal: "no signal",

@@ -87,6 +87,8 @@ describe("workerDisplayStatus", () => {
 		["review_pending", "needs_you"],
 		["ci_failed", "ci_failed"],
 		["no_signal", "no_signal"],
+		["pr_open", "in_review"],
+		["draft", "in_review"],
 		["approved", "mergeable"],
 		["mergeable", "mergeable"],
 		["merged", "done"],
@@ -259,6 +261,7 @@ describe("workerStatusPulses", () => {
 	it("pulses only for working and needs_you", () => {
 		expect(workerStatusPulses("working")).toBe(true);
 		expect(workerStatusPulses("needs_you")).toBe(true);
+		expect(workerStatusPulses("in_review")).toBe(false);
 		expect(workerStatusPulses("mergeable")).toBe(false);
 		expect(workerStatusPulses("no_signal")).toBe(false);
 		expect(workerStatusPulses("done")).toBe(false);
