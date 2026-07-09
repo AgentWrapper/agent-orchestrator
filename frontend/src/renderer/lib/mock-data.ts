@@ -424,7 +424,12 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 18,
 			ci: { state: "pending", failingChecks: [] },
 			review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-			mergeability: { state: "unknown", reasons: ["draft", "ci_pending"], prUrl: "https://github.com/me/pr-kanban-lab/pull/615", conflictFiles: [] },
+			mergeability: {
+				state: "unknown",
+				reasons: ["draft", "ci_pending"],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/615",
+				conflictFiles: [],
+			},
 		}),
 	],
 	"pr-kanban-stack": [
@@ -439,7 +444,12 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 52,
 			ci: { state: "pending", failingChecks: [] },
 			review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-			mergeability: { state: "unknown", reasons: ["draft", "stack_base_pending"], prUrl: "https://github.com/me/pr-kanban-lab/pull/601", conflictFiles: [] },
+			mergeability: {
+				state: "unknown",
+				reasons: ["draft", "stack_base_pending"],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/601",
+				conflictFiles: [],
+			},
 		}),
 		prSummary("pr-kanban-stack", 602, {
 			title: "Settings stack 2/4: project settings layout",
@@ -452,7 +462,12 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 27,
 			ci: { state: "pending", failingChecks: [] },
 			review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-			mergeability: { state: "unknown", reasons: ["ci_pending"], prUrl: "https://github.com/me/pr-kanban-lab/pull/602", conflictFiles: [] },
+			mergeability: {
+				state: "unknown",
+				reasons: ["ci_pending"],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/602",
+				conflictFiles: [],
+			},
 		}),
 		prSummary("pr-kanban-stack", 603, {
 			title: "Settings stack 3/4: global preferences copy",
@@ -465,7 +480,12 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 36,
 			ci: { state: "passing", failingChecks: [] },
 			review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-			mergeability: { state: "mergeable", reasons: ["review_required"], prUrl: "https://github.com/me/pr-kanban-lab/pull/603", conflictFiles: [] },
+			mergeability: {
+				state: "mergeable",
+				reasons: ["review_required"],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/603",
+				conflictFiles: [],
+			},
 		}),
 		prSummary("pr-kanban-stack", 604, {
 			title: "Settings stack 4/4: remove legacy panel chrome",
@@ -478,7 +498,12 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 74,
 			ci: { state: "passing", failingChecks: [] },
 			review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-			mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/me/pr-kanban-lab/pull/604", conflictFiles: [] },
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/604",
+				conflictFiles: [],
+			},
 		}),
 	],
 	"pr-kanban-review": [
@@ -500,13 +525,26 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						count: 3,
 						reviewUrl: "https://github.com/me/pr-kanban-lab/pull/612#pullrequestreview-9001",
 						links: [
-							{ url: "https://github.com/me/pr-kanban-lab/pull/612#discussion_r9001", file: "frontend/src/renderer/components/CommandPalette.tsx", line: 88 },
-							{ url: "https://github.com/me/pr-kanban-lab/pull/612#discussion_r9002", file: "frontend/src/renderer/components/CommandPalette.tsx", line: 134 },
+							{
+								url: "https://github.com/me/pr-kanban-lab/pull/612#discussion_r9001",
+								file: "frontend/src/renderer/components/CommandPalette.tsx",
+								line: 88,
+							},
+							{
+								url: "https://github.com/me/pr-kanban-lab/pull/612#discussion_r9002",
+								file: "frontend/src/renderer/components/CommandPalette.tsx",
+								line: 134,
+							},
 						],
 					},
 				],
 			},
-			mergeability: { state: "blocked", reasons: ["changes_requested"], prUrl: "https://github.com/me/pr-kanban-lab/pull/612", conflictFiles: [] },
+			mergeability: {
+				state: "blocked",
+				reasons: ["changes_requested"],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/612",
+				conflictFiles: [],
+			},
 		}),
 	],
 	"pr-kanban-ci": [
@@ -521,13 +559,33 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			ci: {
 				state: "failing",
 				failingChecks: [
-					{ name: "Playwright / onboarding smoke", status: "failed", conclusion: "failure", url: "https://github.com/me/pr-kanban-lab/actions/runs/611001/job/1" },
-					{ name: "Chromium / NewTaskDialog", status: "failed", conclusion: "timeout", url: "https://github.com/me/pr-kanban-lab/actions/runs/611001/job/2" },
-					{ name: "api contract drift", status: "failed", conclusion: "failure", url: "https://github.com/me/pr-kanban-lab/actions/runs/611001/job/3" },
+					{
+						name: "Playwright / onboarding smoke",
+						status: "failed",
+						conclusion: "failure",
+						url: "https://github.com/me/pr-kanban-lab/actions/runs/611001/job/1",
+					},
+					{
+						name: "Chromium / NewTaskDialog",
+						status: "failed",
+						conclusion: "timeout",
+						url: "https://github.com/me/pr-kanban-lab/actions/runs/611001/job/2",
+					},
+					{
+						name: "api contract drift",
+						status: "failed",
+						conclusion: "failure",
+						url: "https://github.com/me/pr-kanban-lab/actions/runs/611001/job/3",
+					},
 				],
 			},
 			review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-			mergeability: { state: "unstable", reasons: ["ci_failing"], prUrl: "https://github.com/me/pr-kanban-lab/pull/611", conflictFiles: [] },
+			mergeability: {
+				state: "unstable",
+				reasons: ["ci_failing"],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/611",
+				conflictFiles: [],
+			},
 		}),
 	],
 	"pr-kanban-conflict": [
@@ -546,8 +604,14 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 				reasons: ["conflicts"],
 				prUrl: "https://github.com/me/pr-kanban-lab/pull/613",
 				conflictFiles: [
-					{ path: "frontend/src/renderer/components/Sidebar.tsx", url: "https://github.com/me/pr-kanban-lab/pull/613/conflicts#sidebar" },
-					{ path: "frontend/src/renderer/routeTree.gen.ts", url: "https://github.com/me/pr-kanban-lab/pull/613/conflicts#routes" },
+					{
+						path: "frontend/src/renderer/components/Sidebar.tsx",
+						url: "https://github.com/me/pr-kanban-lab/pull/613/conflicts#sidebar",
+					},
+					{
+						path: "frontend/src/renderer/routeTree.gen.ts",
+						url: "https://github.com/me/pr-kanban-lab/pull/613/conflicts#routes",
+					},
 				],
 			},
 		}),
@@ -563,7 +627,12 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 19,
 			ci: { state: "passing", failingChecks: [] },
 			review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-			mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/me/pr-kanban-lab/pull/614", conflictFiles: [] },
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://github.com/me/pr-kanban-lab/pull/614",
+				conflictFiles: [],
+			},
 		}),
 	],
 	"fix-auth-timeouts": [
@@ -704,6 +773,3 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 		}),
 	],
 };
-
-
-

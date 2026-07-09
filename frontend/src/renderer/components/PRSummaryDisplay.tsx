@@ -136,10 +136,7 @@ export function PRSummaryParts({
 						if (link.label === "PR" && link.href === prBrowserUrl(pr)) {
 							return false;
 						}
-						if (
-							part.key === "merge" &&
-							["CI failing", "changes requested", "review required"].includes(link.label)
-						) {
+						if (part.key === "merge" && ["CI failing", "changes requested", "review required"].includes(link.label)) {
 							return false;
 						}
 						return true;
@@ -151,26 +148,38 @@ export function PRSummaryParts({
 				);
 				const chip = statusChipStyles[part.tone] || statusChipStyles.neutral;
 				return (
-					<div key={part.key} className={cn("min-w-0", stacked ? "flex flex-col gap-1.5" : "inline-flex flex-wrap gap-x-1.5 items-center")}>
+					<div
+						key={part.key}
+						className={cn(
+							"min-w-0",
+							stacked ? "flex flex-col gap-1.5" : "inline-flex flex-wrap gap-x-1.5 items-center",
+						)}
+					>
 						<div className="min-w-0 flex items-center gap-1.5 flex-wrap">
 							<div
 								className={cn(
 									"inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[4px] text-[10.5px] font-bold border shadow-sm",
 									chip.bg,
 									chip.text,
-									chip.border
+									chip.border,
 								)}
 							>
 								{chip.icon}
 								<span>
-									<span className="opacity-75 font-normal">{part.label}</span>{" "}
-									<span>{part.status}</span>
+									<span className="opacity-75 font-normal">{part.label}</span> <span>{part.status}</span>
 								</span>
 							</div>
 							{part.summary ? <span className="text-passive text-[11px] font-sans">/ {part.summary}</span> : null}
 						</div>
 						{links.length > 0 || overflowLabel ? (
-							<div className={cn("min-w-0", stacked ? "flex flex-col gap-1 mt-1 pl-3 border-l border-border/50 ml-1.5" : "flex flex-wrap gap-x-1.5 gap-y-1 items-center")}>
+							<div
+								className={cn(
+									"min-w-0",
+									stacked
+										? "flex flex-col gap-1 mt-1 pl-3 border-l border-border/50 ml-1.5"
+										: "flex flex-wrap gap-x-1.5 gap-y-1 items-center",
+								)}
+							>
 								{links.map((link, index) => (
 									<div key={`${part.key}-${index}-${link.label}`} className="flex items-center gap-1.5">
 										{!stacked && index > 0 && <span className="text-passive/40 select-none">/</span>}
@@ -244,5 +253,3 @@ function hasDiffMetadata(pr: SessionPRSummary): boolean {
 function pluralize(noun: string, count: number): string {
 	return count === 1 ? noun : `${noun}s`;
 }
-
-

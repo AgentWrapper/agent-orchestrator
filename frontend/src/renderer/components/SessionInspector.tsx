@@ -239,9 +239,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 				</Badge>
 			</div>
 			{pr.title ? (
-				<div className="text-[14px] font-bold leading-snug text-foreground tracking-tight select-text">
-					{pr.title}
-				</div>
+				<div className="text-[14px] font-bold leading-snug text-foreground tracking-tight select-text">{pr.title}</div>
 			) : null}
 			<PRSummaryMeta className="text-[11px]" pr={pr} showBranch={false} />
 			<div className="border-t border-border/40 my-0.5" />
@@ -385,7 +383,7 @@ function TimelinePill({ label, tone, breathe }: { label: string; tone: string; b
 		<span
 			className={cn(
 				"inline-flex shrink-0 items-center whitespace-nowrap text-[11.5px] font-semibold",
-				breathe && "animate-status-pulse"
+				breathe && "animate-status-pulse",
 			)}
 			style={{
 				color: tone,
@@ -866,4 +864,3 @@ function AgentRow({ session }: { session: WorkspaceSession }) {
 		</div>
 	);
 }
-

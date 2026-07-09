@@ -490,4 +490,3 @@ describe("SessionInspector reviews tab", () => {
 		expect(await screen.findByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 });
-
