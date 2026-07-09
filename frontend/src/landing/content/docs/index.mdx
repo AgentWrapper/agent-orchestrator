@@ -65,12 +65,11 @@ Most users start with the defaults and only edit `agent-orchestrator.yaml` when 
 <PlatformSupport
 	macos="full"
 	linux="full"
-	windows="partial"
+	windows="full"
 	note={
 		<>
-			Windows support is actively improving. Use the process runtime instead of tmux by setting{" "}
-			<code>defaults.runtime: process</code> in <code>agent-orchestrator.yaml</code>. See{" "}
-			<a href="/docs/platforms">Platforms</a> for details.
+			Windows uses the process runtime; tmux and iTerm2 integrations are macOS/Linux-only. See{" "}
+			<a href="/docs/platforms">Platforms</a> for the recommended setup.
 		</>
 	}
 />
