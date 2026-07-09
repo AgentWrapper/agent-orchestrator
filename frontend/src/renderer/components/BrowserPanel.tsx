@@ -16,6 +16,186 @@ type BrowserPanelProps = {
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
 
+export type BrowserAnnotationQueueModel = {
+	status: AnnotationStatus;
+	error: string;
+	queuedCount: number;
+	beginPicking: () => void;
+	cancelPicking: () => void;
+	enqueue: (payload: BrowserAnnotationSubmitPayload) => void;
+	failPicking: (message: string) => void;
+};
+
+export function useBrowserAnnotationQueue({
+	sessionId,
+	sessionStatus,
+	navUrl,
+}: {
+	sessionId?: string;
+	sessionStatus?: WorkspaceSession["status"];
+	navUrl?: string;
+}): BrowserAnnotationQueueModel {
+	const [state, setState] = useState<{ status: AnnotationStatus; error: string; queuedCount: number }>({
+		status: "idle",
+		error: "",
+		queuedCount: 0,
+	});
+	const annotationQueueRef = useRef<BrowserAnnotationSubmitPayload[]>([]);
+	const annotationSendingRef = useRef(false);
+	const annotationWaitingForAgentCycleRef = useRef(false);
+	const annotationWaitAfterCycleRef = useRef(0);
+	const annotationSawAgentWorkingRef = useRef(sessionStatus === "working");
+	const annotationAgentCycleRef = useRef(0);
+	const sessionReadyForAnnotationRef = useRef(sessionStatus === "needs_input");
+	const sessionIdRef = useRef(sessionId ?? "");
+	const generationRef = useRef(0);
+
+	const resetQueue = useCallback(() => {
+		generationRef.current += 1;
+		annotationQueueRef.current = [];
+		annotationSendingRef.current = false;
+		annotationWaitingForAgentCycleRef.current = false;
+		annotationWaitAfterCycleRef.current = annotationAgentCycleRef.current;
+		setState({ status: "idle", error: "", queuedCount: 0 });
+	}, []);
+
+	const drainAnnotationQueue = useCallback(() => {
+		if (
+			annotationSendingRef.current ||
+			!sessionIdRef.current ||
+			!sessionReadyForAnnotationRef.current ||
+			annotationWaitingForAgentCycleRef.current
+		) {
+			return;
+		}
+
+		const payload = annotationQueueRef.current.shift();
+		setState((current) => ({ ...current, queuedCount: annotationQueueRef.current.length }));
+		if (!payload) return;
+
+		annotationSendingRef.current = true;
+		const sendGeneration = generationRef.current;
+		const sendSessionId = sessionIdRef.current;
+		const sendCycle = annotationAgentCycleRef.current;
+		setState({ status: "sending", error: "", queuedCount: annotationQueueRef.current.length });
+
+		void (async () => {
+			let sent = false;
+			try {
+				const message = formatBrowserAnnotationMessage(payload);
+				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+					params: { path: { sessionId: sendSessionId } },
+					body: { message },
+				});
+				if (error) {
+					if (sendGeneration === generationRef.current && sendSessionId === sessionIdRef.current) {
+						setState({
+							status: "error",
+							error: apiErrorMessage(error, "Unable to send annotation."),
+							queuedCount: annotationQueueRef.current.length,
+						});
+					}
+					return;
+				}
+				sent = true;
+			} catch (error) {
+				if (sendGeneration === generationRef.current && sendSessionId === sessionIdRef.current) {
+					setState({
+						status: "error",
+						error: apiErrorMessage(error, "Unable to send annotation."),
+						queuedCount: annotationQueueRef.current.length,
+					});
+				}
+			} finally {
+				if (sendGeneration !== generationRef.current || sendSessionId !== sessionIdRef.current) return;
+				annotationSendingRef.current = false;
+				if (!sent) return;
+
+				annotationWaitingForAgentCycleRef.current = true;
+				annotationWaitAfterCycleRef.current = sendCycle;
+				if (
+					sessionReadyForAnnotationRef.current &&
+					annotationAgentCycleRef.current > annotationWaitAfterCycleRef.current
+				) {
+					annotationWaitingForAgentCycleRef.current = false;
+				}
+
+				const queuedCount = annotationQueueRef.current.length;
+				setState({ status: queuedCount > 0 ? "queued" : "sent", error: "", queuedCount });
+				if (!annotationWaitingForAgentCycleRef.current && queuedCount > 0) drainAnnotationQueue();
+			}
+		})();
+	}, []);
+
+	useEffect(() => {
+		sessionIdRef.current = sessionId ?? "";
+		annotationAgentCycleRef.current = 0;
+		resetQueue();
+	}, [resetQueue, sessionId]);
+
+	useEffect(() => {
+		if (navUrl) return;
+		resetQueue();
+	}, [navUrl, resetQueue]);
+
+	useEffect(() => {
+		const nextWorking = sessionStatus === "working";
+		const nextReady = sessionStatus === "needs_input";
+		sessionReadyForAnnotationRef.current = nextReady;
+
+		if (nextWorking) {
+			annotationSawAgentWorkingRef.current = true;
+			return;
+		}
+
+		if (!nextReady) return;
+		if (annotationSawAgentWorkingRef.current) {
+			annotationAgentCycleRef.current += 1;
+			annotationSawAgentWorkingRef.current = false;
+		}
+		if (annotationWaitingForAgentCycleRef.current) {
+			if (annotationAgentCycleRef.current <= annotationWaitAfterCycleRef.current) return;
+			annotationWaitingForAgentCycleRef.current = false;
+		}
+		drainAnnotationQueue();
+	}, [drainAnnotationQueue, sessionStatus]);
+
+	const beginPicking = useCallback(() => {
+		setState((current) => ({ ...current, status: "picking", error: "" }));
+	}, []);
+
+	const cancelPicking = useCallback(() => {
+		setState((current) => ({
+			status: annotationQueueRef.current.length > 0 ? "queued" : current.status === "sending" ? "sending" : "idle",
+			error: "",
+			queuedCount: annotationQueueRef.current.length,
+		}));
+	}, []);
+
+	const failPicking = useCallback((message: string) => {
+		setState({ status: "error", error: message, queuedCount: annotationQueueRef.current.length });
+	}, []);
+
+	const enqueue = useCallback(
+		(payload: BrowserAnnotationSubmitPayload) => {
+			annotationQueueRef.current.push(payload);
+			setState({ status: "queued", error: "", queuedCount: annotationQueueRef.current.length });
+			drainAnnotationQueue();
+		},
+		[drainAnnotationQueue],
+	);
+
+	return {
+		status: state.status,
+		error: state.error,
+		queuedCount: state.queuedCount,
+		beginPicking,
+		cancelPicking,
+		enqueue,
+		failPicking,
+	};
+}
+
 export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
 	const browserView = useBrowserView({
 		sessionId: session.id,
@@ -24,9 +204,15 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
 	});
+	const annotationQueue = useBrowserAnnotationQueue({
+		sessionId: session.id,
+		sessionStatus: session.status,
+		navUrl: browserView.navState.url,
+	});
 	return (
 		<BrowserPanelView
 			active={active}
+			annotationQueue={annotationQueue}
 			browserView={browserView}
 			onTogglePopOut={onTogglePopOut}
 			poppedOut={poppedOut}
@@ -40,19 +226,12 @@ export function BrowserPanelView({
 	poppedOut,
 	onTogglePopOut,
 	browserView,
-}: BrowserPanelProps & { browserView: BrowserViewModel }) {
+	annotationQueue,
+}: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
 	const { viewId, navState, slotRef, navigate, goBack, goForward, reload, stop, annotationMode, setAnnotationMode } =
 		browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
-	const [annotationStatus, setAnnotationStatus] = useState<AnnotationStatus>("idle");
-	const [annotationError, setAnnotationError] = useState("");
-	const [annotationQueuedCount, setAnnotationQueuedCount] = useState(0);
-	const annotationQueueRef = useRef<BrowserAnnotationSubmitPayload[]>([]);
-	const annotationSendingRef = useRef(false);
-	const annotationWaitingForAgentCycleRef = useRef(false);
-	const annotationSawAgentWorkingRef = useRef(false);
-	const sessionBusyRef = useRef(session.status === "working");
-	const sessionReadyForAnnotationRef = useRef(session.status === "needs_input");
+	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, status } = annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
 	const sessionBusy = session.status === "working";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
@@ -62,118 +241,19 @@ export function BrowserPanelView({
 	}, [navState.url]);
 
 	useEffect(() => {
-		if (navState.url) return;
-		annotationQueueRef.current = [];
-		annotationWaitingForAgentCycleRef.current = false;
-		annotationSawAgentWorkingRef.current = false;
-		setAnnotationQueuedCount(0);
-		setAnnotationStatus("idle");
-		setAnnotationError("");
-	}, [navState.url]);
-
-	const setQueuedStatus = useCallback(() => {
-		const count = annotationQueueRef.current.length;
-		setAnnotationQueuedCount(count);
-		if (count > 0) setAnnotationStatus("queued");
-	}, []);
-
-	const drainAnnotationQueue = useCallback(() => {
-		if (
-			annotationSendingRef.current ||
-			!sessionReadyForAnnotationRef.current ||
-			annotationWaitingForAgentCycleRef.current
-		) {
-			return;
-		}
-
-		const payload = annotationQueueRef.current.shift();
-		setAnnotationQueuedCount(annotationQueueRef.current.length);
-		if (!payload) return;
-
-		annotationSendingRef.current = true;
-		setAnnotationStatus("sending");
-		setAnnotationError("");
-
-		void (async () => {
-			let sent = false;
-			try {
-				const message = formatBrowserAnnotationMessage(payload);
-				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
-					params: { path: { sessionId: session.id } },
-					body: { message },
-				});
-				if (error) {
-					setAnnotationStatus("error");
-					setAnnotationError(apiErrorMessage(error, "Unable to send annotation."));
-					return;
-				}
-				sent = true;
-			} catch (error) {
-				setAnnotationStatus("error");
-				setAnnotationError(apiErrorMessage(error, "Unable to send annotation."));
-			} finally {
-				annotationSendingRef.current = false;
-				setAnnotationQueuedCount(annotationQueueRef.current.length);
-				if (!sent) return;
-
-				if (annotationQueueRef.current.length > 0) {
-					annotationWaitingForAgentCycleRef.current = true;
-					annotationSawAgentWorkingRef.current = sessionBusyRef.current;
-					setAnnotationStatus("queued");
-					return;
-				}
-
-				setAnnotationStatus("sent");
-			}
-		})();
-	}, [session.id]);
-
-	useEffect(() => {
-		const nextBusy = session.status === "working";
-		const nextReady = session.status === "needs_input";
-		sessionBusyRef.current = nextBusy;
-		sessionReadyForAnnotationRef.current = nextReady;
-		if (nextBusy) {
-			if (annotationWaitingForAgentCycleRef.current) {
-				annotationSawAgentWorkingRef.current = true;
-			}
-			return;
-		}
-		if (!nextReady) return;
-		if (annotationWaitingForAgentCycleRef.current) {
-			if (!annotationSawAgentWorkingRef.current) return;
-			annotationWaitingForAgentCycleRef.current = false;
-			annotationSawAgentWorkingRef.current = false;
-		}
-		drainAnnotationQueue();
-	}, [drainAnnotationQueue, session.status]);
-
-	const enqueueAnnotation = useCallback(
-		(payload: BrowserAnnotationSubmitPayload) => {
-			annotationQueueRef.current.push(payload);
-			setAnnotationError("");
-			setQueuedStatus();
-			drainAnnotationQueue();
-		},
-		[drainAnnotationQueue, setQueuedStatus],
-	);
-
-	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
 			if (payload.viewId !== viewId) return;
-			enqueueAnnotation(payload);
+			enqueue(payload);
 		});
 		const offCancel = window.ao?.browser.onAnnotationCancel((payload) => {
 			if (payload.viewId !== viewId) return;
-			setQueuedStatus();
-			if (!annotationSendingRef.current && annotationQueueRef.current.length === 0) setAnnotationStatus("idle");
-			setAnnotationError("");
+			cancelPicking();
 		});
 		return () => {
 			offSubmit?.();
 			offCancel?.();
 		};
-	}, [enqueueAnnotation, setQueuedStatus, viewId]);
+	}, [cancelPicking, enqueue, viewId]);
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -182,31 +262,33 @@ export function BrowserPanelView({
 	};
 
 	const toggleAnnotationMode = async () => {
-		if (!canAnnotate || annotationStatus === "sending") return;
-		const next = !(annotationMode || annotationStatus === "picking");
-		setAnnotationError("");
+		if (!canAnnotate || status === "sending") return;
+		const next = !(annotationMode || status === "picking");
 		try {
 			await setAnnotationMode(next);
-			setAnnotationStatus(next ? "picking" : "idle");
+			if (next) {
+				beginPicking();
+			} else {
+				cancelPicking();
+			}
 		} catch (error) {
-			setAnnotationStatus("error");
-			setAnnotationError(error instanceof Error ? error.message : "Unable to start annotation.");
+			failPicking(error instanceof Error ? error.message : "Unable to start annotation.");
 		}
 	};
 
 	const annotationStatusLabel =
-		annotationStatus === "picking"
+		status === "picking"
 			? "Pick element"
-			: annotationStatus === "queued"
-				? annotationQueuedCount > 1
-					? `Queued (${annotationQueuedCount})`
+			: status === "queued"
+				? queuedCount > 1
+					? `Queued (${queuedCount})`
 					: "Queued"
-				: annotationStatus === "sending"
+				: status === "sending"
 					? "Sending"
-					: annotationStatus === "sent"
+					: status === "sent"
 						? "Sent"
-						: annotationStatus === "error"
-							? annotationError
+						: status === "error"
+							? error
 							: "";
 
 	return (
@@ -246,10 +328,10 @@ export function BrowserPanelView({
 					)}
 				</Button>
 				<Button
-					aria-label={annotationMode || annotationStatus === "picking" ? "Cancel annotation" : "Annotate page"}
-					aria-pressed={annotationMode || annotationStatus === "picking"}
+					aria-label={annotationMode || status === "picking" ? "Cancel annotation" : "Annotate page"}
+					aria-pressed={annotationMode || status === "picking"}
 					className="browser-panel__annotate-btn"
-					disabled={!canAnnotate || annotationStatus === "sending"}
+					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
 					title="Annotate page"
@@ -261,7 +343,7 @@ export function BrowserPanelView({
 				{annotationStatusLabel ? (
 					<span
 						className={
-							annotationStatus === "error"
+							status === "error"
 								? "browser-panel__annotation-status browser-panel__annotation-status--error"
 								: "browser-panel__annotation-status"
 						}

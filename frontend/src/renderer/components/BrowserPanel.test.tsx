@@ -1,8 +1,8 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BrowserPanel } from "./BrowserPanel";
-import type { BrowserNavState } from "../hooks/useBrowserView";
+import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
+import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 
@@ -64,6 +64,54 @@ const session: WorkspaceSession = {
 	updatedAt: "2026-06-15T00:00:00Z",
 	prs: [],
 };
+
+function annotationPayload(instruction: string): BrowserAnnotationSubmitPayload {
+	return {
+		viewId: "42:sess-1",
+		instruction,
+		context: {
+			url: "http://localhost:5173/",
+			tag: "button",
+			classes: [],
+			selector: "button",
+			rect: { x: 0, y: 0, width: 80, height: 30 },
+			nearbyText: [],
+			computedStyle: {},
+		},
+	};
+}
+
+function PersistentBrowserPanelView({
+	currentSession,
+	visible,
+}: {
+	currentSession: WorkspaceSession;
+	visible: boolean;
+}) {
+	const browserView = useBrowserView({
+		sessionId: currentSession.id,
+		active: true,
+		poppedOut: false,
+		previewUrl: currentSession.previewUrl,
+		previewRevision: currentSession.previewRevision,
+	});
+	const annotationQueue = useBrowserAnnotationQueue({
+		sessionId: currentSession.id,
+		sessionStatus: currentSession.status,
+		navUrl: browserView.navState.url,
+	});
+	if (!visible) return null;
+	return (
+		<BrowserPanelView
+			active
+			annotationQueue={annotationQueue}
+			browserView={browserView}
+			onTogglePopOut={() => undefined}
+			poppedOut={false}
+			session={currentSession}
+		/>
+	);
+}
 
 describe("BrowserPanel", () => {
 	const annotationSubmitListeners = new Set<(payload: BrowserAnnotationSubmitPayload) => void>();
@@ -230,6 +278,41 @@ describe("BrowserPanel", () => {
 		expect(body.message.length).toBeLessThanOrEqual(4096);
 	});
 
+	it("waits for the agent turn cycle before sending a follow-up annotation", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button blue.")));
+		});
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button green.")));
+		});
+
+		expect(screen.getByText("Queued")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		rerender(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "working" }}
+			/>,
+		);
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(2);
+		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this button green.");
+	});
+
 	it("queues annotation submissions while one is being sent", async () => {
 		let resolvePost: (value: unknown) => void = () => undefined;
 		postMock
@@ -289,6 +372,43 @@ describe("BrowserPanel", () => {
 		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect(postMock).toHaveBeenCalledTimes(2);
+		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
+	});
+
+	it("preserves queued annotations while the BrowserPanelView is unmounted", async () => {
+		let resolvePost: (value: unknown) => void = () => undefined;
+		postMock
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolvePost = resolve;
+				}),
+			)
+			.mockResolvedValueOnce({ data: {} });
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		const { rerender } = render(<PersistentBrowserPanelView currentSession={session} visible />);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => {
+				listener(annotationPayload("Make this button blue."));
+				listener(annotationPayload("Make this heading shorter."));
+			});
+		});
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		await act(async () => {
+			resolvePost({ data: {} });
+		});
+		expect(screen.getByText("Queued")).toBeInTheDocument();
+
+		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
+		rerender(<PersistentBrowserPanelView currentSession={{ ...session, status: "working" }} visible={false} />);
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+
+		rerender(<PersistentBrowserPanelView currentSession={session} visible />);
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
 	});
 
