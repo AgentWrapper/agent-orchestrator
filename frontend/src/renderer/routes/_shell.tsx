@@ -17,7 +17,8 @@ import { ShellProvider } from "../lib/shell-context";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
-import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
+import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
+import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
@@ -31,10 +32,6 @@ export const Route = createFileRoute("/_shell")({
 	},
 	component: ShellLayout,
 });
-
-function systemTheme(): Theme {
-	return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
 
 function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
@@ -189,8 +186,7 @@ function ShellLayout() {
 	);
 
 	useEffect(() => {
-		document.documentElement.dataset.theme = theme;
-		document.documentElement.style.colorScheme = theme;
+		applyDocumentTheme(theme);
 	}, [theme]);
 
 	useEffect(() => {

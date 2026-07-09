@@ -7,7 +7,8 @@
  * Design system — see DESIGN_TOKENS.md. emdash-matched: flat near-black
  * neutral ramp, hairline borders, system font, refined-blue accent (not emdash's
  * jade). Dark is primary (:root); light is the supported override
- * (:root[data-theme="light"]). The Zustand theme toggle sets data-theme on <html>.
+ * (:root[data-theme="light"]). apply-initial-theme runs before CSS load; the
+ * Zustand theme toggle updates data-theme on <html>.
  */
 @theme inline {
 	--font-sans: var(--font-family-base);

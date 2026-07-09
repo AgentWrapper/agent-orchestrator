@@ -316,7 +316,7 @@
 	--font-mono: var(--font-family-mono);
 }
 
-/* Light theme — set via data-theme (index.html boot script + Zustand toggle). */
+/* Light theme — set via data-theme (apply-initial-theme + Zustand toggle). */
 
 :root[data-theme="light"] {
 	color-scheme: light;
