@@ -9,7 +9,19 @@ const (
 	ProjectKindWorkspace ProjectKind = "workspace"
 	// RootWorkspaceRepoName is the reserved repo_name used for the parent root repo.
 	RootWorkspaceRepoName = "__root__"
+	// DefaultProjectPrefixLength is the display and infrastructure fallback
+	// prefix length derived from a project ID.
+	DefaultProjectPrefixLength = 12
 )
+
+// DefaultProjectPrefix returns the project-ID-derived prefix used when no
+// explicit sessionPrefix applies.
+func DefaultProjectPrefix(id string) string {
+	if len(id) <= DefaultProjectPrefixLength {
+		return id
+	}
+	return id[:DefaultProjectPrefixLength]
+}
 
 // ProjectKind describes how a registered project materialises session workspaces.
 type ProjectKind string

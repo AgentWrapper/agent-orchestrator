@@ -68,15 +68,6 @@ func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domai
 	return out, nil
 }
 
-func (f *fakeStore) HasActiveOrchestrator(_ context.Context, p domain.ProjectID) (bool, error) {
-	for _, r := range f.sessions {
-		if r.ProjectID == p && r.Kind == domain.KindOrchestrator && !r.IsTerminated {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (f *fakeStore) ListAllSessions(_ context.Context) ([]domain.SessionRecord, error) {
 	out := make([]domain.SessionRecord, 0, len(f.sessions))
 	for _, r := range f.sessions {
@@ -385,37 +376,6 @@ func TestSpawnOrchestratorCleanRetiresActiveOrchestratorsBeforeSpawn(t *testing.
 	}
 	if len(fc.killed) != 0 {
 		t.Fatalf("interactive Kill must not be used for replacement: killed=%v", fc.killed)
-	}
-}
-
-// TestSpawnOrchestratorBranchMismatchSurfacesActionableError guards #113: when a
-// stranded state already exists (the newly spawned orchestrator lands on the
-// old prefix-derived branch while config expects the new one), verification must
-// fail with a typed, actionable operator error — not an opaque 500.
-func TestSpawnOrchestratorBranchMismatchSurfacesActionableError(t *testing.T) {
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{
-		ID:     "mer",
-		Config: domain.ProjectConfig{SessionPrefix: "lb"},
-	}
-	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
-		ID:        "lb-20",
-		ProjectID: "mer",
-		Kind:      domain.KindOrchestrator,
-		Metadata:  domain.SessionMetadata{Branch: "ao/learn-breakt-orchestrator"},
-	}}
-	svc := &Service{manager: fc, store: st}
-
-	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
-	if err == nil {
-		t.Fatal("expected a branch-mismatch verification error")
-	}
-	var apiErr *apierr.Error
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("err = %v, want a typed *apierr.Error", err)
-	}
-	if apiErr.Code != "ORCHESTRATOR_BRANCH_MISMATCH" {
-		t.Fatalf("code = %q, want ORCHESTRATOR_BRANCH_MISMATCH", apiErr.Code)
 	}
 }
 
@@ -742,12 +702,13 @@ func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
+func TestSpawnOrchestratorReplacementHarnessMismatchReturnsSessionAndEmitsWarning(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{
 		ID:     "mer",
 		Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{Harness: domain.HarnessCodex}},
 	}
+	sink := &fakeTelemetrySink{}
 	fc := &fakeCommander{
 		spawnRecord: domain.SessionRecord{
 			ID:        "mer-9",
@@ -757,12 +718,96 @@ func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
 			Metadata:  domain.SessionMetadata{Branch: "ao/mer-orchestrator"},
 		},
 	}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: sink})
+
+	sess, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err != nil {
+		t.Fatalf("SpawnOrchestrator err = %v, want spawned session despite verification warning", err)
+	}
+	if sess.ID != "mer-9" {
+		t.Fatalf("session ID = %q, want spawned replacement", sess.ID)
+	}
+	if ev, ok := replacementVerificationWarning(sink.events); !ok || !strings.Contains(fmt.Sprint(ev.Payload["verification_detail"]), `uses harness "claude-code", want "codex"`) {
+		t.Fatalf("events = %#v, want harness mismatch warning", sink.events)
+	}
+}
+
+func TestSpawnOrchestratorReplacementUsesStableProjectBranchAfterSessionPrefixChange(t *testing.T) {
+	st := newFakeStore()
+	st.projects["learn-breakthrough"] = domain.ProjectRecord{
+		ID:     "learn-breakthrough",
+		Config: domain.ProjectConfig{SessionPrefix: "lb"},
+	}
+	st.sessions["learn-breakthrough-19"] = domain.SessionRecord{
+		ID:        "learn-breakthrough-19",
+		ProjectID: "learn-breakthrough",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{Branch: "ao/learn-breakt-orchestrator", WorkspacePath: "/tmp/old"},
+	}
+	fc := &fakeCommander{
+		spawnRecord: domain.SessionRecord{
+			ID:        "learn-breakthrough-20",
+			ProjectID: "learn-breakthrough",
+			Kind:      domain.KindOrchestrator,
+			Metadata:  domain.SessionMetadata{Branch: "ao/learn-breakt-orchestrator"},
+		},
+	}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
-	if err == nil || !strings.Contains(err.Error(), `uses harness "claude-code", want "codex"`) {
-		t.Fatalf("SpawnOrchestrator err = %v, want harness verification failure", err)
+	if _, err := svc.SpawnOrchestrator(context.Background(), "learn-breakthrough", true); err != nil {
+		t.Fatalf("SpawnOrchestrator after sessionPrefix change: %v", err)
 	}
+	if len(fc.retired) != 1 || fc.retired[0] != "learn-breakthrough-19" {
+		t.Fatalf("retired = %v, want existing orchestrator retired first", fc.retired)
+	}
+}
+
+func TestSpawnOrchestratorReplacementVerificationFailureReturnsSessionAndEmitsWarning(t *testing.T) {
+	st := newFakeStore()
+	st.projects["learn-breakthrough"] = domain.ProjectRecord{
+		ID:     "learn-breakthrough",
+		Config: domain.ProjectConfig{SessionPrefix: "lb"},
+	}
+	sink := &fakeTelemetrySink{}
+	fc := &fakeCommander{
+		spawnRecord: domain.SessionRecord{
+			ID:        "learn-breakthrough-20",
+			ProjectID: "learn-breakthrough",
+			Kind:      domain.KindOrchestrator,
+			Metadata:  domain.SessionMetadata{Branch: "ao/wrong-orchestrator"},
+		},
+	}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: sink})
+
+	sess, err := svc.SpawnOrchestrator(context.Background(), "learn-breakthrough", true)
+	if err != nil {
+		t.Fatalf("SpawnOrchestrator err = %v, want spawned session despite verification warning", err)
+	}
+	if sess.ID != "learn-breakthrough-20" {
+		t.Fatalf("session ID = %q, want spawned replacement", sess.ID)
+	}
+	ev, ok := replacementVerificationWarning(sink.events)
+	if !ok {
+		t.Fatalf("events = %#v, want verification warning", sink.events)
+	}
+	if ev.Payload["error_code"] != "ORCHESTRATOR_REPLACEMENT_VERIFICATION_FAILED" {
+		t.Fatalf("payload = %#v, want stable error_code", ev.Payload)
+	}
+	if detail := fmt.Sprint(ev.Payload["verification_detail"]); !strings.Contains(detail, "uses branch") {
+		t.Fatalf("verification_detail = %q, want branch mismatch", detail)
+	}
+	if remediation := fmt.Sprint(ev.Payload["remediation"]); !strings.Contains(remediation, "Inspect the spawned orchestrator session") {
+		t.Fatalf("remediation = %q, want operator action", remediation)
+	}
+}
+
+func replacementVerificationWarning(events []ports.TelemetryEvent) (ports.TelemetryEvent, bool) {
+	for _, ev := range events {
+		if ev.Name == "ao.orchestrator.replacement_verification_failed" && ev.Level == ports.TelemetryLevelWarn {
+			return ev, true
+		}
+	}
+	return ports.TelemetryEvent{}, false
 }
 
 type fakePRClaimer struct {

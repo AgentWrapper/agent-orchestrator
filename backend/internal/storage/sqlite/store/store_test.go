@@ -270,49 +270,6 @@ func TestSessionUpdateActivityAndTermination(t *testing.T) {
 	}
 }
 
-func TestHasActiveOrchestrator(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	seedProject(t, s, "mer")
-	seedProject(t, s, "ao")
-
-	// No orchestrator yet.
-	if has, err := s.HasActiveOrchestrator(ctx, "mer"); err != nil || has {
-		t.Fatalf("empty project: has=%v err=%v, want false", has, err)
-	}
-
-	// A worker session must not count.
-	if _, err := s.CreateSession(ctx, sampleRecord("mer")); err != nil {
-		t.Fatalf("create worker: %v", err)
-	}
-	if has, err := s.HasActiveOrchestrator(ctx, "mer"); err != nil || has {
-		t.Fatalf("worker-only project: has=%v err=%v, want false", has, err)
-	}
-
-	// A live orchestrator counts — but only for its own project.
-	orch := sampleRecord("mer")
-	orch.Kind = domain.KindOrchestrator
-	created, err := s.CreateSession(ctx, orch)
-	if err != nil {
-		t.Fatalf("create orchestrator: %v", err)
-	}
-	if has, err := s.HasActiveOrchestrator(ctx, "mer"); err != nil || !has {
-		t.Fatalf("live orchestrator: has=%v err=%v, want true", has, err)
-	}
-	if has, err := s.HasActiveOrchestrator(ctx, "ao"); err != nil || has {
-		t.Fatalf("other project must not see it: has=%v err=%v, want false", has, err)
-	}
-
-	// A terminated orchestrator must not count.
-	created.IsTerminated = true
-	if err := s.UpdateSession(ctx, created); err != nil {
-		t.Fatalf("terminate orchestrator: %v", err)
-	}
-	if has, err := s.HasActiveOrchestrator(ctx, "mer"); err != nil || has {
-		t.Fatalf("terminated orchestrator: has=%v err=%v, want false", has, err)
-	}
-}
-
 func TestCreateSessionRejectsSecondLiveOrchestratorForProject(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -176,25 +176,6 @@ func (s *Store) ListSessions(ctx context.Context, project domain.ProjectID) ([]d
 	return out, nil
 }
 
-// HasActiveOrchestrator reports whether the project has any non-terminated
-// orchestrator-kind session. It is a direct EXISTS probe that materializes no
-// session rows and performs no read-model enrichment — the lightweight read
-// side of the #113 sessionPrefix lock, which only needs a yes/no answer.
-func (s *Store) HasActiveOrchestrator(ctx context.Context, project domain.ProjectID) (bool, error) {
-	var exists bool
-	err := s.readDB.QueryRowContext(ctx, `
-SELECT EXISTS(
-    SELECT 1 FROM sessions
-    WHERE project_id = ?
-      AND kind = ?
-      AND is_terminated = 0
-)`, project, string(domain.KindOrchestrator)).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("has active orchestrator for %s: %w", project, err)
-	}
-	return exists, nil
-}
-
 // ListAllSessions returns every session across all projects.
 func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error) {
 	rows, err := s.qr.ListAllSessions(ctx)

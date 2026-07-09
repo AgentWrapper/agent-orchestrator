@@ -397,7 +397,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = defaultSessionBranch(id, cfg.Kind, sessionPrefix(project))
+		branch = defaultSessionBranch(id, cfg.Kind, branchSessionPrefix(project, cfg.Kind))
 	}
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 		ProjectID:     cfg.ProjectID,
@@ -788,10 +788,17 @@ func sessionPrefix(project domain.ProjectRecord) string {
 	if p := strings.TrimSpace(project.Config.SessionPrefix); p != "" {
 		return p
 	}
-	if len(project.ID) <= 12 {
-		return project.ID
+	return domain.DefaultProjectPrefix(project.ID)
+}
+
+// branchSessionPrefix returns the prefix used by default branch naming.
+// Orchestrators use the stable project-derived prefix so changing the display
+// sessionPrefix cannot rename their canonical branch.
+func branchSessionPrefix(project domain.ProjectRecord, kind domain.SessionKind) string {
+	if kind == domain.KindOrchestrator {
+		return domain.DefaultProjectPrefix(project.ID)
 	}
-	return project.ID[:12]
+	return sessionPrefix(project)
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.

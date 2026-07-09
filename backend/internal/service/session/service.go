@@ -16,13 +16,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
+var errOrchestratorReplacementVerification = errors.New("orchestrator replacement verification failed")
+
 // Store is the read-only persistence surface needed to assemble controller-facing session read models.
 type Store interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
-	// HasActiveOrchestrator answers whether a project has a live orchestrator
-	// without materializing or enriching session rows (see #113).
-	HasActiveOrchestrator(ctx context.Context, project domain.ProjectID) (bool, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
@@ -307,7 +306,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 		return domain.Session{}, err
 	}
 	if err := verifyOrchestratorReplacement(project, sess); err != nil {
-		return domain.Session{}, err
+		s.emitOrchestratorReplacementVerificationFailed(project, sess, err)
 	}
 	return sess, nil
 }
@@ -321,40 +320,54 @@ func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) err
 	return nil
 }
 
-func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
-	if sess.IsTerminated {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s is terminated", sess.ID)
+func (s *Service) emitOrchestratorReplacementVerificationFailed(project domain.ProjectRecord, sess domain.Session, err error) {
+	if s.telemetry == nil {
+		return
 	}
-	if sess.Kind != domain.KindOrchestrator {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s has kind %q", sess.ID, sess.Kind)
+	projectID := domain.ProjectID(project.ID)
+	sessionID := sess.ID
+	apiErr := toAPIError(err)
+	errorKind, errorCode := telemetrymeta.ErrorKindAndCode(apiErr)
+	payload := map[string]any{
+		"component":           "session_service",
+		"operation":           "replace_orchestrator",
+		"kind":                string(sess.Kind),
+		"harness":             string(sess.Harness),
+		"branch":              sess.Metadata.Branch,
+		"verification_detail": err.Error(),
+		"remediation":         "Inspect the spawned orchestrator session; stop and replace it manually if it is not on the expected branch or harness.",
+		"error_kind":          errorKind,
+		"fingerprint":         telemetrymeta.Fingerprint("session_service", "replace_orchestrator", string(sess.Kind), string(sess.Harness), errorKind, errorCode),
 	}
-	if expected := project.Config.Orchestrator.Harness; expected != "" && sess.Harness != expected {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
+	if errorCode != "" {
+		payload["error_code"] = errorCode
 	}
-	expectedBranch := "ao/" + serviceSessionPrefix(project) + "-orchestrator"
-	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
-		// A live sessionPrefix change desyncs the pinned canonical branch from the
-		// prefix-derived expectation (#113). SetConfig now refuses that change, but
-		// if the state is already stranded, surface an actionable operator error
-		// instead of an opaque 500.
-		return apierr.Conflict(
-			"ORCHESTRATOR_BRANCH_MISMATCH",
-			fmt.Sprintf("Orchestrator replacement verification failed: new session %s is on branch %q but the project's canonical branch is %q. The sessionPrefix likely changed under a live orchestrator; revert the project's sessionPrefix so its derived branch matches the running orchestrator's branch %q (or stop the orchestrator and clear its stale worktree) before respawning.", sess.ID, sess.Metadata.Branch, expectedBranch, sess.Metadata.Branch),
-			map[string]any{"sessionBranch": sess.Metadata.Branch, "expectedBranch": expectedBranch},
-		)
-	}
-	return nil
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.orchestrator.replacement_verification_failed",
+		Source:     "session_service",
+		OccurredAt: s.now(),
+		Level:      ports.TelemetryLevelWarn,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload:    payload,
+	})
 }
 
-func serviceSessionPrefix(project domain.ProjectRecord) string {
-	if p := strings.TrimSpace(project.Config.SessionPrefix); p != "" {
-		return p
+func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
+	if sess.IsTerminated {
+		return fmt.Errorf("%w: new session %s is terminated", errOrchestratorReplacementVerification, sess.ID)
 	}
-	id := project.ID
-	if len(id) <= 12 {
-		return id
+	if sess.Kind != domain.KindOrchestrator {
+		return fmt.Errorf("%w: new session %s has kind %q", errOrchestratorReplacementVerification, sess.ID, sess.Kind)
 	}
-	return id[:12]
+	if expected := project.Config.Orchestrator.Harness; expected != "" && sess.Harness != expected {
+		return fmt.Errorf("%w: new session %s uses harness %q, want %q", errOrchestratorReplacementVerification, sess.ID, sess.Harness, expected)
+	}
+	expectedBranch := "ao/" + domain.DefaultProjectPrefix(project.ID) + "-orchestrator"
+	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
+		return fmt.Errorf("%w: new session %s uses branch %q, want %q", errOrchestratorReplacementVerification, sess.ID, sess.Metadata.Branch, expectedBranch)
+	}
+	return nil
 }
 
 func newestSession(sessions []domain.Session) domain.Session {
@@ -525,15 +538,6 @@ func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID)
 	return err
 }
 
-// HasActiveOrchestrator reports whether the project currently has a live
-// (non-terminated) orchestrator session. Used by the project service to refuse
-// a sessionPrefix change that would strand a running orchestrator's canonical
-// branch (#113). It delegates to the store's EXISTS probe rather than List so
-// the check never loads or enriches session read models just to answer yes/no.
-func (s *Service) HasActiveOrchestrator(ctx context.Context, projectID domain.ProjectID) (bool, error) {
-	return s.store.HasActiveOrchestrator(ctx, projectID)
-}
-
 // List returns sessions as enriched display models after applying API filters.
 func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session, error) {
 	recs, err := s.listRecords(ctx, filter.ProjectID)
@@ -617,6 +621,10 @@ func toAPIError(err error) error {
 			"This session has no saved agent session or prompt to resume from", nil)
 	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
 		return apierr.Conflict("SWITCH_IN_PROGRESS", "An agent switch is already in progress for this session", nil)
+	case errors.Is(err, errOrchestratorReplacementVerification):
+		return apierr.Conflict("ORCHESTRATOR_REPLACEMENT_VERIFICATION_FAILED",
+			"Orchestrator replacement spawned but did not match verification expectations. Inspect the spawned session and replace it manually if needed. Verification detail: "+err.Error(),
+			map[string]any{"verificationDetail": err.Error()})
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo. Register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):

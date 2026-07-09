@@ -95,10 +95,6 @@ func wantCode(t *testing.T, err error, code string) {
 type fakeSessionOps struct {
 	projects []domain.ProjectID
 	err      error
-	// hasOrch reports a live orchestrator for any project; orchErr forces the
-	// lookup to fail so callers can exercise the error path.
-	hasOrch bool
-	orchErr error
 }
 
 type captureSink struct {
@@ -124,10 +120,6 @@ func (*captureSink) Close(context.Context) error { return nil }
 func (f *fakeSessionOps) TeardownProject(_ context.Context, project domain.ProjectID) error {
 	f.projects = append(f.projects, project)
 	return f.err
-}
-
-func (f *fakeSessionOps) HasActiveOrchestrator(_ context.Context, _ domain.ProjectID) (bool, error) {
-	return f.hasOrch, f.orchErr
 }
 
 func TestManager_AddListGetRemove(t *testing.T) {
@@ -492,45 +484,14 @@ func TestManager_SetConfigRejectsUnreachableWorkerMixModel(t *testing.T) {
 	}
 }
 
-// TestManager_SetConfigRejectsPrefixChangeWithLiveOrchestrator reproduces #113:
-// changing a project's sessionPrefix while a live orchestrator exists leaves the
-// orchestrator's canonical branch (ao/<prefix>-orchestrator) pointing at the old
-// prefix, so replacement-verification later demands a branch the running worktree
-// never had and every respawn 500s. SetConfig must reject the prefix change with
-// an actionable error instead of persisting the trap.
-func TestManager_SetConfigRejectsPrefixChangeWithLiveOrchestrator(t *testing.T) {
+func TestManager_SetConfigAllowsSessionPrefixChange(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	sessions := &fakeSessionOps{hasOrch: true}
-	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
-
-	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	// Project "ao" resolves to the id-derived prefix "ao". Setting an explicit,
-	// different prefix while an orchestrator is live is the trap from #113.
-	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{SessionPrefix: "lb"},
-	})
-	wantCode(t, err, "SESSION_PREFIX_LOCKED")
-}
-
-// TestManager_SetConfigAllowsPrefixChangeWithoutLiveOrchestrator guards the
-// happy path: with no live orchestrator the prefix change is a plain config
-// edit and must succeed (#113 must not lock out prefix edits entirely).
-func TestManager_SetConfigAllowsPrefixChangeWithoutLiveOrchestrator(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	sessions := &fakeSessionOps{hasOrch: false}
+	sessions := &fakeSessionOps{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
 
 	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
@@ -547,24 +508,19 @@ func TestManager_SetConfigAllowsPrefixChangeWithoutLiveOrchestrator(t *testing.T
 	}
 }
 
-// TestManager_SetConfigAllowsNonPrefixEditWithLiveOrchestrator guards that the
-// lock is scoped to the prefix: unrelated config edits (and no-op prefix saves)
-// must still succeed while an orchestrator is live.
-func TestManager_SetConfigAllowsNonPrefixEditWithLiveOrchestrator(t *testing.T) {
+func TestManager_SetConfigAllowsNonPrefixEdit(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	sessions := &fakeSessionOps{hasOrch: true}
+	sessions := &fakeSessionOps{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
 
 	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	// Same resolved prefix ("ao" is the id-derived default) plus an unrelated
-	// change — the orchestrator lock must not fire.
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
 		Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"}},
 	})
@@ -573,36 +529,6 @@ func TestManager_SetConfigAllowsNonPrefixEditWithLiveOrchestrator(t *testing.T) 
 	}
 	if proj.Config == nil || proj.Config.AgentConfig.Model != "claude-opus-4-5" {
 		t.Fatalf("config not applied: %#v", proj.Config)
-	}
-}
-
-// TestManager_SetConfigSurfacesOrchestratorLookupFailure guards the error path:
-// a failed orchestrator-state check must not silently persist a prefix change.
-func TestManager_SetConfigSurfacesOrchestratorLookupFailure(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	sessions := &fakeSessionOps{orchErr: errors.New("store down")}
-	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
-
-	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{SessionPrefix: "lb"},
-	})
-	wantCode(t, err, "PROJECT_CONFIG_UPDATE_FAILED")
-
-	// The rejected change must not have persisted.
-	got, err := m.Get(ctx, "ao")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Project != nil && got.Project.Config != nil && got.Project.Config.SessionPrefix == "lb" {
-		t.Fatalf("prefix persisted despite lookup failure: %#v", got.Project.Config)
 	}
 }
 

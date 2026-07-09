@@ -687,11 +687,7 @@ func resolvedSessionPrefix(cfg ports.WorkspaceConfig) string {
 	if p := strings.TrimSpace(cfg.SessionPrefix); p != "" {
 		return p
 	}
-	id := string(cfg.ProjectID)
-	if len(id) <= 12 {
-		return id
-	}
-	return id[:12]
+	return domain.DefaultProjectPrefix(string(cfg.ProjectID))
 }
 
 func (w *Workspace) validateManagedPath(path string) (string, error) {
