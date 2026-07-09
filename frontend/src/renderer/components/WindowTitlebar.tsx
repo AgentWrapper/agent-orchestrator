@@ -131,7 +131,7 @@ export function WindowTitlebar() {
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("view.devtools")}>
 						Toggle DevTools
-						<DropdownMenuShortcut>F12</DropdownMenuShortcut>
+						<DropdownMenuShortcut>Ctrl+Shift+I</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("view.zoomIn")}>Zoom In</DropdownMenuItem>
