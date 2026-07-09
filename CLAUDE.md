@@ -1,4 +1,4 @@
-<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then run: npm run agents (+ npm run agents:system) -->
+<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild: bash scripts/polyscribe.sh (system scope adds --system) -->
 
 # agent-orchestrator (ao)
 
@@ -28,21 +28,6 @@ daemons). Never resurrect code from it. Adoption analysis:
 
 This repo is orchestrated by ao itself — the thing builds the thing. Workers
 here follow the same SDLC as every other repo.
-
-<!--
-@sx-managed: polypowers-module (nickify refreshes marked copies; remove this line to own the file)
-polypowers governing module.
-
-Assembled by polyscribe into a repo's CLAUDE.md / AGENTS.md / GEMINI.md. This is
-the generic SDLC constitution: how work is tracked, the rules, the skill
-catalog, and the identity contract the shared skills defer to. It is
-repo-agnostic — no product, repo, or host names. Repo- or product-specific
-rules (sensitive paths, deploy targets, reviewer rosters, a shared beads host)
-belong in sibling fragments assembled alongside this one.
-
-Response formatting rules are NOT here — they ship as their own vault rule
-asset (nhod-response-structure). Don't duplicate them in repo fragments.
--->
 
 ## Tracking: GitHub Issues + Beads, always paired
 

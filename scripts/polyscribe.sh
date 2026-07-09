@@ -27,13 +27,24 @@
 # pointer that tells the agent to read a bigger file on demand" (context-budget
 # escape hatch). The build reports lengths so you can manage what to inline vs ref.
 #
+# HTML comments are AUTHORING-ONLY. Any <!-- ... --> block in a source primitive
+# or override (multi-line included) is stripped during assembly and never reaches
+# the generated CLAUDE.md/AGENTS.md/GEMINI.md. Use them for provenance, refresh
+# markers (e.g. "@sx-managed: <module>", which only nickify reads off the SOURCE
+# file), and notes to whoever edits the fragment — none of that authoring metadata
+# is agent-facing, and inlining it verbatim is worse than useless to a reading LLM.
+# The one HTML comment that DOES survive is the generated banner below, because it
+# is printed directly, not read from a source file.
+#
 # Edit agent-instructions/source|agent-overrides|system, never the generated files.
 #
-# Usage:
-#   npm run agents          # build + write the REPO files, print length report
-#   npm run agents:check    # build REPO files to temp, diff, exit 1 on drift (CI)
-#   npm run agents:system   # build + write the SYSTEM (global $HOME) files
-#                           #   honors AGENTS_SYSTEM_HOME to retarget for testing
+# Usage (toolchain-free — no npm required):
+#   bash scripts/polyscribe.sh            # build + write the REPO files, print length report
+#   bash scripts/polyscribe.sh --check    # build REPO files to temp, diff, exit 1 on drift (CI)
+#   bash scripts/polyscribe.sh --system   # build + write the SYSTEM (global $HOME) files
+#                                          #   honors AGENTS_SYSTEM_HOME to retarget for testing
+#   (Node repos MAY alias these as `npm run agents[:check|:system]` — optional convenience,
+#    added by nickify only when a package.json already exists. Not required.)
 
 set -euo pipefail
 
@@ -45,7 +56,7 @@ SRC_DIR="${AI_DIR}/source"
 OVR_DIR="${AI_DIR}/agent-overrides"
 SYS_DIR="${AI_DIR}/system"
 
-BANNER='<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then run: npm run agents (+ npm run agents:system) -->'
+BANNER='<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild: bash scripts/polyscribe.sh (system scope adds --system) -->'
 CEILING=200
 
 # --- REPO scope (NEVER glob — order is explicit) -----------------------------
@@ -98,18 +109,55 @@ module_file() {
   else die "missing module: ${dir}/${mod}.md (or ${mod}.ref.md)"; fi
 }
 
-# Emit a file with leading/trailing blank lines trimmed (joint-noise immune).
+# Strip HTML comments (<!-- ... -->), including multi-line spans and multiple
+# comments per line. Authoring-only metadata (provenance, @sx-managed refresh
+# markers, notes to the fragment editor) lives in these comments and must NOT
+# reach the agent-facing generated file. Takes a file arg, writes stripped stdout.
+# Fails LOUDLY (exit 3) if the file ends while still inside a comment: an
+# unterminated "<!--" would otherwise silently swallow the entire rest of the
+# fragment — dropping real instructions with no signal. Abort the build instead,
+# so the existing generated files are left untouched and the mistake is visible.
+strip_html_comments() {
+  local f="$1"
+  awk '
+    BEGIN { incomment = 0 }
+    {
+      line = $0; out = ""
+      while (1) {
+        if (incomment) {
+          p = index(line, "-->")
+          if (p == 0) { line = ""; break }   # comment continues past end of line
+          line = substr(line, p + 3); incomment = 0
+        }
+        s = index(line, "<!--")
+        if (s == 0) { out = out line; break }
+        out = out substr(line, 1, s - 1)      # keep text before the comment
+        line = substr(line, s + 4); incomment = 1
+      }
+      print out
+    }
+    END { if (incomment) exit 3 }            # unterminated comment → hard failure
+  ' "$f"
+}
+
+# Emit a file with HTML comments stripped, then leading/trailing/interior-run
+# blank lines trimmed (so a stripped leading comment block leaves no gap).
 emit_trimmed() {
   local f="$1"
   [[ -f "$f" ]] || die "missing module: $f"
-  awk '
+  # Capture on its own line so the assignment carries strip_html_comments' exit
+  # status (a combined `local x=$(...)` would mask it behind local's status).
+  local stripped
+  stripped="$(strip_html_comments "$f")" \
+    || die "unterminated HTML comment (<!-- with no matching -->) in $f"
+  printf '%s\n' "$stripped" | awk '
     BEGIN { started = 0; pending = 0 }
     {
       if ($0 ~ /^[[:space:]]*$/) { if (started) pending++; next }
       if (started) { for (i = 0; i < pending; i++) print "" }
       pending = 0; print; started = 1
     }
-  ' "$f"
+  '
 }
 
 # Emit one module. A normal <name>.md is inlined; a <name>.ref.md is the
@@ -229,20 +277,29 @@ if [[ "$MODE" == "check" ]]; then
     render_repo "$out" >"${tmp}/${out}"
     diff -u "${REPO_ROOT}/${out}" "${tmp}/${out}" --label "committed/${out}" --label "freshly-built/${out}" || drift=1
   done
-  [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: npm run agents"
+  [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: bash scripts/polyscribe.sh"
   printf 'build-agent-instructions: repo files (AGENTS.md + CLAUDE.md/GEMINI.md inline + AGENTS.shared.md) up to date.\n'
   exit 0
 fi
 
 if [[ "$MODE" == "system" ]]; then
   preflight_system
+  # Two-phase for atomicity (same rationale as the repo build below): render all
+  # system outputs to temps, then move them into place only if all succeed.
+  sys_tmps=(); sys_dsts=()
+  cleanup_sys_tmps() { local t; for t in "${sys_tmps[@]:-}"; do [[ -n "$t" ]] && rm -f "$t"; done; }
+  trap cleanup_sys_tmps EXIT
   for path in "${SYSTEM_OUTPUTS[@]}"; do
     mkdir -p "$(dirname "$path")"
     tmpf="$(mktemp "${path}.XXXXXX")"
-    emit_assembled "$SYS_DIR" "" "${SYSTEM_MODULES[@]}" >"$tmpf"
-    mv -f "$tmpf" "$path"
-    printf 'wrote %s\n' "$path"
+    sys_tmps+=("$tmpf"); sys_dsts+=("$path")
+    emit_assembled "$SYS_DIR" "" "${SYSTEM_MODULES[@]}" >"$tmpf"   # dies here on a malformed fragment; nothing moved yet
   done
+  for i in "${!sys_tmps[@]}"; do
+    mv -f "${sys_tmps[$i]}" "${sys_dsts[$i]}"
+    printf 'wrote %s\n' "${sys_dsts[$i]}"
+  done
+  sys_tmps=(); trap - EXIT
   printf '\nagent-instructions: SYSTEM length report (ceiling %s, home=%s)\n' "$CEILING" "$SYS_HOME"
   printf '  primitives (system/):\n'; report_modules "$SYS_DIR" "${SYSTEM_MODULES[@]}"
   printf '  outputs:\n'
@@ -251,13 +308,26 @@ if [[ "$MODE" == "system" ]]; then
 fi
 
 # --- build (repo) ------------------------------------------------------------
+# Two-phase for atomicity: render EVERY output to a temp first, and only move
+# them into place once all have rendered cleanly. If a render dies partway
+# (e.g. an unterminated comment in a late-rendered override), the EXIT trap
+# removes the temps and the committed files are left untouched — never a
+# half-updated set split across source versions.
 preflight_repo
+build_tmps=(); build_dsts=()
+cleanup_build_tmps() { local t; for t in "${build_tmps[@]:-}"; do [[ -n "$t" ]] && rm -f "$t"; done; }
+trap cleanup_build_tmps EXIT
 for out in "${REPO_ALL[@]}"; do
   tmpf="$(mktemp "${REPO_ROOT}/.${out}.XXXXXX")"
-  render_repo "$out" >"$tmpf"
-  mv -f "$tmpf" "${REPO_ROOT}/${out}"
-  printf 'wrote %s\n' "${REPO_ROOT}/${out}"
+  build_tmps+=("$tmpf"); build_dsts+=("${REPO_ROOT}/${out}")
+  render_repo "$out" >"$tmpf"        # dies here on a malformed fragment; nothing moved yet
 done
+for i in "${!build_tmps[@]}"; do
+  mv -f "${build_tmps[$i]}" "${build_dsts[$i]}"
+  printf 'wrote %s\n' "${build_dsts[$i]}"
+done
+build_tmps=()   # all moved; nothing left for the trap to clean
+trap - EXIT
 printf '\nagent-instructions: REPO length report (ceiling %s)\n' "$CEILING"
 printf '  primitives (source/):\n'; report_modules "$SRC_DIR" "${SOURCE_MODULES[@]}"
 printf '  overrides:\n'; report_modules "$OVR_DIR" "$REPO_CANONICAL_OVERRIDE" "${REPO_CLIENT_OVERRIDES[@]}"
