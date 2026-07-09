@@ -35,6 +35,12 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear", Assignee: "alice"}}, true},
 		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Assignee: "alice"}}, true},
 		{"tracker intake assignee with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: " alice"}}, true},
+		{"tracker intake good labels", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", Labels: []string{"agent-ok"}, ExcludeLabels: []string{"agent:noauto"}}}, false},
+		{"tracker intake label with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", Labels: []string{" agent-ok"}}}, true},
+		{"tracker intake empty label", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", Labels: []string{""}}}, true},
+		{"tracker intake exclude label with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", ExcludeLabels: []string{"agent:noauto "}}}, true},
+		{"tracker intake good max concurrent", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 4}}, false},
+		{"tracker intake negative max concurrent", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: -1}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

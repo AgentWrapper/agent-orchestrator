@@ -2701,6 +2701,16 @@ components:
           type: string
         enabled:
           type: boolean
+        excludeLabels:
+          items:
+            type: string
+          type: array
+        labels:
+          items:
+            type: string
+          type: array
+        maxConcurrent:
+          type: integer
         provider:
           enum:
           - github

@@ -142,6 +142,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		return err
 	}
 	seen := seenIssueIDs(sessions)
+	liveByProject := liveIntakeWorkersByProject(sessions)
 	for _, project := range enabledProjects {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -150,7 +151,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 			o.logger.Debug("tracker intake: project in failure backoff", "project", project.ID, "until", until)
 			continue
 		}
-		if failed := o.pollProject(ctx, project, seen); failed {
+		if failed := o.pollProject(ctx, project, seen, liveByProject[project.ID]); failed {
 			o.backoffUntil[project.ID] = now.Add(o.failureBackoff)
 		} else {
 			delete(o.backoffUntil, project.ID)
@@ -161,7 +162,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, liveWorkers int) (failed bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled {
 		return false
@@ -169,6 +170,10 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 	if err := cfg.Validate(); err != nil {
 		o.logger.Warn("tracker intake: skipping project with invalid config", "project", project.ID, "err", err)
 		return true
+	}
+	if cfg.MaxConcurrent > 0 && liveWorkers >= cfg.MaxConcurrent {
+		o.logger.Debug("tracker intake: project at concurrency cap, deferring", "project", project.ID, "live", liveWorkers, "cap", cfg.MaxConcurrent)
+		return false
 	}
 	repo, ok := trackerRepo(project, cfg)
 	if !ok {
@@ -188,10 +193,15 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
 		return true
 	}
+	spawnedThisPass := 0
 	var spawnFailed bool
 	for _, issue := range issues {
 		if ctx.Err() != nil {
 			return true
+		}
+		if cfg.MaxConcurrent > 0 && liveWorkers+spawnedThisPass >= cfg.MaxConcurrent {
+			o.logger.Debug("tracker intake: reached concurrency cap mid-pass, deferring remaining issues", "project", project.ID, "cap", cfg.MaxConcurrent)
+			break
 		}
 		if issue.State != domain.IssueOpen {
 			continue
@@ -214,11 +224,15 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		seen[issueID] = true
+		spawnedThisPass++
 	}
 	return spawnFailed
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
+	if !issueMatchesLabels(issue, cfg) {
+		return false
+	}
 	assignee := strings.TrimSpace(cfg.Assignee)
 	switch {
 	case assignee == "":
@@ -230,6 +244,26 @@ func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool
 	default:
 		return containsFold(issue.Assignees, assignee)
 	}
+}
+
+// issueMatchesLabels applies the include/exclude label rules. Exclusion wins: an
+// issue carrying any excluded label is rejected even if it also carries an
+// included one. An empty include list imposes no positive requirement.
+func issueMatchesLabels(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
+	for _, excluded := range cfg.ExcludeLabels {
+		if containsFold(issue.Labels, strings.TrimSpace(excluded)) {
+			return false
+		}
+	}
+	if len(cfg.Labels) == 0 {
+		return true
+	}
+	for _, required := range cfg.Labels {
+		if containsFold(issue.Labels, strings.TrimSpace(required)) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsFold(values []string, needle string) bool {
@@ -249,6 +283,36 @@ func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
 		}
 	}
 	return seen
+}
+
+// liveIntakeWorkersByProject counts the live (non-terminated) worker sessions
+// that carry canonical tracker issue ids, per project. Canonical ids are the
+// sessions intake creates and dedupes against; manual ad-hoc --issue values do
+// not consume intake capacity. The count feeds the per-project MaxConcurrent cap
+// so a bulk assignment burst cannot spawn an unbounded number of workers.
+func liveIntakeWorkersByProject(sessions []domain.SessionRecord) map[string]int {
+	counts := make(map[string]int)
+	for _, sess := range sessions {
+		if sess.IsTerminated {
+			continue
+		}
+		if sess.Kind != domain.KindWorker {
+			continue
+		}
+		if !isCanonicalIssueID(sess.IssueID) {
+			continue
+		}
+		counts[string(sess.ProjectID)]++
+	}
+	return counts
+}
+
+func isCanonicalIssueID(id domain.IssueID) bool {
+	provider, native, ok := strings.Cut(string(id), ":")
+	if !ok || provider == "" || native == "" {
+		return false
+	}
+	return strings.Contains(native, "#")
 }
 
 // CanonicalIssueID stores tracker issue ids in sessions.issue_id with the

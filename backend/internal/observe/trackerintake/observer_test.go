@@ -243,6 +243,151 @@ func TestIssueMatchesConfigAssigneeSpecialValues(t *testing.T) {
 	}
 }
 
+func TestIssueMatchesConfigLabelFilters(t *testing.T) {
+	withLabels := func(labels ...string) domain.Issue {
+		return domain.Issue{Assignees: []string{"alice"}, Labels: labels}
+	}
+	// Include rule: only issues carrying an included label match.
+	includeCfg := domain.TrackerIntakeConfig{Assignee: "alice", Labels: []string{"agent-ok"}}
+	if !issueMatchesConfig(withLabels("Agent-OK"), includeCfg) {
+		t.Fatal("issue with included label (case-insensitive) should match")
+	}
+	if issueMatchesConfig(withLabels("other"), includeCfg) {
+		t.Fatal("issue without any included label should not match")
+	}
+	if issueMatchesConfig(withLabels(), includeCfg) {
+		t.Fatal("issue with no labels should not match an include rule")
+	}
+	// Exclude rule wins over everything else.
+	excludeCfg := domain.TrackerIntakeConfig{Assignee: "alice", ExcludeLabels: []string{"agent:noauto"}}
+	if issueMatchesConfig(withLabels("Agent:NoAuto"), excludeCfg) {
+		t.Fatal("issue with excluded label should never match")
+	}
+	if !issueMatchesConfig(withLabels("something"), excludeCfg) {
+		t.Fatal("issue without the excluded label should match")
+	}
+	// Exclusion beats inclusion when both apply.
+	bothCfg := domain.TrackerIntakeConfig{Assignee: "alice", Labels: []string{"agent-ok"}, ExcludeLabels: []string{"agent:noauto"}}
+	if issueMatchesConfig(withLabels("agent-ok", "agent:noauto"), bothCfg) {
+		t.Fatal("exclusion must win over inclusion")
+	}
+	if !issueMatchesConfig(withLabels("agent-ok"), bothCfg) {
+		t.Fatal("included-only issue should match when not excluded")
+	}
+}
+
+func TestPollAppliesLabelFilters(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+			Enabled:       true,
+			Assignee:      "alice",
+			Labels:        []string{"agent-ok"},
+			ExcludeLabels: []string{"agent:noauto"},
+		}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "no included label", State: domain.IssueOpen, Assignees: []string{"alice"}, Labels: []string{"chore"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "excluded", State: domain.IssueOpen, Assignees: []string{"alice"}, Labels: []string{"agent-ok", "agent:noauto"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "eligible", State: domain.IssueOpen, Assignees: []string{"alice"}, Labels: []string{"Agent-OK"}},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#3" {
+		t.Fatalf("spawn calls = %+v, want only eligible issue #3", spawner.calls)
+	}
+}
+
+func TestPollHonorsMaxConcurrentAgainstLiveWorkers(t *testing.T) {
+	// One live intake worker already exists; cap is 2, so only ONE more may spawn
+	// even though two more issues are eligible.
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:       true,
+				Assignee:      "alice",
+				MaxConcurrent: 2,
+			}},
+		}},
+		sessions: []domain.SessionRecord{
+			{ID: "demo-live", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#100"},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "first", State: domain.IssueOpen, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "second", State: domain.IssueOpen, Assignees: []string{"alice"}},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1 (cap of 2 minus 1 live worker)", len(spawner.calls))
+	}
+	if spawner.calls[0].IssueID != "github:acme/demo#1" {
+		t.Fatalf("first spawn issue = %q, want github:acme/demo#1", spawner.calls[0].IssueID)
+	}
+}
+
+func TestPollDefersWhenAlreadyAtMaxConcurrent(t *testing.T) {
+	// Two live intake workers already exist and the cap is 2: no new spawn, and
+	// the tracker is never even queried for this project.
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:       true,
+				Assignee:      "alice",
+				MaxConcurrent: 2,
+			}},
+		}},
+		sessions: []domain.SessionRecord{
+			{ID: "demo-a", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#100"},
+			{ID: "demo-b", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#101"},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "eligible", State: domain.IssueOpen, Assignees: []string{"alice"}},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %d, want 0 (already at cap)", len(spawner.calls))
+	}
+	if len(tracker.repos) != 0 {
+		t.Fatalf("tracker queried %d times, want 0 when already at cap", len(tracker.repos))
+	}
+}
+
+func TestLiveIntakeWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) {
+	sessions := []domain.SessionRecord{
+		{ID: "a", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#1"},
+		{ID: "b", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#2", IsTerminated: true},
+		{ID: "c", ProjectID: "demo", Kind: domain.KindOrchestrator, IssueID: "github:acme/demo#3"},
+		{ID: "d", ProjectID: "demo", Kind: domain.KindWorker},                     // no issue id (ad-hoc worker)
+		{ID: "manual", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "47"}, // manual --issue, not intake-spawned
+		{ID: "e", ProjectID: "other", Kind: domain.KindWorker, IssueID: "github:acme/other#1"},
+	}
+	counts := liveIntakeWorkersByProject(sessions)
+	if counts["demo"] != 1 {
+		t.Fatalf("demo live intake workers = %d, want 1", counts["demo"])
+	}
+	if counts["other"] != 1 {
+		t.Fatalf("other live intake workers = %d, want 1", counts["other"])
+	}
+}
+
 func TestBuildIssuePromptCapsLargeIssueBody(t *testing.T) {
 	prompt := BuildIssuePrompt(domain.Issue{
 		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#99"},
