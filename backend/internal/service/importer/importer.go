@@ -57,7 +57,11 @@ func New(deps Deps) *Manager {
 // Status reports availability only: legacy data present at the root. It never
 // errors on a missing legacy store; that is simply "not available".
 func (m *Manager) Status(_ context.Context) (Status, error) {
-	return Status{Available: legacyimport.HasLegacyData(m.root), LegacyRoot: m.root}, nil
+	// Per the contract above, a missing or unreadable legacy store is simply
+	// "not available"; the parse error is intentionally not surfaced here (the
+	// `ao import` CLI is the path that reports it — issue #2186).
+	has, _ := legacyimport.HasLegacyData(m.root)
+	return Status{Available: has, LegacyRoot: m.root}, nil
 }
 
 // Run executes the import through the daemon's store. Idempotent: the engine
