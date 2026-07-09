@@ -110,7 +110,7 @@ func TestWorkerCapacityUncappedFallbackWorker(t *testing.T) {
 	}
 }
 
-func TestWorkerCapacityIgnoresMaxConcurrentWhenTrackerIntakeDisabled(t *testing.T) {
+func TestWorkerCapacityReportsMaxConcurrentWhenTrackerIntakeDisabled(t *testing.T) {
 	svc := project.NewWorkerCapacity(workerCapacityStore{
 		project: domain.ProjectRecord{
 			ID: "ao",
@@ -128,12 +128,18 @@ func TestWorkerCapacityIgnoresMaxConcurrentWhenTrackerIntakeDisabled(t *testing.
 	if err != nil {
 		t.Fatalf("WorkerCapacity: %v", err)
 	}
-	if got.State != "uncapped" || got.Cap != nil || got.AvailableCapacity != nil || got.FreeAvailableCapacity != nil {
-		t.Fatalf("summary = state %q cap %#v available %#v free %#v, want disabled intake to be uncapped", got.State, got.Cap, got.AvailableCapacity, got.FreeAvailableCapacity)
+	if got.State != "healthy" || got.Cap == nil || *got.Cap != 3 {
+		t.Fatalf("summary = state %q cap %#v, want healthy cap 3", got.State, got.Cap)
+	}
+	if got.AvailableCapacity == nil || *got.AvailableCapacity != 3 {
+		t.Fatalf("AvailableCapacity = %#v, want 3", got.AvailableCapacity)
+	}
+	if got.FreeAvailableCapacity == nil || *got.FreeAvailableCapacity != 2 {
+		t.Fatalf("FreeAvailableCapacity = %#v, want 2", got.FreeAvailableCapacity)
 	}
 }
 
-func TestWorkerCapacityFreeCapacityCountsOnlyIntakeWorkers(t *testing.T) {
+func TestWorkerCapacityFreeCapacityCountsAllLiveWorkers(t *testing.T) {
 	svc := project.NewWorkerCapacity(workerCapacityStore{
 		project: domain.ProjectRecord{
 			ID: "ao",
@@ -158,7 +164,7 @@ func TestWorkerCapacityFreeCapacityCountsOnlyIntakeWorkers(t *testing.T) {
 	if got.ActiveWorkers != 3 {
 		t.Fatalf("ActiveWorkers = %d, want 3", got.ActiveWorkers)
 	}
-	if got.FreeAvailableCapacity == nil || *got.FreeAvailableCapacity != 2 {
-		t.Fatalf("FreeAvailableCapacity = %#v, want 2", got.FreeAvailableCapacity)
+	if got.FreeAvailableCapacity == nil || *got.FreeAvailableCapacity != 0 {
+		t.Fatalf("FreeAvailableCapacity = %#v, want 0", got.FreeAvailableCapacity)
 	}
 }

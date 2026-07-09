@@ -42,6 +42,9 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrWorkerConcurrencyCap means the project already has the configured
+	// maximum number of live worker sessions. The API maps it to a 409.
+	ErrWorkerConcurrencyCap = errors.New("session: worker concurrency cap reached")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
 	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
@@ -182,6 +185,7 @@ type Manager struct {
 	sendConfirm sendConfirmConfig
 	logger      *slog.Logger
 	telemetry   ports.EventSink
+	spawnMu     sync.Mutex
 
 	mixMu      sync.Mutex
 	mixDown    map[domain.BucketKey]workerMixBucketDown
@@ -301,6 +305,24 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
+	m.spawnMu.Lock()
+	spawnLocked := true
+	unlockSpawn := func() {
+		if spawnLocked {
+			spawnLocked = false
+			m.spawnMu.Unlock()
+		}
+	}
+	defer unlockSpawn()
+	if cfg.Kind == domain.KindWorker && project.Config.TrackerIntake.MaxConcurrent > 0 {
+		live, err := m.liveWorkerCount(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: worker cap: %w", err)
+		}
+		if live >= project.Config.TrackerIntake.MaxConcurrent {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: %w: live workers %d >= cap %d", ErrWorkerConcurrencyCap, live, project.Config.TrackerIntake.MaxConcurrent)
+		}
+	}
 	var mixBucket *domain.BucketKey
 	// A configured worker mix distributes worker spawns across weighted
 	// agent/model buckets. It applies only to a worker spawn that names no
@@ -371,6 +393,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
 	}
 	id := rec.ID
+	unlockSpawn()
 
 	branch := cfg.Branch
 	if branch == "" {
@@ -617,6 +640,21 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spa
 	resolved.Model = model
 	resolved.Effort = effort
 	return resolved, nil
+}
+
+func (m *Manager) liveWorkerCount(ctx context.Context, projectID domain.ProjectID) (int, error) {
+	recs, err := m.store.ListSessions(ctx, projectID)
+	if err != nil {
+		return 0, fmt.Errorf("list sessions: %w", err)
+	}
+	count := 0
+	for _, rec := range recs {
+		if rec.Kind != domain.KindWorker || rec.IsTerminated {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 // runningWorkerBuckets tallies the project's live (non-terminated) worker

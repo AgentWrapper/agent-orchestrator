@@ -5,6 +5,7 @@ package trackerintake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -143,7 +145,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		return err
 	}
 	seen := seenIssueIDs(sessions)
-	liveByProject := liveIntakeWorkersByProject(sessions)
+	liveByProject := liveWorkersByProject(sessions)
 	runningByProject := runningWorkerBucketsByProject(sessions)
 	for _, project := range enabledProjects {
 		if err := ctx.Err(); err != nil {
@@ -247,6 +249,10 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			}
 		}
 		if _, err := o.spawner.Spawn(ctx, spawnCfg); err != nil {
+			if isWorkerConcurrencyCap(err) {
+				o.logger.Debug("tracker intake: spawn reached concurrency cap, deferring remaining issues", "project", project.ID, "issue", issueID, "err", err)
+				break
+			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
 			spawnFailed = true
 			continue
@@ -260,6 +266,11 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		spawnedThisPass++
 	}
 	return spawnFailed
+}
+
+func isWorkerConcurrencyCap(err error) bool {
+	var apiError *apierr.Error
+	return errors.As(err, &apiError) && apiError.Code == "WORKER_CONCURRENCY_CAP"
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
@@ -364,12 +375,11 @@ func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
 	return seen
 }
 
-// liveIntakeWorkersByProject counts the live (non-terminated) worker sessions
-// that carry canonical tracker issue ids, per project. Canonical ids are the
-// sessions intake creates and dedupes against; manual ad-hoc --issue values do
-// not consume intake capacity. The count feeds the per-project MaxConcurrent cap
-// so a bulk assignment burst cannot spawn an unbounded number of workers.
-func liveIntakeWorkersByProject(sessions []domain.SessionRecord) map[string]int {
+// liveWorkersByProject counts live (non-terminated) worker sessions per project.
+// The count feeds the per-project MaxConcurrent cap shared by intake and manual
+// spawns, so a bulk assignment burst or repeated CLI spawn cannot exceed the
+// configured worker pool size.
+func liveWorkersByProject(sessions []domain.SessionRecord) map[string]int {
 	counts := make(map[string]int)
 	for _, sess := range sessions {
 		if sess.IsTerminated {
@@ -378,20 +388,9 @@ func liveIntakeWorkersByProject(sessions []domain.SessionRecord) map[string]int 
 		if sess.Kind != domain.KindWorker {
 			continue
 		}
-		if !isCanonicalIssueID(sess.IssueID) {
-			continue
-		}
 		counts[string(sess.ProjectID)]++
 	}
 	return counts
-}
-
-func isCanonicalIssueID(id domain.IssueID) bool {
-	provider, native, ok := strings.Cut(string(id), ":")
-	if !ok || provider == "" || native == "" {
-		return false
-	}
-	return strings.Contains(native, "#")
 }
 
 // runningWorkerBucketsByProject tallies live (non-terminated) worker sessions

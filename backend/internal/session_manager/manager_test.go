@@ -365,6 +365,27 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	}
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
+
+type blockingWorkspace struct {
+	*fakeWorkspace
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingWorkspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	select {
+	case <-w.entered:
+	default:
+		close(w.entered)
+	}
+	select {
+	case <-ctx.Done():
+		return ports.WorkspaceInfo{}, ctx.Err()
+	case <-w.release:
+	}
+	return w.fakeWorkspace.Create(ctx, cfg)
+}
+
 func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 	w.destroyed++
 	return w.destroyErr
@@ -875,6 +896,69 @@ func TestSpawn_ExplicitHarnessWinsWithoutProjectRoleHarness(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].Harness; got != domain.HarnessCodex {
 		t.Fatalf("explicit harness = %q, want %q", got, domain.HarnessCodex)
+	}
+}
+
+func TestSpawn_RejectsWorkerWhenProjectAtConcurrencyCap(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+		TrackerIntake: domain.TrackerIntakeConfig{MaxConcurrent: 1},
+	}}
+	st.sessions["mer-live"] = domain.SessionRecord{
+		ID:        "mer-live",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrWorkerConcurrencyCap) {
+		t.Fatalf("spawn err = %v, want ErrWorkerConcurrencyCap", err)
+	}
+	if len(st.sessions) != 1 {
+		t.Fatalf("capped spawn must not create a session row, got %d rows", len(st.sessions))
+	}
+}
+
+func TestSpawn_CountsInFlightSeedRowsAgainstConcurrencyCap(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+		TrackerIntake: domain.TrackerIntakeConfig{MaxConcurrent: 1},
+	}}
+	ws := &blockingWorkspace{
+		fakeWorkspace: &fakeWorkspace{},
+		entered:       make(chan struct{}),
+		release:       make(chan struct{}),
+	}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		firstErr <- err
+	}()
+	<-ws.entered
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrWorkerConcurrencyCap) {
+		t.Fatalf("second spawn err = %v, want ErrWorkerConcurrencyCap", err)
+	}
+
+	close(ws.release)
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first spawn failed: %v", err)
+	}
+	if len(st.sessions) != 1 {
+		t.Fatalf("in-flight capped spawn must leave one session row, got %d", len(st.sessions))
 	}
 }
 

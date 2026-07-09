@@ -176,11 +176,12 @@ type TrackerIntakeConfig struct {
 	// optional; JSON persistence therefore collapses an empty slice back to the
 	// defaults, i.e. clearing the list restores the default opt-out protection.)
 	ExcludeLabels []string `json:"excludeLabels,omitempty"`
-	// MaxConcurrent caps the number of live intake-spawned worker sessions the
-	// loop will keep running for this project at once. Zero means no cap. When at
-	// the cap the loop defers remaining eligible issues to a later tick (they are
-	// never permanently dropped) so a bulk assignment burst cannot spawn an
-	// unbounded number of workers.
+	// MaxConcurrent caps fresh worker spawn admission against the number of live
+	// worker sessions for this project. Zero means no cap. When at the cap the
+	// intake loop defers remaining eligible issues to a later tick (they are
+	// never permanently dropped), and manual spawn requests are rejected before
+	// durable spawn state is created. Lifecycle restore/re-adoption paths do not
+	// terminate saved work to enforce this admission cap retroactively.
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 }
 

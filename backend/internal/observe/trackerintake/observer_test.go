@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -306,8 +307,8 @@ func TestPollAppliesLabelFilters(t *testing.T) {
 }
 
 func TestPollHonorsMaxConcurrentAgainstLiveWorkers(t *testing.T) {
-	// One live intake worker already exists; cap is 2, so only ONE more may spawn
-	// even though two more issues are eligible.
+	// One live worker already exists; cap is 2, so only ONE more may spawn even
+	// though two more issues are eligible.
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -340,8 +341,8 @@ func TestPollHonorsMaxConcurrentAgainstLiveWorkers(t *testing.T) {
 }
 
 func TestPollDefersWhenAlreadyAtMaxConcurrent(t *testing.T) {
-	// Two live intake workers already exist and the cap is 2: no new spawn, and
-	// the tracker is never even queried for this project.
+	// Two live workers already exist and the cap is 2: no new spawn, and the
+	// tracker is never even queried for this project.
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -373,21 +374,67 @@ func TestPollDefersWhenAlreadyAtMaxConcurrent(t *testing.T) {
 	}
 }
 
-func TestLiveIntakeWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) {
+func TestPollDefersWithoutBackoffWhenSpawnHitsConcurrencyCap(t *testing.T) {
+	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:       true,
+				Assignee:      "alice",
+				MaxConcurrent: 1,
+			}},
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "first", State: domain.IssueOpen, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "second", State: domain.IssueOpen, Assignees: []string{"alice"}},
+	}}
+	spawner := &fakeSpawner{
+		failErrByIssue: map[domain.IssueID]error{
+			"github:acme/demo#1": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+		},
+	}
+	observer := New(singleResolver(tracker), store, spawner, Config{
+		Clock:          func() time.Time { return now },
+		FailureBackoff: time.Hour,
+		Logger:         discardLogger(),
+	})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1 cap collision then defer", len(spawner.calls))
+	}
+	if len(tracker.repos) != 1 {
+		t.Fatalf("tracker calls after first poll = %d, want 1", len(tracker.repos))
+	}
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll() error = %v", err)
+	}
+	if len(tracker.repos) != 2 {
+		t.Fatalf("tracker calls after second poll = %d, want 2 (cap collision must not enter failure backoff)", len(tracker.repos))
+	}
+}
+
+func TestLiveWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) {
 	sessions := []domain.SessionRecord{
 		{ID: "a", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#1"},
 		{ID: "b", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#2", IsTerminated: true},
 		{ID: "c", ProjectID: "demo", Kind: domain.KindOrchestrator, IssueID: "github:acme/demo#3"},
-		{ID: "d", ProjectID: "demo", Kind: domain.KindWorker},                     // no issue id (ad-hoc worker)
-		{ID: "manual", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "47"}, // manual --issue, not intake-spawned
+		{ID: "d", ProjectID: "demo", Kind: domain.KindWorker},
+		{ID: "manual", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "47"},
 		{ID: "e", ProjectID: "other", Kind: domain.KindWorker, IssueID: "github:acme/other#1"},
 	}
-	counts := liveIntakeWorkersByProject(sessions)
-	if counts["demo"] != 1 {
-		t.Fatalf("demo live intake workers = %d, want 1", counts["demo"])
+	counts := liveWorkersByProject(sessions)
+	if counts["demo"] != 3 {
+		t.Fatalf("demo live workers = %d, want 3", counts["demo"])
 	}
 	if counts["other"] != 1 {
-		t.Fatalf("other live intake workers = %d, want 1", counts["other"])
+		t.Fatalf("other live workers = %d, want 1", counts["other"])
 	}
 }
 
@@ -476,12 +523,16 @@ func (f *fakeTracker) List(_ context.Context, repo domain.TrackerRepo, filter do
 func (f *fakeTracker) Preflight(context.Context) error { return nil }
 
 type fakeSpawner struct {
-	calls     []ports.SpawnConfig
-	failIssue domain.IssueID
+	calls          []ports.SpawnConfig
+	failIssue      domain.IssueID
+	failErrByIssue map[domain.IssueID]error
 }
 
 func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	f.calls = append(f.calls, cfg)
+	if err := f.failErrByIssue[cfg.IssueID]; err != nil {
+		return domain.Session{}, err
+	}
 	if cfg.IssueID == f.failIssue {
 		return domain.Session{}, errors.New("spawn failed")
 	}

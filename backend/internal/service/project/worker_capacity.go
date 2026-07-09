@@ -107,7 +107,7 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 		CheckedAt: snapshot.CheckedAt,
 	}
 	intakeCfg := project.Config.TrackerIntake.WithDefaults()
-	if intakeCfg.Enabled && intakeCfg.MaxConcurrent > 0 {
+	if intakeCfg.MaxConcurrent > 0 {
 		workerCap := intakeCfg.MaxConcurrent
 		capacity.Cap = &workerCap
 	}
@@ -121,7 +121,6 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 	for _, count := range running {
 		capacity.ActiveWorkers += count
 	}
-	intakeActiveWorkers := liveIntakeWorkerCount(sessions)
 
 	keys := capacityKeys(targets, running)
 	for _, key := range keys {
@@ -168,7 +167,7 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 			usable = 0
 		}
 		capacity.AvailableCapacity = &usable
-		free := usable - float64(intakeActiveWorkers)
+		free := usable - float64(capacity.ActiveWorkers)
 		if free < 0 {
 			free = 0
 		}
@@ -274,28 +273,6 @@ func capacityState(c WorkerCapacity) string {
 		return "uncapped"
 	}
 	return "healthy"
-}
-
-func liveIntakeWorkerCount(sessions []domain.SessionRecord) int {
-	count := 0
-	for _, sess := range sessions {
-		if sess.Kind != domain.KindWorker || sess.IsTerminated {
-			continue
-		}
-		if !isCanonicalIssueID(sess.IssueID) {
-			continue
-		}
-		count++
-	}
-	return count
-}
-
-func isCanonicalIssueID(id domain.IssueID) bool {
-	provider, native, ok := strings.Cut(string(id), ":")
-	if !ok || provider == "" || native == "" {
-		return false
-	}
-	return strings.Contains(native, "#")
 }
 
 func percent(part, total int) float64 {

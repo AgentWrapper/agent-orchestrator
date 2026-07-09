@@ -348,7 +348,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Optional GitHub issue assignee filter for intake eligibility (empty = any; intake is opt-out-by-default)")
 	f.StringArrayVar(&opts.trackerLabels, "tracker-label", nil, "Only intake issues carrying this label (repeatable; any-match)")
 	f.StringArrayVar(&opts.trackerExcludeLabels, "tracker-exclude-label", nil, "Never intake issues carrying this label (repeatable; wins over --tracker-label)")
-	f.IntVar(&opts.trackerMaxConcurrent, "tracker-max-concurrent", 0, "Cap live intake-spawned workers per project (0 = no cap)")
+	f.IntVar(&opts.trackerMaxConcurrent, "tracker-max-concurrent", 0, "Cap live workers per project (0 = no cap)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
