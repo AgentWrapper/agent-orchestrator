@@ -106,6 +106,12 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 		}
 	};
 
+	const selectOutput = (output: ReportProblemOutput) => {
+		setSelectedOutput(output);
+		setCopiedOutput(null);
+		setCopyError(null);
+	};
+
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
@@ -175,15 +181,15 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 									</Button>
 								</DropdownMenuTrigger>
 								<DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-									<DropdownMenuItem onSelect={() => setSelectedOutput("github")}>
+									<DropdownMenuItem onSelect={() => selectOutput("github")}>
 										<GitPullRequest aria-hidden="true" />
 										GitHub issue
 									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => setSelectedOutput("discord")}>
+									<DropdownMenuItem onSelect={() => selectOutput("discord")}>
 										<MessageSquare aria-hidden="true" />
 										Discord
 									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => setSelectedOutput("email")}>
+									<DropdownMenuItem onSelect={() => selectOutput("email")}>
 										<Mail aria-hidden="true" />
 										Email support
 									</DropdownMenuItem>
@@ -201,8 +207,8 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						)}
 					</div>
 
-					<div className="flex items-center justify-end border-t border-border px-5 py-4">
-						<Button type="button" onClick={() => void copyDraft()}>
+					<div className="border-t border-border px-5 py-4">
+						<Button type="button" className="w-full" onClick={() => void copyDraft()}>
 							<Send className="size-3.5" aria-hidden="true" />
 							{OUTPUT_ACTION_LABELS[selectedOutput]}
 						</Button>

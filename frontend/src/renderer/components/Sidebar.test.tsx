@@ -508,16 +508,18 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("button", { name: "Report destination" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Discord" }));
-		expect(screen.getByRole("button", { name: "Copy and open Discord" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Copy and open Discord" })).toHaveClass("w-full");
 		expect(screen.queryByRole("button", { name: "Copy and open email" })).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Copy and open Discord" }));
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		expect(writeText.mock.calls[0][0]).toContain("**AO feedback**");
+		expect(screen.getByText("Discord draft copied.")).toBeInTheDocument();
 
 		await user.click(screen.getByRole("button", { name: "Report destination" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Email support" }));
 		expect(screen.getByRole("button", { name: "Copy and open email" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Copy and open Discord" })).not.toBeInTheDocument();
+		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Copy and open email" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
