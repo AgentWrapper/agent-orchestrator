@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+	closePR as apiClosePR,
 	collectPRs,
 	getProjects,
 	getSessions,
@@ -19,11 +20,13 @@ import {
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
+const PR_DENSITY_KEY = "ao.prDensity";
 const POLL_INTERVAL_MS = 8000;
 
 // Board-level connection state is derived from the REST poll. The session screen
 // tracks its own terminal mux connection separately.
 export type ConnStatus = "closed" | "connecting" | "open";
+export type PRDensity = "cards" | "table";
 
 type AppState = {
 	config: ServerConfig | null;
@@ -34,6 +37,7 @@ type AppState = {
 	orchestratorId: string | null;
 	stats: DashboardStats;
 	activeProjectId: string; // 'all' or a projectId
+	prDensity: PRDensity;
 	connection: ConnStatus;
 	loading: boolean;
 	error: string | null;
@@ -41,9 +45,11 @@ type AppState = {
 	reloadConfig: () => Promise<void>;
 	refresh: () => Promise<void>;
 	setActiveProject: (id: string) => void;
+	setPRDensity: (density: PRDensity) => void;
 	spawn: (prompt?: string, projectId?: string, harness?: string) => Promise<void>;
 	launchConductor: (projectId: string, clean?: boolean) => Promise<OrchestratorLink>;
 	merge: (pr: DashboardPR) => Promise<void>;
+	close: (pr: DashboardPR) => Promise<void>;
 	kill: (id: string) => Promise<void>;
 	restore: (id: string) => Promise<void>;
 	send: (id: string, message: string) => Promise<void>;
@@ -82,6 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [orchestratorId, setOrchestratorId] = useState<string | null>(null);
 	const [stats, setStats] = useState<DashboardStats>({});
 	const [activeProjectId, setActiveProjectId] = useState<string>("all");
+	const [prDensity, setPRDensityState] = useState<PRDensity>("cards");
 	const [connection, setConnection] = useState<ConnStatus>("closed");
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -92,6 +99,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	useEffect(() => {
 		AsyncStorage.getItem(ACTIVE_PROJECT_KEY).then((v) => {
 			if (v) setActiveProjectId(v);
+		});
+		AsyncStorage.getItem(PR_DENSITY_KEY).then((v) => {
+			if (v === "cards" || v === "table") setPRDensityState(v);
 		});
 	}, []);
 
@@ -148,6 +158,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		AsyncStorage.setItem(ACTIVE_PROJECT_KEY, id).catch(() => {});
 	}, []);
 
+	const setPRDensity = useCallback((density: PRDensity) => {
+		setPRDensityState(density);
+		AsyncStorage.setItem(PR_DENSITY_KEY, density).catch(() => {});
+	}, []);
+
 	// Pick a sensible project for actions that need one (spawn / conductor).
 	const targetProject = useCallback((): string | null => {
 		if (activeProjectId !== "all") return activeProjectId;
@@ -179,6 +194,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const merge = useCallback(
 		async (pr: DashboardPR) => {
 			await apiMergePR(cfgRef.current!, pr);
+			await fetchAll();
+		},
+		[fetchAll],
+	);
+
+	const close = useCallback(
+		async (pr: DashboardPR) => {
+			await apiClosePR(cfgRef.current!, pr);
 			await fetchAll();
 		},
 		[fetchAll],
@@ -216,15 +239,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			orchestratorId,
 			stats,
 			activeProjectId,
+			prDensity,
 			connection,
 			loading,
 			error,
 			reloadConfig,
 			refresh: fetchAll,
 			setActiveProject,
+			setPRDensity,
 			spawn,
 			launchConductor,
 			merge,
+			close,
 			kill,
 			restore,
 			send,
@@ -237,15 +263,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			orchestratorId,
 			stats,
 			activeProjectId,
+			prDensity,
 			connection,
 			loading,
 			error,
 			reloadConfig,
 			fetchAll,
 			setActiveProject,
+			setPRDensity,
 			spawn,
 			launchConductor,
 			merge,
+			close,
 			kill,
 			restore,
 			send,

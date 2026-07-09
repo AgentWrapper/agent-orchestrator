@@ -11,6 +11,7 @@ export type DashboardPR = {
 	repo?: string;
 	branch?: string;
 	baseBranch?: string;
+	updatedAt?: string;
 	isDraft?: boolean;
 	state?: "open" | "merged" | "closed";
 	additions?: number;
@@ -95,11 +96,20 @@ const API = "/api/v1";
 type WirePR = {
 	url: string;
 	number: number;
+	title?: string;
+	owner?: string;
+	repo?: string;
+	branch?: string;
+	baseBranch?: string;
 	state?: string; // draft | open | merged | closed
 	ci?: string; // unknown | pending | passing | failing
 	review?: string; // none | approved | changes_requested | review_required
 	mergeability?: string; // unknown | mergeable | conflicting | blocked | unstable
 	reviewComments?: boolean;
+	additions?: number;
+	deletions?: number;
+	changedFiles?: number;
+	updatedAt?: string;
 };
 
 type WireSession = {
@@ -119,6 +129,12 @@ type WireSession = {
 	prs?: WirePR[];
 };
 
+function repoFromURL(url: string): { owner?: string; repo?: string } {
+	const match = url.match(/^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/(?:pull|merge_requests)\//);
+	if (!match) return {};
+	return { owner: decodeURIComponent(match[1]), repo: decodeURIComponent(match[2]) };
+}
+
 function mapPR(pr: WirePR): DashboardPR {
 	const ci = pr.ci === "passing" || pr.ci === "failing" || pr.ci === "pending" ? pr.ci : "none";
 	const review =
@@ -130,15 +146,30 @@ function mapPR(pr: WirePR): DashboardPR {
 					? "pending"
 					: "none";
 	const state = pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open";
+	const repo = repoFromURL(pr.url);
 	return {
 		number: pr.number,
 		url: pr.url,
+		title: pr.title,
+		owner: pr.owner ?? repo.owner,
+		repo: pr.repo ?? repo.repo,
+		branch: pr.branch,
+		baseBranch: pr.baseBranch,
+		updatedAt: pr.updatedAt,
 		state,
 		isDraft: pr.state === "draft",
 		ciStatus: ci,
 		reviewDecision: review,
-		mergeability: { mergeable: pr.mergeability === "mergeable" },
+		mergeability: {
+			mergeable: pr.mergeability === "mergeable",
+			ciPassing: ci === "passing",
+			approved: review === "approved",
+			noConflicts: pr.mergeability !== "conflicting",
+		},
 		unresolvedThreads: pr.reviewComments ? 1 : 0,
+		additions: typeof pr.additions === "number" ? pr.additions : undefined,
+		deletions: typeof pr.deletions === "number" ? pr.deletions : undefined,
+		changedFiles: typeof pr.changedFiles === "number" ? pr.changedFiles : undefined,
 	};
 }
 
@@ -352,6 +383,10 @@ export async function mergePR(cfg: ServerConfig, pr: DashboardPR): Promise<void>
 	await req(cfg, `${API}/prs/${pr.number}/merge`, { method: "POST" });
 }
 
+export async function closePR(cfg: ServerConfig, pr: DashboardPR): Promise<void> {
+	await req(cfg, `${API}/prs/${pr.number}/close`, { method: "POST" });
+}
+
 // Quick reachability probe for the Settings "Test connection" button.
 export async function pingServer(cfg: ServerConfig): Promise<number> {
 	const res = await req(cfg, `${API}/sessions`);
@@ -361,10 +396,12 @@ export async function pingServer(cfg: ServerConfig): Promise<number> {
 
 // ---- Derived helpers --------------------------------------------------------
 
-const TERMINAL_STATUSES = new Set(["killed", "terminated", "done", "cleanup", "errored", "merged"]);
+export const TERMINAL_STATUSES = ["killed", "terminated", "done", "cleanup", "errored", "merged"] as const;
+
+const TERMINAL_STATUS_SET = new Set<string>(TERMINAL_STATUSES);
 
 export function isTerminalStatus(status?: string | null): boolean {
-	return !!status && TERMINAL_STATUSES.has(status);
+	return !!status && TERMINAL_STATUS_SET.has(status);
 }
 
 // Fallback attention bucket when the server didn't compute attentionLevel.
