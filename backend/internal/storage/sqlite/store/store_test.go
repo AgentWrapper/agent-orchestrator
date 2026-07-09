@@ -323,6 +323,44 @@ func TestPRCRUD(t *testing.T) {
 	if list, _ := s.ListPRsBySession(ctx, r.ID); len(list) != 1 {
 		t.Fatalf("list prs = %d, want 1", len(list))
 	}
+	byNum, ok, err := s.GetPRByNumber(ctx, 1)
+	if err != nil || !ok || byNum.URL != pr.URL {
+		t.Fatalf("GetPRByNumber: ok=%v err=%v got=%+v", ok, err, byNum)
+	}
+	if _, ok, err := s.GetPRByNumber(ctx, 999); err != nil || ok {
+		t.Fatalf("GetPRByNumber missing: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestGetPRByNumber_PrefersOpenOverMerged(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Same provider number can exist across repos; path-id lookup prefers open.
+	merged := domain.PullRequest{
+		URL: "https://github.com/a/b/pull/7", SessionID: r.ID, Number: 7,
+		Merged: true, UpdatedAt: now.Add(time.Hour),
+	}
+	open := domain.PullRequest{
+		URL: "https://github.com/c/d/pull/7", SessionID: r.ID, Number: 7,
+		UpdatedAt: now,
+	}
+	if err := s.WritePR(ctx, merged, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WritePR(ctx, open, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetPRByNumber(ctx, 7)
+	if err != nil || !ok {
+		t.Fatalf("GetPRByNumber: ok=%v err=%v", ok, err)
+	}
+	if got.URL != open.URL || got.Merged {
+		t.Fatalf("got %+v, want open PR %s", got, open.URL)
+	}
 }
 
 func TestWritePRRejectsSessionReassignment(t *testing.T) {

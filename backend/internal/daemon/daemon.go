@@ -25,6 +25,7 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -139,11 +140,28 @@ func Run() error {
 		}
 	}()
 
+	// PR action service (merge / resolve-comments): reuse the same GitHub
+	// provider construction as the SCM observer. When provider setup fails
+	// (should be rare with SkipTokenPreflight), leave PRs nil so the routes
+	// return 501 rather than a fake-success stub.
+	var prActions prsvc.ActionManager
+	if scmProvider, err := newGitHubSCMProvider(log); err != nil {
+		logSCMProviderDisabled(log, err)
+	} else {
+		prActions = prsvc.NewActionServiceWithDeps(prsvc.ActionDeps{
+			Store:     store,
+			Writer:    store,
+			SCM:       scmProvider,
+			Lifecycle: lcStack.LCM,
+		})
+	}
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink}),
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
+		PRs:                prActions,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
