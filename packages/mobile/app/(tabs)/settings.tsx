@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { pingServer } from "../../lib/api";
 import { DEFAULT_CONFIG, loadConfig, saveConfig, type ServerConfig } from "../../lib/config";
+import { useBreakpoint } from "../../lib/responsive";
 import { useApp } from "../../lib/store";
 import { theme } from "../../lib/theme";
 import { Button, ConnectionPill, ScreenHeader } from "../../lib/ui";
@@ -23,6 +24,7 @@ import { Button, ConnectionPill, ScreenHeader } from "../../lib/ui";
 export default function SettingsScreen() {
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
+	const wide = useBreakpoint() === "wide";
 	const { reloadConfig, projects, connection, setActiveProject } = useApp();
 
 	// Tapping a project scopes the Kanban board to it and jumps to that tab.
@@ -84,86 +86,93 @@ export default function SettingsScreen() {
 			<ScreenHeader title="Settings" right={<ConnectionPill status={connection} />} />
 			<ScrollView
 				style={styles.screen}
-				contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+				contentContainerStyle={wide ? styles.screenContentWide : styles.screenContent}
 				keyboardShouldPersistTaps="handled"
 			>
-				<Text style={styles.sectionTitle}>SERVER</Text>
-				<Text style={styles.intro}>
-					Point the app at your AO server - your PC's Tailscale name / 100.x address (or LAN IP on the same Wi-Fi).
-				</Text>
+				<View style={wide ? styles.formColumn : undefined}>
+					<Text style={styles.sectionTitle}>SERVER</Text>
+					<Text style={styles.intro}>
+						Point the app at your AO server - your PC's Tailscale name / 100.x address (or LAN IP on the same Wi-Fi).
+					</Text>
 
-				<Field
-					label="HOST"
-					value={cfg.host}
-					onChangeText={set("host")}
-					placeholder="my-pc.tailXXXX.ts.net  or  192.168.x.x"
-					autoCapitalize="none"
-					keyboardType="url"
-				/>
-				<View style={styles.row}>
-					<View style={{ flex: 1, marginRight: 8 }}>
-						<Field label="API PORT" value={cfg.httpPort} onChangeText={set("httpPort")} keyboardType="number-pad" />
-					</View>
-					<View style={{ flex: 1, marginLeft: 8 }}>
-						<Field label="TERMINAL PORT" value={cfg.muxPort} onChangeText={set("muxPort")} keyboardType="number-pad" />
-					</View>
-				</View>
-
-				<View style={styles.toggleRow}>
-					<View style={{ flex: 1 }}>
-						<Text style={styles.toggleLabel}>Use TLS (https / wss)</Text>
-						<Text style={styles.toggleHint}>On only if AO is served over HTTPS (e.g. a Tailscale funnel).</Text>
-					</View>
-					<Switch
-						value={!!cfg.secure}
-						onValueChange={(v) => setCfg((prev) => ({ ...prev, secure: v }))}
-						trackColor={{ true: theme.blue, false: theme.borderStrong }}
+					<Field
+						label="HOST"
+						value={cfg.host}
+						onChangeText={set("host")}
+						placeholder="my-pc.tailXXXX.ts.net  or  192.168.x.x"
+						autoCapitalize="none"
+						keyboardType="url"
 					/>
-				</View>
-
-				<Button
-					title="Test connection"
-					variant="ghost"
-					icon="activity"
-					loading={testing}
-					onPress={test}
-					style={{ marginTop: 4 }}
-				/>
-				{result && (
-					<View style={[styles.resultBox, { borderColor: result.ok ? theme.tintGreen : theme.tintRed }]}>
-						<Feather
-							name={result.ok ? "check-circle" : "alert-circle"}
-							size={15}
-							color={result.ok ? theme.green : theme.red}
-						/>
-						<Text style={[styles.result, { color: result.ok ? theme.green : theme.red }]}>{result.msg}</Text>
+					<View style={styles.row}>
+						<View style={{ flex: 1, marginRight: 8 }}>
+							<Field label="API PORT" value={cfg.httpPort} onChangeText={set("httpPort")} keyboardType="number-pad" />
+						</View>
+						<View style={{ flex: 1, marginLeft: 8 }}>
+							<Field
+								label="TERMINAL PORT"
+								value={cfg.muxPort}
+								onChangeText={set("muxPort")}
+								keyboardType="number-pad"
+							/>
+						</View>
 					</View>
-				)}
-				<Button
-					title={saved ? "Saved" : "Save"}
-					icon={saved ? undefined : "save"}
-					onPress={save}
-					disabled={!cfg.host.trim()}
-					style={{ marginTop: 12 }}
-				/>
 
-				<Text style={[styles.sectionTitle, { marginTop: 32 }]}>PROJECTS</Text>
-				{projects.length === 0 ? (
-					<Text style={styles.intro}>No projects found. Add a project from the AO dashboard.</Text>
-				) : (
-					projects.map((p) => (
-						<Pressable
-							key={p.id}
-							onPress={() => openProject(p.id)}
-							style={({ pressed }) => [styles.projRow, pressed && styles.projRowPressed]}
-						>
-							<Feather name="folder" size={16} color={theme.textTertiary} />
-							<Text style={styles.projName}>{p.name}</Text>
-							{p.sessionPrefix ? <Text style={styles.projPrefix}>{p.sessionPrefix}</Text> : null}
-							<Feather name="chevron-right" size={16} color={theme.textTertiary} />
-						</Pressable>
-					))
-				)}
+					<View style={styles.toggleRow}>
+						<View style={{ flex: 1 }}>
+							<Text style={styles.toggleLabel}>Use TLS (https / wss)</Text>
+							<Text style={styles.toggleHint}>On only if AO is served over HTTPS (e.g. a Tailscale funnel).</Text>
+						</View>
+						<Switch
+							value={!!cfg.secure}
+							onValueChange={(v) => setCfg((prev) => ({ ...prev, secure: v }))}
+							trackColor={{ true: theme.blue, false: theme.borderStrong }}
+						/>
+					</View>
+
+					<Button
+						title="Test connection"
+						variant="ghost"
+						icon="activity"
+						loading={testing}
+						onPress={test}
+						style={{ marginTop: 4 }}
+					/>
+					{result && (
+						<View style={[styles.resultBox, { borderColor: result.ok ? theme.tintGreen : theme.tintRed }]}>
+							<Feather
+								name={result.ok ? "check-circle" : "alert-circle"}
+								size={15}
+								color={result.ok ? theme.green : theme.red}
+							/>
+							<Text style={[styles.result, { color: result.ok ? theme.green : theme.red }]}>{result.msg}</Text>
+						</View>
+					)}
+					<Button
+						title={saved ? "Saved" : "Save"}
+						icon={saved ? undefined : "save"}
+						onPress={save}
+						disabled={!cfg.host.trim()}
+						style={{ marginTop: 12 }}
+					/>
+
+					<Text style={[styles.sectionTitle, { marginTop: 32 }]}>PROJECTS</Text>
+					{projects.length === 0 ? (
+						<Text style={styles.intro}>No projects found. Add a project from the AO dashboard.</Text>
+					) : (
+						projects.map((p) => (
+							<Pressable
+								key={p.id}
+								onPress={() => openProject(p.id)}
+								style={({ pressed }) => [styles.projRow, pressed && styles.projRowPressed]}
+							>
+								<Feather name="folder" size={16} color={theme.textTertiary} />
+								<Text style={styles.projName}>{p.name}</Text>
+								{p.sessionPrefix ? <Text style={styles.projPrefix}>{p.sessionPrefix}</Text> : null}
+								<Feather name="chevron-right" size={16} color={theme.textTertiary} />
+							</Pressable>
+						))
+					)}
+				</View>
 			</ScrollView>
 		</KeyboardAvoidingView>
 	);
@@ -196,6 +205,9 @@ function Field(props: {
 
 const styles = StyleSheet.create({
 	screen: { flex: 1, backgroundColor: theme.bgBase },
+	screenContent: { padding: 16, paddingBottom: 120 },
+	screenContentWide: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 120, alignItems: "center" },
+	formColumn: { width: "100%", maxWidth: 560 },
 	center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.bgBase },
 	sectionTitle: { color: theme.textTertiary, fontSize: 11, letterSpacing: 1.2, fontWeight: "700", marginBottom: 10 },
 	intro: { color: theme.textSecondary, fontSize: 13, lineHeight: 19, marginBottom: 18 },

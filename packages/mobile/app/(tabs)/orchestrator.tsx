@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { attentionOf, type DashboardSession, type OrchestratorLink } from "../../lib/api";
+import { CardGrid, WideContainer, useBreakpoint } from "../../lib/responsive";
 import { useApp } from "../../lib/store";
 import { attentionMeta, statusVisual, theme, type AttentionLevel, type StatusVisual } from "../../lib/theme";
 import { Button, ConnectionPill, Dot, EmptyState, ScreenHeader } from "../../lib/ui";
@@ -12,6 +13,7 @@ const ZONE_ORDER: AttentionLevel[] = ["merge", "respond", "review", "pending", "
 
 export default function OrchestratorScreen() {
 	const insets = useSafeAreaInsets();
+	const wide = useBreakpoint() === "wide";
 	const { configured, connection, projects, sessions, orchestrators, refresh } = useApp();
 	const [refreshing, setRefreshing] = useState(false);
 
@@ -33,6 +35,22 @@ export default function OrchestratorScreen() {
 		);
 	}
 
+	const cards = visibleProjects.map((p) => {
+		const link = orchestrators.find((o) => o.projectId === p.id) ?? null;
+		const workers = sessions.filter((s) => s.projectId === p.id && s.id !== link?.id);
+		return (
+			<OrchestratorCard
+				key={p.id}
+				projectId={p.id}
+				projectName={p.name}
+				link={link}
+				workerCount={workers.length}
+				zones={zoneCounts(workers)}
+				wide={wide}
+			/>
+		);
+	});
+
 	return (
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
@@ -43,26 +61,19 @@ export default function OrchestratorScreen() {
 			/>
 
 			<ScrollView
-				contentContainerStyle={{ paddingBottom: 110, paddingTop: 4 }}
+				contentContainerStyle={wide ? styles.wideScrollContent : styles.scrollContent}
 				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.blue} />}
 			>
 				{visibleProjects.length === 0 ? (
 					<EmptyState icon="folder" title="No projects" message="Add a project in AO to get started." />
+				) : wide ? (
+					<WideContainer style={styles.wideGrid}>
+						<CardGrid cardBasis={440} maxCardWidth={560}>
+							{cards}
+						</CardGrid>
+					</WideContainer>
 				) : (
-					visibleProjects.map((p) => {
-						const link = orchestrators.find((o) => o.projectId === p.id) ?? null;
-						const workers = sessions.filter((s) => s.projectId === p.id && s.id !== link?.id);
-						return (
-							<OrchestratorCard
-								key={p.id}
-								projectId={p.id}
-								projectName={p.name}
-								link={link}
-								workerCount={workers.length}
-								zones={zoneCounts(workers)}
-							/>
-						);
-					})
+					cards
 				)}
 			</ScrollView>
 		</View>
@@ -84,12 +95,14 @@ function OrchestratorCard({
 	link,
 	workerCount,
 	zones,
+	wide,
 }: {
 	projectId: string;
 	projectName: string;
 	link: OrchestratorLink | null;
 	workerCount: number;
 	zones: Record<string, number>;
+	wide?: boolean;
 }) {
 	const router = useRouter();
 	const { launchConductor } = useApp();
@@ -118,7 +131,7 @@ function OrchestratorCard({
 	};
 
 	return (
-		<View style={styles.card}>
+		<View style={[styles.card, wide && styles.cardWide]}>
 			<View style={styles.head}>
 				<View style={styles.orgIcon}>
 					<Feather name="share-2" size={18} color={theme.blue} />
@@ -158,14 +171,14 @@ function OrchestratorCard({
 				</View>
 			) : null}
 
-			<View style={styles.actions}>
+			<View style={[styles.actions, wide && styles.actionsWide]}>
 				{open ? (
 					<>
 						<Button
 							title="Open orchestrator"
 							icon="terminal"
 							onPress={() => openTerminal(link.id)}
-							style={{ flex: 1 }}
+							style={wide ? styles.contentBtn : styles.flexBtn}
 						/>
 						<Button title="Restart" variant="ghost" icon="rotate-ccw" loading={busy} onPress={() => onLaunch(false)} />
 					</>
@@ -175,7 +188,7 @@ function OrchestratorCard({
 						icon="play"
 						loading={busy}
 						onPress={() => onLaunch(present)}
-						style={{ flex: 1 }}
+						style={wide ? styles.contentBtn : styles.flexBtn}
 					/>
 				)}
 			</View>
@@ -185,6 +198,9 @@ function OrchestratorCard({
 
 const styles = StyleSheet.create({
 	screen: { flex: 1, backgroundColor: theme.bgBase },
+	scrollContent: { paddingBottom: 110, paddingTop: 4 },
+	wideScrollContent: { paddingBottom: 110, paddingTop: 4 },
+	wideGrid: { paddingHorizontal: 16 },
 	card: {
 		backgroundColor: theme.bgElevated,
 		borderRadius: 14,
@@ -194,6 +210,7 @@ const styles = StyleSheet.create({
 		marginHorizontal: 12,
 		marginVertical: 6,
 	},
+	cardWide: { width: "100%", marginHorizontal: 0, marginVertical: 0 },
 	head: { flexDirection: "row", alignItems: "center", gap: 12 },
 	orgIcon: {
 		width: 40,
@@ -219,4 +236,7 @@ const styles = StyleSheet.create({
 	zoneN: { fontSize: 12, fontWeight: "800", fontFamily: theme.fontMono },
 	zoneLabel: { color: theme.textSecondary, fontSize: 11, fontWeight: "600" },
 	actions: { flexDirection: "row", gap: 8, marginTop: 16 },
+	actionsWide: { flexWrap: "wrap" },
+	flexBtn: { flex: 1 },
+	contentBtn: {},
 });

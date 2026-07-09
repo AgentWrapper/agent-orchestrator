@@ -4,6 +4,7 @@ import { Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from "rea
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { DashboardPR, DashboardSession } from "../../lib/api";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
+import { CardGrid, WideContainer, useBreakpoint } from "../../lib/responsive";
 import { useApp, usePRs } from "../../lib/store";
 import { ciVisual, theme } from "../../lib/theme";
 import { Button, Chip, ConnectionPill, EmptyState, Pill, ScreenHeader } from "../../lib/ui";
@@ -13,6 +14,7 @@ type Filter = "open" | "merged" | "all";
 export default function PRsScreen() {
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
+	const wide = useBreakpoint() === "wide";
 	const { configured, connection, refresh } = useApp();
 	const prs = usePRs();
 	const [filter, setFilter] = useState<Filter>("open");
@@ -48,25 +50,44 @@ export default function PRsScreen() {
 		all: prs.length,
 	};
 
+	const filters = (
+		<View style={styles.filters}>
+			{(["open", "merged", "all"] as Filter[]).map((f) => (
+				<Pill
+					key={f}
+					label={`${f[0].toUpperCase() + f.slice(1)} ${counts[f]}`}
+					active={filter === f}
+					onPress={() => setFilter(f)}
+				/>
+			))}
+		</View>
+	);
+
+	const cards = filtered.map(({ pr, session }) => (
+		<PRCard
+			key={`${pr.owner}/${pr.repo}#${pr.number}`}
+			pr={pr}
+			session={session}
+			wide={wide}
+			onOpenSession={() =>
+				router.push({
+					pathname: "/session/[id]",
+					params: { id: session.id, projectId: session.projectId },
+				})
+			}
+		/>
+	));
+
 	return (
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
 			<ScreenHeader title="Pull Requests" right={<ConnectionPill status={connection} />} />
 			<ProjectSwitcher />
 
-			<View style={styles.filters}>
-				{(["open", "merged", "all"] as Filter[]).map((f) => (
-					<Pill
-						key={f}
-						label={`${f[0].toUpperCase() + f.slice(1)} ${counts[f]}`}
-						active={filter === f}
-						onPress={() => setFilter(f)}
-					/>
-				))}
-			</View>
+			{wide ? <WideContainer>{filters}</WideContainer> : filters}
 
 			<ScrollView
-				contentContainerStyle={{ paddingBottom: 110, paddingTop: 4 }}
+				contentContainerStyle={wide ? styles.wideScrollContent : styles.scrollContent}
 				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.blue} />}
 			>
 				{filtered.length === 0 ? (
@@ -75,20 +96,14 @@ export default function PRsScreen() {
 						title="No pull requests"
 						message={filter === "open" ? "No open PRs right now." : "Nothing here yet."}
 					/>
+				) : wide ? (
+					<WideContainer style={styles.wideGrid}>
+						<CardGrid cardBasis={400} maxCardWidth={520}>
+							{cards}
+						</CardGrid>
+					</WideContainer>
 				) : (
-					filtered.map(({ pr, session }) => (
-						<PRCard
-							key={`${pr.owner}/${pr.repo}#${pr.number}`}
-							pr={pr}
-							session={session}
-							onOpenSession={() =>
-								router.push({
-									pathname: "/session/[id]",
-									params: { id: session.id, projectId: session.projectId },
-								})
-							}
-						/>
-					))
+					cards
 				)}
 			</ScrollView>
 		</View>
@@ -98,17 +113,19 @@ export default function PRsScreen() {
 function PRCard({
 	pr,
 	session,
+	wide,
 	onOpenSession,
 }: {
 	pr: DashboardPR;
 	session: DashboardSession;
+	wide?: boolean;
 	onOpenSession: () => void;
 }) {
 	const ci = pr.ciStatus;
 	const review = pr.reviewDecision;
 
 	return (
-		<View style={styles.card}>
+		<View style={[styles.card, wide && styles.cardWide]}>
 			<View style={styles.cardTop}>
 				<Text style={styles.repo} numberOfLines={1}>
 					{pr.repo ? `${pr.owner}/${pr.repo}` : session.projectId}
@@ -155,15 +172,21 @@ function PRCard({
 				) : null}
 			</View>
 
-			<View style={styles.actions}>
-				<Button title="Session" variant="ghost" icon="terminal" onPress={onOpenSession} style={styles.flexBtn} />
+			<View style={[styles.actions, wide && styles.actionsWide]}>
+				<Button
+					title="Session"
+					variant="ghost"
+					icon="terminal"
+					onPress={onOpenSession}
+					style={wide ? styles.contentBtn : styles.flexBtn}
+				/>
 				{pr.url ? (
 					<Button
 						title="Open"
 						variant="ghost"
 						icon="external-link"
 						onPress={() => Linking.openURL(pr.url!)}
-						style={styles.flexBtn}
+						style={wide ? styles.contentBtn : styles.flexBtn}
 					/>
 				) : null}
 			</View>
@@ -174,6 +197,9 @@ function PRCard({
 const styles = StyleSheet.create({
 	screen: { flex: 1, backgroundColor: theme.bgBase },
 	filters: { flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
+	scrollContent: { paddingBottom: 110, paddingTop: 4 },
+	wideScrollContent: { paddingBottom: 110, paddingTop: 4 },
+	wideGrid: { paddingHorizontal: 16 },
 	card: {
 		backgroundColor: theme.bgElevated,
 		borderRadius: 12,
@@ -183,6 +209,7 @@ const styles = StyleSheet.create({
 		marginHorizontal: 12,
 		marginVertical: 5,
 	},
+	cardWide: { width: "100%", marginHorizontal: 0, marginVertical: 0 },
 	cardTop: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
 	repo: { color: theme.textTertiary, fontSize: 12, fontFamily: theme.fontMono },
 	num: { color: theme.textSecondary, fontSize: 13, fontWeight: "700", fontFamily: theme.fontMono },
@@ -191,5 +218,7 @@ const styles = StyleSheet.create({
 	diffChip: { flexDirection: "row", gap: 6, alignItems: "center", paddingHorizontal: 4 },
 	diffText: { fontSize: 11, fontWeight: "700", fontFamily: theme.fontMono },
 	actions: { flexDirection: "row", gap: 8, marginTop: 14 },
+	actionsWide: { flexWrap: "wrap" },
 	flexBtn: { flex: 1, paddingVertical: 10 },
+	contentBtn: { paddingVertical: 10 },
 });

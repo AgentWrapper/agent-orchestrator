@@ -1,16 +1,34 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
+import {
+	ActivityIndicator,
+	Pressable,
+	RefreshControl,
+	ScrollView,
+	SectionList,
+	StyleSheet,
+	Text,
+	View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { attentionOf, type DashboardSession } from "../../lib/api";
+import { attentionOf, sessionTitle, type DashboardSession } from "../../lib/api";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
+import { BoardColumn, WideContainer, useBreakpoint } from "../../lib/responsive";
 import { SessionCard } from "../../lib/SessionCard";
 import { useApp, useVisibleSessions } from "../../lib/store";
-import { attentionMeta, theme } from "../../lib/theme";
+import { attentionMeta, theme, type AttentionLevel } from "../../lib/theme";
 import { Button, ConnectionPill, EmptyState, ScreenHeader, SectionHeader } from "../../lib/ui";
 
 type Section = { key: string; label: string; color: string; order: number; data: DashboardSession[] };
+type BoardLane = { key: string; label: string; color: string; levels: AttentionLevel[] };
+
+const BOARD_LANES: BoardLane[] = [
+	{ key: "working", label: "Working", color: theme.orange, levels: ["working"] },
+	{ key: "needs-you", label: "Needs you", color: theme.amber, levels: ["action", "respond", "review"] },
+	{ key: "in-review", label: "In review", color: theme.textTertiary, levels: ["pending"] },
+	{ key: "ready", label: "Ready to merge", color: theme.green, levels: ["merge"] },
+];
 
 function groupByAttention(sessions: DashboardSession[]): Section[] {
 	const buckets = new Map<string, DashboardSession[]>();
@@ -31,14 +49,34 @@ function groupByAttention(sessions: DashboardSession[]): Section[] {
 		.sort((a, b) => a.order - b.order);
 }
 
+function groupForBoard(sessions: DashboardSession[]) {
+	const lanes = new Map<string, DashboardSession[]>(BOARD_LANES.map((lane) => [lane.key, []]));
+	const done: DashboardSession[] = [];
+
+	for (const s of sessions) {
+		const attention = attentionOf(s);
+		if (attention === "done") {
+			done.push(s);
+			continue;
+		}
+		const lane = BOARD_LANES.find((candidate) => candidate.levels.includes(attention));
+		lanes.get(lane?.key ?? "working")!.push(s);
+	}
+
+	return { lanes, done };
+}
+
 export default function FleetScreen() {
 	const router = useRouter();
 	const insets = useSafeAreaInsets();
+	const wide = useBreakpoint() === "wide";
 	const { configured, loading, error, connection, config, refresh } = useApp();
 	const sessions = useVisibleSessions();
 	const [refreshing, setRefreshing] = useState(false);
+	const [doneExpanded, setDoneExpanded] = useState(false);
 
 	const sections = useMemo(() => groupByAttention(sessions), [sessions]);
+	const board = useMemo(() => groupForBoard(sessions), [sessions]);
 
 	const counts = useMemo(() => {
 		let working = 0,
@@ -52,6 +90,14 @@ export default function FleetScreen() {
 		}
 		return { working, needsYou, mergeable };
 	}, [sessions]);
+
+	const stats = (
+		<View style={styles.stats}>
+			<Stat n={counts.working} label="working" color={theme.orange} />
+			<Stat n={counts.needsYou} label="need you" color={theme.amber} />
+			<Stat n={counts.mergeable} label="mergeable" color={theme.green} />
+		</View>
+	);
 
 	const onRefresh = useCallback(async () => {
 		setRefreshing(true);
@@ -78,18 +124,85 @@ export default function FleetScreen() {
 			<View style={{ height: insets.top }} />
 			<ScreenHeader title="Kanban" subtitle={config?.host} right={<ConnectionPill status={connection} />} />
 
-			<View style={styles.stats}>
-				<Stat n={counts.working} label="working" color={theme.orange} />
-				<Stat n={counts.needsYou} label="need you" color={theme.amber} />
-				<Stat n={counts.mergeable} label="mergeable" color={theme.green} />
-			</View>
+			{wide ? <WideContainer>{stats}</WideContainer> : stats}
 
-			<ProjectSwitcher />
+			{wide ? (
+				<WideContainer>
+					<ProjectSwitcher />
+				</WideContainer>
+			) : (
+				<ProjectSwitcher />
+			)}
 
 			{loading && sessions.length === 0 ? (
 				<View style={styles.center}>
 					<ActivityIndicator color={theme.blue} />
 				</View>
+			) : wide ? (
+				<WideContainer style={styles.wideContent}>
+					{error ? (
+						<EmptyState
+							icon="wifi-off"
+							title="Couldn't reach server"
+							message={error}
+							action={<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />}
+						/>
+					) : (
+						<>
+							<View style={styles.board}>
+								{BOARD_LANES.map((lane) => {
+									const laneSessions = board.lanes.get(lane.key) ?? [];
+									return (
+										<BoardColumn key={lane.key} label={lane.label} color={lane.color} count={laneSessions.length}>
+											{laneSessions.map((session) => (
+												<SessionCard key={`${session.projectId}:${session.id}`} session={session} showProject />
+											))}
+										</BoardColumn>
+									);
+								})}
+							</View>
+							{board.done.length > 0 ? (
+								<View style={styles.doneBar}>
+									<Pressable
+										accessibilityRole="button"
+										accessibilityState={{ expanded: doneExpanded }}
+										onPress={() => setDoneExpanded((v) => !v)}
+										style={({ pressed }) => [styles.doneToggle, pressed && styles.doneTogglePressed]}
+									>
+										<Feather
+											name="chevron-right"
+											size={14}
+											color={theme.textTertiary}
+											style={[styles.doneChevron, doneExpanded && styles.doneChevronExpanded]}
+										/>
+										<Text style={styles.doneLabel}>DONE / TERMINATED</Text>
+										<Text style={styles.doneCount}>{board.done.length}</Text>
+									</Pressable>
+									{doneExpanded ? (
+										<ScrollView style={styles.doneListScroll} contentContainerStyle={styles.doneList}>
+											{board.done.map((session) => (
+												<Pressable
+													key={`${session.projectId}:${session.id}`}
+													onPress={() =>
+														router.push({
+															pathname: "/session/[id]",
+															params: { id: session.id, projectId: session.projectId },
+														})
+													}
+													style={({ pressed }) => [styles.doneItem, pressed && styles.doneItemPressed]}
+												>
+													<Text style={styles.doneItemTitle} numberOfLines={1}>
+														{sessionTitle(session)}
+													</Text>
+												</Pressable>
+											))}
+										</ScrollView>
+									) : null}
+								</View>
+							) : null}
+						</>
+					)}
+				</WideContainer>
 			) : (
 				<SectionList
 					sections={sections}
@@ -166,6 +279,68 @@ const styles = StyleSheet.create({
 	},
 	statN: { fontSize: 24, fontWeight: "800", fontFamily: theme.fontMono },
 	statLabel: { color: theme.textTertiary, fontSize: 11, fontWeight: "600", marginTop: 2 },
+	wideContent: {
+		flex: 1,
+		minHeight: 0,
+		paddingHorizontal: 16,
+		paddingBottom: 12,
+	},
+	board: {
+		flex: 1,
+		minHeight: 0,
+		flexDirection: "row",
+		gap: 8,
+	},
+	doneBar: {
+		marginTop: 8,
+		borderRadius: 12,
+		borderWidth: 1,
+		borderColor: theme.borderSubtle,
+		backgroundColor: theme.bgColumn,
+		overflow: "hidden",
+	},
+	doneToggle: {
+		minHeight: 46,
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+		paddingHorizontal: 14,
+	},
+	doneTogglePressed: { backgroundColor: theme.bgElevatedHover },
+	doneChevron: { transform: [{ rotate: "0deg" }] },
+	doneChevronExpanded: { transform: [{ rotate: "90deg" }] },
+	doneLabel: {
+		flex: 1,
+		color: theme.textSecondary,
+		fontSize: 11,
+		fontWeight: "700",
+		letterSpacing: 1.2,
+	},
+	doneCount: {
+		color: theme.textTertiary,
+		fontSize: 12,
+		fontWeight: "700",
+		fontFamily: theme.fontMono,
+	},
+	doneList: {
+		flexDirection: "row",
+		flexWrap: "wrap",
+		gap: 8,
+		paddingHorizontal: 12,
+		paddingBottom: 12,
+	},
+	doneListScroll: { maxHeight: 160 },
+	doneItem: {
+		maxWidth: 260,
+		borderRadius: 8,
+		borderWidth: 1,
+		borderColor: theme.borderSubtle,
+		backgroundColor: theme.bgElevated,
+		paddingHorizontal: 10,
+		paddingVertical: 7,
+	},
+	doneItemPressed: { backgroundColor: theme.bgElevatedHover, borderColor: theme.borderDefault },
+	doneItemTitle: { color: theme.textSecondary, fontSize: 12 },
 	fab: {
 		position: "absolute",
 		right: 18,
