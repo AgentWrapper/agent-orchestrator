@@ -207,6 +207,9 @@ export function LandingNav() {
 
 					<button
 						type="button"
+						aria-label={open ? "Close navigation menu" : "Open navigation menu"}
+						aria-expanded={open}
+						aria-controls="mobile-navigation-menu"
 						className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)] md:hidden"
 						onClick={() => setOpen(!open)}
 					>
@@ -216,7 +219,10 @@ export function LandingNav() {
 			</div>
 
 			{open && (
-				<div className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden">
+				<div
+					id="mobile-navigation-menu"
+					className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden"
+				>
 					<a
 						href="/docs/installation"
 						onClick={() => setOpen(false)}
@@ -246,6 +252,8 @@ export function LandingNav() {
 									href={item.href}
 									target="_blank"
 									rel="noreferrer"
+									aria-label={item.label}
+									title={item.label}
 									className="text-[color:var(--fg-muted)] hover:text-[color:var(--fg)]"
 								>
 									<Icon className="h-5 w-5" />
