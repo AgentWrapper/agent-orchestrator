@@ -583,6 +583,87 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
 		wantCode(t, err, "UNSUPPORTED_GIT_REPO")
 	})
+
+	t.Run("broad setup paths are rejected before init", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		paths := []string{
+			home,
+			filepath.Join(home, "Desktop"),
+			filepath.Join(home, "Documents"),
+			filepath.Join(home, "Downloads"),
+			filepath.Join(home, ".ao"),
+			filepath.Join(home, ".ao", "data"),
+		}
+		for _, path := range paths {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", path, err)
+			}
+			_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: path})
+			wantCode(t, err, "PROJECT_SETUP_PATH_UNSAFE")
+			if _, statErr := os.Lstat(filepath.Join(path, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("unexpected .git after rejected broad path %s: %v", path, statErr)
+			}
+		}
+	})
+
+	t.Run("plain folder rolls back git init when staging fails", func(t *testing.T) {
+		dir := t.TempDir()
+		gitignore := []byte("node_modules/\n")
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), gitignore, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GIT_INDEX_FILE", filepath.Join(t.TempDir(), "missing", "index"))
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "GIT_ADD_FAILED")
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf(".git still exists after rollback: %v", statErr)
+		}
+		got, readErr := os.ReadFile(filepath.Join(dir, ".gitignore"))
+		if readErr != nil {
+			t.Fatalf("read .gitignore after rollback: %v", readErr)
+		}
+		if string(got) != string(gitignore) {
+			t.Fatalf(".gitignore after rollback = %q, want %q", got, gitignore)
+		}
+	})
+
+	t.Run("plain folder with nested repo is rejected before init", func(t *testing.T) {
+		dir := t.TempDir()
+		nested := filepath.Join(dir, "packages", "foo")
+		if out, err := exec.Command("git", "init", "-b", "main", nested).CombinedOutput(); err != nil {
+			t.Fatalf("git init nested: %v (%s)", err, out)
+		}
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_NESTED_GIT_REPOSITORY")
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("unexpected .git after rejected nested repo setup: %v", statErr)
+		}
+	})
+
+	t.Run("unborn repo with nested repo is rejected before staging", func(t *testing.T) {
+		dir := t.TempDir()
+		if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+			t.Fatalf("git init root: %v (%s)", err, out)
+		}
+		nested := filepath.Join(dir, "vendor", "child")
+		if out, err := exec.Command("git", "init", "-b", "main", nested).CombinedOutput(); err != nil {
+			t.Fatalf("git init nested: %v (%s)", err, out)
+		}
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_NESTED_GIT_REPOSITORY")
+		out, lsErr := exec.Command("git", "-C", dir, "ls-files", "-s").CombinedOutput()
+		if lsErr != nil {
+			t.Fatalf("git ls-files: %v (%s)", lsErr, out)
+		}
+		if strings.Contains(string(out), "160000") {
+			t.Fatalf("nested repo was staged as a gitlink:\n%s", out)
+		}
+	})
 }
 func TestManager_AddValidationAndConflicts(t *testing.T) {
 	ctx := context.Background()
