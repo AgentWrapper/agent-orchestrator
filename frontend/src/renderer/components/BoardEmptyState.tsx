@@ -18,11 +18,11 @@ export function BoardWelcome() {
 					Add a repository and describe the work. AO runs agents on isolated branches, from start to merge.
 				</p>
 
-					<CreateProjectFlow
-						idleLabel="Add your first project"
-						onCreateProject={createProject}
-						onInitializeProject={initializeProjectRepository}
-					>
+				<CreateProjectFlow
+					idleLabel="Add your first project"
+					onCreateProject={createProject}
+					onInitializeProject={initializeProjectRepository}
+				>
 					{({ choosePath, disabled, error, label }) => (
 						<>
 							<button

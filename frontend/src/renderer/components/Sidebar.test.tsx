@@ -277,8 +277,8 @@ describe("Sidebar", () => {
 				orchestratorAgent: "claude-code",
 				asWorkspace: false,
 			}),
-			);
-		});
+		);
+	});
 
 	it("shows repository initialization recovery for git repos with no commits", async () => {
 		const onCreateProject = vi
@@ -302,7 +302,9 @@ describe("Sidebar", () => {
 		vi.mocked(window.confirm).mockReturnValue(false);
 		const onCreateProject = vi
 			.fn()
-			.mockRejectedValueOnce(codedError("This folder is not a Git repository.", "NOT_A_GIT_REPO")) as unknown as CreateProjectHandler;
+			.mockRejectedValueOnce(
+				codedError("This folder is not a Git repository.", "NOT_A_GIT_REPO"),
+			) as unknown as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
 		renderSidebar({ onCreateProject, onInitializeProject });
 		const user = await openCreateProjectDialog();

@@ -82,7 +82,13 @@ export function CreateProjectFlow({
 		}
 	};
 
-	const label = isChoosingPath ? "Opening..." : isInitializing ? "Setting up..." : isCreating ? "Creating..." : idleLabel;
+	const label = isChoosingPath
+		? "Opening..."
+		: isInitializing
+			? "Setting up..."
+			: isCreating
+				? "Creating..."
+				: idleLabel;
 
 	return (
 		<>
