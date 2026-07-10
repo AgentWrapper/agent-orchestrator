@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PullRequestsPage } from "./PullRequestsPage";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -75,16 +74,15 @@ describe("PullRequestsPage", () => {
 		expect(numbers).toEqual(["#41", "#42", "#40"]);
 	});
 
-	it("merges the PR by its own number, not the session's", async () => {
+	it("shows PR actions as unavailable instead of calling unwired action endpoints", () => {
 		setWorkspaces([session("auth", [pr(41, "open"), pr(42, "draft")])]);
 		renderPage();
-		const user = userEvent.setup();
 
 		const childRow = screen.getByText("#42").closest("tr")!;
-		await user.click(within(childRow).getByRole("button", { name: "Merge" }));
+		const action = within(childRow).getByRole("button", { name: "PR actions unavailable" });
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", { params: { path: { id: "42" } } });
+		expect(action).toBeDisabled();
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("shows an empty state when no session has a PR", () => {
