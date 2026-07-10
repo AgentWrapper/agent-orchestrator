@@ -16,12 +16,12 @@ Non-trivial work? Comment on the issue or ping Discord first. Get a thumbs-up, t
 
 ## Ways to contribute
 
-| Type | Examples |
-| --- | --- |
-| Code | Fixes, features, adapters, performance |
-| Docs | README, `docs/`, architecture notes |
-| Triage | Repro bugs, tighten reports, label suggestions |
-| Examples / tests | Recipes, edge cases, flaky-test hunts |
+| Type             | Examples                                       |
+| ---------------- | ---------------------------------------------- |
+| Code             | Fixes, features, adapters, performance         |
+| Docs             | README, `docs/`, architecture notes            |
+| Triage           | Repro bugs, tighten reports, label suggestions |
+| Examples / tests | Recipes, edge cases, flaky-test hunts          |
 
 ## Quick start
 
