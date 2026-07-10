@@ -153,7 +153,19 @@ func TestServerShutdownEndpoint(t *testing.T) {
 	base := "http://" + srv.Addr().String()
 	waitForHealth(t, base)
 
-	resp, err := http.Post(base+"/shutdown", "application/json", nil)
+	info, err := runfile.Read(runPath)
+	if err != nil {
+		t.Fatalf("read run-file: %v", err)
+	}
+	if info == nil || info.ShutdownToken == "" {
+		t.Fatalf("run-file shutdown token = %q, want non-empty", info.ShutdownToken)
+	}
+	req, err := http.NewRequest(http.MethodPost, base+"/shutdown", nil)
+	if err != nil {
+		t.Fatalf("new shutdown request: %v", err)
+	}
+	req.Header.Set(runfile.ShutdownTokenHeader, info.ShutdownToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /shutdown: %v", err)
 	}

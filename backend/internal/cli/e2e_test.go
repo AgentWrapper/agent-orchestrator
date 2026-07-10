@@ -265,6 +265,10 @@ func TestE2E_ShutdownGuard(t *testing.T) {
 	e := newEnv(t)
 	e.startDaemon(t)
 
+	// A plain local POST lacks the daemon-issued token and must be rejected.
+	if code := postShutdown(t, e.port, func(r *http.Request) {}); code != http.StatusForbidden {
+		t.Fatalf("unauthenticated /shutdown = %d, want 403", code)
+	}
 	// A cross-site Origin header must be rejected without stopping the daemon.
 	if code := postShutdown(t, e.port, func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }); code != http.StatusForbidden {
 		t.Fatalf("cross-origin /shutdown = %d, want 403", code)

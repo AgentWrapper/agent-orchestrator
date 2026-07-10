@@ -16,6 +16,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 )
 
+// ShutdownTokenHeader carries the daemon-issued token for POST /shutdown.
+const ShutdownTokenHeader = "X-AO-Shutdown-Token" // #nosec G101 -- header name only; token value is generated at runtime.
+
 // Info is the on-disk handshake payload.
 type Info struct {
 	// PID is the daemon process id.
@@ -29,6 +32,9 @@ type Info struct {
 	// hold a supervisor link on attach (app-owned: re-link; headless: skip so
 	// the daemon stays persistent across app quit).
 	Owner string `json:"owner,omitempty"`
+	// ShutdownToken authorizes the local CLI to call POST /shutdown. It lives in
+	// running.json so arbitrary loopback clients cannot cleanly stop the daemon.
+	ShutdownToken string `json:"shutdownToken,omitempty"`
 }
 
 // Write atomically writes running.json at path, creating parent directories

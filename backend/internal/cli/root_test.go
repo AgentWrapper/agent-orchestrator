@@ -202,6 +202,7 @@ func TestStopUsesShutdownEndpoint(t *testing.T) {
 	cfg := setConfigEnv(t)
 	shutdownCalled := make(chan struct{}, 1)
 	var shutdownSeen atomic.Bool
+	const shutdownToken = "test-shutdown-token"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/healthz":
@@ -209,6 +210,9 @@ func TestStopUsesShutdownEndpoint(t *testing.T) {
 		case "/readyz":
 			_, _ = fmt.Fprintf(w, `{"status":"ready","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
 		case "/shutdown":
+			if got := r.Header.Get(runfile.ShutdownTokenHeader); got != shutdownToken {
+				t.Fatalf("shutdown token header = %q, want %q", got, shutdownToken)
+			}
 			if err := runfile.Remove(cfg.runFile); err != nil {
 				t.Fatal(err)
 			}
@@ -221,7 +225,7 @@ func TestStopUsesShutdownEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: serverPort(t, srv.URL), StartedAt: time.Unix(100, 0).UTC()}); err != nil {
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: serverPort(t, srv.URL), StartedAt: time.Unix(100, 0).UTC(), ShutdownToken: shutdownToken}); err != nil {
 		t.Fatal(err)
 	}
 

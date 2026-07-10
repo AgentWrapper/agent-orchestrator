@@ -32,18 +32,19 @@ const (
 )
 
 type daemonStatus struct {
-	State     daemonState `json:"state"`
-	PID       int         `json:"pid,omitempty"`
-	Port      int         `json:"port,omitempty"`
-	StartedAt *time.Time  `json:"startedAt,omitempty"`
-	Uptime    string      `json:"uptime,omitempty"`
-	RunFile   string      `json:"runFile"`
-	DataDir   string      `json:"dataDir"`
-	Health    string      `json:"health,omitempty"`
-	Ready     string      `json:"ready,omitempty"`
-	Error     string      `json:"error,omitempty"`
-	Resources string      `json:"resources,omitempty"`
-	owned     bool
+	State         daemonState `json:"state"`
+	PID           int         `json:"pid,omitempty"`
+	Port          int         `json:"port,omitempty"`
+	StartedAt     *time.Time  `json:"startedAt,omitempty"`
+	Uptime        string      `json:"uptime,omitempty"`
+	RunFile       string      `json:"runFile"`
+	DataDir       string      `json:"dataDir"`
+	Health        string      `json:"health,omitempty"`
+	Ready         string      `json:"ready,omitempty"`
+	Error         string      `json:"error,omitempty"`
+	Resources     string      `json:"resources,omitempty"`
+	owned         bool
+	shutdownToken string
 }
 
 type probeResult struct {
@@ -92,6 +93,7 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 
 	st.PID = info.PID
 	st.Port = info.Port
+	st.shutdownToken = info.ShutdownToken
 	startedAt := info.StartedAt
 	st.StartedAt = &startedAt
 	st.Uptime = formatUptime(c.deps.Now().Sub(info.StartedAt))

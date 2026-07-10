@@ -2,17 +2,25 @@
 Description=Agent Orchestrator daemon
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/ao daemon
-Restart=on-failure
+# Keep the user service persistent after clean daemon exits. Explicit operator
+# stops still go through `systemctl stop ao.service` (`ao stop` does this when
+# the unit owns the daemon PID), which does not trigger Restart=always.
+Restart=always
 RestartSec=5s
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Delegate=yes
 
-# Only SIGTERM the daemon's main process on restart. Agent sessions run under
-# tmux and must survive deploys; the boot-time reconcile pass re-adopts them.
-KillMode=mixed
+# Only signal the daemon's main process on restart. The tmux server can inherit
+# ao.service's cgroup when the daemon launches the first session, and a
+# cgroup-wide kill would terminate every live agent pane before reconcile can
+# re-adopt them. Non-session helpers must be reaped by the daemon itself.
+KillMode=process
 TimeoutStopSec=60s
 
 [Install]

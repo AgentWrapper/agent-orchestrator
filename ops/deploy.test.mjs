@@ -110,7 +110,11 @@ describe("ao self-deploy script", () => {
 		const unit = await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8");
 
 		assert.match(unit, /^ExecStart=%h\/\.local\/bin\/ao daemon$/m);
-		assert.match(unit, /^KillMode=mixed$/m);
+		assert.match(unit, /^Restart=always$/m);
+		assert.match(unit, /^StartLimitIntervalSec=60s$/m);
+		assert.match(unit, /^StartLimitBurst=5$/m);
+		assert.match(unit, /^Delegate=yes$/m);
+		assert.match(unit, /^KillMode=process$/m);
 		assert.match(unit, /^TimeoutStopSec=60s$/m);
 	});
 

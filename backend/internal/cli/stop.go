@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -70,19 +72,59 @@ func (c *commandContext) stopDaemon(ctx context.Context, opts stopOptions) (daem
 		return daemonStatus{}, fmt.Errorf("daemon pid %d is alive but ownership could not be verified", st.PID)
 	}
 
-	if err := c.requestShutdown(ctx, st.Port); err != nil {
-		return daemonStatus{}, fmt.Errorf("request daemon shutdown: %w", err)
+	stoppedBySystemd, err := c.stopSystemdDaemon(ctx, st.PID, opts.timeout)
+	if err != nil {
+		return daemonStatus{}, err
+	}
+	if !stoppedBySystemd {
+		if err := c.requestShutdown(ctx, st.Port, st.shutdownToken); err != nil {
+			return daemonStatus{}, fmt.Errorf("request daemon shutdown: %w", err)
+		}
 	}
 	return c.waitForStopped(ctx, st.PID, cfg.RunFilePath, cfg.DataDir, opts.timeout)
 }
 
-func (c *commandContext) requestShutdown(ctx context.Context, port int) error {
+func (c *commandContext) stopSystemdDaemon(ctx context.Context, pid int, timeout time.Duration) (bool, error) {
+	systemctl, err := c.deps.LookPath("systemctl")
+	if err != nil {
+		return false, nil
+	}
+
+	checkCtx, cancelCheck := context.WithTimeout(ctx, probeTimeout)
+	defer cancelCheck()
+	if _, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "is-active", "--quiet", "ao.service"); err != nil {
+		return false, nil
+	}
+	out, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "show", "ao.service", "-P", "MainPID")
+	if err != nil {
+		return false, nil
+	}
+	mainPID, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || mainPID != pid {
+		return false, nil
+	}
+
+	if timeout <= 0 {
+		timeout = defaultStopTimeout
+	}
+	stopCtx, cancelStop := context.WithTimeout(ctx, timeout)
+	defer cancelStop()
+	if _, err := c.deps.CommandOutput(stopCtx, systemctl, "--user", "stop", "ao.service"); err != nil {
+		return true, fmt.Errorf("stop ao.service: %w", err)
+	}
+	return true, nil
+}
+
+func (c *commandContext) requestShutdown(ctx context.Context, port int, shutdownToken string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, fmt.Sprintf("http://%s:%d/shutdown", config.LoopbackHost, port), http.NoBody)
 	if err != nil {
 		return err
+	}
+	if shutdownToken != "" {
+		req.Header.Set(runfile.ShutdownTokenHeader, shutdownToken)
 	}
 	resp, err := c.deps.HTTPClient.Do(req)
 	if err != nil {

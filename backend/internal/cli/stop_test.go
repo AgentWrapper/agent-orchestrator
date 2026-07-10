@@ -2,10 +2,16 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
 
@@ -142,5 +148,84 @@ func TestWaitForStoppedReportsStoppedWhenRunFileGoneButProcessLingers(t *testing
 	}
 	if st.State != stateStopped {
 		t.Fatalf("state = %q, want stopped", st.State)
+	}
+}
+
+func TestStopUsesSystemdStopWhenUnitOwnsDaemonPID(t *testing.T) {
+	cfg := setConfigEnv(t)
+	shutdownCalled := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			_, _ = fmt.Fprintf(w, `{"status":"ok","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
+		case "/readyz":
+			_, _ = fmt.Fprintf(w, `{"status":"ready","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
+		case "/shutdown":
+			shutdownCalled <- struct{}{}
+			http.Error(w, "unexpected shutdown", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: serverPort(t, srv.URL), StartedAt: time.Unix(100, 0).UTC(), ShutdownToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped := false
+	var systemctlCalls []string
+	c := &commandContext{deps: Deps{
+		ProcessAlive: func(pid int) bool {
+			if pid != os.Getpid() {
+				return false
+			}
+			return !stopped
+		},
+		LookPath: func(file string) (string, error) {
+			if file == "systemctl" {
+				return "/bin/systemctl", nil
+			}
+			return "", fmt.Errorf("unexpected lookup %q", file)
+		},
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			systemctlCalls = append(systemctlCalls, call)
+			switch strings.Join(args, " ") {
+			case "--user is-active --quiet ao.service":
+				return nil, nil
+			case "--user show ao.service -P MainPID":
+				return []byte(fmt.Sprintf("%d\n", os.Getpid())), nil
+			case "--user stop ao.service":
+				stopped = true
+				_ = runfile.Remove(cfg.runFile)
+				return nil, nil
+			default:
+				return nil, fmt.Errorf("unexpected systemctl call %q", call)
+			}
+		},
+		Now:   func() time.Time { return time.Unix(200, 0).UTC() },
+		Sleep: func(time.Duration) {},
+	}.withDefaults()}
+
+	st, err := c.stopDaemon(context.Background(), stopOptions{timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != stateStopped {
+		t.Fatalf("state = %q, want stopped", st.State)
+	}
+	select {
+	case <-shutdownCalled:
+		t.Fatal("stop used /shutdown even though active ao.service owned the daemon PID")
+	default:
+	}
+	want := []string{
+		"/bin/systemctl --user is-active --quiet ao.service",
+		"/bin/systemctl --user show ao.service -P MainPID",
+		"/bin/systemctl --user stop ao.service",
+	}
+	if strings.Join(systemctlCalls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("systemctl calls:\n%s\nwant:\n%s", strings.Join(systemctlCalls, "\n"), strings.Join(want, "\n"))
 	}
 }

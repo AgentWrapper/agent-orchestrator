@@ -2,6 +2,8 @@ package httpd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,6 +31,7 @@ type Server struct {
 	cancelRequests    context.CancelFunc
 	shutdownRequested chan struct{}
 	shutdownOnce      sync.Once
+	shutdownToken     string
 }
 
 // NewWithDeps constructs a Server with API dependencies supplied by the daemon
@@ -60,6 +63,11 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 		ln = fallback
 	}
 
+	shutdownToken, err := newShutdownToken()
+	if err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
 	requestCtx, cancelRequests := context.WithCancel(context.Background())
 	srv := &Server{
 		cfg:               cfg,
@@ -67,10 +75,12 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 		listen:            ln,
 		cancelRequests:    cancelRequests,
 		shutdownRequested: make(chan struct{}),
+		shutdownToken:     shutdownToken,
 	}
 	srv.http = &http.Server{
 		Handler: NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{
 			RequestShutdown: srv.requestShutdown,
+			ShutdownToken:   srv.shutdownToken,
 		}),
 		BaseContext: func(net.Listener) context.Context {
 			return requestCtx
@@ -92,10 +102,11 @@ func (s *Server) Addr() net.Addr { return s.listen.Addr() }
 // shutdown is complete.
 func (s *Server) Run(ctx context.Context) error {
 	info := runfile.Info{
-		PID:       os.Getpid(),
-		Port:      s.boundPort(),
-		StartedAt: time.Now().UTC(),
-		Owner:     os.Getenv("AO_OWNER"),
+		PID:           os.Getpid(),
+		Port:          s.boundPort(),
+		StartedAt:     time.Now().UTC(),
+		Owner:         os.Getenv("AO_OWNER"),
+		ShutdownToken: s.shutdownToken,
 	}
 	if err := runfile.Write(s.cfg.RunFilePath, info); err != nil {
 		_ = s.listen.Close()
@@ -159,6 +170,14 @@ func (s *Server) requestShutdown() {
 	s.shutdownOnce.Do(func() {
 		close(s.shutdownRequested)
 	})
+}
+
+func newShutdownToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate shutdown token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
 // RequestShutdown triggers the same clean shutdown as POST /shutdown: it makes
