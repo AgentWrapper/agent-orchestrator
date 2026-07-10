@@ -125,14 +125,45 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 		return ClaimPRResult{}, err
 	}
 	prs = claimedFirst(prs, prURL)
-	// TODO: implement workspace branch checkout. Until then, leave BranchChanged
-	// false and let CLI output omit the checkout line rather than claiming the
-	// session was already on the PR branch.
-	res := ClaimPRResult{PRs: prs, BranchChanged: false, DonorWasTerminated: outcome.OwnerTerminated}
+	branchChanged, err := s.checkoutClaimBranch(ctx, rec, pr.SourceBranch)
+	if err != nil {
+		return ClaimPRResult{}, err
+	}
+	res := ClaimPRResult{PRs: prs, BranchChanged: branchChanged, DonorWasTerminated: outcome.OwnerTerminated}
 	if outcome.PreviousOwner != "" && outcome.PreviousOwner != id {
 		res.TakenOverFrom = []domain.SessionID{outcome.PreviousOwner}
 	}
 	return res, nil
+}
+
+type sessionRecordUpdater interface {
+	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+}
+
+func (s *Service) checkoutClaimBranch(ctx context.Context, rec domain.SessionRecord, branch string) (bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || s.workspace == nil {
+		return false, nil
+	}
+	info := ports.WorkspaceInfo{
+		Path:      rec.Metadata.WorkspacePath,
+		Branch:    rec.Metadata.Branch,
+		SessionID: rec.ID,
+		ProjectID: rec.ProjectID,
+	}
+	checked, changed, err := s.workspace.CheckoutBranch(ctx, info, branch)
+	if err != nil {
+		return false, err
+	}
+	if checked.Branch != "" && checked.Branch != rec.Metadata.Branch {
+		rec.Metadata.Branch = checked.Branch
+		if updater, ok := s.store.(sessionRecordUpdater); ok {
+			if err := updater.UpdateSession(ctx, rec); err != nil {
+				return false, fmt.Errorf("update session branch %s: %w", rec.ID, err)
+			}
+		}
+	}
+	return changed, nil
 }
 
 func (s *Service) fetchClaimObservation(ctx context.Context, ref ports.SCMPRRef) (ports.SCMObservation, error) {

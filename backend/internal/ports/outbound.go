@@ -121,6 +121,9 @@ type Workspace interface {
 	Create(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	Destroy(ctx context.Context, info WorkspaceInfo) error
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
+	// CheckoutBranch switches an existing session worktree to branch. It must
+	// refuse dirty worktrees and branches checked out in another worktree.
+	CheckoutBranch(ctx context.Context, info WorkspaceInfo, branch string) (WorkspaceInfo, bool, error)
 	// ForceDestroy removes the worktree unconditionally, bypassing the
 	// dirty-worktree refusal that Destroy enforces. It is only safe to call
 	// AFTER the session's uncommitted work has been captured via StashUncommitted.

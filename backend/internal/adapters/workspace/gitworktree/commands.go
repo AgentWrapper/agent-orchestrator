@@ -18,6 +18,10 @@ func worktreeAddNewBranchArgs(repo, branch, path, baseRef string) []string {
 	return []string{"-C", repo, "worktree", "add", "-b", branch, path, baseRef}
 }
 
+func switchBranchArgs(path, branch string) []string {
+	return []string{"-C", path, "switch", branch}
+}
+
 // worktreeRemoveArgs intentionally omits --force: a dirty worktree (uncommitted
 // agent work) MUST cause `git worktree remove` to fail, so the post-prune
 // "still registered" check in Destroy surfaces the refusal to the Session

@@ -51,6 +51,11 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 	return rec, nil
 }
 
+func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	f.sessions[rec.ID] = rec
+	return nil
+}
+
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
@@ -731,6 +736,45 @@ func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMR
 	return f.review, f.reviewErr
 }
 
+type fakeClaimWorkspace struct {
+	info   ports.WorkspaceInfo
+	branch string
+	err    error
+	calls  int
+}
+
+func (f *fakeClaimWorkspace) Create(context.Context, ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	return ports.WorkspaceInfo{}, nil
+}
+
+func (f *fakeClaimWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error { return nil }
+
+func (f *fakeClaimWorkspace) Restore(context.Context, ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	return ports.WorkspaceInfo{}, nil
+}
+
+func (f *fakeClaimWorkspace) CheckoutBranch(_ context.Context, info ports.WorkspaceInfo, branch string) (ports.WorkspaceInfo, bool, error) {
+	f.calls++
+	f.info = info
+	f.branch = branch
+	if f.err != nil {
+		return ports.WorkspaceInfo{}, false, f.err
+	}
+	changed := info.Branch != branch
+	info.Branch = branch
+	return info, changed, nil
+}
+
+func (f *fakeClaimWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
+
+func (f *fakeClaimWorkspace) StashUncommitted(context.Context, ports.WorkspaceInfo) (string, error) {
+	return "", nil
+}
+
+func (f *fakeClaimWorkspace) ApplyPreserved(context.Context, ports.WorkspaceInfo, string) error {
+	return nil
+}
+
 func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	st := newFakeStore()
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
@@ -756,14 +800,39 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		})
 	}
 
+	rec := st.sessions["mer-1"]
+	rec.Metadata.Branch = "ao/mer-1"
+	st.sessions["mer-1"] = rec
 	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: now}
-	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
+	ws := &fakeClaimWorkspace{}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}},
+		Workspace: ws,
+		SCM: fakeSCM{obs: ports.SCMObservation{
+			Fetched:  true,
+			Provider: "github",
+			Host:     "github.com",
+			Repo:     "acme/repo",
+			PR: ports.SCMPRObservation{
+				URL:          "https://github.com/acme/repo/pull/7",
+				Number:       7,
+				SourceBranch: "fix/dashboard",
+			},
+		}},
+	})
 	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{AllowTakeover: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
+	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" || !res.BranchChanged {
 		t.Fatalf("claim result = %+v", res)
+	}
+	if ws.calls != 1 || ws.info.Path != "/ws" || ws.info.Branch != "ao/mer-1" || ws.branch != "fix/dashboard" {
+		t.Fatalf("checkout call = calls=%d info=%+v branch=%q", ws.calls, ws.info, ws.branch)
+	}
+	if got := st.sessions["mer-1"].Metadata.Branch; got != "fix/dashboard" {
+		t.Fatalf("session branch = %q, want PR source branch", got)
 	}
 }
 

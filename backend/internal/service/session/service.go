@@ -86,6 +86,7 @@ type Service struct {
 	manager             commander
 	store               Store
 	prClaimer           ports.PRClaimer
+	workspace           ports.Workspace
 	scm                 scmProvider
 	clock               func() time.Time
 	telemetry           ports.EventSink
@@ -110,6 +111,7 @@ type Deps struct {
 	Manager   commander
 	Store     Store
 	PRClaimer ports.PRClaimer
+	Workspace ports.Workspace
 	SCM       scmProvider
 	Clock     func() time.Time
 	Telemetry ports.EventSink
@@ -121,7 +123,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, workspace: d.Workspace, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -571,6 +573,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("BRANCH_NOT_FETCHED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchInvalid):
 		return apierr.Invalid("INVALID_BRANCH", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceDirty):
+		return apierr.Conflict("WORKSPACE_DIRTY", "Workspace has uncommitted changes", nil)
 	case errors.Is(err, ports.ErrAgentBinaryNotFound):
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):

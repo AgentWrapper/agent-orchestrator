@@ -119,6 +119,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Manager:   mgr,
 		Store:     store,
 		PRClaimer: store,
+		Workspace: ws,
 		SCM:       scmProvider,
 		Telemetry: telemetry,
 		// no_signal only makes sense for harnesses whose adapters install

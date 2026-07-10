@@ -584,6 +584,14 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PROJECT_MISMATCH", "PR does not belong to the session project", nil)
 	case errors.Is(err, sessionsvc.ErrSCMUnavailable):
 		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SCM_UNAVAILABLE", "SCM unavailable", nil)
+	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceDirty):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "WORKSPACE_DIRTY", "Workspace has uncommitted changes", nil)
+	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "BRANCH_NOT_FETCHED", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceBranchInvalid):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BRANCH", err.Error(), nil)
 	default:
 		envelope.WriteError(w, r, err)
 	}

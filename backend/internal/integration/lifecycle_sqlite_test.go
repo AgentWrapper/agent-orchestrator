@@ -92,6 +92,11 @@ func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return s.Create(ctx, cfg)
 }
+func (s *stubWorkspace) CheckoutBranch(_ context.Context, info ports.WorkspaceInfo, branch string) (ports.WorkspaceInfo, bool, error) {
+	changed := info.Branch != branch
+	info.Branch = branch
+	return info, changed, nil
+}
 func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
 func (s *stubWorkspace) StashUncommitted(_ context.Context, _ ports.WorkspaceInfo) (string, error) {
 	return "", nil
