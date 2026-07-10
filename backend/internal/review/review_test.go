@@ -138,19 +138,20 @@ func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRe
 }
 
 type fakeLauncher struct {
-	handle          string
-	alive           bool
-	spawnErr        error
-	notifyErr       error
-	spawned         bool
-	spawnCount      int
-	notified        bool
-	cancelled       bool
-	gotSpec         LaunchSpec
-	gotHandle       string
-	cancelledHandle string
-	specs           []LaunchSpec
-	handles         []string
+	handle           string
+	alive            bool
+	spawnErr         error
+	notifyErr        error
+	spawned          bool
+	spawnCount       int
+	notified         bool
+	cancelled        bool
+	gotSpec          LaunchSpec
+	gotHandle        string
+	cancelledHandle  string
+	cancelledHarness domain.ReviewerHarness
+	specs            []LaunchSpec
+	handles          []string
 }
 
 func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
@@ -174,9 +175,10 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
 	return f.alive || f.spawned, nil
 }
-func (f *fakeLauncher) Cancel(_ context.Context, handleID string) error {
+func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain.ReviewerHarness) error {
 	f.cancelled = true
 	f.cancelledHandle = handleID
+	f.cancelledHarness = harness
 	return nil
 }
 
@@ -232,7 +234,7 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 
 func TestCancelInterruptsReviewerAndCancelsRunningRuns(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
 		runs: []domain.ReviewRun{
 			{ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
 			{ID: "run-2", ReviewID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha2", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved},
@@ -251,6 +253,9 @@ func TestCancelInterruptsReviewerAndCancelsRunningRuns(t *testing.T) {
 	}
 	if !launcher.cancelled || launcher.cancelledHandle != "review-mer-1" {
 		t.Fatalf("launcher cancel = %v handle=%q", launcher.cancelled, launcher.cancelledHandle)
+	}
+	if launcher.cancelledHarness != domain.ReviewerCodex {
+		t.Fatalf("cancel harness = %q, want codex", launcher.cancelledHarness)
 	}
 	if len(res.CancelledRuns) != 1 || res.CancelledRuns[0].ID != "run-1" {
 		t.Fatalf("cancelled runs = %+v", res.CancelledRuns)

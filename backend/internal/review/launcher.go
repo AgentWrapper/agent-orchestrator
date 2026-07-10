@@ -22,7 +22,7 @@ type Launcher interface {
 	// Alive reports whether a reviewer pane is still running.
 	Alive(ctx context.Context, handleID string) (bool, error)
 	// Cancel interrupts a running reviewer pane while keeping the terminal alive.
-	Cancel(ctx context.Context, handleID string) error
+	Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error
 }
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
@@ -154,9 +154,26 @@ func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error
 	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
 }
 
-func (l *agentLauncher) Cancel(ctx context.Context, handleID string) error {
+func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error {
 	if handleID == "" {
 		return nil
 	}
-	return l.runtime.Interrupt(ctx, ports.RuntimeHandle{ID: handleID})
+	reviewer, ok := l.reviewers.Reviewer(harness)
+	if !ok {
+		return fmt.Errorf("no reviewer adapter for harness %q", harness)
+	}
+	canceller, ok := reviewer.(ports.ReviewerCanceller)
+	if !ok {
+		return fmt.Errorf("reviewer adapter %q does not support cancellation", harness)
+	}
+	spec, err := canceller.ReviewCancel(ctx)
+	if err != nil {
+		return fmt.Errorf("reviewer cancel: %w", err)
+	}
+	switch spec.Mode {
+	case ports.ReviewCancelInterrupt:
+		return l.runtime.Interrupt(ctx, ports.RuntimeHandle{ID: handleID})
+	default:
+		return fmt.Errorf("reviewer adapter %q returned unsupported cancel mode %q", harness, spec.Mode)
+	}
 }

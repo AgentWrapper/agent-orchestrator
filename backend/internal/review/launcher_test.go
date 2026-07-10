@@ -34,6 +34,25 @@ func (f *fakePreLaunchReviewer) PreLaunch(_ context.Context, inv ports.ReviewInv
 	return nil
 }
 
+type fakeCancellableReviewer struct {
+	fakeReviewer
+	cancelled bool
+	cancelErr error
+	mode      ports.ReviewCancelMode
+}
+
+func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
+	f.cancelled = true
+	if f.cancelErr != nil {
+		return ports.ReviewCancelSpec{}, f.cancelErr
+	}
+	mode := f.mode
+	if mode == "" {
+		mode = ports.ReviewCancelInterrupt
+	}
+	return ports.ReviewCancelSpec{Mode: mode}, nil
+}
+
 type fakeReviewerResolver struct {
 	reviewer ports.Reviewer
 	ok       bool
@@ -48,6 +67,7 @@ type fakeRuntime struct {
 	sentMsg   string
 	sentTo    string
 	alive     bool
+	interrupt string
 }
 
 func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -57,7 +77,8 @@ func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
 	return f.alive, nil
 }
-func (f *fakeRuntime) Interrupt(_ context.Context, _ ports.RuntimeHandle) error {
+func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
+	f.interrupt = handle.ID
 	return nil
 }
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
@@ -136,6 +157,30 @@ func TestLauncherAlive(t *testing.T) {
 	}
 	if ok, _ := l.Alive(context.Background(), ""); ok {
 		t.Fatal("empty handle should not be alive")
+	}
+}
+
+func TestLauncherCancelUsesReviewerCancelMode(t *testing.T) {
+	reviewer := &fakeCancellableReviewer{}
+	rt := &fakeRuntime{}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt)
+
+	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerClaudeCode); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if !reviewer.cancelled {
+		t.Fatal("expected reviewer cancel hook to run")
+	}
+	if rt.interrupt != "review-mer-1" {
+		t.Fatalf("interrupt handle = %q, want review-mer-1", rt.interrupt)
+	}
+}
+
+func TestLauncherCancelRequiresReviewerSupport(t *testing.T) {
+	l := NewLauncher(fakeReviewerResolver{reviewer: &fakeReviewer{}, ok: true}, &fakeRuntime{})
+
+	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerClaudeCode); err == nil || !strings.Contains(err.Error(), "does not support cancellation") {
+		t.Fatalf("err = %v, want unsupported cancellation", err)
 	}
 }
 
