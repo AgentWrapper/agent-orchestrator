@@ -6,9 +6,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// Every deriver key must be a known harness name: SupportsHarness equates the
-// two, so a token that drifts from its harness constant would silently report
-// the harness as hook-less.
+// Every direct deriver key must be a known harness name. Delegating harnesses
+// are handled explicitly by SupportsHarness because their callbacks use the
+// claude-code token.
 func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 	for token := range Derivers {
 		if !domain.AgentHarness(token).IsKnown() {
@@ -18,7 +18,7 @@ func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 }
 
 func TestSupportsHarness(t *testing.T) {
-	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessCodexFugu, domain.HarnessClaudeCode, domain.HarnessOpenCode} {
+	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessCodexFugu, domain.HarnessClaudeCode, domain.HarnessOpenCode, domain.HarnessGrok, domain.HarnessContinue, domain.HarnessDevin} {
 		if !SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = false, want true", h)
 		}

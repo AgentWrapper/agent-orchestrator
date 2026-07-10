@@ -2490,6 +2490,10 @@ components:
           $ref: '#/components/schemas/AgentConfig'
         instructionsFile:
           type: string
+        wakeInterval:
+          description: Orchestrator role only. Positive Go duration string such as
+            15m; empty uses the daemon default.
+          type: string
         workspace:
           enum:
           - worktree

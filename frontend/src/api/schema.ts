@@ -915,6 +915,8 @@ export interface components {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
             instructionsFile?: string;
+            /** @description Orchestrator role only. Positive Go duration string such as 15m; empty uses the daemon default. */
+            wakeInterval?: string;
             /** @enum {string} */
             workspace?: "worktree" | "in-place";
         };

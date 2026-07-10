@@ -39,31 +39,36 @@ func TestGuard_OutcomeByState(t *testing.T) {
 		ok          bool
 		wantDeliver Outcome
 		wantNudge   Outcome
+		wantWake    Outcome
 	}{
-		{"active", record(domain.ActivityActive, false), true, Sent, Sent},
-		{"idle", record(domain.ActivityIdle, false), true, Sent, Sent},
+		{"active", record(domain.ActivityActive, false), true, Sent, Sent, SuppressedNotIdle},
+		{"idle", record(domain.ActivityIdle, false), true, Sent, Sent, Sent},
 		// waiting_input is the split that motivates two methods: a user message
 		// (or its Enter re-submit) belongs at an idle prompt; an unsolicited
-		// automated nudge does not.
-		{"waiting_input", record(domain.ActivityWaitingInput, false), true, Sent, SuppressedAwaitingUser},
-		{"blocked", record(domain.ActivityBlocked, false), true, SuppressedAwaitingUser, SuppressedAwaitingUser},
+		// automated nudge does not. WakeIdle is the narrower orchestrator-only
+		// exception for daemon supervision nudges.
+		{"waiting_input", record(domain.ActivityWaitingInput, false), true, Sent, SuppressedAwaitingUser, Sent},
+		{"blocked", record(domain.ActivityBlocked, false), true, SuppressedAwaitingUser, SuppressedAwaitingUser, SuppressedAwaitingUser},
 		// exited is refused even without IsTerminated: the pane holds an
 		// interactive shell after agent exit, so a paste would execute there.
-		{"exited", record(domain.ActivityExited, false), true, SuppressedTerminated, SuppressedTerminated},
-		{"terminated", record(domain.ActivityIdle, true), true, SuppressedTerminated, SuppressedTerminated},
-		{"missing", domain.SessionRecord{}, false, SuppressedNotFound, SuppressedNotFound},
+		{"exited", record(domain.ActivityExited, false), true, SuppressedTerminated, SuppressedTerminated, SuppressedTerminated},
+		{"terminated", record(domain.ActivityIdle, true), true, SuppressedTerminated, SuppressedTerminated, SuppressedTerminated},
+		{"missing", domain.SessionRecord{}, false, SuppressedNotFound, SuppressedNotFound, SuppressedNotFound},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			for method, want := range map[string]Outcome{"Deliver": tc.wantDeliver, "Nudge": tc.wantNudge} {
+			for method, want := range map[string]Outcome{"Deliver": tc.wantDeliver, "Nudge": tc.wantNudge, "WakeIdle": tc.wantWake} {
 				msgr := &fakeMessenger{}
 				g := New(&fakeStore{rec: tc.rec, ok: tc.ok}, msgr, nil)
 				var got Outcome
 				var err error
-				if method == "Deliver" {
+				switch method {
+				case "Deliver":
 					got, err = g.Deliver(context.Background(), "s1", "hello")
-				} else {
+				case "Nudge":
 					got, err = g.Nudge(context.Background(), "s1", "hello")
+				case "WakeIdle":
+					got, err = g.WakeIdle(context.Background(), "s1", "hello")
 				}
 				if err != nil {
 					t.Fatalf("%s: unexpected error: %v", method, err)
@@ -83,8 +88,9 @@ func TestGuard_StoreErrorFailsClosed(t *testing.T) {
 	msgr := &fakeMessenger{}
 	g := New(&fakeStore{err: errors.New("db locked")}, msgr, nil)
 	for name, call := range map[string]func() (Outcome, error){
-		"Deliver": func() (Outcome, error) { return g.Deliver(context.Background(), "s1", "x") },
-		"Nudge":   func() (Outcome, error) { return g.Nudge(context.Background(), "s1", "x") },
+		"Deliver":  func() (Outcome, error) { return g.Deliver(context.Background(), "s1", "x") },
+		"Nudge":    func() (Outcome, error) { return g.Nudge(context.Background(), "s1", "x") },
+		"WakeIdle": func() (Outcome, error) { return g.WakeIdle(context.Background(), "s1", "x") },
 	} {
 		got, err := call()
 		if err == nil {
@@ -108,5 +114,24 @@ func TestGuard_MessengerErrorIsSentPlusError(t *testing.T) {
 	}
 	if got != Sent {
 		t.Errorf("outcome = %v, want Sent (the write was attempted)", got)
+	}
+}
+
+func TestGuard_SanitizesControlCharactersBeforeSend(t *testing.T) {
+	msgr := &fakeMessenger{}
+	g := New(&fakeStore{rec: record(domain.ActivityActive, false), ok: true}, msgr, nil)
+
+	got, err := g.Deliver(context.Background(), "s1", "hello\x1b[31m\nnext\x03")
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got != Sent {
+		t.Fatalf("outcome = %v, want Sent", got)
+	}
+	if len(msgr.sent) != 1 {
+		t.Fatalf("sent = %#v, want one sanitized message", msgr.sent)
+	}
+	if want := "hello[31m\nnext"; msgr.sent[0] != want {
+		t.Fatalf("sent message = %q, want %q", msgr.sent[0], want)
 	}
 }

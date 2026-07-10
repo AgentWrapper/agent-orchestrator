@@ -47,9 +47,9 @@ var (
 	ErrWorkerConcurrencyCap = errors.New("session: worker concurrency cap reached")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
-	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
-	// with the system prompt only). Workers without a task and without a native
-	// session id have nothing meaningful to restore.
+	// not an orchestrator (orchestrators can relaunch fresh with a daemon-owned
+	// kickoff prompt). Workers without a task and without a native session id
+	// have nothing meaningful to restore.
 	ErrNotResumable = errors.New("session: nothing to resume from")
 	// ErrSwitchInProgress means an agent switch is already running for this
 	// session. The API maps it to a 409 so a double-submit does not race two
@@ -1081,11 +1081,12 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if meta.WorkspacePath == "" || (mode == domain.WorkspaceModeWorktree && meta.Branch == "") {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
-	// Resumability is decided inside restoreArgv, not here. A promptless session
-	// can still be fully resumable when the harness pins a deterministic session id
-	// (Claude Code). restoreArgv returns ErrNotResumable only for a promptless,
-	// unresumable non-orchestrator (a worker with no task and no native id to resume).
-	// Orchestrators always relaunch fresh with the system prompt only.
+	// Resumability is decided inside restoreArgvDetailed, not here. A promptless
+	// session can still be fully resumable when the harness pins a deterministic
+	// session id (Claude Code). restoreArgvDetailed returns ErrNotResumable only
+	// for a promptless, unresumable non-orchestrator (a worker with no task and
+	// no native id to resume). Orchestrators can relaunch fresh because AO
+	// supplies the standing system prompt and a daemon-owned kickoff user prompt.
 
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -1122,7 +1123,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, restoreCfg, rec.Kind)
+	argv, restorePrompt, restorePromptDelivery, err := restoreArgvDetailed(ctx, agent, id, rec.ProjectID, ws.Path, meta, systemPrompt, restoreCfg, rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -1141,10 +1142,25 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Carry the resolved mode forward unchanged so a restored session keeps the
 	// workspace mode it was spawned with, never re-derived from current config.
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceMode: mode, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model, IntakePoolBypass: meta.IntakePoolBypass}
+	persistedPrompt := meta.Prompt
+	if persistedPrompt == "" && rec.Kind == domain.KindOrchestrator {
+		persistedPrompt = restorePrompt
+	}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceMode: mode, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: persistedPrompt, Model: meta.Model, IntakePoolBypass: meta.IntakePoolBypass}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
+	}
+	if err := m.deliverRestorePrompt(ctx, agent, handle, ports.LaunchConfig{
+		SessionID:     string(id),
+		WorkspacePath: ws.Path,
+		Prompt:        restorePrompt,
+		SystemPrompt:  systemPrompt,
+		IssueID:       string(rec.IssueID),
+		Config:        restoreCfg,
+		Permissions:   restoreCfg.Permissions,
+	}, restorePromptDelivery); err != nil {
+		m.logger.Warn("restore: deliver kickoff failed", "sessionID", id, "error", err)
 	}
 	return m.getRecord(ctx, id)
 }
@@ -1229,24 +1245,34 @@ func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHar
 	return m.switchLiveHarness(ctx, rec, project, agent, newHarness, systemPrompt, agentConfig, switchModel, resume, resumeAgentSessionID, agentSessionIDs, launched)
 }
 
+type switchAgentLaunch struct {
+	argv     []string
+	prompt   string
+	delivery restoreKickoffDelivery
+}
+
 // switchAgentArgv builds and pre-flight-validates the launch command for a
 // switch/relaunch. When resume is true it uses the agent's resume command (via
-// restoreArgv, which falls back to a fresh launch when the adapter cannot
+// restoreArgvDetailed, which falls back to a fresh launch when the adapter cannot
 // resume); otherwise it launches fresh. Shared by the live and terminated paths.
-func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, issue domain.IssueID, kind domain.SessionKind, systemPrompt string, cfg ports.AgentConfig, agent ports.Agent, resume bool, resumeAgentSessionID string) ([]string, error) {
-	var argv []string
+func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, projectID domain.ProjectID, workspacePath string, meta domain.SessionMetadata, issue domain.IssueID, kind domain.SessionKind, systemPrompt string, cfg ports.AgentConfig, agent ports.Agent, resume bool, resumeAgentSessionID string) (switchAgentLaunch, error) {
+	var launch switchAgentLaunch
 	var err error
 	if resume {
 		resumeMeta := meta
 		// Use the target harness's native id, not the current harness's scalar
 		// AgentSessionID. Deterministic-id adapters can still resume with empty.
 		resumeMeta.AgentSessionID = resumeAgentSessionID
-		argv, err = restoreArgv(ctx, agent, id, workspacePath, resumeMeta, systemPrompt, cfg, kind)
+		launch.argv, launch.prompt, launch.delivery, err = restoreArgvDetailed(ctx, agent, id, projectID, workspacePath, resumeMeta, systemPrompt, cfg, kind)
 	} else {
-		argv, err = agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+		prompt := meta.Prompt
+		if prompt == "" && kind == domain.KindOrchestrator {
+			prompt = orchestratorKickoffPrompt(projectID)
+		}
+		launch.argv, err = agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 			SessionID:     string(id),
 			WorkspacePath: workspacePath,
-			Prompt:        meta.Prompt,
+			Prompt:        prompt,
 			SystemPrompt:  systemPrompt,
 			IssueID:       string(issue),
 			Config:        cfg,
@@ -1255,14 +1281,18 @@ func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, work
 		if err != nil {
 			err = fmt.Errorf("launch command: %w", err)
 		}
+		if prompt != "" {
+			launch.prompt = prompt
+			launch.delivery = restoreKickoffByStrategy
+		}
 	}
 	if err != nil {
-		return nil, err
+		return switchAgentLaunch{}, err
 	}
-	if err := m.validateAgentBinary(argv); err != nil {
-		return nil, err
+	if err := m.validateAgentBinary(launch.argv); err != nil {
+		return switchAgentLaunch{}, err
 	}
-	return argv, nil
+	return launch, nil
 }
 
 // switchLiveHarness swaps the agent of a running session in place.
@@ -1272,7 +1302,7 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 	if meta.RuntimeHandleID == "" {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
 	}
-	argv, err := m.switchAgentArgv(ctx, id, meta.WorkspacePath, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume, resumeAgentSessionID)
+	launch, err := m.switchAgentArgv(ctx, id, rec.ProjectID, meta.WorkspacePath, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume, resumeAgentSessionID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
@@ -1295,7 +1325,7 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: meta.WorkspacePath,
-		Argv:          argv,
+		Argv:          launch.argv,
 		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
@@ -1307,11 +1337,26 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 	// Carry the persisted workspace mode through the switch: a live swap reuses
 	// the same workspace, so dropping the mode here would let a later restore read
 	// the zero value as worktree and relocate an in-place session (a rug-pull).
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	persistedPrompt := meta.Prompt
+	if persistedPrompt == "" && rec.Kind == domain.KindOrchestrator {
+		persistedPrompt = launch.prompt
+	}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Prompt: persistedPrompt, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.lcm.MarkTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
+	}
+	if err := m.deliverRestorePrompt(ctx, agent, handle, ports.LaunchConfig{
+		SessionID:     string(id),
+		WorkspacePath: meta.WorkspacePath,
+		Prompt:        launch.prompt,
+		SystemPrompt:  systemPrompt,
+		IssueID:       string(rec.IssueID),
+		Config:        agentConfig,
+		Permissions:   agentConfig.Permissions,
+	}, launch.delivery); err != nil {
+		m.logger.Warn("switch: deliver kickoff failed", "sessionID", id, "error", err)
 	}
 	return m.getRecord(ctx, id)
 }
@@ -1323,11 +1368,11 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig, switchModel string, resume bool, resumeAgentSessionID string, agentSessionIDs map[domain.AgentHarness]string, launched []domain.AgentHarness) (domain.SessionRecord, error) {
 	id := rec.ID
 	meta := rec.Metadata
-	// Mirror restoreArgv's guard, but only for a FRESH launch: a resumed harness
-	// has a native session to continue, so it needs no saved prompt. A fresh
-	// terminated WORKER with no prompt has nothing to launch from and would
-	// blank-relaunch, which Restore deliberately refuses. Orchestrators are
-	// promptless by design.
+	// Mirror the restore launch guard, but only for a FRESH launch: a resumed
+	// harness has a native session to continue, so it needs no saved prompt. A
+	// fresh terminated WORKER with no prompt has nothing to launch from and
+	// would blank-relaunch, which Restore deliberately refuses. Orchestrators
+	// get a daemon-owned kickoff prompt when no saved prompt exists.
 	if !resume && meta.Prompt == "" && rec.Kind != domain.KindOrchestrator {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotResumable)
 	}
@@ -1345,7 +1390,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
-	argv, err := m.switchAgentArgv(ctx, id, ws.Path, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume, resumeAgentSessionID)
+	launch, err := m.switchAgentArgv(ctx, id, rec.ProjectID, ws.Path, meta, rec.IssueID, rec.Kind, systemPrompt, agentConfig, agent, resume, resumeAgentSessionID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
@@ -1366,7 +1411,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
-		Argv:          argv,
+		Argv:          launch.argv,
 		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
 	})
 	if err != nil {
@@ -1375,10 +1420,25 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	// Persist the RESTORED worktree path/branch: a changed session prefix or
 	// managed root can restore to a different path, and a stale one would break
 	// later terminal/workspace/cleanup operations.
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	persistedPrompt := meta.Prompt
+	if persistedPrompt == "" && rec.Kind == domain.KindOrchestrator {
+		persistedPrompt = launch.prompt
+	}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Prompt: persistedPrompt, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
+	}
+	if err := m.deliverRestorePrompt(ctx, agent, handle, ports.LaunchConfig{
+		SessionID:     string(id),
+		WorkspacePath: ws.Path,
+		Prompt:        launch.prompt,
+		SystemPrompt:  systemPrompt,
+		IssueID:       string(rec.IssueID),
+		Config:        agentConfig,
+		Permissions:   agentConfig.Permissions,
+	}, launch.delivery); err != nil {
+		m.logger.Warn("switch: deliver kickoff failed", "sessionID", id, "error", err)
 	}
 	return m.getRecord(ctx, id)
 }
@@ -1805,6 +1865,37 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 	return nil
 }
 
+// WakeIdle sends an AO-owned idle wake message only when the just-in-time guard
+// still sees the session at idle or waiting_input. Races where the session has
+// already resumed, exited, or blocked are benign suppressions for the supervisor.
+func (m *Manager) WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("wake %s: read session: %w", id, err)
+	}
+	if !ok {
+		m.logger.Info("wake suppressed", "sessionID", id, "outcome", sessionguard.SuppressedNotFound.String())
+		return false, nil
+	}
+	if rec.Kind != domain.KindOrchestrator {
+		m.logger.Info("wake suppressed", "sessionID", id, "outcome", "suppressed_not_orchestrator", "kind", rec.Kind)
+		return false, nil
+	}
+	outcome, err := m.guard.WakeIdle(ctx, id, message)
+	if err != nil {
+		return false, fmt.Errorf("wake %s: %w", id, err)
+	}
+	if outcome != sessionguard.Sent {
+		m.logger.Info("wake suppressed", "sessionID", id, "outcome", outcome.String())
+		return false, nil
+	}
+	rec, ok, _ = m.store.GetSession(ctx, id)
+	if ok && m.harnessNudgeSafe(rec.Harness) {
+		m.confirmActive(ctx, id)
+	}
+	return true, nil
+}
+
 // Rename updates AO's durable display name and, when the session is live under
 // a harness that supports slash-title commands, updates the native app title too.
 func (m *Manager) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
@@ -2105,6 +2196,9 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix s
 }
 
 func buildPrompt(cfg ports.SpawnConfig) string {
+	if cfg.Kind == domain.KindOrchestrator && strings.TrimSpace(cfg.Prompt) == "" {
+		return orchestratorKickoffPrompt(cfg.ProjectID)
+	}
 	return cfg.Prompt
 }
 
@@ -2244,8 +2338,8 @@ func normalizeDisplayName(s string) string {
 // deliver separately to the agent. Orchestrator role instructions and worker
 // coordination hints are placed in the system prompt so they are treated as
 // standing instructions rather than part of the human's task request. A
-// promptless spawn delivers no user prompt at all: the agent simply lands at an
-// empty input box rather than receiving an auto-generated kickoff turn.
+// promptless worker spawn delivers no user prompt at all. Orchestrators receive
+// a daemon-owned kickoff turn so their standing supervision loop starts.
 func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
 	prompt = buildPrompt(cfg)
 	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID)
@@ -2426,6 +2520,10 @@ To discover any other AO command, run `+"`ao --help`"+` (and `+"`ao <command> --
 Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
 }
 
+func orchestratorKickoffPrompt(project domain.ProjectID) string {
+	return fmt.Sprintf("You are the project orchestrator for %s. Read your standing policy for this repo, then begin your supervision loop.", project)
+}
+
 func workerOrchestratorPrompt(orchestratorID domain.SessionID) string {
 	return fmt.Sprintf(`## Orchestrator coordination
 
@@ -2485,8 +2583,26 @@ func (m *Manager) deliverInitialPrompt(ctx context.Context, agent ports.Agent, h
 	}
 	// Same boot race as the title write. Harnesses that can carry the prompt in
 	// argv already returned PromptDeliveryInCommand and never reach here.
+	return m.deliverPromptAfterStart(ctx, handle, cfg.Prompt)
+}
+
+func (m *Manager) deliverPromptAfterStart(ctx context.Context, handle ports.RuntimeHandle, prompt string) error {
+	if prompt == "" {
+		return nil
+	}
 	m.awaitPaneReady(ctx, handle)
-	return m.runtime.SendMessage(ctx, handle, domain.SanitizeControlChars(cfg.Prompt))
+	return m.runtime.SendMessage(ctx, handle, domain.SanitizeControlChars(prompt))
+}
+
+func (m *Manager) deliverRestorePrompt(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, cfg ports.LaunchConfig, delivery restoreKickoffDelivery) error {
+	switch delivery {
+	case restoreKickoffForceAfterStart:
+		return m.deliverPromptAfterStart(ctx, handle, cfg.Prompt)
+	case restoreKickoffByStrategy:
+		return m.deliverInitialPrompt(ctx, agent, handle, cfg)
+	default:
+		return nil
+	}
 }
 
 func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, title string) error {
@@ -2723,14 +2839,15 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 	return nil
 }
 
-// restoreArgv builds the argv to relaunch a torn-down session: the agent's
-// native resume command when it can continue the session, else a fresh launch.
-// The agent signals via ok=false (e.g. no native session id captured yet).
-// Returns ErrNotResumable only for a promptless, unresumable non-orchestrator:
-// a worker with no prompt and no native session id has nothing to restore from.
-// Orchestrators are promptless by design and always relaunch fresh with the
-// system prompt only.
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig, kind domain.SessionKind) ([]string, error) {
+type restoreKickoffDelivery int
+
+const (
+	restoreKickoffNone restoreKickoffDelivery = iota
+	restoreKickoffByStrategy
+	restoreKickoffForceAfterStart
+)
+
+func restoreArgvDetailed(ctx context.Context, agent ports.Agent, id domain.SessionID, projectID domain.ProjectID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig, kind domain.SessionKind) ([]string, string, restoreKickoffDelivery, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -2738,30 +2855,40 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	}
 	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
-		return nil, fmt.Errorf("restore command: %w", err)
+		return nil, "", restoreKickoffNone, fmt.Errorf("restore command: %w", err)
 	}
 	if ok {
-		return cmd, nil
+		if kind == domain.KindOrchestrator {
+			return cmd, orchestratorKickoffPrompt(projectID), restoreKickoffForceAfterStart, nil
+		}
+		return cmd, "", restoreKickoffNone, nil
 	}
 	// Adapter cannot resume. A saved prompt is replayed fresh. An orchestrator is
-	// promptless by design and relaunches with the system prompt only. A promptless
-	// WORKER has no task and no session id to restore from: do not blank-relaunch it.
+	// relaunched with a daemon-owned kickoff prompt. A promptless WORKER has no
+	// task and no session id to restore from: do not blank-relaunch it.
 	if meta.Prompt == "" && kind != domain.KindOrchestrator {
-		return nil, ErrNotResumable
+		return nil, "", restoreKickoffNone, ErrNotResumable
 	}
-	// Fall through to GetLaunchCommand (replays meta.Prompt; empty for an orchestrator).
+	prompt := meta.Prompt
+	if prompt == "" && kind == domain.KindOrchestrator {
+		prompt = orchestratorKickoffPrompt(projectID)
+	}
+	// Fall through to GetLaunchCommand (replays saved prompt, or orchestrator kickoff).
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
-		Prompt:        meta.Prompt,
+		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,
 		Permissions:   agentConfig.Permissions,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("launch command: %w", err)
+		return nil, "", restoreKickoffNone, fmt.Errorf("launch command: %w", err)
 	}
-	return argv, nil
+	if prompt != "" {
+		return argv, prompt, restoreKickoffByStrategy, nil
+	}
+	return argv, "", restoreKickoffNone, nil
 }
 
 // validateAgentBinary checks that argv[0] resolves via the manager's

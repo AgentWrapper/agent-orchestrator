@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProjectConfigValidate(t *testing.T) {
@@ -58,6 +59,11 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good worker workspace override", ProjectConfig{Worker: RoleOverride{Workspace: WorkspaceModeInPlace}}, false},
 		{"unknown worker workspace override", ProjectConfig{Worker: RoleOverride{Workspace: "cloud"}}, true},
 		{"unknown orchestrator workspace override", ProjectConfig{Orchestrator: RoleOverride{Workspace: "nope"}}, true},
+		{"good orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "15m"}}, false},
+		{"negative orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "-1m"}}, true},
+		{"zero orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "0s"}}, true},
+		{"invalid orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "soon"}}, true},
+		{"worker wake interval unsupported", ProjectConfig{Worker: RoleOverride{WakeInterval: "15m"}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -111,6 +117,18 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	got = (ProjectConfig{}).WithDefaults()
 	if got.TrackerIntake.Provider != "" {
 		t.Fatalf("disabled TrackerIntake.Provider = %q, want empty", got.TrackerIntake.Provider)
+	}
+
+	got = (ProjectConfig{}).WithDefaults()
+	if got.Orchestrator.WakeInterval != "15m" {
+		t.Fatalf("default orchestrator wake interval = %s, want 15m", got.Orchestrator.WakeInterval)
+	}
+	got = (ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "30m"}}).WithDefaults()
+	if got.Orchestrator.WakeInterval != "30m" {
+		t.Fatalf("explicit orchestrator wake interval = %s, want 30m", got.Orchestrator.WakeInterval)
+	}
+	if d, err := got.Orchestrator.WakeIntervalDuration(); err != nil || d != 30*time.Minute {
+		t.Fatalf("parsed orchestrator wake interval = %s, %v; want 30m", d, err)
 	}
 }
 

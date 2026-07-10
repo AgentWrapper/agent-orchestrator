@@ -46,6 +46,11 @@ const (
 	// permission decision (Deliver and Nudge), or waiting at the prompt for
 	// the next instruction (Nudge only).
 	SuppressedAwaitingUser
+	// SuppressedNotIdle means an idle-wake write found a session in a state
+	// other than idle or waiting_input. This is a benign race: the supervisor
+	// observed an idle prompt, but the agent resumed before the just-in-time
+	// guard read. Blocked and exited/terminated return more specific outcomes.
+	SuppressedNotIdle
 )
 
 // String names the outcome for logs.
@@ -59,6 +64,8 @@ func (o Outcome) String() string {
 		return "suppressed_terminated"
 	case SuppressedAwaitingUser:
 		return "suppressed_awaiting_user"
+	case SuppressedNotIdle:
+		return "suppressed_not_idle"
 	default:
 		return "suppressed_unknown"
 	}
@@ -103,6 +110,24 @@ func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Out
 	})
 }
 
+// WakeIdle writes an AO-initiated wake message only when the session is at an
+// idle prompt or has just completed a turn. This is the deliberate exception
+// to Nudge's waiting_input suppression for project orchestrator supervision:
+// blocked permission dialogs and active/exited races are still refused at the
+// shared guard.
+func (g *Guard) WakeIdle(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
+	return g.sendWhen(ctx, id, msg, func(state domain.ActivityState) (bool, Outcome) {
+		switch state {
+		case domain.ActivityIdle, domain.ActivityWaitingInput:
+			return true, Sent
+		case domain.ActivityBlocked:
+			return false, SuppressedAwaitingUser
+		default:
+			return false, SuppressedNotIdle
+		}
+	})
+}
+
 // send re-reads the session immediately before pasting so the window between
 // "state looked safe" and "bytes hit the pane" is as small as this process can
 // make it. It is not atomic against the agent itself — a dialog can still
@@ -110,6 +135,15 @@ func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Out
 // available without scraping the terminal. Fail closed: a store error
 // suppresses the write rather than pressing Enter on an unknown state.
 func (g *Guard) send(ctx context.Context, id domain.SessionID, msg string, refuse func(domain.ActivityState) bool) (Outcome, error) {
+	return g.sendWhen(ctx, id, msg, func(state domain.ActivityState) (bool, Outcome) {
+		if refuse(state) {
+			return false, SuppressedAwaitingUser
+		}
+		return true, Sent
+	})
+}
+
+func (g *Guard) sendWhen(ctx context.Context, id domain.SessionID, msg string, allow func(domain.ActivityState) (bool, Outcome)) (Outcome, error) {
 	rec, ok, err := g.store.GetSession(ctx, id)
 	if err != nil {
 		return SuppressedUnknown, fmt.Errorf("guard %s: read session: %w", id, err)
@@ -127,11 +161,11 @@ func (g *Guard) send(ctx context.Context, id domain.SessionID, msg string, refus
 		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "terminated")
 		return SuppressedTerminated, nil
 	}
-	if refuse(rec.Activity.State) {
-		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "awaiting_user", "state", string(rec.Activity.State))
-		return SuppressedAwaitingUser, nil
+	if allowed, outcome := allow(rec.Activity.State); !allowed {
+		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", outcome.String(), "state", string(rec.Activity.State))
+		return outcome, nil
 	}
-	if err := g.messenger.Send(ctx, id, msg); err != nil {
+	if err := g.messenger.Send(ctx, id, domain.SanitizeControlChars(msg)); err != nil {
 		return Sent, fmt.Errorf("guard %s: send: %w", id, err)
 	}
 	return Sent, nil

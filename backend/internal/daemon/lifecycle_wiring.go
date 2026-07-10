@@ -123,8 +123,8 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		PRClaimer: store,
 		SCM:       scmProvider,
 		Telemetry: telemetry,
-		// no_signal only makes sense for harnesses whose adapters install
-		// activity hooks; the deriver registry is the source of truth for that.
+		// no_signal only makes sense for harnesses whose adapters install activity
+		// hooks directly or delegate through Claude Code hooks.
 		SignalCapable: activitydispatch.SupportsHarness,
 		// Lets the daemon compute `<repoKey> #<issue> <slug>` for sessions the
 		// CLI and API spawn, which arrive without the title intake already has.

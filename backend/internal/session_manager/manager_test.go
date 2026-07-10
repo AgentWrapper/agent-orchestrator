@@ -181,6 +181,7 @@ func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness d
 	if metadata.Branch != "" {
 		rec.Metadata.Branch = metadata.Branch
 	}
+	rec.Metadata.Prompt = metadata.Prompt
 	rec.Metadata.Model = metadata.Model
 	if metadata.LaunchedHarnesses != nil {
 		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
@@ -228,6 +229,7 @@ type fakeRuntime struct {
 	outputErr            error
 	getOutputCalls       int
 	getOutputCallsAtSend []int
+	onSend               func()
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -252,6 +254,9 @@ func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bo
 func (r *fakeRuntime) SendMessage(_ context.Context, _ ports.RuntimeHandle, msg string) error {
 	if r.sendErr != nil {
 		return r.sendErr
+	}
+	if r.onSend != nil {
+		r.onSend()
 	}
 	r.sent = append(r.sent, msg)
 	r.getOutputCallsAtSend = append(r.getOutputCallsAtSend, r.getOutputCalls)
@@ -584,6 +589,36 @@ func TestSwitchHarness_Success(t *testing.T) {
 	}
 	if lcm.IsSwitching(id) {
 		t.Fatal("switch guard not cleared after a successful switch")
+	}
+}
+
+func TestSwitchHarness_OrchestratorDeliversKickoffAfterStart(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{blankReads: 2}
+	agent := &afterStartTitleAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 50 * time.Millisecond}
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", RuntimeHandleID: "h1"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	rec, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, "")
+	if err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	if len(rt.sent) != 1 || !strings.Contains(rt.sent[0], "Read your standing policy") {
+		t.Fatalf("runtime sends = %#v, want orchestrator kickoff", rt.sent)
+	}
+	if rt.getOutputCallsAtSend[0] <= rt.blankReads {
+		t.Fatalf("kickoff sent after %d pane reads, want it to wait past %d blank reads", rt.getOutputCallsAtSend[0], rt.blankReads)
+	}
+	if !strings.Contains(rec.Metadata.Prompt, "Read your standing policy") {
+		t.Fatalf("metadata prompt = %q, want persisted kickoff", rec.Metadata.Prompt)
 	}
 }
 
@@ -2087,10 +2122,39 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 
-	// A promptless orchestrator gets no auto-generated kickoff turn: spawning
-	// must deliver nothing to the agent, leaving it idle at an empty input box.
-	if agent.lastLaunch.Prompt != "" {
-		t.Fatalf("prompt = %q, want empty (no kickoff turn)", agent.lastLaunch.Prompt)
+	// The role remains in the system prompt, but the daemon must also send an
+	// initial user turn so a newly spawned orchestrator starts supervising.
+	if !strings.Contains(agent.lastLaunch.Prompt, "Read your standing policy") {
+		t.Fatalf("prompt = %q, want kickoff instructing policy read", agent.lastLaunch.Prompt)
+	}
+	if !strings.Contains(agent.lastLaunch.Prompt, "begin your supervision loop") {
+		t.Fatalf("prompt = %q, want supervision-loop kickoff", agent.lastLaunch.Prompt)
+	}
+}
+
+func TestSpawnOrchestrator_DeliversKickoffAfterStart(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &afterStartTitleAgent{}
+	rt := &fakeRuntime{blankReads: 2}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, msg := range rt.sent {
+		if strings.Contains(msg, "Read your standing policy") && strings.Contains(msg, "begin your supervision loop") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("runtime sends = %#v, want kickoff delivered after pane readiness", rt.sent)
+	}
+	if len(rt.getOutputCallsAtSend) == 0 || rt.getOutputCallsAtSend[len(rt.getOutputCallsAtSend)-1] < 3 {
+		t.Fatalf("kickoff must wait for pane readiness, output calls at send = %v", rt.getOutputCallsAtSend)
 	}
 }
 
@@ -2332,6 +2396,34 @@ func TestRestore_PromptlessOrchestratorResumesViaAdapter(t *testing.T) {
 	if st.sessions["mer-1"].IsTerminated {
 		t.Error("orchestrator must be live after restore")
 	}
+	if len(rt.sent) != 1 || !strings.Contains(rt.sent[0], "Read your standing policy") {
+		t.Fatalf("native restore sends = %#v, want post-start kickoff", rt.sent)
+	}
+}
+
+func TestRestore_OrchestratorKickoffAfterMarkSpawned(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-orchestrator"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	rt.onSend = func() {
+		rec := st.sessions["mer-1"]
+		if rec.IsTerminated {
+			t.Fatal("kickoff sent before MarkSpawned made the session live")
+		}
+		if rec.Metadata.RuntimeHandleID == "" {
+			t.Fatal("kickoff sent before MarkSpawned persisted runtime metadata")
+		}
+	}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: alwaysResumeAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestRestore_PromptlessUnresumableRelaunchesFresh covers the genuine-reboot
@@ -2350,9 +2442,10 @@ func TestRestore_PromptlessUnresumableRelaunchesFresh(t *testing.T) {
 	}
 	rt := &fakeRuntime{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	// fakeAgents resolves to fakeAgent, whose GetRestoreCommand returns ok=false
-	// without an agentSessionId, and GetLaunchCommand returns a valid argv.
-	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	agent := &recordingAgent{}
+	// recordingAgent returns ok=false without an agentSessionId and captures the
+	// fresh-launch fallback config.
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatalf("promptless unresumable session must relaunch fresh, got err = %v", err)
@@ -2362,6 +2455,9 @@ func TestRestore_PromptlessUnresumableRelaunchesFresh(t *testing.T) {
 	}
 	if st.sessions["mer-1"].IsTerminated {
 		t.Error("session must be live after fresh relaunch")
+	}
+	if !strings.Contains(agent.lastLaunch.Prompt, "Read your standing policy") {
+		t.Fatalf("restore fallback prompt = %q, want orchestrator kickoff", agent.lastLaunch.Prompt)
 	}
 }
 
@@ -3635,6 +3731,76 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("Send calls = %d, want 0 (no paste into a pending decision)", len(msg.msgs))
+	}
+}
+
+func TestWakeIdle_AllowsWaitingInputAndConfirmsActive(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Kind:     domain.KindOrchestrator,
+		Activity: domain.Activity{State: domain.ActivityWaitingInput}}
+	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	sent, err := m.WakeIdle(context.Background(), "s1", "continue your supervision loop")
+	if err != nil {
+		t.Fatalf("WakeIdle: %v", err)
+	}
+	if !sent {
+		t.Fatal("WakeIdle sent = false, want true")
+	}
+	if len(msg.msgs) != 2 || msg.msgs[0] != "continue your supervision loop" || msg.msgs[1] != "" {
+		t.Fatalf("WakeIdle sends = %#v, want wake message plus Enter confirmation", msg.msgs)
+	}
+	if got := st.sessions["s1"].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("Activity.State = %q, want active", got)
+	}
+}
+
+func TestWakeIdle_SuppressesBlockedAndActiveRaces(t *testing.T) {
+	for name, state := range map[string]domain.ActivityState{
+		"blocked": domain.ActivityBlocked,
+		"active":  domain.ActivityActive,
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
+				Kind:     domain.KindOrchestrator,
+				Activity: domain.Activity{State: state}}
+			msg := &fakeMessenger{}
+			m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+			sent, err := m.WakeIdle(context.Background(), "s1", "continue your supervision loop")
+			if err != nil {
+				t.Fatalf("WakeIdle: %v", err)
+			}
+			if sent {
+				t.Fatal("WakeIdle sent = true, want false")
+			}
+			if len(msg.msgs) != 0 {
+				t.Fatalf("WakeIdle sends = %#v, want none", msg.msgs)
+			}
+		})
+	}
+}
+
+func TestWakeIdle_SuppressesNonOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Kind:     domain.KindWorker,
+		Activity: domain.Activity{State: domain.ActivityWaitingInput}}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	sent, err := m.WakeIdle(context.Background(), "s1", "continue your supervision loop")
+	if err != nil {
+		t.Fatalf("WakeIdle: %v", err)
+	}
+	if sent {
+		t.Fatal("WakeIdle sent = true, want false")
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("WakeIdle sends = %#v, want none", msg.msgs)
 	}
 }
 

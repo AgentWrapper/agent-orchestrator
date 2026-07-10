@@ -287,6 +287,10 @@ func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, _ string) e
 	f.sent = append(f.sent, id)
 	return nil
 }
+func (f *fakeCommander) WakeIdle(_ context.Context, id domain.SessionID, _ string) (bool, error) {
+	f.sent = append(f.sent, id)
+	return true, nil
+}
 func (f *fakeCommander) Rename(context.Context, domain.SessionID, string) error { return nil }
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)

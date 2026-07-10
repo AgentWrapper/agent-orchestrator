@@ -99,6 +99,7 @@ type roleOverride struct {
 	// silently dropping it.
 	Workspace        string `json:"workspace,omitempty"`
 	InstructionsFile string `json:"instructionsFile,omitempty"`
+	WakeInterval     string `json:"wakeInterval,omitempty"`
 }
 
 // workerMixEntry mirrors domain.WorkerMixEntry so a --config-json payload

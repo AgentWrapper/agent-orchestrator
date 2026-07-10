@@ -54,13 +54,17 @@ func Derive(agent, event string, payload []byte) (domain.ActivityState, bool) {
 	return derive(event, payload)
 }
 
-// SupportsHarness reports whether a harness has an activity pipeline at all:
-// a registered deriver here means its adapter installs `ao hooks <harness>`
-// callbacks that can reach the daemon. Status derivation uses this to decide
-// whether prolonged silence is suspicious (no_signal) or simply all a hook-less
-// harness can ever report (idle). Harness names and `ao hooks` agent tokens are
-// the same strings by convention.
+// SupportsHarness reports whether a harness has an activity pipeline at all.
+// Most supported harnesses install `ao hooks <harness>` callbacks and are
+// listed in Derivers. Claude-compatible delegates install `ao hooks
+// claude-code`, so they are supported even without their own deriver key. Status
+// derivation uses this to decide whether prolonged silence is suspicious
+// (no_signal) or simply all a hook-less harness can ever report (idle).
 func SupportsHarness(h domain.AgentHarness) bool {
+	switch h {
+	case domain.HarnessGrok, domain.HarnessContinue, domain.HarnessDevin:
+		return true
+	}
 	_, ok := Derivers[string(h)]
 	return ok
 }

@@ -251,6 +251,24 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 
 }
 
+func TestProjectsAPI_ListDoesNotExposeProjectConfig(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "agent-orchestrator")
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"ao","config":{"env":{"GITHUB_TOKEN":"secret"},"orchestrator":{"wakeInterval":"30m"}}}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST project = %d, want 201; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET projects = %d, want 200; body=%s", status, body)
+	}
+	if strings.Contains(string(body), "config") || strings.Contains(string(body), "secret") || strings.Contains(string(body), "GITHUB_TOKEN") {
+		t.Fatalf("project list leaked config/env: %s", body)
+	}
+}
+
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 	srv := newTestServer(t)

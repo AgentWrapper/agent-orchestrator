@@ -578,6 +578,9 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	if metadata.WorkspaceMode.IsKnown() {
 		rec.Metadata.WorkspaceMode = metadata.WorkspaceMode
 	}
+	if metadata.Prompt != "" {
+		rec.Metadata.Prompt = metadata.Prompt
+	}
 	rec.Metadata.Model = metadata.Model
 	if metadata.LaunchedHarnesses != nil {
 		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses

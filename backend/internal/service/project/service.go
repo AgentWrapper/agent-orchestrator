@@ -128,6 +128,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			Kind:              row.Kind.WithDefault(),
 			SessionPrefix:     resolveSessionPrefix(row),
 			OrchestratorAgent: row.Config.Orchestrator.Harness,
+			Config:            row.Config.WithDefaults(),
 		})
 	}
 	return out, nil

@@ -54,6 +54,7 @@ type commander interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
@@ -525,6 +526,12 @@ func (s *Service) RollbackSpawn(ctx context.Context, id domain.SessionID) (Rollb
 // Send delegates agent messaging to the internal manager.
 func (s *Service) Send(ctx context.Context, id domain.SessionID, message string) error {
 	return toAPIError(s.manager.Send(ctx, id, message))
+}
+
+// WakeIdle delegates daemon-owned idle wake delivery to the internal manager.
+func (s *Service) WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error) {
+	sent, err := s.manager.WakeIdle(ctx, id, message)
+	return sent, toAPIError(err)
 }
 
 // Rename updates the user-facing session display name.

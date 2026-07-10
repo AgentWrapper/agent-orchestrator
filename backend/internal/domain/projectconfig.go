@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // WorkspaceMode selects how the daemon provisions a session's working
@@ -140,6 +141,10 @@ type RoleOverride struct {
 	// top-level ProjectConfig.Workspace (and ultimately the worktree default);
 	// see ResolveWorkspaceMode.
 	Workspace WorkspaceMode `json:"workspace,omitempty" enum:"worktree,in-place"`
+	// WakeInterval controls how long an orchestrator may sit at waiting_input
+	// before the daemon sends a supervision-loop nudge. It is consumed only for
+	// the orchestrator role; empty means use DefaultOrchestratorWakeInterval.
+	WakeInterval string `json:"wakeInterval,omitempty" description:"Orchestrator role only. Positive Go duration string such as 15m; empty uses the daemon default."`
 	// InstructionsFile is an optional path to a file whose contents the daemon
 	// appends to this role's built-in system prompt at spawn and restore. It
 	// lets a project carry its own standing policy per role (orchestrator vs
@@ -152,6 +157,12 @@ type RoleOverride struct {
 
 // DefaultBranchName is the base branch used when a project configures none.
 const DefaultBranchName = "main"
+
+// DefaultOrchestratorWakeInterval is the daemon fallback when a project leaves
+// orchestrator.wakeInterval unset.
+const DefaultOrchestratorWakeInterval = 15 * time.Minute
+
+const defaultOrchestratorWakeIntervalConfig = "15m"
 
 // DefaultProjectConfig returns the config a project has when it sets nothing:
 // branch "main". Every other field defaults to its zero value (no
@@ -168,6 +179,9 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	def := DefaultProjectConfig()
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
+	}
+	if c.Orchestrator.WakeInterval == "" {
+		c.Orchestrator.WakeInterval = defaultOrchestratorWakeIntervalConfig
 	}
 	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	return c
@@ -205,6 +219,12 @@ func (c ProjectConfig) Validate() error {
 			return err
 		}
 	}
+	if c.Worker.WakeInterval != "" {
+		return fmt.Errorf("worker.wakeInterval: not supported")
+	}
+	if _, err := c.Orchestrator.WakeIntervalDuration(); err != nil {
+		return fmt.Errorf("orchestrator.wakeInterval: %w", err)
+	}
 	for _, s := range c.Symlinks {
 		if err := validateRepoRelative(s); err != nil {
 			return fmt.Errorf("symlink %q: %w", s, err)
@@ -222,6 +242,22 @@ func (c ProjectConfig) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// WakeIntervalDuration parses the configured wake interval. An empty value
+// resolves to DefaultOrchestratorWakeInterval.
+func (r RoleOverride) WakeIntervalDuration() (time.Duration, error) {
+	if r.WakeInterval == "" {
+		return DefaultOrchestratorWakeInterval, nil
+	}
+	d, err := time.ParseDuration(r.WakeInterval)
+	if err != nil {
+		return 0, err
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("must be positive")
+	}
+	return d, nil
 }
 
 func validateNoWhitespaceField(name, value string) error {

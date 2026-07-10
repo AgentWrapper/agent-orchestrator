@@ -149,6 +149,7 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 		RuntimeToken:      "new-token",
 		WorkspacePath:     "/ws2",
 		Branch:            "b2",
+		Prompt:            "new prompt",
 		Model:             "switch-model",
 		LaunchedHarnesses: []domain.AgentHarness{domain.HarnessClaudeCode, domain.HarnessCodex},
 	}
@@ -171,6 +172,9 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	if got.Metadata.Model != "switch-model" {
 		t.Fatalf("Model = %q, want switch-model", got.Metadata.Model)
 	}
+	if got.Metadata.Prompt != "new prompt" {
+		t.Fatalf("Prompt = %q, want new prompt", got.Metadata.Prompt)
+	}
 	if got.Metadata.WorkspacePath != "/ws2" || got.Metadata.Branch != "b2" {
 		t.Fatalf("workspace path/branch not persisted: %+v", got.Metadata)
 	}
@@ -179,10 +183,6 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	}
 	if !got.FirstSignalAt.IsZero() {
 		t.Fatal("FirstSignalAt should reset so the new agent re-proves its hooks")
-	}
-	// Prompt survives the switch.
-	if got.Metadata.Prompt != "p" {
-		t.Fatalf("preserved prompt lost: %+v", got.Metadata)
 	}
 }
 
