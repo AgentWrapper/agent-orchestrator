@@ -21,6 +21,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -86,6 +87,21 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchCo
 		return "", err
 	}
 	return ports.PromptDeliveryAfterStart, nil
+}
+
+// PromptReadinessHints waits for Kimi's interactive prompt before AO injects
+// the worker's first task.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 750 * time.Millisecond,
+		Patterns:     []string{"│ >"},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      8 * time.Second,
+		Lines:        80,
+	}, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Kimi session

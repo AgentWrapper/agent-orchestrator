@@ -24,10 +24,10 @@ export default async function DocsSlugPage({ params }: PageProps) {
 				single: true,
 			}}
 			editOnGithub={{
-				owner: "ComposioHQ",
+				owner: "AgentWrapper",
 				repo: "agent-orchestrator",
 				sha: "main",
-				path: `website/content/docs/${page.file?.path ?? ""}`,
+				path: `frontend/src/landing/content/docs/${page.file?.path ?? ""}`,
 			}}
 			breadcrumb={{
 				enabled: true,

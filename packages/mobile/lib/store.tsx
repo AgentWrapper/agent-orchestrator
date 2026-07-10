@@ -105,12 +105,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		reloadConfig();
 	}, [reloadConfig]);
 
-	const fetchAll = useCallback(async () => {
+	// fetchAll returns false when it hit an auth failure (missing/wrong password
+	// or a 429 lockout). The poll loop uses that to STOP hammering: a phone that
+	// keeps polling with a bad password would otherwise rack up a failed attempt
+	// every few seconds and keep the daemon's brute-force lockout armed forever.
+	// Polling resumes when the config changes (the user fixes the password and
+	// reconnects), which re-runs the effect below.
+	const fetchAll = useCallback(async (): Promise<boolean> => {
 		const c = cfgRef.current;
 		if (!c || !isConfigured(c)) {
 			setConnection("closed");
 			setLoading(false);
-			return;
+			return false;
 		}
 		try {
 			const [projs, sess] = await Promise.all([getProjects(c).catch(() => [] as ProjectInfo[]), getSessions(c, "all")]);
@@ -121,15 +127,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setStats(sess.stats);
 			setError(null);
 			setConnection("open");
+			return true;
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Failed to load");
+			const msg = e instanceof Error ? e.message : "Failed to load";
+			setError(msg);
 			setConnection("closed");
+			// Auth failures are not transient — don't keep polling into a lockout.
+			// Network/other errors are transient, so keep polling for recovery.
+			return !(msg.startsWith("401") || msg.startsWith("429"));
 		} finally {
 			setLoading(false);
 		}
 	}, []);
 
-	// (Re)start the REST poll whenever the config changes.
+	// (Re)start the REST poll whenever the config changes. Stops polling on an
+	// auth failure so the phone can't lock itself out by hammering a bad password.
 	useEffect(() => {
 		if (!config || !isConfigured(config)) {
 			setConnection("closed");
@@ -138,8 +150,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		}
 		setLoading(true);
 		setConnection("connecting");
-		fetchAll();
-		const poll = setInterval(fetchAll, POLL_INTERVAL_MS);
+		let stopped = false;
+		const tick = async () => {
+			if (stopped) return;
+			const keepGoing = await fetchAll();
+			if (!keepGoing) stopped = true;
+		};
+		void tick();
+		const poll = setInterval(() => void tick(), POLL_INTERVAL_MS);
 		return () => clearInterval(poll);
 	}, [config, fetchAll]);
 
@@ -220,7 +238,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			loading,
 			error,
 			reloadConfig,
-			refresh: fetchAll,
+			refresh: async () => {
+				await fetchAll();
+			},
 			setActiveProject,
 			spawn,
 			launchConductor,
