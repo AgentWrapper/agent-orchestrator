@@ -83,6 +83,7 @@ const COLUMNS: Column[] = [
 	},
 ];
 
+
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();

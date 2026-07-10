@@ -24,8 +24,308 @@
       "loadSessions": "Could not load sessions."
     },
 
-    "done": "Done / Terminated",
+    "status": {
+      "working": "Working",
+      "inputNeeded": "Input needed",
+      "noSignal": "No signal",
+      "ciFailed": "CI failed",
+      "changesRequested": "Changes requested",
+      "reviewPending": "Review pending",
+      "draftPR": "Draft PR",
+      "prOpen": "PR open",
+      "approved": "Approved",
+      "ready": "Ready",
+      "merged": "Merged",
+      "terminated": "Terminated"
+    },
 
+    "lifecycle": {
+      "open": "Open",
+      "merged": "Merged",
+      "draft": "Draft",
+      "closed": "Closed"
+    },
+
+    "done": "Done / Terminated",
+    "intakeIssue": "Intake issue: {{id}}",
     "noPR": "No PR yet"
+  },
+
+  "sidebar": {
+    "projects": "Projects",
+    "settings": "Settings",
+    "nightly": "Nightly",
+
+    "tooltips": {
+      "board": "Orchestrator board",
+      "collapse": "Collapse sidebar · ⌘B",
+      "expand": "Expand sidebar · ⌘B",
+      "dashboard": "Dashboard",
+      "orchestrator": "Orchestrator",
+      "spawnOrchestrator": "Spawn orchestrator",
+      "restarting": "Restarting…",
+      "spawning": "Spawning…",
+      "newProject": "New project",
+      "opening": "Opening...",
+      "creating": "Creating...",
+      "initializing": "Initializing...",
+      "settingUp": "Setting up..."
+    },
+
+    "menu": {
+      "lightMode": "Light mode",
+      "darkMode": "Dark mode",
+      "pullRequests": "Pull requests",
+      "search": "Search",
+      "projectSettings": "Project settings",
+      "globalSettings": "Global settings",
+      "connectMobile": "Connect Mobile"
+    },
+
+    "errors": {
+      "loadProjects": "Could not load projects.",
+      "noProjects": "No projects yet.",
+      "registerRepo": "Click <plus/> above to register a Git repository.",
+      "removeProject": "Could not remove project",
+      "addProject": "Could not add project"
+    },
+
+    "dialogs": {
+      "removeProjectTitle": "Remove project",
+      "removeProjectBody": "This will remove <strong>{{name}}</strong> from AO",
+      "removeProjectMess": "This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.",
+      "removing": "Removing…",
+      "remove": "Remove"
+    },
+
+    "aria": {
+      "openOrchestrator": "Open {{name}} orchestrator",
+      "spawnOrchestrator": "Spawn {{name}} orchestrator",
+      "openDashboard": "Open {{name}} dashboard",
+      "projectActions": "Project actions for {{name}}",
+      "renameSession": "Rename {{name}}",
+      "openSession": "Open {{name}}",
+      "daemon": "Daemon {{state}}",
+      "eventsOffline": " · events offline"
+    }
+  },
+
+  "notifications": {
+    "title": "Notifications",
+
+    "empty": "No unread notifications.",
+
+    "actions": {
+      "markAll": "Mark all",
+      "markAllRead": "Mark all notifications read",
+      "markRead": "Mark read",
+      "open": "Open target"
+    },
+
+    "errors": {
+      "load": "Could not load notifications.",
+      "markRead": "Could not mark notification read",
+      "markAllRead": "Could not mark notifications read"
+    },
+
+    "aria": {
+      "unread": "{{count}} unread notifications",
+      "open": "Open notification target",
+      "markRead": "Mark notification read"
+    }
+  },
+
+  "settings": {
+    "globalSettings": {
+      "title" : "Global settings",
+      "subtitle" : "Settings that apply across all projects"
+    },
+    "updates": {
+      "title" : "Updates",
+      "automaticUpdates" : "Automatic Updates",
+      "updateChannel" : "Update Channel",
+      "saveChanges" : "Save Changes",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "stable": "Stable (latest release)",
+      "nightly": "Nightly (pre-release)",
+      "nightlyWarning": "Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable with that.",
+      "saving": "Saving…",
+      "saved": "Saved.",
+      "saveFailed": "Save failed",
+      "currentVersion": "Current version",
+      "checkForUpdates": "Check for updates",
+      "updateTo": "Update to {{version}}",
+      "updateLatest": "Update to latest",
+      "restartInstall": "Restart & install",
+      "checking": "Checking for updates…",
+      "updateAvailable": "Update available{{version}}.",
+      "downloading": "Downloading… {{percent}}%",
+      "downloaded": "Downloaded. Restart to finish updating.",
+      "latestVersion": "You're on the latest version.",
+      "unsupported": "Updates need the installed app.",
+      "updateFailed": "Update failed."
+    },
+
+    "migration": {
+      "title": "Migration",
+      "description": "Import projects and orchestrator sessions from a legacy Agent Orchestrator install. Nothing is modified, and it's safe to run more than once.",
+
+      "status": {
+        "pending": "Not migrated yet",
+        "completed": "Completed",
+        "declined": "Declined",
+        "failed": "Last attempt failed"
+      },
+    
+      "labels": {
+        "status": "Status",
+        "completed": "Completed",
+        "lastAttempt": "Last attempt",
+        "lastReport": "Last report",
+        "legacyInstall": "Legacy install"
+      },
+    
+      "messages": {
+        "checking": "Checking…",
+        "found": "Found",
+        "noneFound": "None found",
+      
+        "migrationFailed": "Migration failed.",
+        "migrationComplete": "Migration complete.",
+        "nothingToImport": "Nothing to import from a legacy install.",
+      
+        "legacyUntouched": "Your legacy projects are untouched (nothing is ever deleted).",
+      
+        "report": "{{imported}} imported, {{skipped}} already present"
+      },
+    
+      "buttons": {
+        "run": "Run migration",
+        "rerun": "Re-run migration",
+        "retry": "Retry migration",
+        "running": "Running…"
+      }
+    }
+  },
+
+  "pullRequests": {
+    "title": "Pull Requests",
+    "subtitle": "Open PRs across every agent session, ready to resolve and merge.",
+    "empty": "No open pull requests.",
+      
+    "table": {
+      "pr": "PR",
+      "worker": "Worker",
+      "state": "State",
+      "actions": "Actions"
+    },
+  
+    "actions": {
+      "resolve": "Resolve",
+      "merge": "Merge",
+      "merging": "Merging…"
+    },
+  
+    "messages": {
+      "merged": "Merged ({{method}})",
+      "mergeFailed": "Merge failed",
+      "commentsResolved": "Comments resolved",
+      "resolveFailed": "Resolve failed"
+    }
+  },
+
+  "topbar": {
+    "status": {
+      "active": "Active",
+      "idle": "Idle",
+	    "waiting": "Waiting for input",
+	    "blocked": "Blocked",
+	    "exit": "Exited",
+	    "unknown": "Unknown"
+    },
+    "orchestrator": "Orchestrator",
+    "newTask": "New task",
+    "openKanban": "Open Kanban",
+    "kanban": "Kanban",
+    "openOrchestrator": "Open orchestrator",
+    "restarting": "Restarting…",
+    "spawning": "Spawning…",
+    "inspector": {
+      "close": "Close inspector panel",
+      "open": "Open inspector panel",
+      "closeAction": "Close",
+      "openAction": "Open",
+      "shortcutTitle": "{{action}} inspector · ⌘⇧B"
+    },
+    "kill": {
+      "failed": "Kill failed",
+      "confirm": "Confirm kill",
+      "killing": "Killing…",
+      "cancel": "Cancel",
+      "session": "Kill session",
+      "label": "Kill"
+    }
+  },
+
+  "createProject": {
+    "title": "Import to Agent Orchestrator",
+    "subtitle": "What are you importing?",
+    "closeAria": "Close new project dialog",
+    "pickerTitleWorkspace": "Choose a workspace folder",
+    "pickerTitleProject": "Choose a project repository",
+
+    "workspace": {
+      "title": "Workspace",
+      "description": "Several Git repos that live under one parent folder.",
+      "tag": "Multiple repositories"
+    },
+
+    "singleRepo": {
+      "title": "Project",
+      "description": "A single Git repository — one codebase, tracked in one repo.",
+      "tag": "One repository"
+    },
+
+    "folder": {
+      "backAria": "Back to import type",
+      "closeAria": "Close import dialog",
+      "titleWorkspace": "Import workspace",
+      "titleProject": "Import project",
+      "descriptionWorkspace": "Pick a folder that contains your Git repositories. Each repo inside it joins the workspace.",
+      "descriptionProject": "Import a single Git repository as one project.",
+      "workspaceRoot": "Workspace root",
+      "projectFolder": "Project folder",
+      "change": "Change",
+      "importFailedWorkspace": "Import failed · workspace not registered",
+      "importFailedProject": "Import failed · project not registered",
+      "noReposDetected": "No repositories detected in this folder.",
+      "chooseFolder": "Choose a folder",
+      "chooseProjectFolder": "Choose a project folder",
+      "chooseFolderHintWorkspace": "Opens your system file picker — pick the folder that holds your repos",
+      "chooseFolderHintProject": "Opens your system file picker — select one repo folder",
+      "cancel": "Cancel",
+      "importWorkspace": "Import workspace",
+      "importProject": "Import project",
+      "resolveFailed_one": "Resolve {{count}} failed repository to continue",
+      "resolveFailed_other": "Resolve {{count}} failed repositories to continue",
+      "noReposToImport": "No repositories to import",
+      "noProjectSelected": "No project selected",
+      "repoCannotImport": "Repository cannot be imported"
+    }
+  },
+
+  "connectMobile": {
+    "title": "Connect Mobile",
+    "description": "Pair the Agent Orchestrator mobile app with this desktop over your LAN.",
+    "checkingStatus": "Checking status…",
+    "statusLoadFailed": "Failed to load mobile status.",
+    "enableToggle": "Enable mobile",
+    "enableToggleDescription": "Open a password-protected port on your local network so your phone can connect.",
+    "address": "Address",
+    "password": "Password",
+    "copy": "Copy",
+    "copied": "Copied",
+    "regeneratePassword": "Regenerate password"
   }
 }

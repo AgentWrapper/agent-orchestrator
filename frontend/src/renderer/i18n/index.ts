@@ -33,7 +33,9 @@ i18n.on("languageChanged", (language) => {
 });
 
 export function initialiseI18n(){
-    console.log("INITIALISED");
+    if (i18n.isInitialized) {
+        return Promise.resolve(i18n);
+    }
     return i18n.use(initReactI18next).init({
         resources: {
             en: {translation: en},

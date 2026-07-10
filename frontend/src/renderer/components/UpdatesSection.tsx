@@ -7,19 +7,21 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { useTranslation } from "react-i18next";
 
 export const updateSettingsQueryKey = ["update-settings"] as const;
 
-const CHANNEL_OPTIONS: { value: UpdateChannel; label: string }[] = [
-	{ value: "latest", label: "Stable (latest release)" },
-	{ value: "nightly", label: "Nightly (pre-release)" },
-];
 
 // UpdatesSection is the Global Settings card for the desktop auto-update channel
 // (issue #2207). It reads/writes ~/.ao/update-settings.json via the main process
 // (the same file auto-updater.ts consumes), letting a user pick Stable vs Nightly.
 // Changes apply on the next launch / update check.
 export function UpdatesSection() {
+	const { t } = useTranslation();
+	const CHANNEL_OPTIONS: { value: UpdateChannel; label: string }[] = [
+		{ value: "latest", label: t("settings.updates.stable") },
+		{ value: "nightly", label:  t("settings.updates.nightly") },
+	];
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
@@ -59,19 +61,19 @@ export function UpdatesSection() {
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="text-control">Updates</CardTitle>
+				<CardTitle className="text-control">{t("settings.updates.title")}</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="updatesEnabled" className="text-xs text-muted-foreground">
-						Automatic updates
+						{t("settings.updates.automaticUpdates")}
 					</Label>
 					<EnabledSelect id="updatesEnabled" value={form.enabled} onChange={setEnabled} />
 				</div>
 
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="updateChannel" className="text-xs text-muted-foreground">
-						Update channel
+						{t("settings.updates.updateChannel")}
 					</Label>
 					<Select value={form.channel} onValueChange={(v) => setChannel(v as UpdateChannel)} disabled={!form.enabled}>
 						<SelectTrigger id="updateChannel" className="h-control-form w-full text-control">
@@ -89,21 +91,20 @@ export function UpdatesSection() {
 
 				{form.channel === "nightly" && form.enabled && (
 					<p className="text-xs leading-row text-warning">
-						Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable
-						with that.
+						{t("settings.updates.nightlyWarning")}
 					</p>
 				)}
 
 				<div className="flex items-center gap-3">
 					<Button type="button" variant="primary" onClick={() => save.mutate(form)} disabled={save.isPending}>
-						{save.isPending ? "Saving…" : "Save changes"}
+						{save.isPending? t("settings.updates.saving") : t("settings.updates.saveChanges")}
 					</Button>
 					{save.isError && (
 						<span className="text-xs text-error">
-							{save.error instanceof Error ? save.error.message : "Save failed"}
+							{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}
 						</span>
 					)}
-					{savedAt && !save.isPending && !save.isError && <span className="text-xs text-success">Saved.</span>}
+					{savedAt && !save.isPending && !save.isError && <span className="text-xs text-success">{t("settings.updates.saved")}</span>}
 				</div>
 
 				<UpdateActions />
@@ -118,6 +119,7 @@ export function UpdatesSection() {
 function UpdateActions() {
 	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
+	const { t } = useTranslation();
 
 	useEffect(() => {
 		let live = true;
@@ -138,23 +140,23 @@ function UpdateActions() {
 	return (
 		<div className="flex flex-col gap-3 border-t border-border pt-4">
 			<div className="flex items-center gap-2 text-xs">
-				<span className="text-passive">Current version</span>
+				<span className="text-passive">{t("settings.updates.currentVersion")}</span>
 				<span className="font-mono text-caption text-foreground">{version.data ? `v${version.data}` : "…"}</span>
 			</div>
 			<div className="flex items-center gap-3">
 				<Button type="button" variant="outline" onClick={() => void aoBridge.updates.check()} disabled={busy}>
 					{checking && <Loader2 className="mr-2 size-icon-base animate-spin" />}
-					Check for updates
+					{t("settings.updates.checkForUpdates")}
 				</Button>
 
 				{status.state === "available" && (
 					<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-						Update to {status.version ? `v${status.version}` : "latest"}
+						{status.version? t("settings.updates.updateTo", {version: `v${status.version}`}) : t("settings.updates.updateLatest")}
 					</Button>
 				)}
 				{status.state === "downloaded" && (
 					<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
-						Restart &amp; install
+						{t("settings.updates.restartInstall")}
 					</Button>
 				)}
 
@@ -165,39 +167,41 @@ function UpdateActions() {
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
+	const { t } = useTranslation();
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-muted-foreground">Checking for updates…</span>;
+			return <span className="text-xs text-muted-foreground">{t("settings.updates.checking")}</span>;
 		case "available":
 			return (
 				<span className="text-xs text-muted-foreground">
-					Update available{status.version ? ` (v${status.version})` : ""}.
+					{t("settings.updates.updateAvailable", { version: status.version ? ` (v${status.version})` : "" })}
 				</span>
 			);
 		case "downloading":
-			return <span className="text-xs text-muted-foreground">Downloading… {status.percent ?? 0}%</span>;
+			return <span className="text-xs text-muted-foreground">{t("settings.updates.downloading", {percent: status.percent ?? 0})}</span>;
 		case "downloaded":
-			return <span className="text-xs text-success">Downloaded. Restart to finish updating.</span>;
+			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
 		case "not-available":
-			return <span className="text-xs text-muted-foreground">You're on the latest version.</span>;
+			return <span className="text-xs text-muted-foreground">{t("settings.updates.latestVersion")}</span>;
 		case "unsupported":
-			return <span className="text-xs text-passive">{status.message ?? "Updates need the installed app."}</span>;
+			return <span className="text-xs text-passive">{status.message ?? t("settings.updates.unsupported")}</span>;
 		case "error":
-			return <span className="text-xs text-error">{status.message ?? "Update failed."}</span>;
+			return <span className="text-xs text-error">{status.message ?? t("settings.updates.updateFailed")}</span>;
 		default:
 			return null;
 	}
 }
 
 function EnabledSelect({ id, value, onChange }: { id: string; value: boolean; onChange: (value: boolean) => void }) {
+	const { t } = useTranslation();
 	return (
 		<Select value={value ? "on" : "off"} onValueChange={(v) => onChange(v === "on")}>
 			<SelectTrigger id={id} className="h-control-form w-full text-control">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
-				<SelectItem value="on">Enabled</SelectItem>
-				<SelectItem value="off">Disabled</SelectItem>
+				<SelectItem value="on">{t("settings.updates.enabled")}</SelectItem>
+				<SelectItem value="off">{t("settings.updates.disabled")}</SelectItem>
 			</SelectContent>
 		</Select>
 	);
