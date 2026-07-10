@@ -427,6 +427,28 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
 }
 
+/* Expanded-only sidebar chrome waits for the rail width transition to finish
+ * before painting, so tap-to-expand does not flash labels inside the narrow
+ * collapsed rail. */
+.sidebar-expanded-chrome {
+	transition: opacity 150ms ease-out;
+}
+
+[data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
+	opacity: 0;
+	pointer-events: none;
+}
+
+[data-slot="sidebar-container"][data-expanded-chrome="visible"] .sidebar-expanded-chrome {
+	opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sidebar-expanded-chrome {
+		transition: none;
+	}
+}
+
 /* ── Shell topbar (agent-orchestrator .dashboard-app-header) ──────────────
  * One header for every screen (rendered by the shell layout), so one padding:
  * AO's session-topbar values. Upstream splits this into a 14px dashboard

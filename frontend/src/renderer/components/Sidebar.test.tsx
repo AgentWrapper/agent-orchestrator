@@ -1,6 +1,6 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
@@ -119,6 +119,8 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 }
 
 beforeEach(() => {
+	window.localStorage.clear();
+	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -476,5 +478,70 @@ describe("Sidebar", () => {
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-[84px]");
+	});
+
+	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {
+		renderSidebar();
+
+		const resizeHandle = document.querySelector(".resize-handle--right");
+		if (!(resizeHandle instanceof HTMLElement)) throw new Error("Resize handle not found");
+
+		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
+
+		fireEvent.pointerDown(resizeHandle, { clientX: 240 });
+		fireEvent.pointerMove(window, { clientX: 120 });
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
+		});
+		expect(document.cookie).toContain("sidebar_state=false");
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe("240");
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+		expect(document.body).not.toHaveClass("is-resizing-x");
+
+		const expandRail = document.querySelector('[data-sidebar="rail"]');
+		if (!(expandRail instanceof HTMLElement)) throw new Error("Sidebar rail not found");
+		fireEvent.pointerDown(expandRail, { clientX: 48 });
+		fireEvent.pointerMove(window, { clientX: 128 });
+		fireEvent.pointerUp(window);
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
+		});
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("280px");
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe("280");
+	});
+
+	it("discards a queued narrow resize frame when collapsing", async () => {
+		let queuedFrame: FrameRequestCallback | undefined;
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			queuedFrame = callback;
+			return 1;
+		});
+		const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+		try {
+			renderSidebar();
+
+			const resizeHandle = document.querySelector(".resize-handle--right");
+			if (!(resizeHandle instanceof HTMLElement)) throw new Error("Resize handle not found");
+
+			fireEvent.pointerDown(resizeHandle, { clientX: 240 });
+			fireEvent.pointerMove(window, { clientX: 205 });
+			fireEvent.pointerMove(window, { clientX: 120 });
+
+			await waitFor(() => {
+				expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
+			});
+			expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe("240");
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+
+			queuedFrame?.(performance.now());
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+			cancelAnimationFrameSpy.mockRestore();
+		}
 	});
 });

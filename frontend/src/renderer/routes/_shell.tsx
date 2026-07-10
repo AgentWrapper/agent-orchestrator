@@ -244,7 +244,7 @@ function ShellLayout() {
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
 				<SidebarProvider
-					className="min-h-0 flex-1"
+					className="min-h-0 flex-1 overflow-x-hidden"
 					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
 					open={isSidebarOpen}
 					style={{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as CSSProperties}
@@ -257,8 +257,8 @@ function ShellLayout() {
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
-					<main className="flex min-w-0 flex-1 flex-col">
-						<div className="min-h-0 flex-1">
+					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+						<div className="min-h-0 flex-1 overflow-x-hidden">
 							<Outlet />
 						</div>
 					</main>

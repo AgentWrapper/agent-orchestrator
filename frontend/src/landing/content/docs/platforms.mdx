@@ -12,8 +12,8 @@ The platform differences come from the tools used to run and attach to long-live
 <PlatformSupport
 	macos="full"
 	linux="full"
-	windows="partial"
-	note={<>Windows support is actively improving. Use the process runtime instead of tmux.</>}
+	windows="full"
+	note={<>Windows uses the process runtime. tmux and iTerm2 integrations are macOS/Linux-only.</>}
 />
 
 ## Recommended Setup
@@ -22,7 +22,7 @@ The platform differences come from the tools used to run and attach to long-live
 | ---------------------- | ------------------- | ---------------------------------- | -------------------------------------------------------------------------------- |
 | macOS                  | `tmux`              | `desktop`, Slack, Discord, webhook | Best local experience. iTerm2 attach support is macOS-only.                      |
 | Linux                  | `tmux`              | `desktop`, Slack, Discord, webhook | Best server and workstation setup. Desktop notifications need `notify-send`.     |
-| Windows                | `process`           | Slack, Discord, webhook            | Native tmux and iTerm2 are unavailable. Windows support is in progress.          |
+| Windows                | `process`           | Slack, Discord, webhook            | Native tmux and iTerm2 are unavailable; use the browser dashboard terminal.      |
 | Container or remote VM | `process` or `tmux` | Slack, Discord, webhook            | Use persistent storage for AO data and protect the dashboard with your own auth. |
 
 ## macOS
@@ -92,9 +92,9 @@ If you are running AO on a headless Linux host, prefer Slack, Discord, or webhoo
 
 ## Windows
 
-<Callout type="warn" title="Windows support is in progress">
-	The native Windows path uses `runtime: process`. The core spawn and PR workflow is available, but tmux-specific
-	workflows and iTerm2 helpers do not apply.
+<Callout type="info" title="Windows uses the process runtime">
+	The native Windows path uses `runtime: process`. The core spawn and PR workflow is available; tmux-specific workflows
+	and iTerm2 helpers do not apply.
 </Callout>
 
 Recommended config:

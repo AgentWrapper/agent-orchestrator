@@ -18,6 +18,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
+	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
@@ -139,6 +141,18 @@ func Run() error {
 		}
 	}()
 
+	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
+	// listener needs the built router's handler, which only exists once srv is
+	// constructed — and srv's router mounts the mobile controller, which needs
+	// the bridge service. Break the cycle with late binding: build bs with LAN
+	// left nil, hand its controller into NewWithDeps, then once srv exists,
+	// build the LAN listener over srv.Handler() and assign it onto bs.LAN.
+	bs := &controllers.BridgeService{
+		ConfigPath:  mobilebridge.Path(cfg.DataDir),
+		DefaultPort: mobilebridge.DefaultPort,
+	}
+	mc := &controllers.MobileController{Bridge: bs}
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink}),
 		Agents:             agentSvc,
@@ -151,6 +165,7 @@ func Run() error {
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
 		Telemetry:          telemetrySink,
+		Mobile:             mc,
 	})
 	if err != nil {
 		stop()
@@ -160,6 +175,19 @@ func Run() error {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return err
+	}
+
+	// Late-bind: the LAN listener shares the exact loopback router instance so
+	// the LAN surface and loopback surface never drift apart.
+	lan := httpd.NewMobileLAN(srv.Handler(), mobilebridge.DefaultPort, log)
+	bs.LAN = lan
+
+	// Restore Connect Mobile across a daemon restart: if the bridge was left
+	// enabled, re-arm the listener on its last port with the same password
+	// hash so an already-paired phone keeps working with no new password.
+	// Best-effort: never blocks boot.
+	if err := restoreMobileOnBoot(mobilebridge.Path(cfg.DataDir), lan); err != nil {
+		log.Warn("restore mobile bridge on boot failed", "err", err)
 	}
 
 	// Reconcile sessions on boot: adopt crash-surviving runtimes, capture and
@@ -202,6 +230,11 @@ func Run() error {
 	stop()
 	<-previewDone
 	lcStack.Stop()
+	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer lanCancel()
+	if err := lan.Stop(lanStopCtx); err != nil {
+		log.Error("mobile LAN listener shutdown", "err", err)
+	}
 	if err := cdcPipe.Stop(); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
