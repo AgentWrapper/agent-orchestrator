@@ -39,7 +39,7 @@ func (t tmuxPaneLister) panes(ctx context.Context) ([]pane, error) {
 	if err != nil {
 		// No server / no sessions is not an error worth failing the tick over:
 		// treat it as "no panes" so the observer records zero scopes.
-		return nil, nil
+		return nil, nil //nolint:nilerr // a missing tmux server means "no panes", not a tick failure
 	}
 	return parsePaneLines(string(out)), nil
 }
@@ -70,7 +70,10 @@ func parsePaneLines(s string) []pane {
 type procCgroupResolver struct{}
 
 func (procCgroupResolver) cgroupOf(pid int) (string, bool) {
-	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cgroup"))
+	// Build the path with string concat rather than filepath.Join: gocritic's
+	// filepathJoin flags a Join arg that itself contains a separator ("/proc"),
+	// and /proc paths are always forward-slash on Linux anyway.
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
 	if err != nil {
 		return "", false
 	}

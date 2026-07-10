@@ -44,7 +44,8 @@ func startMetricsObserver(ctx context.Context, cfg config.Config, store *sqlite.
 		},
 		Logger: logger,
 	})
-	return obs, obs.Start(ctx)
+	done := obs.Start(ctx)
+	return obs, done
 }
 
 // metricsProvider adapts the observer to the controller read interface, mapping

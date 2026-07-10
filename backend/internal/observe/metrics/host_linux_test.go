@@ -3,6 +3,7 @@
 package metrics
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,7 +77,7 @@ func TestReadDiskFreeEmptyPath(t *testing.T) {
 }
 
 func TestLinuxHostCollectorPopulatesCPU(t *testing.T) {
-	h, _ := NewHostCollector(t.TempDir()).Host(nil)
+	h, _ := NewHostCollector(t.TempDir()).Host(context.Background())
 	if h.NumCPU <= 0 {
 		t.Errorf("NumCPU should be populated, got %d", h.NumCPU)
 	}
