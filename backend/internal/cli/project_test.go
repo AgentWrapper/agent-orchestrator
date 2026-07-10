@@ -36,6 +36,66 @@ func projectServer(t *testing.T, status int, respBody string) (*httptest.Server,
 	return srv, capture
 }
 
+func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []projectCapture
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
+			requests = append(requests, projectCapture{method: r.Method, path: r.URL.Path, body: body})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"sessionPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
+			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--workspace", "in-place")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %#v, want GET then PUT", requests)
+	}
+	if requests[0].method != http.MethodGet || requests[0].path != "/api/v1/projects/demo" {
+		t.Fatalf("first request = %s %s, want GET /api/v1/projects/demo", requests[0].method, requests[0].path)
+	}
+	if requests[1].method != http.MethodPut || requests[1].path != "/api/v1/projects/demo/config" {
+		t.Fatalf("second request = %s %s, want PUT /api/v1/projects/demo/config", requests[1].method, requests[1].path)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(requests[1].body, &got); err != nil {
+		t.Fatalf("decode request: %v\nbody=%s", err, requests[1].body)
+	}
+	if got.Config.Workspace != "in-place" {
+		t.Fatalf("workspace = %q, want in-place", got.Config.Workspace)
+	}
+	if got.Config.SessionPrefix != "fleet" ||
+		got.Config.Env["FOO"] != "bar" ||
+		got.Config.AgentConfig.Permissions != "auto" ||
+		got.Config.Worker.Agent != "codex" ||
+		got.Config.Orchestrator.InstructionsFile != ".claude/orchestrator.md" ||
+		len(got.Config.WorkerMix) != 2 ||
+		!got.Config.TrackerIntake.Enabled ||
+		got.Config.TrackerIntake.Provider != "github" ||
+		got.Config.TrackerIntake.Repo != "acme/demo" ||
+		got.Config.TrackerIntake.Assignee != "alice" ||
+		strings.Join(got.Config.TrackerIntake.Labels, ",") != "agent-ok" ||
+		strings.Join(got.Config.TrackerIntake.ExcludeLabels, ",") != "no-ao" ||
+		got.Config.TrackerIntake.MaxConcurrent != 3 {
+		t.Fatalf("flag update did not preserve existing config: %#v", got.Config)
+	}
+}
+
 func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)

@@ -58,12 +58,17 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
 | `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
 
-`ao project set-config` replaces the full project config; GET the current
-config first, edit it, then send the full replacement. If issue intake is
-enabled, disabling it must be explicit: set `trackerIntake.enabled=false` in
-that full replacement JSON. Omitting
-`trackerIntake` from an enabled project is rejected so stale writers cannot
-silently erase intake caps and filters. A one-field replacement such as
+`ao project set-config` field flags merge into the stored project config; for
+example, `--workspace in-place` changes only the workspace mode. Use
+`--config-json` when replacing the full project config is intentional, or
+`--clear` to remove all config. Repeatable collection flags such as `--env`,
+`--symlink`, `--post-create`, `--tracker-label`, and
+`--tracker-exclude-label` replace that field's stored collection with the values
+passed in the command. If issue intake is enabled, disabling it must be explicit:
+set `trackerIntake.enabled=false` in the replacement JSON or pass
+`--tracker-intake=false` with another config flag. Omitting `trackerIntake` from
+an enabled project is rejected so stale writers cannot silently erase intake caps
+and filters. A one-field replacement such as
 `{"trackerIntake":{"enabled":false}}` clears every other config key; use it only
 when that is intentional. Use the first-class pause/resume control for
 intentional fleet pauses when available.

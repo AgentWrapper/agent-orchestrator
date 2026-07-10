@@ -329,11 +329,12 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
-		Long: "Replace a project's per-project config (branch, session prefix, env, " +
+		Long: "Update a project's per-project config (branch, session prefix, env, " +
 			"symlinks, post-create, agent model/permissions, role overrides, tracker intake). The config " +
 			"is resolved when a session spawns.\n\n" +
-			"Set fields via flags, pass the whole object with --config-json, or --clear " +
-			"to remove all config.",
+			"Set fields via flags to merge them into the stored config, pass the whole object with " +
+			"--config-json to replace it, or --clear to remove all config. Repeatable collection " +
+			"flags replace that field's stored collection with the values passed in this command.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return usageError{err}
@@ -355,6 +356,12 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 			config, err := buildProjectConfig(opts)
 			if err != nil {
 				return err
+			}
+			if !opts.clear && opts.configJSON == "" {
+				config, err = ctx.mergedProjectConfigFromFlags(cmd, id, config)
+				if err != nil {
+					return err
+				}
 			}
 			req := setConfigRequest{Config: config}
 			if opts.clear {
@@ -405,10 +412,87 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+func (c *commandContext) mergedProjectConfigFromFlags(cmd *cobra.Command, id string, patch projectConfig) (projectConfig, error) {
+	var current projectGetResult
+	if err := c.getJSON(cmd.Context(), "projects/"+url.PathEscape(id), &current); err != nil {
+		return projectConfig{}, err
+	}
+	base := projectConfig{}
+	if current.Project.Config != nil {
+		base = *current.Project.Config
+	}
+	applyProjectConfigFlagPatch(&base, patch, cmd)
+	return base, nil
+}
+
+func applyProjectConfigFlagPatch(base *projectConfig, patch projectConfig, cmd *cobra.Command) {
+	flags := cmd.Flags()
+	if flags.Changed("default-branch") {
+		base.DefaultBranch = patch.DefaultBranch
+	}
+	if flags.Changed("session-prefix") {
+		base.SessionPrefix = patch.SessionPrefix
+	}
+	if flags.Changed("workspace") {
+		base.Workspace = patch.Workspace
+	}
+	if flags.Changed("env") {
+		base.Env = patch.Env
+	}
+	if flags.Changed("symlink") {
+		base.Symlinks = patch.Symlinks
+	}
+	if flags.Changed("post-create") {
+		base.PostCreate = patch.PostCreate
+	}
+	if flags.Changed("model") {
+		base.AgentConfig.Model = patch.AgentConfig.Model
+	}
+	if flags.Changed("permission") {
+		base.AgentConfig.Permissions = patch.AgentConfig.Permissions
+	}
+	if flags.Changed("worker-agent") {
+		base.Worker.Agent = patch.Worker.Agent
+	}
+	if flags.Changed("worker-instructions-file") {
+		base.Worker.InstructionsFile = patch.Worker.InstructionsFile
+	}
+	if flags.Changed("orchestrator-agent") {
+		base.Orchestrator.Agent = patch.Orchestrator.Agent
+	}
+	if flags.Changed("orchestrator-instructions-file") {
+		base.Orchestrator.InstructionsFile = patch.Orchestrator.InstructionsFile
+	}
+	if !trackerConfigFlagChanged(cmd) {
+		return
+	}
+	if patch.TrackerIntake.Provider != "" {
+		base.TrackerIntake.Provider = patch.TrackerIntake.Provider
+	}
+	if flags.Changed("tracker-intake") {
+		base.TrackerIntake.Enabled = patch.TrackerIntake.Enabled
+	}
+	if flags.Changed("tracker-repo") {
+		base.TrackerIntake.Repo = patch.TrackerIntake.Repo
+	}
+	if flags.Changed("tracker-assignee") {
+		base.TrackerIntake.Assignee = patch.TrackerIntake.Assignee
+	}
+	if flags.Changed("tracker-label") {
+		base.TrackerIntake.Labels = patch.TrackerIntake.Labels
+	}
+	if flags.Changed("tracker-exclude-label") {
+		base.TrackerIntake.ExcludeLabels = patch.TrackerIntake.ExcludeLabels
+	}
+	if flags.Changed("tracker-max-concurrent") {
+		base.TrackerIntake.MaxConcurrent = patch.TrackerIntake.MaxConcurrent
+	}
+}
+
 // buildProjectConfig turns the set-config flags into the typed config sent to
 // the daemon. --clear empties the config; --config-json supplies the whole
-// object; otherwise the field flags form the config. The daemon validates the
-// values.
+// object; otherwise the field flags form a patch that is merged with the stored
+// config before sending the request. The daemon validates the values.
 func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	if opts.clear {
 		return projectConfig{}, nil
