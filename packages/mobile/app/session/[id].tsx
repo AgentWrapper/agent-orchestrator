@@ -28,7 +28,12 @@ const TERMINAL_ENHANCE_JS = `
   s.textContent =
     '.xterm-screen{pointer-events:none !important;}' +
     '.xterm-helper-textarea{pointer-events:none !important;}' +
-    '.xterm-viewport{pointer-events:auto !important;-webkit-overflow-scrolling:touch !important;}';
+    '.xterm-viewport{pointer-events:auto !important;-webkit-overflow-scrolling:touch !important;}' +
+    // We drive scrolling ourselves, so the WebView scrollbar is pure wasted width
+    // on the right. Hide it (and give the viewport a thin overlay one) so the fit
+    // reclaims those pixels as extra columns instead of a gap.
+    '.xterm-viewport{scrollbar-width:none !important;}' +
+    '.xterm-viewport::-webkit-scrollbar{width:0 !important;height:0 !important;display:none !important;}';
   document.head.appendChild(s);
 
   // Report xterm's REAL grid size (measured by the FitAddon from the actual
@@ -42,6 +47,16 @@ const TERMINAL_ENHANCE_JS = `
   function reportFit() {
     try {
       var F = window.fitAddon; if (!F || !F.proposeDimensions) return;
+      // xterm can't measure a real scrollbar on mobile (overlay scrollbars are
+      // 0px, so its "offsetWidth - offsetWidth || 15" falls back to assuming a
+      // 15px one). proposeDimensions subtracts that phantom width and under-reports
+      // cols, leaving a dead strip on the right. We drive our own scroll and hide
+      // the bar (see injected CSS above), so zero it before measuring to reclaim
+      // those columns for the fit.
+      try {
+        var vp = window.terminal && window.terminal._core && window.terminal._core.viewport;
+        if (vp) vp.scrollBarWidth = 0;
+      } catch (_) {}
       var d = F.proposeDimensions();
       if (d && d.cols > 0 && d.rows > 0 && window.ReactNativeWebView) {
         window.ReactNativeWebView.postMessage(
@@ -143,6 +158,14 @@ const TERMINAL_ENHANCE_JS = `
         ro.observe(host);
       } catch (_) {}
       reportFit(); applyScale();
+      // Android's first measure often runs before layout/fonts settle, so the grid
+      // comes out narrower than the WebView until some later resize nudges it. Since
+      // nothing changes the host box in between (the ResizeObserver never fires until
+      // e.g. the keyboard opens), re-measure a few times as things settle so the fit
+      // reaches full width on its own.
+      [60, 200, 500, 1000].forEach(function (t) {
+        setTimeout(function () { reportFit(); applyScale(); }, t);
+      });
     } else {
       setTimeout(wire, 200);
     }
