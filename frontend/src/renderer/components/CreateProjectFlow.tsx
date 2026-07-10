@@ -56,6 +56,7 @@ export function CreateProjectFlow({
 			<CreateProjectAgentSheet
 				error={error}
 				isCreating={isCreating}
+				kind="single_repo"
 				onOpenChange={(open) => {
 					if (!open) {
 						setSelectedPath(null);

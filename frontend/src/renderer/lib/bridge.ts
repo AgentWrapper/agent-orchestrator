@@ -6,6 +6,7 @@ export const aoBridge: AoBridge =
 		app: {
 			getVersion: async () => "0.0.0-preview",
 			chooseDirectory: async () => null,
+			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 		},
 		clipboard: {
 			writeText: async (text: string) => {

@@ -24,17 +24,9 @@ type NotificationCenterProps = {
 	style?: React.CSSProperties;
 };
 
-export function NotificationCenter({ style }: NotificationCenterProps) {
+function useNotificationTargetNavigation() {
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
-	const notificationsQuery = useNotificationsQuery();
-	const markRead = useMarkNotificationReadMutation();
-	const markAllRead = useMarkAllNotificationsReadMutation();
-	const [actionError, setActionError] = useState<string | null>(null);
-	const notifications = useMemo(() => notificationsQuery.data ?? [], [notificationsQuery.data]);
-	const unreadCount = notifications.length;
-
-	const openTarget = useCallback(
+	return useCallback(
 		(notification: NotificationDTO) => {
 			const target = notification.target;
 			if (target.kind === "pr" && target.prUrl) {
@@ -56,6 +48,11 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		},
 		[navigate],
 	);
+}
+
+export function NotificationRuntime() {
+	const queryClient = useQueryClient();
+	const openTarget = useNotificationTargetNavigation();
 
 	useEffect(() => createNotificationsTransport(queryClient).connect(), [queryClient]);
 
@@ -66,6 +63,18 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			if (notification) openTarget(notification);
 		});
 	}, [openTarget, queryClient]);
+
+	return null;
+}
+
+export function NotificationCenter({ style }: NotificationCenterProps) {
+	const notificationsQuery = useNotificationsQuery();
+	const markRead = useMarkNotificationReadMutation();
+	const markAllRead = useMarkAllNotificationsReadMutation();
+	const [actionError, setActionError] = useState<string | null>(null);
+	const notifications = useMemo(() => notificationsQuery.data ?? [], [notificationsQuery.data]);
+	const unreadCount = notifications.length;
+	const openTarget = useNotificationTargetNavigation();
 
 	const markOneRead = async (id: string) => {
 		setActionError(null);

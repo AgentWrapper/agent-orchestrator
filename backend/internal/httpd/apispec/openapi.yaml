@@ -189,6 +189,100 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/mobile/disable:
+    post:
+      operationId: disableMobile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Disable the Connect Mobile LAN bridge
+      tags:
+      - mobile
+  /api/v1/mobile/enable:
+    post:
+      operationId: enableMobile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Enable the Connect Mobile LAN bridge and issue a fresh password
+      tags:
+      - mobile
+  /api/v1/mobile/regenerate:
+    post:
+      operationId: regenerateMobile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Rotate the Connect Mobile password, dropping any connected phone
+      tags:
+      - mobile
+  /api/v1/mobile/status:
+    get:
+      operationId: getMobileStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+      summary: Check whether Connect Mobile's LAN bridge is enabled
+      tags:
+      - mobile
   /api/v1/notifications:
     get:
       operationId: listNotifications
@@ -1495,57 +1589,6 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
-  /api/v1/sessions/{sessionId}/switch:
-    post:
-      operationId: switchSessionAgent
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SwitchAgentRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SwitchAgentResponse'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Conflict
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-      summary: Switch a live session's agent harness (and optionally model) in place
-      tags:
-      - sessions
   /api/v1/sessions/cleanup:
     post:
       operationId: cleanupSessions
@@ -1960,6 +2003,25 @@ components:
       - ok
       - prNumber
       - method
+      type: object
+    MobileStatusResponse:
+      properties:
+        enabled:
+          type: boolean
+        host:
+          type: string
+        password:
+          type: string
+        port:
+          type: integer
+        warning:
+          type: string
+      required:
+      - enabled
+      - host
+      - port
+      - password
+      - warning
       type: object
     NotificationEnvelope:
       properties:
@@ -2746,29 +2808,6 @@ components:
       - runId
       - verdict
       type: object
-    SwitchAgentRequest:
-      properties:
-        harness:
-          minLength: 1
-          type: string
-        model:
-          type: string
-      required:
-      - harness
-      type: object
-    SwitchAgentResponse:
-      properties:
-        ok:
-          type: boolean
-        session:
-          $ref: '#/components/schemas/ControllersSessionView'
-        sessionId:
-          type: string
-      required:
-      - ok
-      - sessionId
-      - session
-      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -2824,3 +2863,5 @@ tags:
   name: events
 - description: Legacy AO project import (availability probe and run)
   name: import
+- description: Connect Mobile LAN bridge control (loopback/desktop only)
+  name: mobile

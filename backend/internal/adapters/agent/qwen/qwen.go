@@ -4,23 +4,33 @@
 //
 // Qwen Code (github.com/QwenLM/qwen-code) is a fork of Google's gemini-cli, so
 // it inherits gemini-cli-shaped flags: `-p/--prompt` (or a positional prompt)
-// for the headless one-shot prompt, `--approval-mode {plan,default,auto-edit,
-// auto,yolo}` for permissions, and `-r/--resume <id>` to continue a specific
-// session. It also has a native Claude-Code-shaped hook system configured in
-// `.qwen/settings.json` (top-level "hooks" key, event arrays of matcher groups
-// with command hooks), and emits a `session_id` in every hook payload — so AO
-// captures native session identity and activity from those hooks rather than
-// from transcript/cache scans.
+// for the headless one-shot prompt, `--approval-mode
+// {plan,default,auto-edit,auto,yolo}` for permissions, and `-r/--resume <id>` to
+// continue a specific session. AO starts prompted worker sessions through Qwen's
+// documented `--input-file` remote-input bridge, which submits the task into the
+// interactive TUI after Qwen reports session_start; this avoids Qwen's
+// non-interactive approval behavior in `-p` mode and avoids a blind terminal
+// Enter race. Qwen also has a native Claude-Code-shaped hook system configured
+// in `.qwen/settings.json` (top-level "hooks" key, event arrays of matcher
+// groups with command hooks), and emits a `session_id` in every hook payload —
+// so AO captures native session identity and activity from those hooks rather
+// than from transcript/cache scans.
 package qwen
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -55,8 +65,10 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new Qwen Code session: the
 // approval-mode flag, optional system-prompt instructions, and the initial
-// prompt (passed via `-p` so a leading "-" is not read as a flag). Prompt is
-// delivered in-command.
+// prompt. Workers use Qwen's remote-input bridge so the task is submitted into
+// the interactive TUI after startup; non-workers use `-p` so command-delivered
+// prompts keep their previous one-shot behavior. `-p` takes the prompt as an
+// argument, so a leading "-" is not read as a flag.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.qwenBinary(ctx)
 	if err != nil {
@@ -70,11 +82,27 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
 
-	if cfg.Prompt != "" {
+	if cfg.Prompt != "" && cfg.Kind == domain.KindWorker {
+		if runtime.GOOS != "windows" {
+			return qwenWorkerRemoteInputCommand(cmd, cfg)
+		}
+		cmd = append(cmd, "-i", cfg.Prompt)
+	} else if cfg.Prompt != "" {
 		cmd = append(cmd, "-p", cfg.Prompt)
 	}
 
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that Qwen receives prompted worker tasks via
+// argv: either the Unix remote-input launcher or the Windows `-i` fallback.
+// Promptless worker launches are plain interactive sessions with no task to
+// send.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Qwen Code
@@ -95,7 +123,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 6)
+	cmd = make([]string, 0, 3)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "-r", agentSessionID)
@@ -160,4 +188,84 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--approval-mode", "yolo")
 	}
+}
+
+type qwenSubmitCommand struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func qwenWorkerRemoteInputCommand(qwenCmd []string, cfg ports.LaunchConfig) ([]string, error) {
+	if strings.TrimSpace(cfg.DataDir) == "" {
+		return nil, errors.New("qwen: data dir is required for worker remote input")
+	}
+	sessionKey := safeQwenSessionKey(cfg.SessionID)
+	if sessionKey == "" {
+		sessionKey = "worker"
+	}
+	dir := filepath.Join(cfg.DataDir, "agent-runtime", "qwen", sessionKey)
+	inputPath := filepath.Join(dir, sessionKey+".input.jsonl")
+	outputPath := filepath.Join(dir, sessionKey+".output.jsonl")
+
+	submit, err := json.Marshal(qwenSubmitCommand{Type: "submit", Text: cfg.Prompt})
+	if err != nil {
+		submit = []byte(`{"type":"submit","text":""}`)
+	}
+
+	args := append([]string{}, qwenCmd...)
+	args = append(args, "--json-file", outputPath, "--input-file", inputPath)
+
+	var script strings.Builder
+	script.WriteString("umask 077; ")
+	script.WriteString("mkdir -p ")
+	script.WriteString(qwenShellQuote(dir))
+	script.WriteString("; : > ")
+	script.WriteString(qwenShellQuote(inputPath))
+	script.WriteString("; : > ")
+	script.WriteString(qwenShellQuote(outputPath))
+	script.WriteString("; ( for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40; do ")
+	script.WriteString("if grep -q '\"session_start\"' ")
+	script.WriteString(qwenShellQuote(outputPath))
+	script.WriteString("; then printf '%s\\n' ")
+	script.WriteString(qwenShellQuote(string(submit)))
+	script.WriteString(" >> ")
+	script.WriteString(qwenShellQuote(inputPath))
+	script.WriteString("; exit 0; fi; sleep 0.25; done; printf '%s\\n' ")
+	script.WriteString(qwenShellQuote(string(submit)))
+	script.WriteString(" >> ")
+	script.WriteString(qwenShellQuote(inputPath))
+	script.WriteString(" ) & exec")
+	for _, arg := range args {
+		script.WriteString(" ")
+		script.WriteString(qwenShellQuote(arg))
+	}
+	return []string{"sh", "-lc", script.String()}, nil
+}
+
+func safeQwenSessionKey(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range sessionID {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '_',
+			r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	label := strings.Trim(b.String(), "_")
+	if label == "" {
+		label = "session"
+	}
+	return label + "-" + hex.EncodeToString([]byte(sessionID))
+}
+
+func qwenShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

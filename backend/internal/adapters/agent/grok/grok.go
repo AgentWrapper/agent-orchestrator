@@ -5,8 +5,8 @@
 // hook installation (which writes .claude/settings.local.json with AO
 // hook commands). Grok will pick them up via its compat layer.
 //
-// Launch uses `-p <prompt>` for the initial task (in-command delivery).
-// Permission bypass uses `--always-approve`. We also pass `--no-auto-update`
+// Launch uses a positional prompt for the initial task (in-command delivery).
+// Permission handling uses `--permission-mode`. We also pass `--no-auto-update`
 // for headless/scripted use (parity with Codex no-update).
 // Restore prefers the hook-captured native session id via `-r <id>`.
 //
@@ -67,8 +67,8 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>] -p <prompt>`.
-// Prompt is delivered via -p (in command).
+// GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>] [-- prompt]`.
+// Prompt is delivered positionally so Grok starts an interactive coding session.
 //
 // Uses --permission-mode (acceptEdits / auto / bypassPermissions) to match
 // `grok -h` output. Default omits the flag so Grok uses its config.
@@ -82,7 +82,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	if cfg.Prompt != "" {
-		cmd = append(cmd, "-p", cfg.Prompt)
+		cmd = append(cmd, "--", cfg.Prompt)
 	}
 
 	return cmd, nil
