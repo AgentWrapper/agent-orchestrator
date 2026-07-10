@@ -65,9 +65,10 @@ func TestObserverTickProducesSnapshot(t *testing.T) {
 			sess("a", "proj1", domain.ActivityActive, "a", false),
 			sess("b", "proj1", domain.ActivityIdle, "b", false),
 			sess("c", "proj2", domain.ActivityWaitingInput, "c", false),
-			sess("d", "proj2", domain.ActivityActive, "d", true), // terminated: excluded
+			sess("d", "proj2", domain.ActivityActive, "d", true),             // terminated: excluded
+			sess("zombie1", "proj2", domain.ActivityActive, "zombie1", true), // terminated handle still alive → zombie
 		}},
-		Host:   fakeHost{h: Host{NumCPU: 4, LoadAvg1: 1, MemTotalBytes: 100, MemAvailableBytes: 80, DiskTotalBytes: 100, DiskFreeBytes: 90}},
+		Host:   fakeHost{h: Host{LoadKnown: true, NumCPU: 4, LoadAvg1: 1, MemKnown: true, MemTotalBytes: 100, MemAvailableBytes: 80, DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 90}},
 		Scopes: fakeScopes{m: map[string]uint64{"a": 1000, "b": 2000, "zombie1": 500}},
 		Cost:   fakeCost{c: Cost{CostTotals: CostTotals{InputTokens: 10, OutputTokens: 5, TotalTokens: 15, CostUSD: 0.5, Events: 2}, ByProject: []ProjectCost{{ProjectID: "proj1", CostTotals: CostTotals{InputTokens: 7, TotalTokens: 7, Events: 1}}}}},
 		Alerts: sink,
@@ -116,7 +117,7 @@ func TestObserverTickProducesSnapshot(t *testing.T) {
 
 func TestObserverEmitsAlertTransitions(t *testing.T) {
 	sink := &captureSink{}
-	host := fakeHost{h: Host{NumCPU: 1, DiskTotalBytes: 100, DiskFreeBytes: 5}} // 5% < 10%
+	host := fakeHost{h: Host{NumCPU: 1, DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 5}} // 5% < 10%
 	o := New(Deps{Host: host, Alerts: sink}, Config{
 		Clock: fixedClock(), Logger: quietLogger(),
 		Thresholds: Thresholds{DiskFreePercent: 10},
@@ -185,7 +186,7 @@ func TestObserverFailingSessionsDoesNotFabricateZombies(t *testing.T) {
 // collector FAILS must not report zero scopes/zero zombies and thereby clear the
 // alert — the zombie count is unknown that tick.
 func TestObserverScopesErrorDoesNotClearZombieAlert(t *testing.T) {
-	sessions := fakeSessions{rows: nil} // no live sessions
+	sessions := fakeSessions{rows: []domain.SessionRecord{sess("leaked", "proj", domain.ActivityActive, "leaked", true)}} // terminated row + live scope
 	o := New(Deps{
 		Sessions: sessions,
 		Scopes:   fakeScopes{m: map[string]uint64{"leaked": 10}},
@@ -210,7 +211,7 @@ func TestObserverScopesErrorDoesNotClearZombieAlert(t *testing.T) {
 // TestObserverAlertZombieSurvivesSessionOutage: once the zombie alert is firing,
 // a tick where the session list fails must hold the alert (no spurious clear).
 func TestObserverAlertZombieSurvivesSessionOutage(t *testing.T) {
-	live := fakeSessions{rows: nil} // no live sessions → the scope is a real zombie
+	live := fakeSessions{rows: []domain.SessionRecord{sess("leaked", "proj", domain.ActivityActive, "leaked", true)}} // terminated row + live scope → real zombie
 	deadScope := fakeScopes{m: map[string]uint64{"leaked": 42}}
 	o := New(Deps{Sessions: live, Scopes: deadScope}, Config{
 		Clock: fixedClock(), Logger: quietLogger(),
@@ -223,6 +224,58 @@ func TestObserverAlertZombieSurvivesSessionOutage(t *testing.T) {
 	snap := o.Tick(context.Background())
 	if len(snap.Alerts) != 1 || snap.Alerts[0].Kind != AlertZombies {
 		t.Fatalf("zombie alert must survive a session-list outage, got alerts=%+v", snap.Alerts)
+	}
+}
+
+func TestObserverIgnoresForeignTmuxScopesForZombieCount(t *testing.T) {
+	o := New(Deps{
+		Sessions: fakeSessions{rows: []domain.SessionRecord{
+			sess("live-session", "proj", domain.ActivityActive, "ao-live-handle", false),
+			sess("dead-session", "proj", domain.ActivityActive, "ao-dead-handle", true),
+		}},
+		Scopes: fakeScopes{m: map[string]uint64{
+			"ao-live-handle": 100,
+			"ao-dead-handle": 200,
+			"foreign-tmux":   300,
+		}},
+	}, Config{Clock: fixedClock(), Logger: quietLogger()})
+	snap := o.Tick(context.Background())
+	if snap.Zombies != 1 {
+		t.Fatalf("only an ao-owned terminated handle should count as zombie, got %d scopes=%+v", snap.Zombies, snap.Scopes)
+	}
+	if len(snap.Scopes) != 2 {
+		t.Fatalf("foreign scopes should be filtered from ao metrics, got %+v", snap.Scopes)
+	}
+	for _, sc := range snap.Scopes {
+		switch sc.Name {
+		case "ao-live-handle":
+			if !sc.Matched || sc.SessionID != "live-session" {
+				t.Fatalf("live scope must map to domain session id, got %+v", sc)
+			}
+		case "ao-dead-handle", "foreign-tmux":
+			if sc.SessionID != "" {
+				t.Fatalf("unmatched scope %s must omit session id, got %+v", sc.Name, sc)
+			}
+		}
+	}
+}
+
+func TestObserverReportsZombiesKnownFalseOnUnknownTick(t *testing.T) {
+	o := New(Deps{
+		Sessions: fakeSessions{err: context.DeadlineExceeded},
+		Scopes:   fakeScopes{m: map[string]uint64{"s1": 100}},
+	}, Config{Clock: fixedClock(), Logger: quietLogger()})
+	snap := o.Tick(context.Background())
+	if snap.ZombiesKnown {
+		t.Fatalf("zombiesKnown must be false when session facts are unavailable")
+	}
+}
+
+func TestObserverCostWindowSecondsSetWhenAggregatorUnavailable(t *testing.T) {
+	o := New(Deps{Cost: fakeCost{err: context.DeadlineExceeded}}, Config{Clock: fixedClock(), Logger: quietLogger(), CostWindow: 2 * time.Hour})
+	snap := o.Tick(context.Background())
+	if snap.Cost.WindowSeconds != 7200 {
+		t.Fatalf("cost window seconds should be stable even when aggregate fails, got %+v", snap.Cost)
 	}
 }
 

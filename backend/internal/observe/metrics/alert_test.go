@@ -6,7 +6,7 @@ func TestEvaluatorFiresAndClearsOnTransition(t *testing.T) {
 	e := newEvaluator(Thresholds{DiskFreePercent: 10})
 
 	// Below threshold → fire once.
-	alerts, tr := e.evaluate(Snapshot{Host: Host{DiskTotalBytes: 100, DiskFreeBytes: 5}})
+	alerts, tr := e.evaluate(Snapshot{Host: Host{DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 5}})
 	if len(alerts) != 1 || alerts[0].Kind != AlertDiskLow {
 		t.Fatalf("want disk_low firing, got %+v", alerts)
 	}
@@ -15,13 +15,13 @@ func TestEvaluatorFiresAndClearsOnTransition(t *testing.T) {
 	}
 
 	// Still below → firing, but NO new transition (dedupe on state, not tick).
-	_, tr = e.evaluate(Snapshot{Host: Host{DiskTotalBytes: 100, DiskFreeBytes: 6}})
+	_, tr = e.evaluate(Snapshot{Host: Host{DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 6}})
 	if len(tr) != 0 {
 		t.Fatalf("want no transition while sustained, got %+v", tr)
 	}
 
 	// Recovered → clear transition.
-	alerts, tr = e.evaluate(Snapshot{Host: Host{DiskTotalBytes: 100, DiskFreeBytes: 50}})
+	alerts, tr = e.evaluate(Snapshot{Host: Host{DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 50}})
 	if len(alerts) != 0 {
 		t.Fatalf("want no firing alerts after recovery, got %+v", alerts)
 	}
@@ -33,7 +33,7 @@ func TestEvaluatorFiresAndClearsOnTransition(t *testing.T) {
 func TestEvaluatorZeroThresholdDisables(t *testing.T) {
 	e := newEvaluator(Thresholds{}) // all zero → everything disabled
 	alerts, tr := e.evaluate(Snapshot{
-		Host:    Host{DiskTotalBytes: 100, DiskFreeBytes: 1, MemTotalBytes: 100, MemAvailableBytes: 1, NumCPU: 1, LoadAvg1: 99},
+		Host:    Host{DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 1, MemKnown: true, MemTotalBytes: 100, MemAvailableBytes: 1, LoadKnown: true, NumCPU: 1, LoadAvg1: 99},
 		Zombies: 5,
 	})
 	if len(alerts) != 0 || len(tr) != 0 {
@@ -50,17 +50,37 @@ func TestEvaluatorIgnoresUnknownHostFacts(t *testing.T) {
 	}
 }
 
+func TestEvaluatorUnknownHostFactsHoldFiringAlerts(t *testing.T) {
+	e := newEvaluator(Thresholds{DiskFreePercent: 10, MemAvailablePercent: 10, LoadPerCore: 1})
+	alerts, tr := e.evaluate(Snapshot{Host: Host{
+		DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 5,
+		MemKnown: true, MemTotalBytes: 100, MemAvailableBytes: 5,
+		LoadKnown: true, NumCPU: 1, LoadAvg1: 2,
+	}})
+	if len(alerts) != 3 || len(tr) != 3 {
+		t.Fatalf("want three firing alerts, got alerts=%+v tr=%+v", alerts, tr)
+	}
+
+	alerts, tr = e.evaluate(Snapshot{Host: Host{NumCPU: 1}})
+	if len(alerts) != 3 {
+		t.Fatalf("unknown host facts must hold prior firing alerts, got %+v", alerts)
+	}
+	if len(tr) != 0 {
+		t.Fatalf("unknown host facts must not emit false clear transitions, got %+v", tr)
+	}
+}
+
 func TestEvaluatorZombieSustain(t *testing.T) {
 	e := newEvaluator(Thresholds{ZombieSustainTicks: 2})
 
 	// Tick 1: zombies>0 but not yet sustained.
-	alerts, tr := e.evaluate(Snapshot{Zombies: 1, zombiesKnown: true})
+	alerts, tr := e.evaluate(Snapshot{Zombies: 1, ZombiesKnown: true})
 	if len(alerts) != 0 || len(tr) != 0 {
 		t.Fatalf("first zombie tick must not fire, got alerts=%+v tr=%+v", alerts, tr)
 	}
 
 	// Tick 2: sustained → fire.
-	alerts, tr = e.evaluate(Snapshot{Zombies: 3, zombiesKnown: true})
+	alerts, tr = e.evaluate(Snapshot{Zombies: 3, ZombiesKnown: true})
 	if len(alerts) != 1 || alerts[0].Kind != AlertZombies {
 		t.Fatalf("second zombie tick must fire, got %+v", alerts)
 	}
@@ -72,7 +92,7 @@ func TestEvaluatorZombieSustain(t *testing.T) {
 	}
 
 	// Tick 3: back to zero → clear and reset counter.
-	alerts, tr = e.evaluate(Snapshot{Zombies: 0, zombiesKnown: true})
+	alerts, tr = e.evaluate(Snapshot{Zombies: 0, ZombiesKnown: true})
 	if len(alerts) != 0 {
 		t.Fatalf("want cleared, got %+v", alerts)
 	}
@@ -87,10 +107,10 @@ func TestEvaluatorZombieSustain(t *testing.T) {
 func TestEvaluatorZombieBlipDoesNotFire(t *testing.T) {
 	e := newEvaluator(Thresholds{ZombieSustainTicks: 2})
 	// One tick of zombies then gone: never reaches the sustain count.
-	if _, tr := e.evaluate(Snapshot{Zombies: 1, zombiesKnown: true}); len(tr) != 0 {
+	if _, tr := e.evaluate(Snapshot{Zombies: 1, ZombiesKnown: true}); len(tr) != 0 {
 		t.Fatalf("blip tick 1 must not fire, got %+v", tr)
 	}
-	if _, tr := e.evaluate(Snapshot{Zombies: 0, zombiesKnown: true}); len(tr) != 0 {
+	if _, tr := e.evaluate(Snapshot{Zombies: 0, ZombiesKnown: true}); len(tr) != 0 {
 		t.Fatalf("blip cleared before sustain must produce no transition, got %+v", tr)
 	}
 }
@@ -98,9 +118,9 @@ func TestEvaluatorZombieBlipDoesNotFire(t *testing.T) {
 func TestEvaluatorMultipleSimultaneousAlerts(t *testing.T) {
 	e := newEvaluator(Thresholds{DiskFreePercent: 10, MemAvailablePercent: 10, LoadPerCore: 1})
 	alerts, tr := e.evaluate(Snapshot{Host: Host{
-		DiskTotalBytes: 100, DiskFreeBytes: 1,
-		MemTotalBytes: 100, MemAvailableBytes: 1,
-		NumCPU: 2, LoadAvg1: 8, // 4 per core > 1
+		DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 1,
+		MemKnown: true, MemTotalBytes: 100, MemAvailableBytes: 1,
+		LoadKnown: true, NumCPU: 2, LoadAvg1: 8, // 4 per core > 1
 	}})
 	if len(alerts) != 3 {
 		t.Fatalf("want 3 firing alerts, got %+v", alerts)
@@ -140,14 +160,14 @@ func TestEvaluatorZombieUnknownHoldsState(t *testing.T) {
 	e := newEvaluator(Thresholds{ZombieSustainTicks: 2})
 
 	// Two authoritative ticks with zombies → fire.
-	e.evaluate(Snapshot{Zombies: 2, zombiesKnown: true})
-	alerts, tr := e.evaluate(Snapshot{Zombies: 2, zombiesKnown: true})
+	e.evaluate(Snapshot{Zombies: 2, ZombiesKnown: true})
+	alerts, tr := e.evaluate(Snapshot{Zombies: 2, ZombiesKnown: true})
 	if len(alerts) != 1 || len(tr) != 1 || !tr[0].Firing {
 		t.Fatalf("want zombie firing after two known ticks, got alerts=%+v tr=%+v", alerts, tr)
 	}
 
 	// A tick with unknown sessions must hold the firing state (no clear).
-	alerts, tr = e.evaluate(Snapshot{Zombies: 0, zombiesKnown: false})
+	alerts, tr = e.evaluate(Snapshot{Zombies: 0, ZombiesKnown: false})
 	if len(alerts) != 1 || alerts[0].Kind != AlertZombies {
 		t.Fatalf("unknown-session tick must hold the firing zombie alert, got %+v", alerts)
 	}
@@ -157,8 +177,8 @@ func TestEvaluatorZombieUnknownHoldsState(t *testing.T) {
 
 	// A fresh unknown tick from a cleared machine must NOT fabricate a zombie.
 	e2 := newEvaluator(Thresholds{ZombieSustainTicks: 2})
-	e2.evaluate(Snapshot{Zombies: 0, zombiesKnown: false})
-	alerts2, tr2 := e2.evaluate(Snapshot{Zombies: 0, zombiesKnown: false})
+	e2.evaluate(Snapshot{Zombies: 0, ZombiesKnown: false})
+	alerts2, tr2 := e2.evaluate(Snapshot{Zombies: 0, ZombiesKnown: false})
 	if len(alerts2) != 0 || len(tr2) != 0 {
 		t.Fatalf("unknown sessions must not fabricate a zombie alert, got alerts=%+v tr=%+v", alerts2, tr2)
 	}

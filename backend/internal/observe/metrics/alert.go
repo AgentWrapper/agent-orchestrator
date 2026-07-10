@@ -91,32 +91,45 @@ func newEvaluator(th Thresholds) *evaluator {
 func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 	next := map[AlertKind]Alert{}
 
-	// disk_low: only when total disk is known (avoids a stub 0 tripping it).
-	if e.th.DiskFreePercent > 0 && s.Host.DiskTotalBytes > 0 {
-		if pct := s.Host.DiskFreePercent(); pct < e.th.DiskFreePercent {
-			next[AlertDiskLow] = Alert{
-				Kind: AlertDiskLow, Severity: SeverityWarn, Value: pct, Threshold: e.th.DiskFreePercent,
-				Message: fmt.Sprintf("disk free %.1f%% below %.1f%% on data volume", pct, e.th.DiskFreePercent),
+	// disk_low: when disk facts are unknown this tick, carry the prior state so
+	// a transient statfs failure cannot emit a false recovery transition.
+	if e.th.DiskFreePercent > 0 {
+		if !s.Host.DiskKnown {
+			carryPrior(next, e.firing, AlertDiskLow)
+		} else if s.Host.DiskTotalBytes > 0 {
+			if pct := s.Host.DiskFreePercent(); pct < e.th.DiskFreePercent {
+				next[AlertDiskLow] = Alert{
+					Kind: AlertDiskLow, Severity: SeverityWarn, Value: pct, Threshold: e.th.DiskFreePercent,
+					Message: fmt.Sprintf("disk free %.1f%% below %.1f%% on data volume", pct, e.th.DiskFreePercent),
+				}
 			}
 		}
 	}
 
-	// mem_low: only when total memory is known.
-	if e.th.MemAvailablePercent > 0 && s.Host.MemTotalBytes > 0 {
-		if pct := s.Host.MemAvailablePercent(); pct < e.th.MemAvailablePercent {
-			next[AlertMemLow] = Alert{
-				Kind: AlertMemLow, Severity: SeverityWarn, Value: pct, Threshold: e.th.MemAvailablePercent,
-				Message: fmt.Sprintf("memory available %.1f%% below %.1f%%", pct, e.th.MemAvailablePercent),
+	// mem_low: when memory facts are unknown this tick, carry the prior state.
+	if e.th.MemAvailablePercent > 0 {
+		if !s.Host.MemKnown {
+			carryPrior(next, e.firing, AlertMemLow)
+		} else if s.Host.MemTotalBytes > 0 {
+			if pct := s.Host.MemAvailablePercent(); pct < e.th.MemAvailablePercent {
+				next[AlertMemLow] = Alert{
+					Kind: AlertMemLow, Severity: SeverityWarn, Value: pct, Threshold: e.th.MemAvailablePercent,
+					Message: fmt.Sprintf("memory available %.1f%% below %.1f%%", pct, e.th.MemAvailablePercent),
+				}
 			}
 		}
 	}
 
-	// load_high: only when CPU count is known.
-	if e.th.LoadPerCore > 0 && s.Host.NumCPU > 0 {
-		if lpc := s.Host.LoadPerCore(); lpc > e.th.LoadPerCore {
-			next[AlertLoadHigh] = Alert{
-				Kind: AlertLoadHigh, Severity: SeverityWarn, Value: lpc, Threshold: e.th.LoadPerCore,
-				Message: fmt.Sprintf("load per core %.2f above %.2f", lpc, e.th.LoadPerCore),
+	// load_high: when load facts are unknown this tick, carry the prior state.
+	if e.th.LoadPerCore > 0 {
+		if !s.Host.LoadKnown {
+			carryPrior(next, e.firing, AlertLoadHigh)
+		} else if s.Host.NumCPU > 0 {
+			if lpc := s.Host.LoadPerCore(); lpc > e.th.LoadPerCore {
+				next[AlertLoadHigh] = Alert{
+					Kind: AlertLoadHigh, Severity: SeverityWarn, Value: lpc, Threshold: e.th.LoadPerCore,
+					Message: fmt.Sprintf("load per core %.2f above %.2f", lpc, e.th.LoadPerCore),
+				}
 			}
 		}
 	}
@@ -127,10 +140,8 @@ func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 	// and carry the prior firing state forward, so a transient outage does not
 	// fabricate — or spuriously clear — a fleet-wide leak alert.
 	if e.th.ZombieSustainTicks > 0 {
-		if !s.zombiesKnown {
-			if prev, ok := e.firing[AlertZombies]; ok {
-				next[AlertZombies] = prev
-			}
+		if !s.ZombiesKnown {
+			carryPrior(next, e.firing, AlertZombies)
 		} else {
 			if s.Zombies > 0 {
 				e.zombieN++
@@ -185,4 +196,10 @@ func sortedAlerts(m map[AlertKind]Alert) []Alert {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Kind < out[j].Kind })
 	return out
+}
+
+func carryPrior(next, firing map[AlertKind]Alert, kind AlertKind) {
+	if prev, ok := firing[kind]; ok {
+		next[kind] = prev
+	}
 }

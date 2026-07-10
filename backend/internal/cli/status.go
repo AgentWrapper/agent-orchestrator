@@ -186,14 +186,18 @@ type metricsSummary struct {
 	Latest *struct {
 		Host struct {
 			NumCPU            int     `json:"numCpu"`
+			LoadKnown         bool    `json:"loadKnown"`
 			LoadAvg1          float64 `json:"loadAvg1"`
+			MemKnown          bool    `json:"memKnown"`
 			MemTotalBytes     uint64  `json:"memTotalBytes"`
 			MemAvailableBytes uint64  `json:"memAvailableBytes"`
+			DiskKnown         bool    `json:"diskKnown"`
 			DiskTotalBytes    uint64  `json:"diskTotalBytes"`
 			DiskFreeBytes     uint64  `json:"diskFreeBytes"`
 		} `json:"host"`
-		Zombies int `json:"zombies"`
-		Alerts  []struct {
+		Zombies      int  `json:"zombies"`
+		ZombiesKnown bool `json:"zombiesKnown"`
+		Alerts       []struct {
 			Kind string `json:"kind"`
 		} `json:"alerts"`
 	} `json:"latest"`
@@ -231,18 +235,22 @@ func (c *commandContext) readResourceSummary(ctx context.Context, port int) stri
 func formatResourceSummary(m metricsSummary) string {
 	l := m.Latest
 	parts := make([]string, 0, 4)
-	if l.Host.NumCPU > 0 {
+	if l.Host.LoadKnown && l.Host.NumCPU > 0 {
 		parts = append(parts, fmt.Sprintf("load %.2f/%dcpu", l.Host.LoadAvg1, l.Host.NumCPU))
 	}
-	if l.Host.MemTotalBytes > 0 {
+	if l.Host.MemKnown && l.Host.MemTotalBytes > 0 {
 		pct := 100 * float64(l.Host.MemAvailableBytes) / float64(l.Host.MemTotalBytes)
 		parts = append(parts, fmt.Sprintf("mem %.0f%% free", pct))
 	}
-	if l.Host.DiskTotalBytes > 0 {
+	if l.Host.DiskKnown && l.Host.DiskTotalBytes > 0 {
 		pct := 100 * float64(l.Host.DiskFreeBytes) / float64(l.Host.DiskTotalBytes)
 		parts = append(parts, fmt.Sprintf("disk %.0f%% free", pct))
 	}
-	parts = append(parts, fmt.Sprintf("zombies %d", l.Zombies))
+	if l.ZombiesKnown {
+		parts = append(parts, fmt.Sprintf("zombies %d", l.Zombies))
+	} else {
+		parts = append(parts, "zombies unknown")
+	}
 	summary := strings.Join(parts, ", ")
 	if n := len(l.Alerts); n > 0 {
 		kinds := make([]string, 0, n)

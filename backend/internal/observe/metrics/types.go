@@ -27,17 +27,15 @@ type Snapshot struct {
 	Scopes []Scope `json:"scopes"`
 	// Zombies is the machine-wide count of live runtime sessions with no
 	// matching non-terminated session row (leaked tmux / orphaned processes).
+	// It is authoritative only when ZombiesKnown is true.
 	Zombies int `json:"zombies"`
+	// ZombiesKnown reports whether the runtime/session facts were complete enough
+	// to distinguish "zero zombies" from "zombie count unavailable this tick".
+	ZombiesKnown bool `json:"zombiesKnown"`
 	// Cost holds token/cost aggregates over the configured rolling window.
 	Cost Cost `json:"cost"`
 	// Alerts holds the alert conditions currently firing at snapshot time.
 	Alerts []Alert `json:"alerts"`
-
-	// zombiesKnown reports whether the live session set was trustworthy when this
-	// snapshot was built. It is internal evaluator state (not serialized): when
-	// false, Zombies is not authoritative and the zombie alert holds its sustain
-	// counter rather than treating the tick as zero zombies.
-	zombiesKnown bool
 }
 
 // Host is machine-wide resource pressure. Zero values mean "not collected"
@@ -46,13 +44,20 @@ type Snapshot struct {
 type Host struct {
 	// NumCPU is the logical CPU count used to normalise loadavg per core.
 	NumCPU int `json:"numCpu"`
+	// LoadKnown reports whether load averages were collected successfully.
+	LoadKnown bool `json:"loadKnown"`
 	// LoadAvg1/5/15 are the 1/5/15-minute run-queue load averages.
 	LoadAvg1  float64 `json:"loadAvg1"`
 	LoadAvg5  float64 `json:"loadAvg5"`
 	LoadAvg15 float64 `json:"loadAvg15"`
+	// MemKnown reports whether memory facts were collected successfully.
+	MemKnown bool `json:"memKnown"`
 	// MemTotalBytes/MemAvailableBytes describe physical memory headroom.
 	MemTotalBytes     uint64 `json:"memTotalBytes"`
 	MemAvailableBytes uint64 `json:"memAvailableBytes"`
+	// DiskKnown reports whether data-volume disk facts were collected
+	// successfully.
+	DiskKnown bool `json:"diskKnown"`
 	// DiskTotalBytes/DiskFreeBytes describe free space on the data-dir volume.
 	DiskTotalBytes uint64 `json:"diskTotalBytes"`
 	DiskFreeBytes  uint64 `json:"diskFreeBytes"`
@@ -145,9 +150,13 @@ type HarnessCost struct {
 	CostTotals
 }
 
-// Cost holds token/cost aggregates derived from telemetry events over the
-// observer's rolling window. The top-level fields are fleet-wide totals; the
-// grouped slices expose the same totals by project and by harness.
+// Cost holds token/cost aggregates derived from cost-bearing telemetry events
+// over the observer's rolling window. Producers must emit at least one of
+// input_tokens, output_tokens, total_tokens, or cost_usd in payload_json for an
+// event to be counted; if no current harness emits those keys, the aggregate is
+// correctly zero while the schema remains ready for the producer. The top-level
+// fields are fleet-wide totals; the grouped slices expose the same totals by
+// project and by harness.
 type Cost struct {
 	// WindowSeconds is the length of the rolling aggregation window.
 	WindowSeconds int64 `json:"windowSeconds"`

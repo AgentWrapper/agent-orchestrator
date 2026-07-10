@@ -2254,6 +2254,8 @@ components:
         diskFreeBytes:
           minimum: 0
           type: integer
+        diskKnown:
+          type: boolean
         diskTotalBytes:
           minimum: 0
           type: integer
@@ -2266,9 +2268,13 @@ components:
         loadAvg15:
           format: double
           type: number
+        loadKnown:
+          type: boolean
         memAvailableBytes:
           minimum: 0
           type: integer
+        memKnown:
+          type: boolean
         memTotalBytes:
           minimum: 0
           type: integer
@@ -2276,11 +2282,14 @@ components:
           type: integer
       required:
       - numCpu
+      - loadKnown
       - loadAvg1
       - loadAvg5
       - loadAvg15
+      - memKnown
       - memTotalBytes
       - memAvailableBytes
+      - diskKnown
       - diskTotalBytes
       - diskFreeBytes
       type: object
@@ -2381,12 +2390,15 @@ components:
           type: array
         zombies:
           type: integer
+        zombiesKnown:
+          type: boolean
       required:
       - collectedAt
       - host
       - projects
       - scopes
       - zombies
+      - zombiesKnown
       - cost
       - alerts
       type: object

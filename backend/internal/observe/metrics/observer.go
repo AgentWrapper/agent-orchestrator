@@ -156,7 +156,14 @@ func (o *Observer) pollErr(ctx context.Context) error {
 // drive cycles deterministically. It returns the snapshot it produced.
 func (o *Observer) Tick(ctx context.Context) Snapshot {
 	now := o.clock().UTC()
-	snap := Snapshot{CollectedAt: now, Cost: Cost{ByProject: []ProjectCost{}, ByHarness: []HarnessCost{}}}
+	snap := Snapshot{
+		CollectedAt: now,
+		Cost: Cost{
+			WindowSeconds: int64(o.costWindow / time.Second),
+			ByProject:     []ProjectCost{},
+			ByHarness:     []HarnessCost{},
+		},
+	}
 
 	if o.deps.Host != nil {
 		// The collector returns a partially-filled Host plus the first error; a
@@ -205,7 +212,7 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 	// Zombies are trustworthy only when BOTH the live session set and the scope
 	// set are known this tick.
 	zombiesKnown := sessionsKnown && scopesKnown
-	snap.zombiesKnown = zombiesKnown
+	snap.ZombiesKnown = zombiesKnown
 	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem, zombiesKnown)
 
 	if o.deps.Cost != nil {
@@ -286,8 +293,9 @@ func (o *Observer) Snapshots() (history []Snapshot, latest Snapshot, hasLatest b
 }
 
 // aggregateSessions computes per-project counts, per-scope memory (matched to
-// live sessions), and the machine-wide zombie count. A scope with no matching
-// non-terminated session row is a zombie (leaked runtime / orphaned process).
+// live sessions), and the machine-wide zombie count. Only runtime handles that
+// have ever belonged to an ao session are eligible for zombie accounting; a
+// foreign tmux session visible on the same tmux server is not an ao leak.
 //
 // sessionsKnown reports whether the live session set is trustworthy this tick.
 // When it is false (no session source, or the query failed) the live-handle set
@@ -295,10 +303,17 @@ func (o *Observer) Snapshots() (history []Snapshot, latest Snapshot, hasLatest b
 // counted — a DB hiccup must not masquerade as a fleet-wide leak.
 func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64, sessionsKnown bool) ([]Project, []Scope, int) {
 	byProject := map[string]*Project{}
-	// handle id -> project id, for matching cgroup scopes to live sessions.
-	liveHandles := map[string]string{}
+	// handle id -> live ao session record, for matching cgroup scopes.
+	liveHandles := map[string]domain.SessionRecord{}
+	// handle id set for all known ao-owned runtime handles, including terminated
+	// rows, so a dead row with a live runtime scope is counted as an ao zombie
+	// while a user's unrelated tmux session is ignored.
+	ownedHandles := map[string]struct{}{}
 
 	for _, s := range sessions {
+		if h := s.Metadata.RuntimeHandleID; h != "" {
+			ownedHandles[h] = struct{}{}
+		}
 		if s.IsTerminated {
 			continue
 		}
@@ -315,24 +330,34 @@ func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint
 		}
 		p.ByActivity[state]++
 		if h := s.Metadata.RuntimeHandleID; h != "" {
-			liveHandles[h] = pid
+			liveHandles[h] = s
 		}
 	}
 
 	scopes := make([]Scope, 0, len(scopeMem))
 	zombies := 0
 	for name, mem := range scopeMem {
-		_, matched := liveHandles[name]
+		rec, matched := liveHandles[name]
+		_, owned := ownedHandles[name]
+		// When the session set is known, ignore scopes that have never belonged to
+		// ao. A user's unrelated tmux session can share the tmux server and systemd
+		// scope shape, but it is not an ao session-scope metric or an ao zombie.
+		if sessionsKnown && !matched && !owned {
+			continue
+		}
 		// When the session set is unknown we cannot judge a scope as matched;
 		// report it unmatched but do not count it toward zombies.
 		reportMatched := sessionsKnown && matched
-		scopes = append(scopes, Scope{
-			SessionID: name, // scope handle id == tmux session name == ao session id
-			Name:      name,
-			MemBytes:  mem,
-			Matched:   reportMatched,
-		})
-		if sessionsKnown && !matched {
+		scope := Scope{
+			Name:     name,
+			MemBytes: mem,
+			Matched:  reportMatched,
+		}
+		if reportMatched {
+			scope.SessionID = string(rec.ID)
+		}
+		scopes = append(scopes, scope)
+		if sessionsKnown && !matched && owned {
 			zombies++
 		}
 	}

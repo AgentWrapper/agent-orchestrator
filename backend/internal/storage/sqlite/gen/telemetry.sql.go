@@ -44,10 +44,62 @@ func (q *Queries) CreateTelemetryEvent(ctx context.Context, arg CreateTelemetryE
 	return err
 }
 
+const listCostTelemetryEventsSince = `-- name: ListCostTelemetryEventsSince :many
+SELECT id, occurred_at, name, source, level, project_id, session_id, request_id, payload_json
+FROM telemetry_event
+WHERE occurred_at >= ?
+  AND (
+    instr(payload_json, '"input_tokens"') > 0 OR
+    instr(payload_json, '"output_tokens"') > 0 OR
+    instr(payload_json, '"total_tokens"') > 0 OR
+    instr(payload_json, '"cost_usd"') > 0
+  )
+ORDER BY occurred_at DESC
+LIMIT ?
+`
+
+type ListCostTelemetryEventsSinceParams struct {
+	OccurredAt time.Time
+	Limit      int64
+}
+
+// Newest-first cost-bearing telemetry only, so the metrics cost aggregate cap
+// applies to rows that can actually contribute tokens/cost rather than being
+// starved by unrelated operational telemetry in a busy window.
+func (q *Queries) ListCostTelemetryEventsSince(ctx context.Context, arg ListCostTelemetryEventsSinceParams) ([]TelemetryEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listCostTelemetryEventsSince, arg.OccurredAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TelemetryEvent{}
+	for rows.Next() {
+		var i TelemetryEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OccurredAt,
+			&i.Name,
+			&i.Source,
+			&i.Level,
+			&i.ProjectID,
+			&i.SessionID,
+			&i.RequestID,
+			&i.PayloadJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTelemetryEventsSince = `-- name: ListTelemetryEventsSince :many
--- Newest-first so that when the caller's LIMIT truncates a busy window the rows
--- that survive are the most recent, not the oldest. Callers that need
--- chronological order re-sort in memory.
 SELECT id, occurred_at, name, source, level, project_id, session_id, request_id, payload_json
 FROM telemetry_event
 WHERE occurred_at >= ?
@@ -60,6 +112,9 @@ type ListTelemetryEventsSinceParams struct {
 	Limit      int64
 }
 
+// Newest-first so that when the caller's LIMIT truncates a busy window the rows
+// that survive are the most recent, not the oldest. Callers that need
+// chronological order re-sort in memory.
 func (q *Queries) ListTelemetryEventsSince(ctx context.Context, arg ListTelemetryEventsSinceParams) ([]TelemetryEvent, error) {
 	rows, err := q.db.QueryContext(ctx, listTelemetryEventsSince, arg.OccurredAt, arg.Limit)
 	if err != nil {

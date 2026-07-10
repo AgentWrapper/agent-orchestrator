@@ -843,6 +843,7 @@ export interface components {
         };
         MetricsHost: {
             diskFreeBytes: number;
+            diskKnown: boolean;
             diskTotalBytes: number;
             /** Format: double */
             loadAvg1: number;
@@ -850,7 +851,9 @@ export interface components {
             loadAvg5: number;
             /** Format: double */
             loadAvg15: number;
+            loadKnown: boolean;
             memAvailableBytes: number;
+            memKnown: boolean;
             memTotalBytes: number;
             numCpu: number;
         };
@@ -894,6 +897,7 @@ export interface components {
             projects: components["schemas"]["MetricsProject"][];
             scopes: components["schemas"]["MetricsScope"][];
             zombies: number;
+            zombiesKnown: boolean;
         };
         NotificationEnvelope: {
             notification: components["schemas"]["NotificationResponse"];

@@ -14,7 +14,7 @@ type fakeTelemetry struct {
 	err  error
 }
 
-func (f fakeTelemetry) ListTelemetryEventsSince(_ context.Context, _ time.Time, limit int64) ([]gen.TelemetryEvent, error) {
+func (f fakeTelemetry) ListCostTelemetryEventsSince(_ context.Context, _ time.Time, limit int64) ([]gen.TelemetryEvent, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

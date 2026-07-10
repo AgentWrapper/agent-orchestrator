@@ -14,7 +14,7 @@ import (
 
 // telemetryReader is the store read surface the cost aggregator needs.
 type telemetryReader interface {
-	ListTelemetryEventsSince(ctx context.Context, since time.Time, limit int64) ([]gen.TelemetryEvent, error)
+	ListCostTelemetryEventsSince(ctx context.Context, since time.Time, limit int64) ([]gen.TelemetryEvent, error)
 }
 
 // costScanLimit bounds how many telemetry rows one aggregation reads so a busy
@@ -55,7 +55,7 @@ func (a *StoreCostAggregator) Aggregate(ctx context.Context, since time.Time) (C
 	if fetch > 0 {
 		fetch++
 	}
-	rows, err := a.reader.ListTelemetryEventsSince(ctx, since, fetch)
+	rows, err := a.reader.ListCostTelemetryEventsSince(ctx, since, fetch)
 	if err != nil {
 		return Cost{}, err
 	}

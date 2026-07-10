@@ -35,6 +35,7 @@ func (c *LinuxHostCollector) Host(_ context.Context) (Host, error) {
 	if l1, l5, l15, err := readLoadAvg("/proc/loadavg"); err != nil {
 		firstErr = err
 	} else {
+		h.LoadKnown = true
 		h.LoadAvg1, h.LoadAvg5, h.LoadAvg15 = l1, l5, l15
 	}
 
@@ -43,6 +44,7 @@ func (c *LinuxHostCollector) Host(_ context.Context) (Host, error) {
 			firstErr = err
 		}
 	} else {
+		h.MemKnown = true
 		h.MemTotalBytes, h.MemAvailableBytes = total, avail
 	}
 
@@ -51,6 +53,7 @@ func (c *LinuxHostCollector) Host(_ context.Context) (Host, error) {
 			firstErr = err
 		}
 	} else {
+		h.DiskKnown = true
 		h.DiskTotalBytes, h.DiskFreeBytes = total, free
 	}
 
