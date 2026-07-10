@@ -55,9 +55,30 @@ const pr = (projectId: string, number: number, state: PRFacts["state"], ci: PRFa
 });
 
 const projects = [
-	{ id: "api-gateway", kind: "git", name: "api-gateway", path: "/Users/me/api-gateway", projectPrefix: "api", sessionPrefix: "api" },
-	{ id: "webgl-preview", kind: "git", name: "webgl-preview", path: "/Users/me/webgl-preview", projectPrefix: "webgl", sessionPrefix: "webgl" },
-	{ id: "mobile-shell", kind: "git", name: "mobile-shell", path: "/Users/me/mobile-shell", projectPrefix: "mobile", sessionPrefix: "mobile" },
+	{
+		id: "api-gateway",
+		kind: "git",
+		name: "api-gateway",
+		path: "/Users/me/api-gateway",
+		projectPrefix: "api",
+		sessionPrefix: "api",
+	},
+	{
+		id: "webgl-preview",
+		kind: "git",
+		name: "webgl-preview",
+		path: "/Users/me/webgl-preview",
+		projectPrefix: "webgl",
+		sessionPrefix: "webgl",
+	},
+	{
+		id: "mobile-shell",
+		kind: "git",
+		name: "mobile-shell",
+		path: "/Users/me/mobile-shell",
+		projectPrefix: "mobile",
+		sessionPrefix: "mobile",
+	},
 	{
 		id: "billing-portal",
 		kind: "git",
