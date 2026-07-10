@@ -72,17 +72,18 @@ describe("normalizeBrowserURL", () => {
 		expect(normalizeBrowserURL("example.com").href).toBe("https://example.com/");
 	});
 
-	it("allows file:// preview targets without mangling the scheme", () => {
-		expect(normalizeBrowserURL("file:///tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
-		expect(normalizeBrowserURL("file:///C:/tmp/index.html").protocol).toBe("file:");
+	it("allows daemon preview file proxy URLs", () => {
+		expect(
+			normalizeBrowserURL("http://127.0.0.1:3001/api/v1/sessions/ao-1/preview/files/index.html").href,
+		).toBe("http://127.0.0.1:3001/api/v1/sessions/ao-1/preview/files/index.html");
 	});
 
-	it("converts absolute local file paths to file URLs", () => {
-		expect(normalizeBrowserURL("C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html").href).toBe(
-			"file:///C:/Users/Lenovo/Downloads/sm5/paper_explainer.html",
+	it("rejects local file URLs and absolute local paths", () => {
+		expect(() => normalizeBrowserURL("file:///tmp/preview/index.html")).toThrow(/unsupported/i);
+		expect(() => normalizeBrowserURL("C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html")).toThrow(
+			/local file paths/i,
 		);
-		expect(normalizeBrowserURL("C:/Users/Lenovo/My File.html").href).toBe("file:///C:/Users/Lenovo/My%20File.html");
-		expect(normalizeBrowserURL("/tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
+		expect(() => normalizeBrowserURL("/tmp/preview/index.html")).toThrow(/local file paths/i);
 	});
 
 	it("rejects privileged or unsupported schemes", () => {
@@ -92,8 +93,8 @@ describe("normalizeBrowserURL", () => {
 });
 
 describe("isAllowedBrowserURL", () => {
-	it("allows file:// even when a renderer origin is set", () => {
-		expect(isAllowedBrowserURL("file:///tmp/preview/index.html", "http://localhost:5173")).toBe(true);
+	it("rejects file:// even when a renderer origin is set", () => {
+		expect(isAllowedBrowserURL("file:///tmp/preview/index.html", "http://localhost:5173")).toBe(false);
 	});
 
 	it("still blocks the renderer's own http origin", () => {

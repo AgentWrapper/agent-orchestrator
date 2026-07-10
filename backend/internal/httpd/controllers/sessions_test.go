@@ -555,12 +555,16 @@ func TestSessionsAPI_SetPreviewLocalRelativePathResolvesToFilesURL(t *testing.T)
 	}
 }
 
-func TestSessionsAPI_SetPreviewAbsoluteFilePathPersistsFileURL(t *testing.T) {
+func TestSessionsAPI_SetPreviewAbsoluteWorkspaceFileUsesPreviewProxy(t *testing.T) {
 	svc := newFakeSessionService()
-	file := filepath.Join(t.TempDir(), "implementation_plan.html")
+	workspace := t.TempDir()
+	file := filepath.Join(workspace, "implementation_plan.html")
 	if err := os.WriteFile(file, []byte(`<html></html>`), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(file)+`}`)
@@ -573,20 +577,39 @@ func TestSessionsAPI_SetPreviewAbsoluteFilePathPersistsFileURL(t *testing.T) {
 		} `json:"session"`
 	}
 	mustJSON(t, body, &resp)
-	parsed, err := url.Parse(resp.Session.PreviewURL)
-	if err != nil {
-		t.Fatalf("parse preview url: %v", err)
-	}
-	if parsed.Scheme != "file" {
-		t.Fatalf("previewUrl = %q, want file URL", resp.Session.PreviewURL)
+	if !strings.HasSuffix(resp.Session.PreviewURL, "/preview/files/implementation_plan.html") {
+		t.Fatalf("previewUrl = %q, want preview/files URL", resp.Session.PreviewURL)
 	}
 }
 
-func TestSessionsAPI_SetPreviewMissingAbsoluteFilePathFailsWithoutOverwriting(t *testing.T) {
+func TestSessionsAPI_SetPreviewFileURLOutsideWorkspaceFailsWithoutOverwriting(t *testing.T) {
 	svc := newFakeSessionService()
-	missing := filepath.Join(t.TempDir(), "implmentation_plan.html")
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "implementation_plan.html")
+	if err := os.WriteFile(outside, []byte(`<html></html>`), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
 	s := svc.sessions["ao-1"]
-	s.Metadata = domain.SessionMetadata{PreviewURL: "http://localhost:4321/docs"}
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace, PreviewURL: "http://localhost:4321/docs"}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote((&url.URL{Scheme: "file", Path: outside}).String())+`}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("set outside file preview = %d, want 400; body=%s", status, body)
+	}
+	assertErrorCode(t, body, status, http.StatusBadRequest, "PREVIEW_FILE_OUTSIDE_WORKSPACE")
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:4321/docs" {
+		t.Fatalf("persisted previewUrl = %q, want existing target preserved", got)
+	}
+}
+
+func TestSessionsAPI_SetPreviewMissingAbsoluteWorkspaceFileFailsWithoutOverwriting(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	missing := filepath.Join(workspace, "implementation_plan.html")
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace, PreviewURL: "http://localhost:4321/docs"}
 	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 

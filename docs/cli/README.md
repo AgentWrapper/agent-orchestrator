@@ -77,8 +77,9 @@ spawn remains the authoritative runtime validation point. Use
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it
-autodetects an `index.html` in the session workspace; with a URL argument it
-opens that URL verbatim (`file://`, `http`, `https`).
+autodetects an `index.html` in the session workspace; with an explicit target it
+opens `http`/`https` URLs directly and serves workspace-local files through the
+daemon preview proxy.
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 

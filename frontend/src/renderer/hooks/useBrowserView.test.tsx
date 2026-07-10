@@ -292,9 +292,15 @@ describe("useBrowserView", () => {
 		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(2));
 
 		// A changed target with a fresh revision navigates to the new URL.
-		rerender({ previewUrl: "file:///tmp/preview/index.html", previewRevision: 3 });
+		rerender({
+			previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+			previewRevision: 3,
+		});
 		await waitFor(() =>
-			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "file:///tmp/preview/index.html" }),
+			expect(bridge.navigate).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				url: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+			}),
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(3);
 	});
