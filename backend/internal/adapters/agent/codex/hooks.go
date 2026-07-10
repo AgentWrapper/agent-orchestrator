@@ -95,13 +95,9 @@ func appendSessionHookFlags(cmd *[]string) {
 // by the canonicalized cwd first and the literal path second (on macOS the two
 // commonly differ, e.g. /tmp vs /private/tmp).
 func appendWorkspaceTrustFlag(cmd *[]string, workspacePath string) {
-	path := strings.TrimSpace(workspacePath)
-	if path == "" {
+	keys := hookutil.WorkspacePathVariants(workspacePath)
+	if len(keys) == 0 {
 		return
-	}
-	keys := []string{path}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
-		keys = append(keys, resolved)
 	}
 	entries := make([]string, 0, len(keys))
 	for _, key := range keys {
