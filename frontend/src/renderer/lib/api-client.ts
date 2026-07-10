@@ -11,6 +11,15 @@ const initialApiBaseUrl = explicitApiBaseUrl ?? (import.meta.env.DEV ? devApiBas
 
 let runtimeApiBaseUrl: string | null = explicitApiBaseUrl ?? null;
 
+// Human-facing reason the daemon base URL is untrusted (identity mismatch,
+// spawn failure, exit code, …), surfaced by runtimeFetch's 503 short-circuit
+// so callers see the actual cause instead of the generic fallback (#2481).
+let daemonUnavailableMessage: string | null = null;
+
+export function setDaemonUnavailableMessage(message: string | null): void {
+	daemonUnavailableMessage = message;
+}
+
 const baseUrlListeners = new Set<() => void>();
 
 export function getApiBaseUrl(): string {
@@ -161,7 +170,7 @@ async function runtimeFetch(input: Request): Promise<Response> {
 	const baseUrl = runtimeApiBaseUrl;
 	if (baseUrl === null) {
 		reportApiError(operation, "daemon_unavailable", 503);
-		return new Response(JSON.stringify({ message: "AO daemon is not ready." }), {
+		return new Response(JSON.stringify({ message: daemonUnavailableMessage ?? "AO daemon is not ready." }), {
 			status: 503,
 			headers: { "Content-Type": "application/json" },
 		});
