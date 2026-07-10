@@ -122,6 +122,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			terminal.clear();
 		}
 		hadAttachmentRef.current = true;
+		if (handleId) {
+			terminal.focus();
+		}
 		return attach(terminal);
 	}, [terminal, handleId, attach, attachSession?.id]);
 

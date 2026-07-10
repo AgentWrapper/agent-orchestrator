@@ -518,6 +518,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			write: (data) => term.write(data),
 			writeln: (line) => term.writeln(line),
 			clear: () => term.write(CLEAR_SEQUENCE),
+			focus: () => term.focus(),
 			onUserInput: (listener) => {
 				userInputListeners.add(listener);
 				return { dispose: () => userInputListeners.delete(listener) };
