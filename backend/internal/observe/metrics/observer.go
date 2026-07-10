@@ -41,7 +41,11 @@ type HostCollector interface {
 // per live runtime scope keyed by the scope's runtime handle id (the tmux
 // session name), which the observer matches against session rows.
 type ScopeCollector interface {
-	Scopes(ctx context.Context) (map[string]uint64, error)
+	// Scopes returns per-runtime-handle memory readings plus an availability bit.
+	// available=false means the collector ran but this host cannot currently
+	// distinguish runtime scopes from unknown/unavailable data; callers must not
+	// treat an empty map as authoritative zero zombies.
+	Scopes(ctx context.Context) (map[string]uint64, bool, error)
 }
 
 // CostAggregator sums token/cost telemetry over a rolling window ending now.
@@ -178,19 +182,18 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 	}
 
 	var scopeMem map[string]uint64
-	// scopesKnown is false when a wired scope collector failed this tick. The
+	// scopesKnown is false when scope facts are unavailable this tick. The
 	// zombie count is derived from scopes with no live session; if scope
-	// collection failed we cannot judge zombies, so a scope error must not be
-	// read as "zero scopes / zero zombies" and spuriously CLEAR a firing zombie
-	// alert (the mirror of the sessions-error case). A nil collector is a valid
-	// "no scopes" configuration and stays known.
-	scopesKnown := true
+	// collection failed, no collector is wired, or the collector could not prove
+	// it can see ao-managed per-session scopes, an empty map must not be read as
+	// authoritative zero zombies and spuriously CLEAR a firing zombie alert.
+	scopesKnown := false
 	if o.deps.Scopes != nil {
-		if scopes, err := o.deps.Scopes.Scopes(ctx); err != nil {
+		if scopes, available, err := o.deps.Scopes.Scopes(ctx); err != nil {
 			o.logger.Warn("metrics observer: scope collect failed", "err", err)
-			scopesKnown = false
 		} else {
 			scopeMem = scopes
+			scopesKnown = available
 		}
 	}
 

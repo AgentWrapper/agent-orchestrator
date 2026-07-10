@@ -12,7 +12,8 @@ type stubScopeCollector struct{}
 // tmuxBinary argument is accepted for signature parity and ignored.
 func NewScopeCollector(_ string) ScopeCollector { return stubScopeCollector{} }
 
-// Scopes returns an empty map so zombie/scope accounting degrades to zero.
-func (stubScopeCollector) Scopes(_ context.Context) (map[string]uint64, error) {
-	return map[string]uint64{}, nil
+// Scopes returns unavailable: cgroup-per-session accounting is unsupported, so
+// callers must not treat an empty map as authoritative zero zombies.
+func (stubScopeCollector) Scopes(_ context.Context) (map[string]uint64, bool, error) {
+	return map[string]uint64{}, false, nil
 }

@@ -7,7 +7,8 @@ import (
 
 // pane is one tmux pane: which session it belongs to and its leaf process PID.
 // The observer maps a pane's PID to its cgroup scope to charge memory to the
-// owning ao session (the tmux session name equals the ao session id).
+// owning ao session (the tmux session name is the runtime handle id stored on
+// the ao session row).
 type pane struct {
 	session string
 	pid     int
@@ -46,14 +47,17 @@ type cgroupScopeCollector struct {
 	logger *slog.Logger
 }
 
-// Scopes returns per-session memory keyed by tmux session name.
+// Scopes returns per-session memory keyed by tmux session name. The boolean is
+// false when panes were visible but none resolved to a managed per-session
+// cgroup, which means zombie detection is unavailable rather than known-zero.
 //
-// A cgroup's memory charge is counted at most once per session. Multiple panes
-// in one session normally share a single tmux-spawn scope cgroup, so charging
-// every pane's cgroup separately would multiply the session's memory by its
-// pane count. We track the set of already-charged cgroup paths per session and
-// add a cgroup's memory.current only the first time we see it for that session.
-// A session that legitimately spans distinct cgroups still sums, because each
+// A cgroup's memory charge is counted at most once per session. tmux commonly
+// creates one systemd scope per spawned pane; several panes can still resolve to
+// the same cgroup in tests or alternate launch topologies, so charging every
+// pane's cgroup separately could multiply the session's memory by its pane
+// count. We track the set of already-charged cgroup paths per session and add a
+// cgroup's memory.current only the first time we see it for that session. A
+// session that legitimately spans distinct cgroups still sums, because each
 // distinct path is charged exactly once.
 //
 // Panes whose PID has no resolvable cgroup or no readable memory charge are
@@ -61,13 +65,13 @@ type cgroupScopeCollector struct {
 // masquerade as an idle one. A pane sharing the daemon's own cgroup (no
 // per-session scope) is skipped, since counting it would charge the entire
 // daemon's memory to that session.
-func (c cgroupScopeCollector) Scopes(ctx context.Context) (map[string]uint64, error) {
+func (c cgroupScopeCollector) Scopes(ctx context.Context) (map[string]uint64, bool, error) {
 	if c.lister == nil || c.resolver == nil || c.memory == nil {
-		return map[string]uint64{}, nil
+		return map[string]uint64{}, false, nil
 	}
 	panes, err := c.lister.panes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	selfCg, haveSelf := c.resolver.selfCgroup()
 	out := map[string]uint64{}
@@ -111,6 +115,7 @@ func (c cgroupScopeCollector) Scopes(ctx context.Context) (map[string]uint64, er
 			lg = slog.Default()
 		}
 		lg.Warn("metrics observer: tmux panes present but no managed per-session scope resolved; per-session memory and zombie detection unavailable this tick", "panes", len(panes))
+		return out, false, nil
 	}
-	return out, nil
+	return out, true, nil
 }

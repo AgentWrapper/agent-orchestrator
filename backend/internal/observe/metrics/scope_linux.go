@@ -100,10 +100,10 @@ func (procCgroupResolver) cgroupOf(pid int) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	// Only ao-managed panes live in a per-session tmux-spawn scope. Restricting
-	// to that shape excludes a human's own `tmux new` on the same server (which
-	// sits in the shared service/session cgroup, not its own scope) so it is
-	// neither charged memory nor counted as a zombie.
+	// Restrict to tmux-spawn scopes as a cheap per-pane-scope prefilter. This
+	// shape alone does NOT prove ao ownership: a human tmux session can use the
+	// same systemd scope pattern. Ownership is decided later by matching the tmux
+	// session name against ao session RuntimeHandleID values in aggregateSessions.
 	if !isManagedScope(cg) {
 		return "", false
 	}

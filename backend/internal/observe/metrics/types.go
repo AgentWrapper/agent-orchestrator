@@ -155,8 +155,9 @@ type HarnessCost struct {
 // input_tokens, output_tokens, total_tokens, or cost_usd in payload_json for an
 // event to be counted; if no current harness emits those keys, the aggregate is
 // correctly zero while the schema remains ready for the producer. The top-level
-// fields are fleet-wide totals; the grouped slices expose the same totals by
-// project and by harness.
+// fields are fleet-wide totals; grouped slices are attributed subsets by project
+// and by harness (events missing a project_id or harness/source still contribute
+// to fleet totals but not to the corresponding grouping).
 type Cost struct {
 	// WindowSeconds is the length of the rolling aggregation window.
 	WindowSeconds int64 `json:"windowSeconds"`

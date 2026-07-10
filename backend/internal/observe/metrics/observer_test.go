@@ -29,11 +29,25 @@ type fakeHost struct {
 func (f fakeHost) Host(context.Context) (Host, error) { return f.h, f.err }
 
 type fakeScopes struct {
-	m   map[string]uint64
-	err error
+	m         map[string]uint64
+	available *bool
+	err       error
 }
 
-func (f fakeScopes) Scopes(context.Context) (map[string]uint64, error) { return f.m, f.err }
+func (f fakeScopes) Scopes(context.Context) (map[string]uint64, bool, error) {
+	if f.err != nil {
+		return nil, false, f.err
+	}
+	if f.available != nil {
+		return f.m, *f.available, nil
+	}
+	return f.m, true, nil
+}
+
+func unavailableScopes(m map[string]uint64) fakeScopes {
+	available := false
+	return fakeScopes{m: m, available: &available}
+}
 
 type fakeCost struct {
 	c   Cost
@@ -268,6 +282,20 @@ func TestObserverReportsZombiesKnownFalseOnUnknownTick(t *testing.T) {
 	snap := o.Tick(context.Background())
 	if snap.ZombiesKnown {
 		t.Fatalf("zombiesKnown must be false when session facts are unavailable")
+	}
+}
+
+func TestObserverUnavailableScopesMakeZombiesUnknown(t *testing.T) {
+	o := New(Deps{
+		Sessions: fakeSessions{rows: []domain.SessionRecord{sess("live", "proj", domain.ActivityActive, "live-handle", false)}},
+		Scopes:   unavailableScopes(map[string]uint64{}),
+	}, Config{Clock: fixedClock(), Logger: quietLogger()})
+	snap := o.Tick(context.Background())
+	if snap.ZombiesKnown {
+		t.Fatalf("zombiesKnown must be false when the scope collector reports unavailable")
+	}
+	if snap.Zombies != 0 || len(snap.Scopes) != 0 {
+		t.Fatalf("unavailable scope facts should not fabricate zombies/scopes, got %+v", snap)
 	}
 }
 

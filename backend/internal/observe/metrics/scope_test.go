@@ -45,9 +45,12 @@ func TestCgroupScopeCollector(t *testing.T) {
 		resolver: fakeCgroupResolver{byPID: map[int]string{1: "/cg1", 2: "/cg2", 3: "/cg3", 5: "/cg5"}},
 		memory:   fakeMemReader{"/cg1": 100, "/cg2": 200, "/cg3": 400},
 	}
-	got, err := c.Scopes(context.Background())
+	got, available, err := c.Scopes(context.Background())
 	if err != nil {
 		t.Fatalf("Scopes: %v", err)
+	}
+	if !available {
+		t.Fatalf("Scopes should be available")
 	}
 	if got["sess-a"] != 300 {
 		t.Errorf("sess-a spans two distinct cgroups and should sum to 300, got %d", got["sess-a"])
@@ -79,9 +82,12 @@ func TestCgroupScopeCollectorSharedScopeNotDoubleCounted(t *testing.T) {
 		}},
 		memory: fakeMemReader{"/scope-a": 500},
 	}
-	got, err := c.Scopes(context.Background())
+	got, available, err := c.Scopes(context.Background())
 	if err != nil {
 		t.Fatalf("Scopes: %v", err)
+	}
+	if !available {
+		t.Fatalf("Scopes should be available")
 	}
 	if got["sess-a"] != 500 {
 		t.Errorf("shared scope must be charged once (500), got %d (double-count?)", got["sess-a"])
@@ -103,9 +109,12 @@ func TestCgroupScopeCollectorSkipsDaemonCgroup(t *testing.T) {
 		},
 		memory: fakeMemReader{"/ao.service": 3_000_000, "/scope-b": 200},
 	}
-	got, err := c.Scopes(context.Background())
+	got, available, err := c.Scopes(context.Background())
 	if err != nil {
 		t.Fatalf("Scopes: %v", err)
+	}
+	if !available {
+		t.Fatalf("Scopes should be available")
 	}
 	if _, ok := got["sess-a"]; ok {
 		t.Errorf("sess-a shares the daemon cgroup and must be skipped, got %d", got["sess-a"])
@@ -115,21 +124,37 @@ func TestCgroupScopeCollectorSkipsDaemonCgroup(t *testing.T) {
 	}
 }
 
+func TestCgroupScopeCollectorAllDroppedUnavailable(t *testing.T) {
+	c := cgroupScopeCollector{
+		lister:   fakePaneLister{list: []pane{{session: "sess-a", pid: 1}}},
+		resolver: fakeCgroupResolver{byPID: map[int]string{1: "/ao.service"}, self: "/ao.service"},
+		memory:   fakeMemReader{"/ao.service": 100},
+		logger:   quietLogger(),
+	}
+	got, available, err := c.Scopes(context.Background())
+	if err != nil {
+		t.Fatalf("Scopes: %v", err)
+	}
+	if available || len(got) != 0 {
+		t.Fatalf("all dropped panes should report unavailable empty scopes, got available=%v scopes=%+v", available, got)
+	}
+}
+
 func TestCgroupScopeCollectorListerError(t *testing.T) {
 	c := cgroupScopeCollector{
 		lister:   fakePaneLister{err: errors.New("boom")},
 		resolver: fakeCgroupResolver{},
 		memory:   fakeMemReader{},
 	}
-	if _, err := c.Scopes(context.Background()); err == nil {
+	if _, _, err := c.Scopes(context.Background()); err == nil {
 		t.Fatal("want error from lister propagated")
 	}
 }
 
 func TestCgroupScopeCollectorNilDepsNoError(t *testing.T) {
 	var c cgroupScopeCollector // all nil
-	got, err := c.Scopes(context.Background())
-	if err != nil || len(got) != 0 {
-		t.Fatalf("nil-dep collector must return empty, no error; got %+v %v", got, err)
+	got, available, err := c.Scopes(context.Background())
+	if err != nil || len(got) != 0 || available {
+		t.Fatalf("nil-dep collector must return empty/unavailable, no error; got %+v available=%v err=%v", got, available, err)
 	}
 }
