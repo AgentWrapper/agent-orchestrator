@@ -112,6 +112,17 @@ func (s *Store) SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID d
 	})
 }
 
+// CancelRunningReviewRunsBySession marks all currently running review passes
+// for a worker cancelled.
+func (s *Store) CancelRunningReviewRunsBySession(ctx context.Context, sessionID domain.SessionID, body string) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.CancelRunningReviewRunsBySession(ctx, gen.CancelRunningReviewRunsBySessionParams{
+		Body:      body,
+		SessionID: sessionID,
+	})
+}
+
 // MarkReviewRunDelivered records that lifecycle delivered the worker nudge for
 // a completed AO-internal review pass.
 func (s *Store) MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error) {
@@ -159,6 +170,20 @@ func (s *Store) ListReviewRunsBySession(ctx context.Context, id domain.SessionID
 	rows, err := s.qr.ListReviewRunsBySession(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("list review runs for session %s: %w", id, err)
+	}
+	out := make([]domain.ReviewRun, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, reviewRunFromRow(row))
+	}
+	return out, nil
+}
+
+// ListRunningReviewRunsBySession returns only currently running unverdicted
+// review passes for a worker session, newest first.
+func (s *Store) ListRunningReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
+	rows, err := s.qr.ListRunningReviewRunsBySession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list running review runs for session %s: %w", id, err)
 	}
 	out := make([]domain.ReviewRun, 0, len(rows))
 	for _, row := range rows {

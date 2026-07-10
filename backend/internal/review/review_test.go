@@ -16,8 +16,9 @@ import (
 // --- fakes ---
 
 type fakeStore struct {
-	review *domain.Review
-	runs   []domain.ReviewRun
+	review               *domain.Review
+	runs                 []domain.ReviewRun
+	listAllReviewRunHits int
 	// insertErr, when set, makes the next InsertReviewRun model a concurrent
 	// writer that already recorded a run for this commit: it records that
 	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
@@ -96,6 +97,17 @@ func (f *fakeStore) SupersedeStaleRunningReviewRuns(_ context.Context, sessionID
 	}
 	return n, nil
 }
+func (f *fakeStore) CancelRunningReviewRunsBySession(_ context.Context, sessionID domain.SessionID, body string) (int64, error) {
+	var n int64
+	for i := range f.runs {
+		if f.runs[i].SessionID == sessionID && f.runs[i].Status == domain.ReviewRunRunning && f.runs[i].Verdict == domain.VerdictNone {
+			f.runs[i].Status = domain.ReviewRunCancelled
+			f.runs[i].Body = body
+			n++
+		}
+	}
+	return n, nil
+}
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
 	for _, r := range f.runs {
 		if r.ID == id {
@@ -113,7 +125,17 @@ func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, sessionID d
 	return domain.ReviewRun{}, false, nil
 }
 func (f *fakeStore) ListReviewRunsBySession(_ context.Context, _ domain.SessionID) ([]domain.ReviewRun, error) {
+	f.listAllReviewRunHits++
 	return f.runs, nil
+}
+func (f *fakeStore) ListRunningReviewRunsBySession(_ context.Context, sessionID domain.SessionID) ([]domain.ReviewRun, error) {
+	out := make([]domain.ReviewRun, 0)
+	for _, run := range f.runs {
+		if run.SessionID == sessionID && run.Status == domain.ReviewRunRunning && run.Verdict == domain.VerdictNone {
+			out = append(out, run)
+		}
+	}
+	return out, nil
 }
 
 type fakeSessions struct {
@@ -262,6 +284,12 @@ func TestCancelInterruptsReviewerAndCancelsRunningRuns(t *testing.T) {
 	}
 	if store.runs[0].Status != domain.ReviewRunCancelled || !strings.Contains(store.runs[0].Body, "cancelled") {
 		t.Fatalf("run not marked cancelled: %+v", store.runs[0])
+	}
+	if store.runs[1].Status != domain.ReviewRunComplete {
+		t.Fatalf("non-running run was changed: %+v", store.runs[1])
+	}
+	if store.listAllReviewRunHits != 1 {
+		t.Fatalf("full review run list calls = %d, want 1 for final plan refresh only", store.listAllReviewRunHits)
 	}
 	if res.Reviews[0].Status == ReviewStateRunning {
 		t.Fatalf("review state still running: %+v", res.Reviews[0])

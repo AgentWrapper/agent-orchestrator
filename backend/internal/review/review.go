@@ -36,9 +36,11 @@ type Store interface {
 	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	SupersedeReviewRun(ctx stdctx.Context, id, body string) (bool, error)
 	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
+	CancelRunningReviewRunsBySession(ctx stdctx.Context, sessionID domain.SessionID, body string) (int64, error)
 	GetReviewRun(ctx stdctx.Context, id string) (domain.ReviewRun, bool, error)
 	GetReviewRunBySessionPRAndSHA(ctx stdctx.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
+	ListRunningReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
 
 // Sessions resolves the worker session under review.
@@ -397,30 +399,26 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	if err := e.launcher.Cancel(ctx, review.ReviewerHandleID, review.Harness); err != nil {
 		return CancelResult{}, err
 	}
-	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
+	running, err := e.store.ListRunningReviewRunsBySession(ctx, workerID)
 	if err != nil {
 		return CancelResult{}, err
 	}
-	cancelled := make([]domain.ReviewRun, 0)
-	for _, run := range runs {
-		if run.Status != domain.ReviewRunRunning {
-			continue
-		}
-		if ok, err := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunCancelled, domain.VerdictNone, "cancelled by user", ""); err != nil {
-			return CancelResult{}, err
-		} else if ok {
-			run.Status = domain.ReviewRunCancelled
-			run.Verdict = domain.VerdictNone
-			run.Body = "cancelled by user"
-			run.GithubReviewID = ""
-			cancelled = append(cancelled, run)
-		}
+	if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, "cancelled by user"); err != nil {
+		return CancelResult{}, err
+	}
+	cancelled := make([]domain.ReviewRun, 0, len(running))
+	for _, run := range running {
+		run.Status = domain.ReviewRunCancelled
+		run.Verdict = domain.VerdictNone
+		run.Body = "cancelled by user"
+		run.GithubReviewID = ""
+		cancelled = append(cancelled, run)
 	}
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
 		return CancelResult{}, err
 	}
-	runs, err = e.store.ListReviewRunsBySession(ctx, workerID)
+	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
 	if err != nil {
 		return CancelResult{}, err
 	}

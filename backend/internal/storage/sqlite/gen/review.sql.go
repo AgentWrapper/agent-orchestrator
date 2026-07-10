@@ -13,6 +13,23 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const cancelRunningReviewRunsBySession = `-- name: CancelRunningReviewRunsBySession :execrows
+UPDATE review_run SET status = 'cancelled', body = ? WHERE session_id = ? AND status = 'running' AND verdict = ''
+`
+
+type CancelRunningReviewRunsBySessionParams struct {
+	Body      string
+	SessionID domain.SessionID
+}
+
+func (q *Queries) CancelRunningReviewRunsBySession(ctx context.Context, arg CancelRunningReviewRunsBySessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelRunningReviewRunsBySession, arg.Body, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getReviewBySession = `-- name: GetReviewBySession :one
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
 FROM review WHERE session_id = ?
@@ -184,6 +201,48 @@ FROM review_run WHERE session_id = ? ORDER BY created_at DESC
 
 func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.SessionID) ([]ReviewRun, error) {
 	rows, err := q.db.QueryContext(ctx, listReviewRunsBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReviewRun{}
+	for rows.Next() {
+		var i ReviewRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReviewID,
+			&i.SessionID,
+			&i.Harness,
+			&i.PRURL,
+			&i.TargetSha,
+			&i.Status,
+			&i.Verdict,
+			&i.Body,
+			&i.CreatedAt,
+			&i.GithubReviewID,
+			&i.DeliveredAt,
+			&i.BatchID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunningReviewRunsBySession = `-- name: ListRunningReviewRunsBySession :many
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+FROM review_run WHERE session_id = ? AND status = 'running' AND verdict = '' ORDER BY created_at DESC
+`
+
+func (q *Queries) ListRunningReviewRunsBySession(ctx context.Context, sessionID domain.SessionID) ([]ReviewRun, error) {
+	rows, err := q.db.QueryContext(ctx, listRunningReviewRunsBySession, sessionID)
 	if err != nil {
 		return nil, err
 	}
