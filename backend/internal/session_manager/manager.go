@@ -1099,6 +1099,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		Kind:          rec.Kind,
 		SessionPrefix: sessionPrefix(project),
 		Branch:        meta.Branch,
+		RestorePath:   meta.WorkspacePath,
 		Mode:          mode,
 	})
 	if err != nil {
@@ -1383,6 +1384,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 		Kind:          rec.Kind,
 		SessionPrefix: sessionPrefix(project),
 		Branch:        meta.Branch,
+		RestorePath:   meta.WorkspacePath,
 		Mode:          sessionWorkspaceMode(meta),
 	})
 	if err != nil {
@@ -1782,6 +1784,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
+			RestorePath:   rec.Metadata.WorkspacePath,
 			Mode:          sessionWorkspaceMode(rec.Metadata),
 		})
 		if err != nil {

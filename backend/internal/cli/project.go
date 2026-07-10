@@ -171,6 +171,7 @@ func (r setConfigRequest) MarshalJSON() ([]byte, error) {
 type projectSetConfigOptions struct {
 	defaultBranch                string
 	projectPrefix                string
+	legacySessionPrefix          string
 	workspace                    string
 	model                        string
 	permission                   string
@@ -355,6 +356,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 			if opts.clear && trackerConfigFlagChanged(cmd) {
 				return usageError{errors.New("usage: tracker intake flags cannot be combined with --clear; clear sends an explicit trackerIntake disable sentinel")}
 			}
+			if err := normalizeProjectPrefixFlags(cmd, &opts); err != nil {
+				return err
+			}
 			config, err := buildProjectConfig(opts)
 			if err != nil {
 				return err
@@ -391,7 +395,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
 	f.StringVar(&opts.projectPrefix, "project-prefix", "", "Short project-wide prefix for names, branches, and worktrees")
-	f.StringVar(&opts.projectPrefix, "session-prefix", "", "Deprecated alias for --project-prefix")
+	f.StringVar(&opts.legacySessionPrefix, "session-prefix", "", "Deprecated alias for --project-prefix")
 	f.StringVar(&opts.workspace, "workspace", "", "Session workspace mode: worktree (default) or in-place")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
@@ -426,6 +430,19 @@ func (c *commandContext) mergedProjectConfigFromFlags(cmd *cobra.Command, id str
 	}
 	applyProjectConfigFlagPatch(&base, patch, cmd)
 	return base, nil
+}
+
+func normalizeProjectPrefixFlags(cmd *cobra.Command, opts *projectSetConfigOptions) error {
+	flags := cmd.Flags()
+	projectChanged := flags.Changed("project-prefix")
+	legacyChanged := flags.Changed("session-prefix")
+	if projectChanged && legacyChanged && opts.projectPrefix != opts.legacySessionPrefix {
+		return usageError{errors.New("usage: --project-prefix and --session-prefix disagree; use --project-prefix")}
+	}
+	if !projectChanged && legacyChanged {
+		opts.projectPrefix = opts.legacySessionPrefix
+	}
+	return nil
 }
 
 func applyProjectConfigFlagPatch(base *projectConfig, patch projectConfig, cmd *cobra.Command) {

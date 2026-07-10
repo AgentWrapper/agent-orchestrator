@@ -328,6 +328,22 @@ func TestBuildProjectConfigWorkspaceFlag(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfigRejectsConflictingProjectPrefixAliases(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{}}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--project-prefix", "new", "--session-prefix", "old")
+	if err == nil {
+		t.Fatal("expected conflicting prefix flags to fail")
+	}
+	if !strings.Contains(err.Error(), "--project-prefix and --session-prefix disagree") {
+		t.Fatalf("error = %q, want conflicting prefix message", err)
+	}
+}
+
 // TestBuildProjectConfigWorkspaceConfigJSON is the CLI-side half of the
 // silent-drop guard: --config-json must carry BOTH the top-level and per-role
 // workspace mode into the mirror, and re-marshaling the mirror (exactly what

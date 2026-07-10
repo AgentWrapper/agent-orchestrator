@@ -1756,6 +1756,35 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 		t.Fatal("restore should relaunch")
 	}
 }
+
+func TestRestore_UsesPersistedWorkspacePathAfterProjectPrefixChange(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		ProjectPrefix: "new",
+		Orchestrator:  domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}}
+	oldPath := "/ws/mer/orchestrator/old-orchestrator"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:           "mer-orch",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		Harness:      domain.HarnessClaudeCode,
+		Metadata:     domain.SessionMetadata{WorkspacePath: oldPath, Branch: "ao/mer-orchestrator", AgentSessionID: "agent-x"},
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+
+	if _, err := m.Restore(ctx, "mer-orch"); err != nil {
+		t.Fatal(err)
+	}
+	if ws.lastCfg.RestorePath != oldPath {
+		t.Fatalf("restore path = %q, want persisted path %q", ws.lastCfg.RestorePath, oldPath)
+	}
+	if ws.lastCfg.SessionPrefix != "new" {
+		t.Fatalf("session prefix = %q, want current display prefix new", ws.lastCfg.SessionPrefix)
+	}
+}
+
 func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "restore-model"}}}

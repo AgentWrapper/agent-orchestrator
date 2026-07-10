@@ -247,6 +247,42 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 }
 
+func TestRestoreUsesPersistedPathOverCurrentPrefix(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	oldPath := filepath.Join(ws.managedRoot, "proj", "orchestrator", "old-orchestrator")
+	cfg := ports.WorkspaceConfig{
+		ProjectID:     "proj",
+		SessionID:     "proj-1",
+		Kind:          domain.KindOrchestrator,
+		SessionPrefix: "new",
+		Branch:        "ao/proj-orchestrator",
+		RestorePath:   oldPath,
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + oldPath + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Restore(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if info.Path != oldPath {
+		t.Fatalf("restore path = %q, want persisted path %q", info.Path, oldPath)
+	}
+}
+
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join
 // in managedPath cleans `..` segments before validateManagedPath sees them, so a
 // session id of "../other" would stay inside managedRoot while jumping projects.
