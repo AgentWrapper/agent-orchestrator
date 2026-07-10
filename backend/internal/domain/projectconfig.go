@@ -7,6 +7,36 @@ import (
 	"strings"
 )
 
+// WorkspaceMode selects how the daemon provisions a session's working
+// directory. It is resolved at spawn (top-level default plus a per-role
+// override) and persisted per session so a later config flip never relocates an
+// already-running session.
+type WorkspaceMode string
+
+const (
+	// WorkspaceModeWorktree is the default: the daemon creates a private git
+	// worktree per session under its managed root and checks out an
+	// `ao/<sid>/root` branch there.
+	WorkspaceModeWorktree WorkspaceMode = "worktree"
+	// WorkspaceModeInPlace starts the session at the project's repo root and does
+	// nothing more — no daemon-created branch, no daemon-created worktree. The
+	// shared root stays read-only ground truth owned by the operator's SDLC
+	// skills.
+	WorkspaceModeInPlace WorkspaceMode = "in-place"
+)
+
+// IsKnown reports whether m is one of the supported workspace modes. The empty
+// string is NOT known: it is the zero value, which resolution treats as the
+// built-in default (worktree) rather than an explicit selection.
+func (m WorkspaceMode) IsKnown() bool {
+	switch m {
+	case WorkspaceModeWorktree, WorkspaceModeInPlace:
+		return true
+	default:
+		return false
+	}
+}
+
 // ProjectConfig is the typed per-project configuration — the SQLite twin of the
 // legacy agent-orchestrator.yaml `projects.<id>` block. It is persisted as one
 // JSON blob per project and resolved at spawn. Each field is typed and
@@ -21,6 +51,11 @@ type ProjectConfig struct {
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 	// SessionPrefix overrides the displayed session-id prefix.
 	SessionPrefix string `json:"sessionPrefix,omitempty"`
+	// Workspace is the project-wide default workspace mode. Empty resolves to
+	// WorkspaceModeWorktree (today's behavior), so existing projects are
+	// unchanged on upgrade. A per-role override (Worker/Orchestrator) wins over
+	// this value; see ResolveWorkspaceMode.
+	Workspace WorkspaceMode `json:"workspace,omitempty" enum:"worktree,in-place"`
 
 	// Env are extra environment variables forwarded into worker session
 	// runtimes. AO-internal vars (AO_SESSION, AO_PROJECT_ID, …) always win.
@@ -74,10 +109,37 @@ func (c ProjectConfig) ResolveReviewerHarness(_ AgentHarness) ReviewerHarness {
 	return FallbackReviewerHarness
 }
 
+// ResolveWorkspaceMode picks the workspace mode for a session of the given kind.
+// Precedence mirrors ResolveReviewerHarness: the matching role override wins
+// (Worker for KindWorker, Orchestrator for KindOrchestrator), else the top-level
+// ProjectConfig.Workspace, else the built-in WorkspaceModeWorktree default. It
+// never returns "": an empty configured value (IsKnown reports false) is treated
+// as "unset" and falls through to the next precedence tier.
+func (c ProjectConfig) ResolveWorkspaceMode(kind SessionKind) WorkspaceMode {
+	var ro RoleOverride
+	switch kind {
+	case KindWorker:
+		ro = c.Worker
+	case KindOrchestrator:
+		ro = c.Orchestrator
+	}
+	if ro.Workspace.IsKnown() {
+		return ro.Workspace
+	}
+	if c.Workspace.IsKnown() {
+		return c.Workspace
+	}
+	return WorkspaceModeWorktree
+}
+
 // RoleOverride overrides the harness and/or agent config for a session role.
 type RoleOverride struct {
 	Harness     AgentHarness `json:"agent,omitempty"`
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
+	// Workspace overrides the workspace mode for this role. Empty defers to the
+	// top-level ProjectConfig.Workspace (and ultimately the worktree default);
+	// see ResolveWorkspaceMode.
+	Workspace WorkspaceMode `json:"workspace,omitempty" enum:"worktree,in-place"`
 	// InstructionsFile is an optional path to a file whose contents the daemon
 	// appends to this role's built-in system prompt at spawn and restore. It
 	// lets a project carry its own standing policy per role (orchestrator vs
@@ -126,9 +188,15 @@ func (c ProjectConfig) Validate() error {
 	if err := validateNameComponent("sessionPrefix", c.SessionPrefix); err != nil {
 		return err
 	}
+	if c.Workspace != "" && !c.Workspace.IsKnown() {
+		return fmt.Errorf("workspace: unknown mode %q", c.Workspace)
+	}
 	for role, ro := range map[string]RoleOverride{"worker": c.Worker, "orchestrator": c.Orchestrator} {
 		if ro.Harness != "" && !ro.Harness.IsKnown() {
 			return fmt.Errorf("%s.agent: unknown harness %q", role, ro.Harness)
+		}
+		if ro.Workspace != "" && !ro.Workspace.IsKnown() {
+			return fmt.Errorf("%s.workspace: unknown mode %q", role, ro.Workspace)
 		}
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)

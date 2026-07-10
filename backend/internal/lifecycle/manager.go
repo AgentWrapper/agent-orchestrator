@@ -572,6 +572,12 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	if metadata.Branch != "" {
 		rec.Metadata.Branch = metadata.Branch
 	}
+	// Carry the workspace mode across a harness switch for the same reason the
+	// path and branch are carried: losing it would silently demote an in-place
+	// session to worktree on the next restore.
+	if metadata.WorkspaceMode.IsKnown() {
+		rec.Metadata.WorkspaceMode = metadata.WorkspaceMode
+	}
 	rec.Metadata.Model = metadata.Model
 	if metadata.LaunchedHarnesses != nil {
 		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
@@ -627,6 +633,15 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.Prompt, in.Prompt)
 	set(&base.Model, in.Model)
 	set(&base.PreviewURL, in.PreviewURL)
+	// WorkspaceMode is not a plain string merge: the zero value is meaningful
+	// (it reads as "worktree" for every session spawned before the field
+	// existed), so only a known mode may overwrite the base. Dropping it here
+	// would persist "" for an in-place session, which normalizes back to
+	// worktree on the next restore and relocates the session into a worktree
+	// it never had.
+	if in.WorkspaceMode.IsKnown() {
+		base.WorkspaceMode = in.WorkspaceMode
+	}
 	if in.PreviewRevision != 0 {
 		base.PreviewRevision = in.PreviewRevision
 	}

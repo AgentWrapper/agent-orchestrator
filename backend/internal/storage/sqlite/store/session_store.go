@@ -207,6 +207,7 @@ type sessionRow struct {
 	AgentSessionID    string
 	Prompt            string
 	Model             string
+	WorkspaceMode     string
 	PreviewURL        string
 	PreviewRevision   int64
 	LaunchedHarnesses string
@@ -233,6 +234,7 @@ func getSessionRow(row gen.GetSessionRow) sessionRow {
 		AgentSessionID:    row.AgentSessionID,
 		Prompt:            row.Prompt,
 		Model:             row.Model,
+		WorkspaceMode:     row.WorkspaceMode,
 		PreviewURL:        row.PreviewURL,
 		PreviewRevision:   row.PreviewRevision,
 		LaunchedHarnesses: row.LaunchedHarnesses,
@@ -260,6 +262,7 @@ func listSessionsByProjectRow(row gen.ListSessionsByProjectRow) sessionRow {
 		AgentSessionID:    row.AgentSessionID,
 		Prompt:            row.Prompt,
 		Model:             row.Model,
+		WorkspaceMode:     row.WorkspaceMode,
 		PreviewURL:        row.PreviewURL,
 		PreviewRevision:   row.PreviewRevision,
 		LaunchedHarnesses: row.LaunchedHarnesses,
@@ -287,6 +290,7 @@ func listAllSessionsRow(row gen.ListAllSessionsRow) sessionRow {
 		AgentSessionID:    row.AgentSessionID,
 		Prompt:            row.Prompt,
 		Model:             row.Model,
+		WorkspaceMode:     row.WorkspaceMode,
 		PreviewURL:        row.PreviewURL,
 		PreviewRevision:   row.PreviewRevision,
 		LaunchedHarnesses: row.LaunchedHarnesses,
@@ -317,6 +321,7 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 			AgentSessionID:    row.AgentSessionID,
 			Prompt:            row.Prompt,
 			Model:             row.Model,
+			WorkspaceMode:     domain.WorkspaceMode(row.WorkspaceMode),
 			IntakePoolBypass:  intakePoolBypass(row.LaunchedHarnesses),
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
@@ -349,6 +354,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		AgentSessionID:    rec.Metadata.AgentSessionID,
 		Prompt:            rec.Metadata.Prompt,
 		Model:             rec.Metadata.Model,
+		WorkspaceMode:     string(rec.Metadata.WorkspaceMode),
 		PreviewURL:        rec.Metadata.PreviewURL,
 		PreviewRevision:   rec.Metadata.PreviewRevision,
 		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),
@@ -376,6 +382,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		AgentSessionID:    rec.Metadata.AgentSessionID,
 		Prompt:            rec.Metadata.Prompt,
 		Model:             rec.Metadata.Model,
+		WorkspaceMode:     string(rec.Metadata.WorkspaceMode),
 		PreviewURL:        rec.Metadata.PreviewURL,
 		PreviewRevision:   rec.Metadata.PreviewRevision,
 		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),

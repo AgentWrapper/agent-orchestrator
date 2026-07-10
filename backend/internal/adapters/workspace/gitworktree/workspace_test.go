@@ -96,6 +96,42 @@ func TestParseWorktreePorcelain(t *testing.T) {
 	}
 }
 
+func TestCreateInPlaceRejectsNonGitRepo(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	notRepo := filepath.Join(tmp, "plain")
+	if err := os.MkdirAll(notRepo, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": notRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Mode: domain.WorkspaceModeInPlace})
+	if err == nil {
+		t.Fatal("expected an error creating an in-place workspace on a non-git directory")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("error = %v, want it to report a non-git repository", err)
+	}
+}
+
+func TestCreateInPlaceRejectsBranch(t *testing.T) {
+	// The branch is rejected before any repo resolution, so the fake repo path is
+	// never touched: the daemon must not check out a branch in the shared root.
+	ws, err := New(Options{Binary: "git", ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": "/nonexistent/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/x", Mode: domain.WorkspaceModeInPlace})
+	if err == nil {
+		t.Fatal("expected an error: in-place mode must reject an explicit branch")
+	}
+	if !strings.Contains(err.Error(), "in-place mode does not create a branch") {
+		t.Fatalf("error = %v, want the branch-rejection message", err)
+	}
+}
+
 func TestManagedPathSafety(t *testing.T) {
 	root := t.TempDir()
 	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": root}})

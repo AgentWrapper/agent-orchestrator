@@ -396,6 +396,10 @@ type fakeWorkspace struct {
 	// path, when set, is returned as the workspace path so provisioning tests
 	// can point at a real temp directory.
 	path string
+	// inPlacePath, when set, is returned as the workspace path in in-place mode
+	// (standing in for the resolved project repo root). Empty derives it from the
+	// project id, mirroring the real adapter resolving RepoPath(projectID).
+	inPlacePath string
 	// stashRef is returned by StashUncommitted (empty means clean worktree).
 	stashRef        string
 	stashErr        error
@@ -416,11 +420,21 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 		return ports.WorkspaceInfo{}, w.createErr
 	}
 	w.lastCfg = cfg
+	// Mirror the real adapter in in-place mode: resolve the project's repo root
+	// (never a per-session path) and check out no branch, so manager tests can
+	// assert the session's cwd and the empty branch.
+	if cfg.Mode == domain.WorkspaceModeInPlace {
+		path := w.inPlacePath
+		if path == "" {
+			path = "/repo/" + string(cfg.ProjectID)
+		}
+		return ports.WorkspaceInfo{Path: path, Branch: "", Mode: domain.WorkspaceModeInPlace, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	}
 	path := w.path
 	if path == "" {
 		path = "/ws/" + string(cfg.SessionID)
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, Mode: domain.WorkspaceModeWorktree, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 
 type blockingWorkspace struct {
@@ -443,7 +457,13 @@ func (w *blockingWorkspace) Create(ctx context.Context, cfg ports.WorkspaceConfi
 	return w.fakeWorkspace.Create(ctx, cfg)
 }
 
-func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
+func (w *fakeWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) error {
+	// In-place teardown is a no-op in the real adapter (the shared repo root is
+	// never removed); mirror that so a test asserting destroyed==0 for an in-place
+	// session is meaningful.
+	if info.Mode == domain.WorkspaceModeInPlace {
+		return nil
+	}
 	w.destroyed++
 	return w.destroyErr
 }
@@ -454,6 +474,11 @@ func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) 
 	return w.Create(ctx, cfg)
 }
 func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo) error {
+	// The real adapter no-ops ForceDestroy for an in-place session (the shared
+	// root is never removed); mirror that by not recording the call.
+	if info.Mode == domain.WorkspaceModeInPlace {
+		return nil
+	}
 	entry := "ForceDestroy:" + string(info.SessionID)
 	w.calls = append(w.calls, entry)
 	if w.sharedLog != nil {
@@ -462,6 +487,12 @@ func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo
 	return w.forceDestroyErr
 }
 func (w *fakeWorkspace) StashUncommitted(_ context.Context, info ports.WorkspaceInfo) (string, error) {
+	// The real adapter no-ops StashUncommitted for an in-place session (nothing
+	// session-scoped to save in the shared root); mirror that so an in-place
+	// marker row always carries an empty preserve ref.
+	if info.Mode == domain.WorkspaceModeInPlace {
+		return "", nil
+	}
 	w.stashCalls++
 	entry := "StashUncommitted:" + string(info.SessionID)
 	w.calls = append(w.calls, entry)

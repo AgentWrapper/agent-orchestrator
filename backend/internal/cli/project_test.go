@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type projectCapture struct {
@@ -136,6 +138,75 @@ func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 		got.TrackerIntake.MaxConcurrent != 4 {
 		t.Fatalf("tracker intake config = %#v", got.TrackerIntake)
 	}
+}
+
+func TestBuildProjectConfigWorkspaceFlag(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{workspace: "in-place"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Workspace != "in-place" {
+		t.Fatalf("workspace = %q, want in-place", got.Workspace)
+	}
+}
+
+// TestBuildProjectConfigWorkspaceConfigJSON is the CLI-side half of the
+// silent-drop guard: --config-json must carry BOTH the top-level and per-role
+// workspace mode into the mirror, and re-marshaling the mirror (exactly what
+// postJSON puts on the wire) must decode into domain.ProjectConfig with both
+// values intact. A field missing from the mirror would unmarshal fine here yet
+// vanish on the round trip, so the domain decode below would see the zero value.
+// The daemon's validator is the gate for an unknown mode, so we assert it
+// accepts the known modes and rejects a bogus one with a field-named error.
+func TestBuildProjectConfigWorkspaceConfigJSON(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{
+		configJSON: `{"workspace":"in-place","worker":{"workspace":"in-place"}}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Workspace != "in-place" || got.Worker.Workspace != "in-place" {
+		t.Fatalf("workspace round-trip = top-level:%q worker:%q, want in-place/in-place", got.Workspace, got.Worker.Workspace)
+	}
+
+	domainCfg := marshalToDomainConfig(t, got)
+	if domainCfg.Workspace != domain.WorkspaceModeInPlace || domainCfg.Worker.Workspace != domain.WorkspaceModeInPlace {
+		t.Fatalf("domain decode = top-level:%q worker:%q, want in-place/in-place (mirror dropped a field?)", domainCfg.Workspace, domainCfg.Worker.Workspace)
+	}
+	if err := domainCfg.Validate(); err != nil {
+		t.Fatalf("known workspace modes rejected by validator: %v", err)
+	}
+
+	bogus, err := buildProjectConfig(projectSetConfigOptions{configJSON: `{"workspace":"bogus"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bogus.Workspace != "bogus" {
+		t.Fatalf("bogus workspace = %q, want passthrough of \"bogus\"", bogus.Workspace)
+	}
+	err = marshalToDomainConfig(t, bogus).Validate()
+	if err == nil {
+		t.Fatal("expected an error for an unknown workspace mode, got nil")
+	}
+	if !strings.Contains(err.Error(), "workspace") || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("error = %q, want it to name the workspace field and the bad value", err)
+	}
+}
+
+// marshalToDomainConfig sends the CLI mirror through the exact JSON encode the
+// CLI client performs and decodes it into the daemon's canonical domain type,
+// so a drift between the two structs' json tags surfaces as a lost field.
+func marshalToDomainConfig(t *testing.T, cfg projectConfig) domain.ProjectConfig {
+	t.Helper()
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal mirror config: %v", err)
+	}
+	var out domain.ProjectConfig
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("decode into domain config: %v\nbody=%s", err, data)
+	}
+	return out
 }
 
 func TestBuildProjectConfigRoleInstructionsFileFlags(t *testing.T) {

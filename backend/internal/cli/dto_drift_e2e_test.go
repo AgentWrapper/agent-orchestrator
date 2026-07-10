@@ -140,7 +140,8 @@ func authorizedCodexInventory() agentsvc.Inventory {
 // the CLI's request body. Every other method is a no-op so it satisfies the
 // projectsvc.Manager interface.
 type fakeProjectManager struct {
-	added projectsvc.AddInput
+	added      projectsvc.AddInput
+	configured projectsvc.SetConfigInput
 }
 
 var _ projectsvc.Manager = (*fakeProjectManager)(nil)
@@ -164,6 +165,7 @@ func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (pro
 }
 
 func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, in projectsvc.SetConfigInput) (projectsvc.Project, error) {
+	f.configured = in
 	cfg := in.Config
 	return projectsvc.Project{ID: id, Config: &cfg}, nil
 }
@@ -298,6 +300,44 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 		}
 		if !bytes.Contains(out.Bytes(), []byte("registered project")) {
 			t.Errorf("output missing %q; got: %s", "registered project", out.String())
+		}
+	})
+
+	// project set-config exercises the CLI's projectConfig mirror (project.go)
+	// against the daemon's canonical domain.ProjectConfig decode. A key absent
+	// from the mirror unmarshals fine on the CLI side but is silently dropped
+	// before it ever reaches the wire, so the captured domain value is the zero
+	// value. Driving --config-json for both the top-level and per-role workspace
+	// mode catches exactly that drop: the fields must survive the CLI mirror →
+	// JSON → controller → domain round trip with their values intact.
+	t.Run("project set-config workspace round-trip", func(t *testing.T) {
+		projects := &fakeProjectManager{}
+		startDriftTestDaemon(t, &fakeSessionService{}, projects)
+
+		var out bytes.Buffer
+		root := NewRootCommand(Deps{
+			Out:          &out,
+			Err:          &out,
+			HTTPClient:   &http.Client{},
+			ProcessAlive: func(int) bool { return true },
+		})
+		root.SetArgs([]string{
+			"project", "set-config", "demo",
+			"--config-json", `{"workspace":"in-place","worker":{"workspace":"in-place"}}`,
+		})
+		if err := root.Execute(); err != nil {
+			t.Fatalf("set-config execute: %v\noutput: %s", err, out.String())
+		}
+
+		got := projects.configured.Config
+		if got.Workspace != domain.WorkspaceModeInPlace {
+			t.Errorf("Config.Workspace = %q, want %q (CLI json:\"workspace\" dropped before the wire?)", got.Workspace, domain.WorkspaceModeInPlace)
+		}
+		if got.Worker.Workspace != domain.WorkspaceModeInPlace {
+			t.Errorf("Config.Worker.Workspace = %q, want %q (CLI roleOverride json:\"workspace\" dropped before the wire?)", got.Worker.Workspace, domain.WorkspaceModeInPlace)
+		}
+		if !bytes.Contains(out.Bytes(), []byte("updated config")) {
+			t.Errorf("output missing %q; got: %s", "updated config", out.String())
 		}
 	})
 }

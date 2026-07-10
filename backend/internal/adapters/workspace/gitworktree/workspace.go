@@ -115,9 +115,23 @@ func New(opts Options) (*Workspace, error) {
 	}, nil
 }
 
+// inPlace reports whether cfg/info selects in-place mode — the session runs at
+// the project's repo root with no daemon-created branch or worktree.
+func (w *Workspace) inPlace(mode domain.WorkspaceMode) bool {
+	return mode == domain.WorkspaceModeInPlace
+}
+
 // Create adds a git worktree for the session under the managed root, checking
 // out the requested branch, and returns where it landed.
+//
+// In in-place mode it creates nothing: it resolves the project's repo root,
+// verifies it is a git repository, and returns it as the workspace. No
+// `git worktree add`, no branch — the shared root is read-only ground truth
+// owned by the operator's SDLC skills.
 func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	if w.inPlace(cfg.Mode) {
+		return w.resolveInPlace(ctx, cfg)
+	}
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -140,12 +154,65 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, Mode: domain.WorkspaceModeWorktree, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+}
+
+// resolveInPlace backs both Create and Restore in in-place mode: it returns the
+// project's repo root as the workspace without touching git. It is idempotent —
+// there is no per-session state to create or restore — so a restarted daemon
+// lands the session at the same path.
+//
+// The repo path is returned verbatim from the resolver (not symlink-canonical)
+// so the session's cwd matches the path the operator's SDLC skills use, which is
+// what the harness's working-directory-keyed session picker keys on.
+//
+// A branch under in-place mode is a hard error: honoring it would mean checking
+// out a branch in the operator's shared root, which is precisely what the mode
+// forbids.
+func (w *Workspace) resolveInPlace(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	if cfg.ProjectID == "" {
+		return ports.WorkspaceInfo{}, errors.New("gitworktree: project id is required")
+	}
+	if err := validatePathComponent("project id", string(cfg.ProjectID)); err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	if cfg.Branch != "" {
+		return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: in-place mode does not create a branch, but %q was requested — the daemon must not check out a branch in the shared repo root", cfg.Branch)
+	}
+	repo, err := w.repos.RepoPath(cfg.ProjectID)
+	if err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	if repo == "" {
+		return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: no repo configured for project %q", cfg.ProjectID)
+	}
+	if err := w.ensureGitRepo(ctx, repo); err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	return ports.WorkspaceInfo{Path: repo, Branch: "", Mode: domain.WorkspaceModeInPlace, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+}
+
+// ensureGitRepo verifies that repo exists on disk and is a git repository, so an
+// in-place session fails fast with a clear error rather than launching an agent
+// in a directory git cannot operate on.
+func (w *Workspace) ensureGitRepo(ctx context.Context, repo string) error {
+	if _, err := os.Stat(repo); err != nil {
+		return fmt.Errorf("gitworktree: in-place repo path %q: %w", repo, err)
+	}
+	if _, err := w.run(ctx, w.binary, "-C", repo, "rev-parse", "--git-dir"); err != nil {
+		return fmt.Errorf("gitworktree: in-place repo path %q is not a git repository: %w", repo, err)
+	}
+	return nil
 }
 
 // Destroy removes the session's worktree and prunes it from the repo, refusing
 // (rather than force-deleting) if git still has the path registered afterwards.
 func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	if w.inPlace(info.Mode) {
+		// The repo root is git's main worktree and read-only ground truth: never
+		// removed, never pruned. Teardown of an in-place session is a no-op.
+		return nil
+	}
 	if info.ProjectID == "" {
 		return errors.New("gitworktree: project id is required")
 	}
@@ -201,6 +268,10 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 // discards agent work. For interactive teardown (ao session kill, ao cleanup)
 // use Destroy, which refuses dirty worktrees via ErrWorkspaceDirty.
 func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	if w.inPlace(info.Mode) {
+		// Same rationale as Destroy: the shared repo root is never removed.
+		return nil
+	}
 	if info.ProjectID == "" {
 		return errors.New("gitworktree: project id is required")
 	}
@@ -241,6 +312,12 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 // Returns the full ref name (e.g. "refs/ao/preserved/sess-1"). Returns an
 // empty string (and no error) if the worktree is clean.
 func (w *Workspace) StashUncommitted(ctx context.Context, info ports.WorkspaceInfo) (string, error) {
+	if w.inPlace(info.Mode) {
+		// The shared root is not the session's private tree: a preserve ref built
+		// from it would capture whatever the operator or another agent has in
+		// flight. There is nothing session-scoped to save.
+		return "", nil
+	}
 	if info.Path == "" {
 		return "", fmt.Errorf("%w: empty path", ErrUnsafePath)
 	}
@@ -365,6 +442,15 @@ func (w *Workspace) countIgnoredPaths(ctx context.Context, worktree string) (int
 //
 // NEVER deletes the preserve ref on a failed or conflicted apply.
 func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo, ref string) error {
+	if w.inPlace(info.Mode) {
+		// An in-place session never produces a preserve ref (StashUncommitted is a
+		// no-op), so an empty ref is the expected path and applies nothing. A
+		// non-empty ref must never be replayed onto the shared root.
+		if ref == "" {
+			return nil
+		}
+		return fmt.Errorf("gitworktree: ApplyPreserved: refusing to apply preserved ref %q to in-place workspace %q — the shared repo root is never mutated by the daemon", ref, info.Path)
+	}
 	if info.Path == "" {
 		return fmt.Errorf("%w: empty path", ErrUnsafePath)
 	}
@@ -420,6 +506,11 @@ func (w *Workspace) runCherryPickNoCommit(ctx context.Context, worktree, commitS
 // Restore re-attaches to an existing worktree for the session if one is still
 // present, recreating the handle without disturbing its contents.
 func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	if w.inPlace(cfg.Mode) {
+		// In-place restore is identical to create: resolve the repo root, no git
+		// mutation. It is idempotent across daemon restarts.
+		return w.resolveInPlace(ctx, cfg)
+	}
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -440,7 +531,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		if branch == "" {
 			branch = cfg.Branch
 		}
-		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+		return ports.WorkspaceInfo{Path: path, Branch: branch, Mode: domain.WorkspaceModeWorktree, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 	}
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -453,7 +544,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, Mode: domain.WorkspaceModeWorktree, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 
 func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, bool, error) {
@@ -466,7 +557,7 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		if branch == "" {
 			branch = cfg.Branch
 		}
-		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
+		return ports.WorkspaceInfo{Path: path, Branch: branch, Mode: domain.WorkspaceModeWorktree, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
 	}
 	return ports.WorkspaceInfo{}, false, nil
 }

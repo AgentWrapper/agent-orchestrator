@@ -700,6 +700,8 @@ func toAPIError(err error) error {
 		return apierr.Conflict("WORKER_CONCURRENCY_CAP", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrModelHarnessMismatch):
 		return apierr.Invalid("MODEL_HARNESS_MISMATCH", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrBranchNotAllowedInPlace):
+		return apierr.Invalid("BRANCH_NOT_ALLOWED_IN_PLACE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

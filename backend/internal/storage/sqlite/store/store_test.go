@@ -324,6 +324,62 @@ func TestSessionFirstSignalRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSessionWorkspaceModeRoundTrip asserts the workspace mode survives the
+// real column-mapped store on both Create→Get and Update→Get, and that a row
+// written with an empty mode reads back empty (the pre-upgrade shape the
+// session manager normalizes to worktree) rather than being defaulted to some
+// other value at the SQL layer. Without a workspace_mode column an in-place
+// session silently becomes a worktree session on the first store round-trip.
+func TestSessionWorkspaceModeRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	// Create with an explicit in-place mode → Get reads it back verbatim.
+	rec := sampleRecord("mer")
+	rec.Metadata.WorkspaceMode = domain.WorkspaceModeInPlace
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get after create: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.WorkspaceMode != domain.WorkspaceModeInPlace {
+		t.Fatalf("WorkspaceMode after Create→Get = %q, want %q", got.Metadata.WorkspaceMode, domain.WorkspaceModeInPlace)
+	}
+
+	// Update to worktree → Get reads back the updated mode.
+	got.Metadata.WorkspaceMode = domain.WorkspaceModeWorktree
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	again, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get after update: ok=%v err=%v", ok, err)
+	}
+	if again.Metadata.WorkspaceMode != domain.WorkspaceModeWorktree {
+		t.Fatalf("WorkspaceMode after Update→Get = %q, want %q", again.Metadata.WorkspaceMode, domain.WorkspaceModeWorktree)
+	}
+
+	// A row written with an empty mode reads back empty (not defaulted to
+	// "worktree" or anything else at the SQL layer) — the no-rug-pull shape.
+	empty := sampleRecord("mer")
+	empty.Metadata.WorkspaceMode = ""
+	createdEmpty, err := s.CreateSession(ctx, empty)
+	if err != nil {
+		t.Fatalf("create empty-mode: %v", err)
+	}
+	gotEmpty, ok, err := s.GetSession(ctx, createdEmpty.ID)
+	if err != nil || !ok {
+		t.Fatalf("get empty-mode: ok=%v err=%v", ok, err)
+	}
+	if gotEmpty.Metadata.WorkspaceMode != "" {
+		t.Fatalf("empty WorkspaceMode read back as %q, want empty string", gotEmpty.Metadata.WorkspaceMode)
+	}
+}
+
 func TestPRCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

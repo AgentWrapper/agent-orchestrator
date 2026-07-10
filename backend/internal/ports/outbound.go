@@ -183,6 +183,12 @@ type WorkspaceConfig struct {
 	// BaseBranch is the per-project default branch new session branches are
 	// created from. Empty falls back to the workspace adapter's own default.
 	BaseBranch string
+	// Mode selects how the workspace is provisioned. Empty means
+	// domain.WorkspaceModeWorktree (back-compat): the adapter creates a private
+	// git worktree and checks out Branch. domain.WorkspaceModeInPlace starts the
+	// session at the project's repo root and creates neither a branch nor a
+	// worktree.
+	Mode domain.WorkspaceMode
 }
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
@@ -191,4 +197,8 @@ type WorkspaceInfo struct {
 	Branch    string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
+	// Mode is the workspace mode this info describes, so the record is always
+	// self-describing rather than inferred from the path. Empty means
+	// domain.WorkspaceModeWorktree (back-compat).
+	Mode domain.WorkspaceMode
 }

@@ -70,6 +70,11 @@ var (
 	// agent/model bucket that this daemon has already failed to launch. AO must
 	// not silently substitute a different bucket for that spawn attempt.
 	ErrWorkerMixBucketDown = errors.New("session: worker mix bucket is down")
+	// ErrBranchNotAllowedInPlace means a spawn requested an explicit branch under
+	// in-place workspace mode. Honoring it would check out a branch in the shared
+	// repo root, which the mode forbids, so the spawn fails loudly before any
+	// durable state is created. The API maps it to a 400.
+	ErrBranchNotAllowedInPlace = errors.New("session: a branch cannot be checked out in the shared repo root under in-place workspace mode")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -427,6 +432,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
 
+	// Resolve the workspace mode once (role override → top-level → worktree) and
+	// persist it later in metadata so a config flip never relocates this session
+	// on restart. Reject an explicit branch under in-place BEFORE any durable
+	// state exists: honoring it would check out a branch in the shared repo root,
+	// which the mode forbids, and rolling back a half-created session is avoidable
+	// noise when the request is invalid up front.
+	mode := project.Config.ResolveWorkspaceMode(cfg.Kind)
+	if mode == domain.WorkspaceModeInPlace && cfg.Branch != "" {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w (requested %q)", ErrBranchNotAllowedInPlace, cfg.Branch)
+	}
+
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
@@ -434,8 +450,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	id := rec.ID
 	unlockSpawn()
 
+	// A daemon-created session branch only exists in worktree mode. In-place mode
+	// starts the session at the repo root and checks out nothing, so the branch
+	// stays empty (the explicit-branch case was already rejected above).
 	branch := cfg.Branch
-	if branch == "" {
+	if branch == "" && mode == domain.WorkspaceModeWorktree {
 		branch = defaultSessionBranch(id, cfg.Kind, branchSessionPrefix(project, cfg.Kind))
 	}
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
@@ -445,6 +464,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionPrefix: sessionPrefix(project),
 		Branch:        branch,
 		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+		Mode:          mode,
 	})
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
@@ -456,10 +476,19 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
-	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
+	//
+	// In-place mode skips provisioning entirely: symlinks would write into the
+	// operator's read-only ground truth, and postCreate would re-run per session
+	// against a tree the operator already provisioned. The shared root is set up
+	// once, out of band, not per spawn.
+	if mode == domain.WorkspaceModeWorktree {
+		if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
+			_ = m.workspace.Destroy(ctx, ws)
+			m.rollbackSpawnSeedRow(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
+		}
+	} else {
+		m.logger.Info("spawn: in-place workspace mode; skipping per-project provisioning", "sessionID", id, "workspacePath", ws.Path)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
@@ -562,7 +591,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt, Model: strings.TrimSpace(cfg.Model), IntakePoolBypass: cfg.IntakePoolBypass}
+	// Persist the resolved mode so restore reads it back instead of recomputing
+	// from (possibly changed) project config — the no-rug-pull guarantee.
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceMode: mode, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt, Model: strings.TrimSpace(cfg.Model), IntakePoolBypass: cfg.IntakePoolBypass}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -964,7 +995,10 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
 		}
-		freed = true
+		// An in-place Destroy is a deliberate no-op: the shared repo root is never
+		// reclaimed. Reporting freed=true there would tell the caller a workspace
+		// was removed when the operator's tree is untouched.
+		freed = ws.Mode != domain.WorkspaceModeInPlace
 	}
 	return freed, nil
 }
@@ -1037,11 +1071,14 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
 	meta := rec.Metadata
+	mode := sessionWorkspaceMode(meta)
 	// Mirror Kill's incomplete-handle guard: a session whose spawn failed before
-	// the workspace landed has neither WorkspacePath nor Branch, and there is
-	// nothing meaningful to restore from. Surface this as a typed 409 instead of
-	// letting workspace.Restore fail with an opaque wrapped error.
-	if meta.WorkspacePath == "" || meta.Branch == "" {
+	// the workspace landed has no WorkspacePath, and there is nothing meaningful
+	// to restore from. A missing Branch means the same thing ONLY in worktree
+	// mode — an in-place session legitimately has no branch, so requiring one
+	// here would wrongly reject every in-place restore. Surface this as a typed
+	// 409 instead of letting workspace.Restore fail with an opaque wrapped error.
+	if meta.WorkspacePath == "" || (mode == domain.WorkspaceModeWorktree && meta.Branch == "") {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
 	// Resumability is decided inside restoreArgv, not here. A promptless session
@@ -1060,6 +1097,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		Kind:          rec.Kind,
 		SessionPrefix: sessionPrefix(project),
 		Branch:        meta.Branch,
+		Mode:          mode,
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: workspace: %w", id, err)
@@ -1101,7 +1139,9 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model, IntakePoolBypass: meta.IntakePoolBypass}
+	// Carry the resolved mode forward unchanged so a restored session keeps the
+	// workspace mode it was spawned with, never re-derived from current config.
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceMode: mode, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt, Model: meta.Model, IntakePoolBypass: meta.IntakePoolBypass}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
@@ -1146,8 +1186,10 @@ func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHar
 	}
 	meta := rec.Metadata
 	// Both the in-place swap and the relaunch-as path reuse the session's
-	// worktree, so its path and branch must exist.
-	if meta.WorkspacePath == "" || meta.Branch == "" {
+	// workspace, so its path must exist. A branch is only required in worktree
+	// mode — an in-place session legitimately has none, so gating on it would
+	// wrongly refuse to switch the harness of an in-place session.
+	if meta.WorkspacePath == "" || (sessionWorkspaceMode(meta) == domain.WorkspaceModeWorktree && meta.Branch == "") {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
 	}
 
@@ -1262,7 +1304,10 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 		_ = m.lcm.MarkTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
 	}
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	// Carry the persisted workspace mode through the switch: a live swap reuses
+	// the same workspace, so dropping the mode here would let a later restore read
+	// the zero value as worktree and relocate an in-place session (a rug-pull).
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.lcm.MarkTerminated(ctx, id)
@@ -1292,6 +1337,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 		Kind:          rec.Kind,
 		SessionPrefix: sessionPrefix(project),
 		Branch:        meta.Branch,
+		Mode:          sessionWorkspaceMode(meta),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: workspace: %w", id, err)
@@ -1329,7 +1375,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	// Persist the RESTORED worktree path/branch: a changed session prefix or
 	// managed root can restore to a different path, and a stale one would break
 	// later terminal/workspace/cleanup operations.
-	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
+	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
 	if err := m.lcm.MarkSwitched(ctx, id, newHarness, switched); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: completed: %w", id, err)
@@ -1405,7 +1451,12 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 		if rec.IsTerminated {
 			continue
 		}
-		if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		// Skip a session with no workspace at all (half-spawned). A missing branch
+		// only signals incomplete metadata in worktree mode; an in-place session
+		// has no branch by design and must still be torn down (marker row written,
+		// runtime destroyed) so RestoreAll relaunches it — the adapter no-ops the
+		// stash and force-destroy for it.
+		if rec.Metadata.WorkspacePath == "" || (sessionWorkspaceMode(rec.Metadata) == domain.WorkspaceModeWorktree && rec.Metadata.Branch == "") {
 			continue
 		}
 		if err := m.saveAndTeardownOne(ctx, rec); err != nil {
@@ -1477,7 +1528,11 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // worktree intact: better to skip the relaunch than to tear down un-preserved
 // work or relaunch onto an inconsistent worktree.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
-	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+	// Same mode-aware guard as SaveAndTeardownAll: a branch-less session is only
+	// "incomplete" in worktree mode. An in-place session has no branch by design,
+	// so it must fall through to be adopted (if alive) or terminated-with-marker
+	// (if dead) rather than be silently left looking live forever.
+	if rec.Metadata.WorkspacePath == "" || (sessionWorkspaceMode(rec.Metadata) == domain.WorkspaceModeWorktree && rec.Metadata.Branch == "") {
 		return nil
 	}
 	handle := runtimeHandle(rec.Metadata)
@@ -1666,6 +1721,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
+			Mode:          sessionWorkspaceMode(rec.Metadata),
 		})
 		if err != nil {
 			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", err)
@@ -1950,6 +2006,16 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		// (the lingering keep-alive shell) until cleanup reruns.
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
+		}
+		// An in-place workspace is the operator's shared repo root: it is never
+		// destroyed. It also bypasses the liveWorkspacePaths guard on purpose —
+		// EVERY in-place session shares the one root path, so that guard would mark
+		// each terminated in-place session permanently Skipped even though there is
+		// nothing to reclaim. Its runtime is already torn down above; count it as
+		// cleaned so reporting stays coherent.
+		if ws.Mode == domain.WorkspaceModeInPlace {
+			result.Cleaned = append(result.Cleaned, rec.ID)
+			continue
 		}
 		if liveWorkspaces[normalizeWorkspacePath(ws.Path)] {
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace in use by a live session"})
@@ -2732,7 +2798,21 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 	return ports.WorkspaceInfo{
 		Path:      rec.Metadata.WorkspacePath,
 		Branch:    rec.Metadata.Branch,
+		Mode:      sessionWorkspaceMode(rec.Metadata),
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 	}
+}
+
+// sessionWorkspaceMode reads a session's persisted workspace mode, normalizing
+// the zero value to worktree. Every session that predates the WorkspaceMode
+// field has an empty mode and MUST keep behaving as a worktree session across
+// the upgrade — this normalization is the no-rug-pull guarantee, applied on
+// every teardown/restore path so a config flip can never relocate an existing
+// session.
+func sessionWorkspaceMode(meta domain.SessionMetadata) domain.WorkspaceMode {
+	if meta.WorkspaceMode.IsKnown() {
+		return meta.WorkspaceMode
+	}
+	return domain.WorkspaceModeWorktree
 }

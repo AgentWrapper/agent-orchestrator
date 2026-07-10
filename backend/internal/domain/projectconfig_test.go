@@ -1,6 +1,10 @@
 package domain
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestProjectConfigValidate(t *testing.T) {
 	tests := []struct {
@@ -48,6 +52,12 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake exclude label with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", ExcludeLabels: []string{"agent:noauto "}}}, true},
 		{"tracker intake good max concurrent", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 4}}, false},
 		{"tracker intake negative max concurrent", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: -1}}, true},
+		{"good top-level workspace worktree", ProjectConfig{Workspace: WorkspaceModeWorktree}, false},
+		{"good top-level workspace in-place", ProjectConfig{Workspace: WorkspaceModeInPlace}, false},
+		{"unknown top-level workspace", ProjectConfig{Workspace: "cloud"}, true},
+		{"good worker workspace override", ProjectConfig{Worker: RoleOverride{Workspace: WorkspaceModeInPlace}}, false},
+		{"unknown worker workspace override", ProjectConfig{Worker: RoleOverride{Workspace: "cloud"}}, true},
+		{"unknown orchestrator workspace override", ProjectConfig{Orchestrator: RoleOverride{Workspace: "nope"}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,5 +148,110 @@ func TestProjectConfigIsZero(t *testing.T) {
 	}
 	if (ProjectConfig{Env: map[string]string{"A": "b"}}).IsZero() {
 		t.Fatal("config with env should not be zero")
+	}
+	// A config that sets no workspace mode is still zero: the default lives in
+	// ResolveWorkspaceMode, not in the stored config, so SQL-NULL persistence and
+	// IsZero() semantics are preserved.
+	if !(ProjectConfig{Workspace: ""}).IsZero() {
+		t.Fatal("config with empty workspace mode should be zero")
+	}
+	if (ProjectConfig{Workspace: WorkspaceModeInPlace}).IsZero() {
+		t.Fatal("config with an explicit workspace mode should not be zero")
+	}
+}
+
+func TestWorkspaceModeIsKnown(t *testing.T) {
+	if !WorkspaceModeWorktree.IsKnown() {
+		t.Fatal("worktree must be known")
+	}
+	if !WorkspaceModeInPlace.IsKnown() {
+		t.Fatal("in-place must be known")
+	}
+	// The zero value is deliberately NOT known: resolution treats it as "unset"
+	// and falls through to the default rather than as an explicit selection.
+	if WorkspaceMode("").IsKnown() {
+		t.Fatal("empty mode must not be known")
+	}
+	if WorkspaceMode("cloud").IsKnown() {
+		t.Fatal("unknown mode must not be known")
+	}
+}
+
+func TestResolveWorkspaceMode(t *testing.T) {
+	// No config at all: both kinds resolve to the worktree default, never "".
+	for _, kind := range []SessionKind{KindWorker, KindOrchestrator} {
+		if got := (ProjectConfig{}).ResolveWorkspaceMode(kind); got != WorkspaceModeWorktree {
+			t.Fatalf("default for %s = %q, want worktree", kind, got)
+		}
+	}
+
+	// Top-level default applies to both kinds when no role override is set.
+	cfg := ProjectConfig{Workspace: WorkspaceModeInPlace}
+	if got := cfg.ResolveWorkspaceMode(KindWorker); got != WorkspaceModeInPlace {
+		t.Fatalf("worker top-level = %q, want in-place", got)
+	}
+	if got := cfg.ResolveWorkspaceMode(KindOrchestrator); got != WorkspaceModeInPlace {
+		t.Fatalf("orchestrator top-level = %q, want in-place", got)
+	}
+
+	// The role override wins over the top-level default, per kind.
+	cfg = ProjectConfig{
+		Workspace:    WorkspaceModeInPlace,
+		Worker:       RoleOverride{Workspace: WorkspaceModeWorktree},
+		Orchestrator: RoleOverride{Workspace: WorkspaceModeInPlace},
+	}
+	if got := cfg.ResolveWorkspaceMode(KindWorker); got != WorkspaceModeWorktree {
+		t.Fatalf("worker override = %q, want worktree", got)
+	}
+	if got := cfg.ResolveWorkspaceMode(KindOrchestrator); got != WorkspaceModeInPlace {
+		t.Fatalf("orchestrator override = %q, want in-place", got)
+	}
+
+	// An empty role override defers to the top-level value, not the built-in
+	// default, so one role can override while the other inherits.
+	cfg = ProjectConfig{
+		Workspace:    WorkspaceModeInPlace,
+		Orchestrator: RoleOverride{Workspace: WorkspaceModeWorktree},
+	}
+	if got := cfg.ResolveWorkspaceMode(KindWorker); got != WorkspaceModeInPlace {
+		t.Fatalf("worker inherits top-level = %q, want in-place", got)
+	}
+	if got := cfg.ResolveWorkspaceMode(KindOrchestrator); got != WorkspaceModeWorktree {
+		t.Fatalf("orchestrator override = %q, want worktree", got)
+	}
+}
+
+func TestProjectConfigWorkspaceJSONRoundTrip(t *testing.T) {
+	// A config that sets no workspace mode must not emit the field (omitempty on a
+	// string), at the top level or inside either role override, so a minimal blob
+	// stays minimal. (The role-override objects themselves always appear — Go's
+	// omitempty does not elide a zero struct — but their "workspace" key must not.)
+	blob, err := json.Marshal(ProjectConfig{DefaultBranch: "main"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got := string(blob); strings.Contains(got, `"workspace"`) {
+		t.Fatalf("marshaled config unexpectedly carries a workspace key: %s", got)
+	}
+
+	// A config that sets the fields round-trips them at both the top level and on
+	// a role override.
+	in := ProjectConfig{
+		Workspace: WorkspaceModeInPlace,
+		Worker:    RoleOverride{Workspace: WorkspaceModeWorktree},
+	}
+	blob, err = json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out ProjectConfig
+	if err := json.Unmarshal(blob, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Workspace != WorkspaceModeInPlace {
+		t.Fatalf("round-trip top-level = %q, want in-place", out.Workspace)
+	}
+	if out.Worker.Workspace != WorkspaceModeWorktree {
+		t.Fatalf("round-trip worker override = %q, want worktree", out.Worker.Workspace)
 	}
 }

@@ -624,6 +624,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"worker cap", fmt.Errorf("spawn: %w: live workers 2 >= cap 2", sessionmanager.ErrWorkerConcurrencyCap), apierr.KindConflict, "WORKER_CONCURRENCY_CAP"},
 		{"model harness mismatch", fmt.Errorf("spawn: %w: %q is not a anthropic model (harness %q)", sessionmanager.ErrModelHarnessMismatch, "opus", "codex"), apierr.KindInvalid, "MODEL_HARNESS_MISMATCH"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
+		{"branch not allowed in place", fmt.Errorf("spawn: %w (requested %q)", sessionmanager.ErrBranchNotAllowedInPlace, "feature/x"), apierr.KindInvalid, "BRANCH_NOT_ALLOWED_IN_PLACE"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

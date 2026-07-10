@@ -846,6 +846,8 @@ export interface components {
             trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
             worker?: components["schemas"]["RoleOverride"];
             workerMix?: components["schemas"]["WorkerMix"];
+            /** @enum {string} */
+            workspace?: "worktree" | "in-place";
         };
         ProjectGetResponse: {
             project: components["schemas"]["ProjectOrDegraded"];
@@ -913,6 +915,8 @@ export interface components {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
             instructionsFile?: string;
+            /** @enum {string} */
+            workspace?: "worktree" | "in-place";
         };
         RollbackSessionResponse: {
             deleted?: boolean;

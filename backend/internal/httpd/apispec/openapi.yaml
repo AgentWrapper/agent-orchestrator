@@ -2309,6 +2309,11 @@ components:
           $ref: '#/components/schemas/RoleOverride'
         workerMix:
           $ref: '#/components/schemas/WorkerMix'
+        workspace:
+          enum:
+          - worktree
+          - in-place
+          type: string
       type: object
     ProjectGetResponse:
       properties:
@@ -2484,6 +2489,11 @@ components:
         agentConfig:
           $ref: '#/components/schemas/AgentConfig'
         instructionsFile:
+          type: string
+        workspace:
+          enum:
+          - worktree
+          - in-place
           type: string
       type: object
     RollbackSessionResponse:

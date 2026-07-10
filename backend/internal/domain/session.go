@@ -25,12 +25,18 @@ const (
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
-	Branch          string `json:"branch,omitempty"`
-	WorkspacePath   string `json:"workspacePath,omitempty"`
-	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
-	RuntimeToken    string `json:"runtimeToken,omitempty"`
-	AgentSessionID  string `json:"agentSessionId,omitempty"`
-	Prompt          string `json:"prompt,omitempty"`
+	Branch        string `json:"branch,omitempty"`
+	WorkspacePath string `json:"workspacePath,omitempty"`
+	// WorkspaceMode is the workspace mode resolved for this session at spawn and
+	// persisted so restore never re-reads it from project config — a later config
+	// flip must not relocate an already-running session. The zero value ("")
+	// reads as WorkspaceModeWorktree, so every session that predates this field
+	// keeps its worktree across the upgrade with no migration (no rug-pull).
+	WorkspaceMode   WorkspaceMode `json:"workspaceMode,omitempty"`
+	RuntimeHandleID string        `json:"runtimeHandleId,omitempty"`
+	RuntimeToken    string        `json:"runtimeToken,omitempty"`
+	AgentSessionID  string        `json:"agentSessionId,omitempty"`
+	Prompt          string        `json:"prompt,omitempty"`
 	// Model is the per-session model override supplied at spawn. Empty means
 	// restore should keep resolving the model from project/role config.
 	Model string `json:"model,omitempty"`

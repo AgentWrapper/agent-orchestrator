@@ -92,9 +92,13 @@ type harnessModel struct {
 
 // roleOverride mirrors domain.RoleOverride.
 type roleOverride struct {
-	Agent            string      `json:"agent,omitempty"`
-	AgentConfig      agentConfig `json:"agentConfig,omitempty"`
-	InstructionsFile string      `json:"instructionsFile,omitempty"`
+	Agent       string      `json:"agent,omitempty"`
+	AgentConfig agentConfig `json:"agentConfig,omitempty"`
+	// Workspace mirrors domain.RoleOverride.Workspace so a --config-json payload
+	// round-trips the per-role workspace mode through to the daemon instead of
+	// silently dropping it.
+	Workspace        string `json:"workspace,omitempty"`
+	InstructionsFile string `json:"instructionsFile,omitempty"`
 }
 
 // workerMixEntry mirrors domain.WorkerMixEntry so a --config-json payload
@@ -120,8 +124,12 @@ type trackerIntakeConfig struct {
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch string              `json:"defaultBranch,omitempty"`
-	SessionPrefix string              `json:"sessionPrefix,omitempty"`
+	DefaultBranch string `json:"defaultBranch,omitempty"`
+	SessionPrefix string `json:"sessionPrefix,omitempty"`
+	// Workspace mirrors domain.ProjectConfig.Workspace (the project-wide default
+	// workspace mode). Empty resolves to worktree on the daemon; a --config-json
+	// payload round-trips it instead of silently dropping it.
+	Workspace     string              `json:"workspace,omitempty"`
 	Env           map[string]string   `json:"env,omitempty"`
 	Symlinks      []string            `json:"symlinks,omitempty"`
 	PostCreate    []string            `json:"postCreate,omitempty"`
@@ -141,6 +149,7 @@ type setConfigRequest struct {
 type projectSetConfigOptions struct {
 	defaultBranch                string
 	sessionPrefix                string
+	workspace                    string
 	model                        string
 	permission                   string
 	workerAgent                  string
@@ -334,6 +343,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
 	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
+	f.StringVar(&opts.workspace, "workspace", "", "Session workspace mode: worktree (default) or in-place")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
@@ -378,6 +388,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	cfg := projectConfig{
 		DefaultBranch: opts.defaultBranch,
 		SessionPrefix: opts.sessionPrefix,
+		Workspace:     opts.workspace,
 		Env:           env,
 		Symlinks:      opts.symlink,
 		PostCreate:    opts.postCreate,
