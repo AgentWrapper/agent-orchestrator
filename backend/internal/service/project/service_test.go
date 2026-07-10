@@ -585,6 +585,16 @@ func configureCommitter(t *testing.T) {
 
 func gitRepoWithCommit(t *testing.T, dir string) string {
 	t.Helper()
+	return gitRepoWithCommitWithOrigin(t, dir, "https://example.com/"+filepath.Base(dir)+".git")
+}
+
+func gitRepoWithCommitNoOrigin(t *testing.T, dir string) string {
+	t.Helper()
+	return gitRepoWithCommitWithOrigin(t, dir, "")
+}
+
+func gitRepoWithCommitWithOrigin(t *testing.T, dir, origin string) string {
+	t.Helper()
 	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v (%s)", err, out)
 	}
@@ -596,6 +606,11 @@ func gitRepoWithCommit(t *testing.T, dir string) string {
 	}
 	if out, err := exec.Command("git", "-C", dir, "commit", "-m", "initial").CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+	if origin != "" {
+		if out, err := exec.Command("git", "-C", dir, "remote", "add", "origin", origin).CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %v (%s)", err, out)
+		}
 	}
 	return dir
 }
@@ -662,6 +677,17 @@ func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
 
 	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
 	wantCode(t, err, "WORKSPACE_CHILD_UNBORN")
+}
+
+func TestManager_AddWorkspaceRejectsChildWithoutOrigin(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
+
+	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_CHILD_ORIGIN_REQUIRED")
 }
 
 // TestManager_AddWorkspaceAdoptsExistingParent verifies that when the parent is

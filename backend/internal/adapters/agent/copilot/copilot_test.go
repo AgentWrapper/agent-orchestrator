@@ -33,7 +33,7 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"copilot", "--allow-all"}
+	want := []string{"copilot", "--allow-all", "--interactive", "-fix this"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -48,6 +48,9 @@ func TestGetLaunchCommandOmitsPromptWhenEmpty(t *testing.T) {
 	}
 	if contains(cmd, "-p") {
 		t.Fatalf("command %#v unexpectedly contains -p", cmd)
+	}
+	if contains(cmd, "--interactive") {
+		t.Fatalf("command %#v unexpectedly contains --interactive", cmd)
 	}
 }
 
@@ -123,7 +126,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.PromptDeliveryAfterStart {
+	if got != ports.PromptDeliveryInCommand {
 		t.Fatalf("unexpected strategy: %q", got)
 	}
 }

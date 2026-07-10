@@ -14,6 +14,7 @@ import {
 } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -22,6 +23,12 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+
+const isLinux =
+	typeof navigator !== "undefined" &&
+	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
+		.toLowerCase()
+		.includes("linux");
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -188,6 +195,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			{isLinux ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<span className="dashboard-app-header__kill-error max-w-[320px] truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
@@ -220,6 +228,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							: "Spawn Orchestrator"}
 			</button>
 		</>
+	) : isLinux ? (
+		<NotificationCenter />
 	) : undefined;
 
 	return (

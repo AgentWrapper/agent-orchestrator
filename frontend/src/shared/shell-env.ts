@@ -63,8 +63,15 @@ export function withFallbackPath(currentPath: string | undefined): string {
 	return result.join(":");
 }
 
+function normalizeTerm(term: string | undefined): string {
+	const trimmed = term?.trim();
+	if (!trimmed || trimmed === "dumb") return "xterm-256color";
+	return trimmed;
+}
+
 // Base = shell env, overlaid by processEnv so Electron/AO runtime vars win, then
-// PATH forced to the shell's PATH (with floor), then explicit overrides.
+// PATH forced to the shell's PATH (with floor), TERM forced to a tmux-usable
+// value, then explicit overrides.
 //
 // TERM defaults to xterm-256color (what the renderer's xterm.js emulates): a
 // Finder/Dock launch starts under launchd with no controlling tty, so TERM is
@@ -78,6 +85,7 @@ export function buildDaemonEnv(
 ): NodeJS.ProcessEnv {
 	const merged: NodeJS.ProcessEnv = { TERM: "xterm-256color", ...(shellEnv ?? {}), ...processEnv };
 	merged.PATH = withFallbackPath(shellEnv?.PATH ?? processEnv.PATH);
+	merged.TERM = normalizeTerm(merged.TERM);
 	return { ...merged, ...overrides };
 }
 

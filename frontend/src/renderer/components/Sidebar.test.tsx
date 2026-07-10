@@ -1,6 +1,6 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
@@ -58,7 +58,14 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
-type CreateProjectHandler = (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+type CreateProjectInput = {
+	path: string;
+	workerAgent: string;
+	orchestratorAgent: string;
+	trackerIntake?: unknown;
+	asWorkspace?: boolean;
+};
+type CreateProjectHandler = (input: CreateProjectInput) => Promise<void>;
 type RemoveProjectHandler = (projectId: string) => Promise<void>;
 
 function renderSidebar({
@@ -112,6 +119,8 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 }
 
 beforeEach(() => {
+	window.localStorage.clear();
+	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -190,6 +199,12 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
+		expect(screen.getByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
+		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+		expect(await screen.findByRole("dialog", { name: "Import project" })).toBeInTheDocument();
+		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: /Choose a project folder/i }));
 
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		const dialog = screen.getByRole("dialog", { name: "Project agents" });
@@ -203,8 +218,116 @@ describe("Sidebar", () => {
 				path: "/repo/new-project",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				asWorkspace: false,
 			}),
 		);
+	});
+
+	it("can create a workspace project from the project add flow", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		expect(await screen.findByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
+		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: /Choose a folder/i }));
+
+		expect(await screen.findByText("/repo/workspace")).toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Workspace agents" })).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith({
+				path: "/repo/workspace",
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+				asWorkspace: true,
+			}),
+		);
+	});
+
+	it("shows detected repository validation when workspace import fails", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/Users/test/dev/acme");
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/Users/test/dev/acme",
+			repos: [
+				{
+					name: "web",
+					path: "/Users/test/dev/acme/web",
+					relativePath: "web",
+					branch: "HEAD",
+					remote: "",
+					hasRemote: false,
+					status: "error",
+					reason: "Origin remote is required.",
+				},
+				{
+					name: "api",
+					path: "/Users/test/dev/acme/api",
+					relativePath: "api",
+					branch: "main",
+					remote: "git@github.com:acme/api.git",
+					hasRemote: true,
+					status: "ok",
+				},
+			],
+		});
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a folder/i }));
+		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		expect(screen.getByText("workspace not registered")).toBeInTheDocument();
+		expect(screen.getByText("web")).toBeInTheDocument();
+		expect(screen.getByText("Origin remote is required.")).toBeInTheDocument();
+		expect(screen.getByText("api")).toBeInTheDocument();
+		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
+		expect(screen.getByText("Resolve 1 failed repository to continue")).toBeInTheDocument();
+		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
+			path: "/Users/test/dev/acme",
+			mode: "workspace",
+		});
+	});
+
+	it("does not rescan folders for non-validation create failures", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockRejectedValue(new Error("AO daemon is not ready.")) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.scanImportFolder = vi.fn();
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a folder/i }));
+		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
+	});
+
+	it("opens global settings from the footer menu when no project is selected", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getByRole("button", { name: /project actions/i }));
+
+		expect(await screen.findByRole("menuitem", { name: /settings/i })).toBeInTheDocument();
 	});
 
 	it("shows needs-auth agents as unavailable while keeping authorized agents selectable", async () => {
@@ -229,6 +352,8 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a project folder/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 
 		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
@@ -271,6 +396,8 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a project folder/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
 
@@ -301,6 +428,8 @@ describe("Sidebar", () => {
 				path: "/repo/new-project",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				trackerIntake: undefined,
+				asWorkspace: false,
 			}),
 		);
 	});
@@ -349,5 +478,70 @@ describe("Sidebar", () => {
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-[84px]");
+	});
+
+	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {
+		renderSidebar();
+
+		const resizeHandle = document.querySelector(".resize-handle--right");
+		if (!(resizeHandle instanceof HTMLElement)) throw new Error("Resize handle not found");
+
+		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
+
+		fireEvent.pointerDown(resizeHandle, { clientX: 240 });
+		fireEvent.pointerMove(window, { clientX: 120 });
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
+		});
+		expect(document.cookie).toContain("sidebar_state=false");
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe("240");
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+		expect(document.body).not.toHaveClass("is-resizing-x");
+
+		const expandRail = document.querySelector('[data-sidebar="rail"]');
+		if (!(expandRail instanceof HTMLElement)) throw new Error("Sidebar rail not found");
+		fireEvent.pointerDown(expandRail, { clientX: 48 });
+		fireEvent.pointerMove(window, { clientX: 128 });
+		fireEvent.pointerUp(window);
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
+		});
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("280px");
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe("280");
+	});
+
+	it("discards a queued narrow resize frame when collapsing", async () => {
+		let queuedFrame: FrameRequestCallback | undefined;
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			queuedFrame = callback;
+			return 1;
+		});
+		const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+		try {
+			renderSidebar();
+
+			const resizeHandle = document.querySelector(".resize-handle--right");
+			if (!(resizeHandle instanceof HTMLElement)) throw new Error("Resize handle not found");
+
+			fireEvent.pointerDown(resizeHandle, { clientX: 240 });
+			fireEvent.pointerMove(window, { clientX: 205 });
+			fireEvent.pointerMove(window, { clientX: 120 });
+
+			await waitFor(() => {
+				expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
+			});
+			expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe("240");
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+
+			queuedFrame?.(performance.now());
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+			cancelAnimationFrameSpy.mockRestore();
+		}
 	});
 });

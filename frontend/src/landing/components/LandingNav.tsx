@@ -1,104 +1,268 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
+import { useEffect, useState, useRef } from "react";
+import gsap from "gsap";
+import ScrollTrigger from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
 
-function XIcon() {
+if (typeof window !== "undefined") {
+	gsap.registerPlugin(ScrollTrigger, useGSAP);
+}
+
+function DownloadIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-			<path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<path d="M12 3v12" />
+			<path d="m7 10 5 5 5-5" />
+			<path d="M5 21h14" />
 		</svg>
 	);
 }
 
-function DiscordIcon() {
+function MenuIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-			<path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<path d="M4 6h16" />
+			<path d="M4 12h16" />
+			<path d="M4 18h16" />
 		</svg>
 	);
 }
 
-function GithubIcon() {
+function CloseIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-			<path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<path d="M18 6 6 18" />
+			<path d="m6 6 12 12" />
 		</svg>
 	);
+}
+
+function XSocialIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M18.9 2.25h3.24l-7.08 8.09 8.33 11.41h-6.52l-5.11-6.91-5.84 6.91H2.66l7.57-8.67L2.25 2.25h6.69l4.62 6.3 5.34-6.3Zm-1.14 17.5h1.8L7.96 4.14H6.03l11.73 15.61Z" />
+		</svg>
+	);
+}
+
+function DiscordIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M20.32 4.37A19.8 19.8 0 0 0 15.36 2.8a13.7 13.7 0 0 0-.64 1.32 18.4 18.4 0 0 0-5.44 0 13.7 13.7 0 0 0-.64-1.32 19.7 19.7 0 0 0-4.96 1.57C.54 9.04-.32 13.6.1 18.1a19.9 19.9 0 0 0 6.08 3.08c.49-.67.93-1.38 1.3-2.12-.72-.27-1.4-.6-2.05-.98.17-.12.34-.25.5-.38a14.2 14.2 0 0 0 12.14 0c.16.13.33.26.5.38-.65.39-1.34.72-2.06.99.38.74.81 1.45 1.31 2.12a19.9 19.9 0 0 0 6.08-3.08c.5-5.22-.86-9.74-3.58-13.73ZM8.02 15.33c-1.18 0-2.15-1.08-2.15-2.41 0-1.34.95-2.42 2.15-2.42 1.2 0 2.17 1.09 2.15 2.42 0 1.33-.96 2.41-2.15 2.41Zm7.96 0c-1.18 0-2.15-1.08-2.15-2.41 0-1.34.95-2.42 2.15-2.42 1.2 0 2.17 1.09 2.15 2.42 0 1.33-.95 2.41-2.15 2.41Z" />
+		</svg>
+	);
+}
+
+const socials = [
+	{
+		label: "Discord",
+		href: "https://discord.com/invite/UZv7JjxbwG",
+		icon: DiscordIcon,
+	},
+	{
+		label: "X",
+		href: "https://twitter.com/aoagents",
+		icon: XSocialIcon,
+	},
+];
+
+const navLinks = [
+	{ label: "Demo", href: "#see-it" },
+	{ label: "Features", href: "#features" },
+	{ label: "Docs", href: "/docs" },
+];
+
+function getPlatformLabel() {
+	if (typeof navigator === "undefined") return "Install AO";
+
+	const isSmallViewport = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+	const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+	const isPortableDevice =
+		isSmallViewport ||
+		/android|iphone|ipad|ipod|mobile|tablet/.test(platform) ||
+		(platform.includes("mac") && navigator.maxTouchPoints > 1);
+
+	if (isPortableDevice) return "Setup guide";
+	if (platform.includes("mac")) return "Install for macOS";
+	if (platform.includes("win")) return "Install for Windows";
+	if (platform.includes("linux") || platform.includes("x11")) return "Install for Linux";
+	return "Install AO";
 }
 
 export function LandingNav() {
+	const [open, setOpen] = useState(false);
+	const [installLabel, setInstallLabel] = useState("Install AO");
+	const navRef = useRef<HTMLDivElement>(null);
+	const innerRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const updatePlatformLabel = () => setInstallLabel(getPlatformLabel());
+
+		updatePlatformLabel();
+		window.addEventListener("resize", updatePlatformLabel);
+		return () => window.removeEventListener("resize", updatePlatformLabel);
+	}, []);
+
+	useGSAP(() => {
+		// Shrink + hide-on-scroll only on desktop (>=768px). On mobile/tablet the
+		// nav stays in its normal, full-size state.
+		const mm = gsap.matchMedia();
+		mm.add("(min-width: 768px)", () => {
+			const trigger = ScrollTrigger.create({
+				start: "top -50",
+				end: 99999,
+				toggleClass: { className: "nav-scrolled", targets: navRef.current },
+				onUpdate: (self) => {
+					if (self.direction === 1) {
+						gsap.to(innerRef.current, {
+							yPercent: -100,
+							opacity: 0,
+							duration: 0.4,
+							ease: "power3.inOut",
+						});
+					} else {
+						gsap.to(innerRef.current, {
+							yPercent: 0,
+							opacity: 1,
+							duration: 0.4,
+							ease: "power3.out",
+						});
+					}
+				},
+			});
+
+			return () => {
+				trigger.kill();
+				// Clear any inline transform/class left from desktop state.
+				navRef.current?.classList.remove("nav-scrolled");
+				if (innerRef.current) gsap.set(innerRef.current, { clearProps: "transform,opacity" });
+			};
+		});
+		return () => mm.revert();
+	}, []);
+
 	return (
-		<nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-6 max-w-[80rem] mx-auto bg-[var(--landing-bg)]/90 backdrop-blur-sm">
-			<a
-				href="#"
-				className="inline-flex items-center gap-2 text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
+		<header
+			data-testid="site-nav"
+			ref={navRef}
+			className="pointer-events-auto fixed inset-x-0 top-0 z-40 pt-4 px-4 transition-all duration-500 ease-out flex justify-center [&.nav-scrolled]:pt-2"
+		>
+			<div
+				ref={innerRef}
+				className="w-full max-w-6xl mx-auto flex h-14 items-center justify-between gap-6 rounded-full border border-[color:var(--border)] bg-[color:var(--bg)]/70 px-6 backdrop-blur-xl shadow-lg transition-all duration-500 ease-out [.nav-scrolled_&]:h-12 [.nav-scrolled_&]:max-w-4xl [.nav-scrolled_&]:bg-[color:var(--bg)]/90"
 			>
-				<Image
-					src="/ao-logo.png"
-					alt=""
-					aria-hidden
-					width={28}
-					height={28}
-					className="h-7 w-7 rounded-md object-cover"
-				/>
-				Agent Orchestrator
-			</a>
-			<ul className="hidden md:flex items-center gap-8 list-none">
-				<li>
-					<Link
-						href="/docs"
-						className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
-					>
-						Docs
-					</Link>
-				</li>
-				<li>
+				<a href="/" data-testid="nav-logo" className="group inline-flex h-10 shrink-0 items-center gap-3">
+					<img
+						src="/ao-logo.svg"
+						alt="Agent Orchestrator"
+						className="block h-7 w-7 shrink-0 object-contain transition-transform duration-300 group-hover:scale-105"
+					/>
+					<span className="hidden text-[15px] font-semibold leading-[1.1] tracking-tight text-[color:var(--fg)] sm:block">
+						Agent Orchestrator
+					</span>
+				</a>
+
+				<nav className="hidden items-center gap-8 md:flex" aria-label="Primary">
+					{navLinks.map((item) => (
+						<a
+							key={item.label}
+							href={item.href}
+							className="landing-nav-link px-1.5 py-1.5 text-[13px] font-medium tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--accent)]"
+						>
+							{item.label}
+						</a>
+					))}
+				</nav>
+
+				<div className="flex items-center gap-3">
+					<div className="hidden items-center gap-3 lg:flex">
+						{socials.map((item) => {
+							const Icon = item.icon;
+							return (
+								<a
+									key={item.label}
+									href={item.href}
+									target="_blank"
+									rel="noreferrer"
+									aria-label={item.label}
+									title={item.label}
+									className="group/social inline-flex h-8 w-8 items-center justify-center rounded-full text-[color:var(--fg-dim)] transition-[color,background-color] duration-300 ease-out hover:bg-[color:var(--bg-elevated)] hover:text-[color:var(--fg)]"
+								>
+									<Icon className="h-4 w-4 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/social:scale-110 group-active/social:scale-90" />
+								</a>
+							);
+						})}
+					</div>
+					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block" />
 					<a
-						href="#features"
-						className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
+						href="/docs/installation"
+						data-testid="nav-cta-btn"
+						style={{ color: "#000000" }}
+						className="fluid-press group/cta inline-flex h-9 items-center gap-2 rounded-full bg-[color:var(--accent)] px-5 text-[13px] font-semibold shadow-[0_8px_24px_-14px_var(--accent-glow)] hover:shadow-[0_14px_34px_-12px_var(--accent-glow)] hover:brightness-[1.07] max-[365px]:hidden [.nav-scrolled_&]:h-8 [.nav-scrolled_&]:px-4 [.nav-scrolled_&]:text-[12px]"
 					>
-						Features
+						<DownloadIcon className="h-3.5 w-3.5 transition-transform duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/cta:translate-y-0.5" />
+						<span>{installLabel}</span>
 					</a>
-				</li>
-				<li>
-					<a
-						href="#how"
-						className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
+
+					<button
+						type="button"
+						aria-label={open ? "Close navigation menu" : "Open navigation menu"}
+						aria-expanded={open}
+						aria-controls="mobile-navigation-menu"
+						className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)] md:hidden"
+						onClick={() => setOpen(!open)}
 					>
-						How It Works
-					</a>
-				</li>
-			</ul>
-			<div className="flex items-center gap-2">
-				<a
-					href="https://x.com/aoagents"
-					target="_blank"
-					rel="noopener noreferrer"
-					aria-label="X (Twitter)"
-					className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
-				>
-					<XIcon />
-				</a>
-				<a
-					href="https://discord.gg/UZv7JjxbwG"
-					target="_blank"
-					rel="noopener noreferrer"
-					aria-label="Discord"
-					className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
-				>
-					<DiscordIcon />
-				</a>
-				<a
-					href="https://github.com/ComposioHQ/agent-orchestrator"
-					target="_blank"
-					rel="noopener noreferrer"
-					aria-label="GitHub"
-					className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
-				>
-					<GithubIcon />
-				</a>
+						{open ? <CloseIcon className="h-5 w-5" /> : <MenuIcon className="h-5 w-5" />}
+					</button>
+				</div>
 			</div>
-		</nav>
+
+			{open && (
+				<div
+					id="mobile-navigation-menu"
+					className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden"
+				>
+					<a
+						href="/docs/installation"
+						onClick={() => setOpen(false)}
+						style={{ color: "#000000" }}
+						className="mb-1 hidden items-center justify-center gap-2 rounded-lg bg-[color:var(--accent)] px-4 py-3 text-[15px] font-semibold max-[365px]:flex"
+					>
+						<DownloadIcon className="h-4 w-4" />
+						<span>{installLabel}</span>
+					</a>
+					{navLinks.map((item) => (
+						<a
+							key={item.label}
+							href={item.href}
+							onClick={() => setOpen(false)}
+							className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
+						>
+							{item.label}
+						</a>
+					))}
+					<div className="my-2 h-px bg-[color:var(--border)]" />
+					<div className="flex justify-center gap-6 py-2">
+						{socials.map((item) => {
+							const Icon = item.icon;
+							return (
+								<a
+									key={item.label}
+									href={item.href}
+									target="_blank"
+									rel="noreferrer"
+									aria-label={item.label}
+									title={item.label}
+									className="text-[color:var(--fg-muted)] hover:text-[color:var(--fg)]"
+								>
+									<Icon className="h-5 w-5" />
+								</a>
+							);
+						})}
+					</div>
+				</div>
+			)}
+		</header>
 	);
 }

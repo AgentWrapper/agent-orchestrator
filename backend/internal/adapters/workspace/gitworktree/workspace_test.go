@@ -211,6 +211,70 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 }
 
+func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitErr := exec.Command("sh", "-c", "exit 1").Run()
+	if exitErr == nil {
+		t.Fatal("expected exit error")
+	}
+	var calls []string
+	addAttempts := 0
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return []byte("origin/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/feature/test"):
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/main"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify origin/main"):
+			return []byte("abc123\n"), nil
+		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
+			addAttempts++
+			if addAttempts == 1 {
+				return nil, commandError{
+					args:   append([]string{binary}, args...),
+					output: "Preparing worktree (new branch 'feature/test')\nfatal: '" + output + "' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
+					err:    errors.New("exit status 128"),
+				}
+			}
+			return nil, nil
+		case strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	baseSHA, err := ws.createWorkspaceProjectRepo(context.Background(), workspaceProjectRepo{
+		name:       "api",
+		repoPath:   repo,
+		outputPath: output,
+	}, "feature/test")
+	if err != nil {
+		t.Fatalf("createWorkspaceProjectRepo: %v", err)
+	}
+	if baseSHA != "abc123" {
+		t.Fatalf("baseSHA = %q, want abc123", baseSHA)
+	}
+	if addAttempts != 2 {
+		t.Fatalf("add attempts = %d, want 2", addAttempts)
+	}
+	got := strings.Join(calls, "\n")
+	if !strings.Contains(got, "worktree prune") {
+		t.Fatalf("calls missing worktree prune:\n%s", got)
+	}
+}
+
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join
 // in managedPath cleans `..` segments before validateManagedPath sees them, so a
 // session id of "../other" would stay inside managedRoot while jumping projects.
@@ -279,6 +343,62 @@ func TestRestoreRefusesNonEmptyUnregisteredPath(t *testing.T) {
 	_, err = ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
 	if err == nil || !strings.Contains(err.Error(), "path exists and is not a registered worktree") {
 		t.Fatalf("restore error = %v", err)
+	}
+}
+
+func TestRestoreWithRepoPathMovesStrayPathAside(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess", "api")
+	if err := mkdirFile(path, "keep.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	var addPath string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse"):
+			return []byte("commit"), nil
+		case strings.Contains(joined, "worktree add"):
+			if len(args) >= 2 {
+				addPath = args[len(args)-2]
+			}
+			if addPath == "" {
+				t.Fatalf("could not find worktree add path in args: %v", args)
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "proj-1",
+		Branch:    "ao/proj-1",
+		RepoPath:  repo,
+		Path:      path,
+	})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if info.Path != path || addPath != path {
+		t.Fatalf("restored path=%q addPath=%q, want %q", info.Path, addPath, path)
+	}
+	if _, err := os.Stat(filepath.Join(path+".stray", "keep.txt")); err != nil {
+		t.Fatalf("stray path was not preserved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(path, "keep.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original path still has stray file: %v", err)
 	}
 }
 
@@ -457,6 +577,10 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
 			return nil, nil
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return nil, commandError{args: args, err: exitOne}
+		case strings.Contains(joined, "branch --show-current"):
+			return nil, commandError{args: args, err: exitOne}
 		case strings.Contains(joined, "rev-parse"):
 			return nil, commandError{args: args, err: exitOne}
 		default:
@@ -467,6 +591,37 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/missing"})
 	if !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
+	}
+}
+
+func TestResolveBaseRefInfersRepoDefaultBranchWhenUnset(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": t.TempDir()}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitOne := func() error {
+		cmd := exec.Command("sh", "-c", "exit 1")
+		return cmd.Run()
+	}()
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return []byte("origin/master\n"), nil
+		case strings.Contains(joined, "origin/master"):
+			return []byte("sha\n"), nil
+		case strings.Contains(joined, "rev-parse --verify"):
+			return nil, commandError{args: args, err: exitOne}
+		default:
+			return nil, nil
+		}
+	}
+	ref, err := ws.resolveBaseRef(context.Background(), "/repo/child", "ao/work", "")
+	if err != nil {
+		t.Fatalf("resolveBaseRef err = %v", err)
+	}
+	if ref != "origin/master" {
+		t.Fatalf("base ref = %q, want child origin/master", ref)
 	}
 }
 

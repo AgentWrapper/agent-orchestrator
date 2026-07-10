@@ -12,8 +12,23 @@ const EMBEDDED_LOCAL_URL_PATTERN =
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
+let telemetryContext: TelemetryProperties = {};
 
 type TelemetryProperties = Record<string, unknown>;
+
+export function buildTelemetryContext(appVersion: string, platform: string): TelemetryProperties {
+	const version = appVersion.trim() || "unknown";
+	return {
+		app_version: version,
+		ao_version: version,
+		platform,
+		build_mode: import.meta.env.DEV ? "dev" : "packaged",
+	};
+}
+
+function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
+	return { ...telemetryContext, ...properties };
+}
 
 function normalizeException(reason: unknown): Error {
 	if (reason instanceof Error) return reason;
@@ -251,6 +266,7 @@ export async function initTelemetry(): Promise<boolean> {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
 		if (!bootstrap) return false;
+		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform);
 		posthog.init(POSTHOG_KEY, {
 			api_host: POSTHOG_HOST,
 			defaults: RELEASE_TAG,
@@ -269,19 +285,19 @@ export async function initTelemetry(): Promise<boolean> {
 			},
 		});
 		posthog.identify(bootstrap.distinctId, {
-			app_version: bootstrap.appVersion,
-			platform: bootstrap.platform,
+			...telemetryContext,
 			surface: "renderer",
 		});
 		posthog.register({
-			app_version: bootstrap.appVersion,
-			platform: bootstrap.platform,
+			...telemetryContext,
 			surface: "renderer",
-			build_mode: import.meta.env.DEV ? "dev" : "packaged",
 		});
 		bindErrorHandlers();
-		posthog.capture("ao.app.active", await sanitizeRendererProperties("ao.app.active", { channel: "renderer" }));
-		posthog.capture("ao.renderer.loaded");
+		posthog.capture(
+			"ao.app.active",
+			withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
+		);
+		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
 		return true;
 	})().catch(() => false);
 	return initPromise;
@@ -289,19 +305,19 @@ export async function initTelemetry(): Promise<boolean> {
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
-	const safeProperties = await sanitizeRendererProperties(event, properties);
+	const safeProperties = withTelemetryContext(await sanitizeRendererProperties(event, properties));
 	posthog.capture(event, safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
-	const safeProperties = await sanitizeRendererExceptionProperties(error, properties);
+	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));
 	posthog.captureException(normalizeException(error), safeProperties);
 }
 
 export async function addRendererExceptionStep(message: string, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
-	const safeProperties = await sanitizeRendererContextProperties(properties);
+	const safeProperties = withTelemetryContext(await sanitizeRendererContextProperties(properties));
 	posthog.addExceptionStep(message, safeProperties);
 }
 

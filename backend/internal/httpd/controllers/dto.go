@@ -196,21 +196,6 @@ type RestoreSessionResponse struct {
 	Session   SessionView      `json:"session"`
 }
 
-// SwitchAgentRequest is the body of POST /api/v1/sessions/{sessionId}/switch.
-// Harness is the target agent harness; Model optionally overrides the agent
-// model for the new launch (empty keeps the resolved default).
-type SwitchAgentRequest struct {
-	Harness string `json:"harness" minLength:"1"`
-	Model   string `json:"model,omitempty"`
-}
-
-// SwitchAgentResponse is the body of POST /api/v1/sessions/{sessionId}/switch.
-type SwitchAgentResponse struct {
-	OK        bool             `json:"ok"`
-	SessionID domain.SessionID `json:"sessionId"`
-	Session   SessionView      `json:"session"`
-}
-
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
 type KillSessionResponse struct {
 	OK        bool             `json:"ok"`
@@ -559,4 +544,15 @@ type ResolveCommentsRequest struct {
 type ResolveCommentsResponse struct {
 	OK       bool `json:"ok"`
 	Resolved int  `json:"resolved"`
+}
+
+// MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
+// regenerate endpoints. Password is populated only transiently, on enable and
+// regenerate responses (empty otherwise) — it is never persisted in plaintext.
+type MobileStatusResponse struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Password string `json:"password"`
+	Warning  string `json:"warning"`
 }

@@ -4,6 +4,8 @@ import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { RootProvider } from "fumadocs-ui/provider";
 import type { LinkItemType } from "fumadocs-ui/layouts/shared";
 import { source } from "@/lib/source";
+import { DocsClipboardFix } from "@/components/docs/DocsClipboardFix";
+import { DocsHardNav } from "@/components/docs/DocsHardNav";
 import "./docs.css";
 
 function GithubIcon({ size = 16 }: { size?: number } = {}) {
@@ -52,7 +54,7 @@ const links: LinkItemType[] = [
 async function GitHubStars() {
 	let stars: string | null = null;
 	try {
-		const res = await fetch("https://api.github.com/repos/ComposioHQ/agent-orchestrator", {
+		const res = await fetch("https://api.github.com/repos/AgentWrapper/agent-orchestrator", {
 			next: { revalidate: 3600 },
 		});
 		if (res.ok) {
@@ -76,11 +78,13 @@ async function GitHubStars() {
 
 export default function Layout({ children }: { children: ReactNode }) {
 	return (
-		<RootProvider theme={{ enabled: true, defaultTheme: "dark" }} search={{ options: { type: "static" } }}>
+		<RootProvider theme={{ enabled: false, defaultTheme: "dark" }} search={{ options: { type: "static" } }}>
 			<DocsLayout
 				tree={source.pageTree}
 				links={links}
+				themeSwitch={{ enabled: false }}
 				nav={{
+					url: "/",
 					title: (
 						<span className="flex items-center gap-2 font-semibold">
 							<Image
@@ -91,7 +95,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 								height={22}
 								className="h-[22px] w-[22px] rounded-[5px] object-cover"
 							/>
-							<span className="text-[var(--color-text-primary)]">AO</span>
+							<span className="text-[var(--color-text-primary)]">Agent Orchestrator</span>
 						</span>
 					),
 				}}
@@ -100,18 +104,20 @@ export default function Layout({ children }: { children: ReactNode }) {
 					collapsible: true,
 					banner: (
 						<a
-							href="https://github.com/ComposioHQ/agent-orchestrator"
+							href="https://github.com/AgentWrapper/agent-orchestrator"
 							target="_blank"
 							rel="noreferrer noopener"
 							className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors py-1"
 						>
 							<GithubIcon />
-							<span>ComposioHQ/agent-orchestrator</span>
+							<span>AgentWrapper/agent-orchestrator</span>
 							<GitHubStars />
 						</a>
 					),
 				}}
 			>
+				<DocsClipboardFix />
+				<DocsHardNav />
 				{children}
 			</DocsLayout>
 		</RootProvider>
