@@ -78,10 +78,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	// Best-effort: suppress the interactive workspace-trust prompt for this
-	// AO-spawned worker workspace. A failure leaves the one-time prompt intact.
-	// cfg.Env carries the runtime's env overrides so the marker lands in the
-	// CURSOR_DATA_DIR the spawned cursor-agent will actually resolve.
-	_ = ensureWorkspaceTrusted(cfg.WorkspacePath, cfg.Env)
+	// AO-spawned worker workspace; see seedWorkspaceTrust for the failure
+	// policy. cfg.Env carries the runtime's env overrides so the marker lands
+	// in the data dir the spawned cursor-agent will actually resolve.
+	seedWorkspaceTrust(ctx, cfg.WorkspacePath, cfg.Env)
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
@@ -122,13 +122,22 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	// Best-effort: keep the resumed session's workspace trusted (idempotent when
 	// already seeded at launch) so resume never re-triggers the trust prompt.
-	_ = ensureWorkspaceTrusted(cfg.Session.WorkspacePath, cfg.Env)
+	seedWorkspaceTrust(ctx, cfg.Session.WorkspacePath, cfg.Env)
 
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+// CleanupWorkspaceState removes the AO-seeded workspace-trust markers when the
+// session manager tears a workspace down for good, so a reused worktree path
+// does not stay silently pre-trusted for later manual cursor-agent runs. env
+// mirrors the launch-time overrides so the same data dir is targeted. Markers
+// recording a real user trust decision (non-"ao-managed") are never touched.
+func (p *Plugin) CleanupWorkspaceState(ctx context.Context, workspacePath string, env map[string]string) error {
+	return removeWorkspaceTrust(ctx, workspacePath, env)
 }
 
 // SessionInfo surfaces Cursor hook-derived metadata. Metadata is intentionally
@@ -211,13 +220,12 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeAcceptEdits:
 		// No dedicated accept-edits flag exists; cursor has no accept-edits
 		// flag, it is governed by .cursor/cli.json permissions.
-	case ports.PermissionModeAuto:
-		*cmd = append(*cmd, "--force")
-	case ports.PermissionModeBypassPermissions:
-		// cursor-agent has no separate "full bypass" tier: --force is the
-		// strongest approval flag it documents (--yolo is not listed in
-		// `cursor-agent --help` and errors as an unknown option), so Auto and
-		// BypassPermissions both map to --force and are behaviorally identical.
+	case ports.PermissionModeAuto, ports.PermissionModeBypassPermissions:
+		// cursor-agent has no separate "full bypass" tier: --force is its
+		// strongest documented approval flag, and --yolo is merely an alias
+		// for --force where it exists (older builds rejected --yolo as an
+		// unknown option), so both modes map to --force and are behaviorally
+		// identical.
 		*cmd = append(*cmd, "--force")
 	}
 }

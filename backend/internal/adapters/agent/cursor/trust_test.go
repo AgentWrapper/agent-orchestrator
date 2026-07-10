@@ -32,7 +32,7 @@ func TestEnsureWorkspaceTrustedWritesMarker(t *testing.T) {
 	t.Setenv("CURSOR_DATA_DIR", dataDir)
 
 	workspace := "/Users/example/.ao/data/worktrees/repo/agent-abc123"
-	if err := ensureWorkspaceTrusted(workspace, nil); err != nil {
+	if err := ensureWorkspaceTrusted(context.Background(), workspace, nil); err != nil {
 		t.Fatalf("ensureWorkspaceTrusted: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestEnsureWorkspaceTrustedIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ensureWorkspaceTrusted(workspace, nil); err != nil {
+	if err := ensureWorkspaceTrusted(context.Background(), workspace, nil); err != nil {
 		t.Fatalf("ensureWorkspaceTrusted: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestEnsureWorkspaceTrustedEnvOverrideWinsOverDaemonEnv(t *testing.T) {
 
 	workspace := "/Users/example/.ao/data/worktrees/repo/agent-env-override"
 	env := map[string]string{"CURSOR_DATA_DIR": overrideDir}
-	if err := ensureWorkspaceTrusted(workspace, env); err != nil {
+	if err := ensureWorkspaceTrusted(context.Background(), workspace, env); err != nil {
 		t.Fatalf("ensureWorkspaceTrusted: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestEnsureWorkspaceTrustedEmptyPathIsNoop(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("CURSOR_DATA_DIR", dataDir)
 
-	if err := ensureWorkspaceTrusted("   ", nil); err != nil {
+	if err := ensureWorkspaceTrusted(context.Background(), "   ", nil); err != nil {
 		t.Fatalf("ensureWorkspaceTrusted(blank) = %v, want nil", err)
 	}
 	entries, err := os.ReadDir(dataDir)
@@ -150,7 +150,7 @@ func TestEnsureWorkspaceTrustedSeedsSymlinkResolvedPath(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	if err := ensureWorkspaceTrusted(link, nil); err != nil {
+	if err := ensureWorkspaceTrusted(context.Background(), link, nil); err != nil {
 		t.Fatalf("ensureWorkspaceTrusted: %v", err)
 	}
 
@@ -255,5 +255,96 @@ func TestGetRestoreCommandSeedsTrustUnderEnvOverride(t *testing.T) {
 	markerPath := filepath.Join(cursorProjectStorageDir(workspace, env), cursorTrustMarkerName)
 	if _, err := os.Stat(markerPath); err != nil {
 		t.Fatalf("GetRestoreCommand did not seed trust marker under env override: %v", err)
+	}
+}
+
+func TestCursorProjectStorageDirHonorsEnvHomeOverride(t *testing.T) {
+	daemonHome := t.TempDir()
+	childHome := t.TempDir()
+	t.Setenv("CURSOR_DATA_DIR", "")
+	t.Setenv("HOME", daemonHome)
+
+	workspace := "/Users/example/.ao/data/worktrees/repo/agent-home-override"
+	env := map[string]string{"HOME": childHome}
+
+	dir := cursorProjectStorageDir(workspace, env)
+	want := filepath.Join(childHome, ".cursor", "projects", cursorSlugifyPath(workspace))
+	if dir != want {
+		t.Fatalf("cursorProjectStorageDir = %q, want %q (env HOME override must win over the daemon's home)", dir, want)
+	}
+}
+
+func TestCursorProjectStorageDirResolvesRelativeBaseAgainstWorkspace(t *testing.T) {
+	// The spawned cursor-agent resolves a relative CURSOR_DATA_DIR against its
+	// own cwd — the workspace — so the marker must land there, not relative to
+	// the daemon's cwd.
+	workspace := t.TempDir()
+	env := map[string]string{"CURSOR_DATA_DIR": ".cursor-data"}
+
+	dir := cursorProjectStorageDir(workspace, env)
+	want := filepath.Join(workspace, ".cursor-data", "projects", cursorSlugifyPath(workspace))
+	if dir != want {
+		t.Fatalf("cursorProjectStorageDir = %q, want %q (relative base must resolve against the workspace)", dir, want)
+	}
+}
+
+func TestCleanupWorkspaceStateRemovesAOManagedMarker(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CURSOR_DATA_DIR", dataDir)
+
+	plugin := &Plugin{}
+	workspace := "/Users/example/.ao/data/worktrees/repo/agent-cleanup"
+	if err := ensureWorkspaceTrusted(context.Background(), workspace, nil); err != nil {
+		t.Fatalf("ensureWorkspaceTrusted: %v", err)
+	}
+	markerPath := filepath.Join(cursorProjectStorageDir(workspace, nil), cursorTrustMarkerName)
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("marker not seeded: %v", err)
+	}
+
+	if err := plugin.CleanupWorkspaceState(context.Background(), workspace, nil); err != nil {
+		t.Fatalf("CleanupWorkspaceState: %v", err)
+	}
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("AO-managed marker still present after cleanup: %v", err)
+	}
+}
+
+func TestCleanupWorkspaceStatePreservesUserTrustDecision(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CURSOR_DATA_DIR", dataDir)
+
+	plugin := &Plugin{}
+	workspace := "/Users/example/repo-user-trusted"
+	markerPath := filepath.Join(cursorProjectStorageDir(workspace, nil), cursorTrustMarkerName)
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// A marker cursor-agent wrote after the user answered its prompt (no
+	// ao-managed trustMethod) records a real user decision.
+	native := []byte(`{"trustedAt":"2026-01-01T00:00:00Z","workspacePath":"/Users/example/repo-user-trusted"}`)
+	if err := os.WriteFile(markerPath, native, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.CleanupWorkspaceState(context.Background(), workspace, nil); err != nil {
+		t.Fatalf("CleanupWorkspaceState: %v", err)
+	}
+	got, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("user trust marker was removed: %v", err)
+	}
+	if string(got) != string(native) {
+		t.Fatalf("user trust marker was modified: %s", got)
+	}
+}
+
+func TestCleanupWorkspaceStateMissingMarkerIsNoop(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CURSOR_DATA_DIR", dataDir)
+
+	plugin := &Plugin{}
+	if err := plugin.CleanupWorkspaceState(context.Background(), "/Users/example/never-seeded", nil); err != nil {
+		t.Fatalf("CleanupWorkspaceState on unseeded workspace: %v", err)
 	}
 }

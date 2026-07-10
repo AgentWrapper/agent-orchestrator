@@ -256,16 +256,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+	// Computed once and shared with the adapter (PreLaunch and the command
+	// builders) so env-derived paths (e.g. Cursor's trust marker under
+	// CURSOR_DATA_DIR) resolve against the same environment the runtime
+	// exports into the agent process.
+	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, env); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
-	// Computed once and shared with the adapter so env-derived paths (e.g.
-	// Cursor's trust marker under CURSOR_DATA_DIR) resolve against the same
-	// environment the runtime exports into the agent process.
-	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
@@ -277,6 +278,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Env:           env,
 	})
 	if err != nil {
+		// GetLaunchCommand may already have seeded agent-side workspace state
+		// (e.g. cursor's trust marker), so rollbacks from here on clean it up
+		// before the worktree disappears.
+		m.cleanupAgentWorkspaceState(ctx, agent, ws.Path, env)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
@@ -286,6 +291,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
+		m.cleanupAgentWorkspaceState(ctx, agent, ws.Path, env)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
@@ -297,6 +303,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Env:           env,
 	})
 	if err != nil {
+		m.cleanupAgentWorkspaceState(ctx, agent, ws.Path, env)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
@@ -305,6 +312,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
+		m.cleanupAgentWorkspaceState(ctx, agent, ws.Path, env)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
@@ -470,6 +478,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 	freed := false
 	if ws.Path != "" {
+		// Agent-side per-workspace state (e.g. cursor's trust marker) goes
+		// first, while the path still exists to resolve symlink variants. The
+		// session is already terminal, so this holds even if the dirty-worktree
+		// guard below preserves the worktree itself.
+		m.cleanupSessionWorkspaceState(ctx, rec)
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				return false, nil
@@ -525,6 +538,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 			return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 		}
 	}
+	m.cleanupSessionWorkspaceState(ctx, rec)
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		return fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
 	}
@@ -580,7 +594,11 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if !ok {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+	// The env is computed once and shared with the adapter (PreLaunch and the
+	// command builders) for the same reason as in spawn: env-derived adapter
+	// paths must match the runtime's exports.
+	env := m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env)
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, env); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
 	// The system prompt is derived, not persisted: recompute it so a restored
@@ -591,9 +609,6 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	// The env is computed once and shared with the adapter for the same reason
-	// as in spawn: env-derived adapter paths must match the runtime's exports.
-	env := m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env)
 	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind, env)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
@@ -959,6 +974,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
+		m.cleanupSessionWorkspaceState(ctx, rec)
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if !errors.Is(err, ports.ErrWorkspaceDirty) {
 				// The public reason stays a fixed string (the raw error carries
@@ -1301,11 +1317,63 @@ type preLauncher interface {
 	PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error
 }
 
+// workspaceStateCleaner is an optional agent capability: remove agent-side
+// state the adapter seeded for a workspace OUTSIDE the worktree itself (e.g.
+// cursor's pre-seeded workspace-trust marker in the agent's own data dir)
+// when that workspace is torn down. Without it, durable state keyed to a
+// reusable absolute worktree path outlives the session that justified it.
+// Best-effort: failures are logged by the manager, never block teardown.
+type workspaceStateCleaner interface {
+	CleanupWorkspaceState(ctx context.Context, workspacePath string, env map[string]string) error
+}
+
+// cleanupAgentWorkspaceState asks the session's agent adapter to remove any
+// agent-side per-workspace state before the worktree is destroyed (the path
+// must still exist so symlink-resolved variants can be derived). env carries
+// the same overrides the session launched with so the adapter targets the
+// same locations it seeded.
+func (m *Manager) cleanupAgentWorkspaceState(ctx context.Context, agent ports.Agent, workspacePath string, env map[string]string) {
+	if agent == nil || workspacePath == "" {
+		return
+	}
+	cleaner, ok := agent.(workspaceStateCleaner)
+	if !ok {
+		return
+	}
+	if err := cleaner.CleanupWorkspaceState(ctx, workspacePath, env); err != nil {
+		m.logger.Warn("agent workspace-state cleanup failed", "path", workspacePath, "error", err)
+	}
+}
+
+// cleanupSessionWorkspaceState is cleanupAgentWorkspaceState for teardown
+// paths that hold only a session record: it resolves the adapter from the
+// record's harness and rebuilds the session's runtime env from the project
+// config. A missing project degrades to an empty config (matching loadProject
+// semantics) rather than skipping cleanup.
+func (m *Manager) cleanupSessionWorkspaceState(ctx context.Context, rec domain.SessionRecord) {
+	if rec.Metadata.WorkspacePath == "" {
+		return
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		m.logger.Warn("agent workspace-state cleanup: load project", "session", rec.ID, "error", err)
+	}
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	m.cleanupAgentWorkspaceState(ctx, agent, rec.Metadata.WorkspacePath, env)
+}
+
 // prepareWorkspace runs the per-session pre-launch steps before the runtime
 // starts the agent: installing the workspace-local activity hooks (so early
 // startup hooks can update the already-created session row), then any optional
-// PreLaunch step. Shared by Spawn and Restore.
-func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string) error {
+// PreLaunch step. Shared by Spawn and Restore. env is the same effective
+// environment later passed to the command builders and the runtime, so
+// env-sensitive PreLaunch work resolves the same paths the spawned process
+// will (see ports.LaunchConfig.Env).
+func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, env map[string]string) error {
 	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
@@ -1314,7 +1382,7 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 		return fmt.Errorf("install hooks: %w", err)
 	}
 	if pl, ok := agent.(preLauncher); ok {
-		if err := pl.PreLaunch(ctx, ports.LaunchConfig{SessionID: string(id), WorkspacePath: workspacePath}); err != nil {
+		if err := pl.PreLaunch(ctx, ports.LaunchConfig{SessionID: string(id), WorkspacePath: workspacePath, Env: env}); err != nil {
 			return fmt.Errorf("pre-launch: %w", err)
 		}
 	}
