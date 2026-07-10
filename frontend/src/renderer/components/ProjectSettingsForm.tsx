@@ -158,6 +158,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
+	const [intakeDisableRequested, setIntakeDisableRequested] = useState(false);
 	// A non-empty worker mix resolves the worker harness on its own, so the single
 	// default worker agent is only required when no mix is configured. The
 	// orchestrator agent is always required.
@@ -181,7 +182,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		assignee: form.intakeAssignee,
 		optOutLabels: form.intakeOptOutLabels,
 	};
-	const patchIntake = (patch: Partial<IntakeForm>) =>
+	const patchIntake = (patch: Partial<IntakeForm>) => {
+		if (patch.enabled !== undefined) {
+			setIntakeDisableRequested(!patch.enabled);
+		}
 		setForm((f) => ({
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
@@ -189,6 +193,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 			intakeOptOutLabels: patch.optOutLabels ?? f.intakeOptOutLabels,
 		}));
+	};
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
 
 	const mutation = useMutation({
@@ -214,7 +219,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						: undefined,
 				// Pass the loaded intake as base so fields the form doesn't expose
 				// (labels, maxConcurrent) survive the save instead of being wiped.
-				trackerIntake: buildIntake(intakeForm, intake),
+				trackerIntake: buildIntake(intakeForm, intake, {
+					explicitDisable: intakeDisableRequested,
+				}),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },

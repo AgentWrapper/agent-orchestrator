@@ -110,6 +110,12 @@ type workerMixEntry struct {
 	Weight int    `json:"weight"`
 }
 
+// reviewerConfig mirrors domain.ReviewerConfig so project JSON round-trips
+// configured reviewer harnesses through the CLI mirror.
+type reviewerConfig struct {
+	Harness string `json:"harness"`
+}
+
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
 type trackerIntakeConfig struct {
 	Enabled       bool     `json:"enabled,omitempty"`
@@ -138,13 +144,26 @@ type projectConfig struct {
 	Worker        roleOverride        `json:"worker,omitempty"`
 	Orchestrator  roleOverride        `json:"orchestrator,omitempty"`
 	WorkerMix     []workerMixEntry    `json:"workerMix,omitempty"`
+	Reviewers     []reviewerConfig    `json:"reviewers,omitempty"`
 	TrackerIntake trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
 // PUT /api/v1/projects/{id}/config.
 type setConfigRequest struct {
-	Config projectConfig `json:"config"`
+	Config    projectConfig `json:"config"`
+	rawConfig json.RawMessage
+}
+
+func (r setConfigRequest) MarshalJSON() ([]byte, error) {
+	if len(r.rawConfig) > 0 {
+		return json.Marshal(struct {
+			Config json.RawMessage `json:"config"`
+		}{Config: r.rawConfig})
+	}
+	return json.Marshal(struct {
+		Config projectConfig `json:"config"`
+	}{Config: r.Config})
 }
 
 type projectSetConfigOptions struct {
@@ -166,6 +185,7 @@ type projectSetConfigOptions struct {
 	trackerLabels                []string
 	trackerExcludeLabels         []string
 	trackerMaxConcurrent         int
+	trackerIntakeSet             bool
 	configJSON                   string
 	clear                        bool
 	json                         bool
@@ -325,11 +345,29 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(args[0])
+			opts.trackerIntakeSet = cmd.Flags().Changed("tracker-intake")
+			if opts.configJSON != "" && trackerConfigFlagChanged(cmd) {
+				return usageError{errors.New("usage: tracker intake flags cannot be combined with --config-json; include trackerIntake in the JSON object instead")}
+			}
+			if opts.clear && trackerConfigFlagChanged(cmd) {
+				return usageError{errors.New("usage: tracker intake flags cannot be combined with --clear; clear sends an explicit trackerIntake disable sentinel")}
+			}
 			config, err := buildProjectConfig(opts)
 			if err != nil {
 				return err
 			}
 			req := setConfigRequest{Config: config}
+			if opts.clear {
+				req.rawConfig = json.RawMessage(`{"trackerIntake":{"enabled":false}}`)
+			} else if opts.configJSON != "" {
+				req.rawConfig = json.RawMessage(opts.configJSON)
+			} else if opts.trackerIntakeSet && !opts.trackerIntake {
+				rawConfig, err := configWithExplicitTrackerIntakeEnabled(config, false)
+				if err != nil {
+					return err
+				}
+				req.rawConfig = rawConfig
+			}
 			var res projectResult
 			if err := ctx.putJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/config", req, &res); err != nil {
 				return err
@@ -363,6 +401,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
+	cmd.MarkFlagsMutuallyExclusive("clear", "config-json")
 	return cmd
 }
 
@@ -410,6 +449,53 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}
 	}
 	return cfg, nil
+}
+
+func trackerConfigFlagChanged(cmd *cobra.Command) bool {
+	for _, name := range []string{
+		"tracker-intake",
+		"tracker-repo",
+		"tracker-assignee",
+		"tracker-label",
+		"tracker-exclude-label",
+		"tracker-max-concurrent",
+	} {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func configWithExplicitTrackerIntakeEnabled(config projectConfig, enabled bool) (json.RawMessage, error) {
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	var tracker map[string]json.RawMessage
+	if trackerRaw, ok := raw["trackerIntake"]; ok {
+		if err := json.Unmarshal(trackerRaw, &tracker); err != nil {
+			return nil, err
+		}
+	}
+	if tracker == nil {
+		tracker = make(map[string]json.RawMessage)
+	}
+	enabledData, err := json.Marshal(enabled)
+	if err != nil {
+		return nil, err
+	}
+	tracker["enabled"] = enabledData
+	trackerData, err := json.Marshal(tracker)
+	if err != nil {
+		return nil, err
+	}
+	raw["trackerIntake"] = trackerData
+	return json.Marshal(raw)
 }
 
 func trackerProviderForFlags(opts projectSetConfigOptions) string {

@@ -32,15 +32,23 @@ export type IntakeForm = {
 // grows, IntakeFields gains a provider <Select> + per-provider scope fields,
 // and buildIntake switches the scope field it emits.
 
-// buildIntake produces the payload field. Disabled intake serializes to
-// `undefined` (omit) — the whole config is dropped, so no base field (labels,
-// maxConcurrent) leaks into a persisted-but-disabled intake. When enabled it
+// buildIntake produces the payload field. Disabled intake usually serializes to
+// `undefined` (omit), but full-replace settings saves need an explicit
+// `{ enabled: false }` sentinel so the daemon can distinguish an intentional
+// disable from a stale writer that dropped trackerIntake. When enabled it
 // spreads `base` (the config that loaded) first so fields the form does NOT own
 // — labels, maxConcurrent — survive the save instead of being silently dropped;
 // the form-owned fields then override. An empty optOutLabels list is omitted so
 // the daemon falls back to the default taxonomy.
-export function buildIntake(form: IntakeForm, base?: TrackerIntakeConfig): TrackerIntakeConfig | undefined {
-	if (!form.enabled) return undefined;
+export function buildIntake(
+	form: IntakeForm,
+	base?: TrackerIntakeConfig,
+	options: { explicitDisable?: boolean } = {},
+): TrackerIntakeConfig | undefined {
+	if (!form.enabled) {
+		const hasDisabledBase = base !== undefined && base.enabled !== true && Object.keys(base).length > 0;
+		return options.explicitDisable || hasDisabledBase ? { ...base, enabled: false } : undefined;
+	}
 	const excludeLabels = form.optOutLabels.map((l) => l.trim()).filter((l) => l !== "");
 	const next: TrackerIntakeConfig = {
 		...base,

@@ -91,4 +91,23 @@ describe("buildIntake", () => {
 		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, base);
 		expect(out).toBeUndefined();
 	});
+
+	it("can serialize an explicit disable sentinel while preserving hidden base fields", () => {
+		const base = { enabled: true, provider: "github" as const, maxConcurrent: 4, labels: ["ready"] };
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, base, {
+			explicitDisable: true,
+		});
+		expect(out).toEqual({ enabled: false, provider: "github", maxConcurrent: 4, labels: ["ready"] });
+	});
+
+	it("serializes a disabled populated base even when the daemon omitted enabled false", () => {
+		const base = { provider: "github" as const, maxConcurrent: 4, labels: ["ready"] };
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, base);
+		expect(out).toEqual({ enabled: false, provider: "github", maxConcurrent: 4, labels: ["ready"] });
+	});
+
+	it("does not fabricate a disable sentinel for a never-configured base", () => {
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, {});
+		expect(out).toBeUndefined();
+	});
 });

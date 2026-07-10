@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pressly/goose/v3"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
@@ -38,5 +40,118 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 		if !strings.Contains(schema, "'"+string(h)+"'") {
 			t.Errorf("sessions.harness CHECK is missing harness %q — the migration that widens it silently no-opped; schema:\n%s", h, schema)
 		}
+	}
+}
+
+func downTo(t *testing.T, db *sql.DB, version int64) {
+	t.Helper()
+	gooseMu.Lock()
+	defer gooseMu.Unlock()
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatalf("set dialect: %v", err)
+	}
+	if err := goose.DownTo(db, "migrations", version); err != nil {
+		t.Fatalf("migrate down to %d: %v", version, err)
+	}
+}
+
+func TestProjectConfigCDCMigrationPreservesChangeLogHighWaterMark(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 30)
+	if _, err := db.Exec(
+		`INSERT INTO projects (id, path, registered_at) VALUES ('p1', '/tmp/p1', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := db.Exec(
+			`INSERT INTO change_log (project_id, event_type, payload) VALUES ('p1', 'session_updated', '{}')`,
+		); err != nil {
+			t.Fatalf("seed change_log row %d: %v", i+1, err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM change_log WHERE seq IN (4, 5)`); err != nil {
+		t.Fatalf("delete tail rows: %v", err)
+	}
+
+	upTo(t, db, 31)
+	assertSQLiteSequence(t, db, "change_log", 5)
+	assertNextChangeLogSeq(t, db, 6)
+
+	if _, err := db.Exec(`DELETE FROM change_log WHERE seq = 6`); err != nil {
+		t.Fatalf("delete post-upgrade row: %v", err)
+	}
+	downTo(t, db, 30)
+	assertSQLiteSequence(t, db, "change_log", 6)
+	assertNextChangeLogSeq(t, db, 7)
+}
+
+func TestProjectConfigCDCTriggersSkipMalformedLegacyConfig(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 30)
+	if _, err := db.Exec(
+		`INSERT INTO projects (id, path, registered_at, config) VALUES ('p1', '/tmp/p1', '2026-01-01T00:00:00Z', 'not-json')`,
+	); err != nil {
+		t.Fatalf("seed corrupt project config: %v", err)
+	}
+
+	upTo(t, db, 31)
+	if _, err := db.Exec(`UPDATE projects SET config = '{"defaultBranch":"main"}' WHERE id = 'p1'`); err != nil {
+		t.Fatalf("repair corrupt project config: %v", err)
+	}
+	assertProjectConfigChangeLogCount(t, db, 0)
+
+	if _, err := db.Exec(`UPDATE projects SET config = '{"defaultBranch":"release"}' WHERE id = 'p1'`); err != nil {
+		t.Fatalf("update valid project config: %v", err)
+	}
+	assertProjectConfigChangeLogCount(t, db, 1)
+}
+
+func assertProjectConfigChangeLogCount(t *testing.T, db *sql.DB, want int64) {
+	t.Helper()
+	var got int64
+	if err := db.QueryRow(`SELECT COUNT(*) FROM change_log WHERE event_type = 'project_config_changed'`).Scan(&got); err != nil {
+		t.Fatalf("count project_config_changed events: %v", err)
+	}
+	if got != want {
+		t.Fatalf("project_config_changed count = %d, want %d", got, want)
+	}
+}
+
+func assertSQLiteSequence(t *testing.T, db *sql.DB, table string, want int64) {
+	t.Helper()
+	var got int64
+	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = ?`, table).Scan(&got); err != nil {
+		t.Fatalf("read sqlite_sequence for %s: %v", table, err)
+	}
+	if got != want {
+		t.Fatalf("sqlite_sequence[%s] = %d, want %d", table, got, want)
+	}
+}
+
+func assertNextChangeLogSeq(t *testing.T, db *sql.DB, want int64) {
+	t.Helper()
+	res, err := db.Exec(`INSERT INTO change_log (project_id, event_type, payload) VALUES ('p1', 'session_updated', '{}')`)
+	if err != nil {
+		t.Fatalf("insert change_log row: %v", err)
+	}
+	got, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	if got != want {
+		t.Fatalf("next change_log seq = %d, want %d", got, want)
 	}
 }

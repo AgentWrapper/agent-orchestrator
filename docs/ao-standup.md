@@ -100,23 +100,35 @@ stubbed or hidden in browser mode.
 
 ```bash
 ao project add --path ~/agent-orchestrator   # etc. per project
-ao project set-config agent-orchestrator \
-  --default-branch main \
-  --session-prefix ao \
-  --worker-agent claude-code \
-  --orchestrator-agent claude-code \
-  --permission bypass-permissions \
-  --env POLYPOWERS_AUTOMERGE=1 \
-  --env POLYPOWERS_REPO=polymath-ventures/agent-orchestrator
+config="$(ao project get agent-orchestrator --json \
+  | jq -c '.project.config
+      | .defaultBranch = "main"
+      | .sessionPrefix = "ao"
+      | .worker = ((.worker // {}) | .agent = "claude-code")
+      | .orchestrator = ((.orchestrator // {}) | .agent = "claude-code")
+      | .agentConfig = ((.agentConfig // {}) | .permissions = "bypass-permissions")
+      | .env = ((.env // {})
+          | .POLYPOWERS_AUTOMERGE = "1"
+          | .POLYPOWERS_REPO = "polymath-ventures/agent-orchestrator")')"
+ao project set-config agent-orchestrator --config-json "$config"
 ```
 
 **`set-config` REPLACES the entire config blob — it does not merge.** Pass
-every flag every time; a call that "just updates one env var" silently drops
-the rest of the config. The command above is the full live config — the
-`POLYPOWERS_*` env grants workers the autonomous merge+deploy loop (decisions
-D-c/D-e), `bypass-permissions` keeps unattended workers from stalling on
-prompts. Omitting any of those flags on a later `set-config` call deletes
-that piece of config.
+the whole current object every time; a call that "just updates one env var"
+drops the rest of the config. Before editing, GET the current config, apply the
+intended change, then send the full replacement with `--config-json`. The
+command above edits the current live config in place so keys such as
+`trackerIntake`, `workerMix`, and `reviewers` survive. The `POLYPOWERS_*` env
+grants workers the autonomous merge+deploy loop (decisions D-c/D-e);
+`bypass-permissions` keeps unattended workers from stalling on prompts.
+
+Disabling issue intake is protected: if `trackerIntake` is enabled, a
+replacement payload that merely omits `trackerIntake` is rejected. Use the
+first-class pause/resume control for intentional fleet pauses when available;
+for a config-level disable, merge `trackerIntake.enabled=false` into the full
+current config and send that full replacement JSON. Do not send a one-field
+`{"trackerIntake":{"enabled":false}}` replacement unless clearing every other
+config key is also intended.
 
 Registered projects at standup: `agent-orchestrator` (prefix `ao`),
 `coachclaw` (prefix `cc`). Adding a project in the UI spawns its orchestrator

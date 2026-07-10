@@ -743,6 +743,183 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	}
 }
 
+func TestProjectConfigCDCTriggersPopulateChangeLog(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	base, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "mer",
+		Path:         "/tmp/mer",
+		RegisteredAt: now,
+		Config: domain.ProjectConfig{
+			Env: map[string]string{"GITHUB_TOKEN": "secret"},
+			TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:       true,
+				Provider:      domain.TrackerProviderGitHub,
+				MaxConcurrent: 8,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("update project config: %v", err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1 project config event: %#v", len(evs), evs)
+	}
+	if evs[0].ProjectID != "mer" || evs[0].SessionID != "" || evs[0].Type != "project_config_changed" {
+		t.Fatalf("event = %#v, want project_config_changed for mer without session", evs[0])
+	}
+	var payload struct {
+		ID     string         `json:"id"`
+		Before map[string]any `json:"before"`
+		After  map[string]any `json:"after"`
+	}
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatalf("config payload JSON: %v", err)
+	}
+	if payload.ID != "mer" || len(payload.Before) != 0 {
+		t.Fatalf("payload before = %#v, want empty config for mer", payload)
+	}
+	if _, ok := payload.After["trackerIntake"].(map[string]any); !ok {
+		t.Fatalf("payload after missing trackerIntake object: %#v", payload.After)
+	}
+	if _, ok := payload.After["env"]; ok {
+		t.Fatalf("payload after leaked env secrets: %#v", payload.After)
+	}
+
+	base = evs[0].Seq
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "mer",
+		Path:         "/tmp/mer",
+		RegisteredAt: now,
+		Config: domain.ProjectConfig{
+			Env: map[string]string{"GITHUB_TOKEN": "secret"},
+			TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:       true,
+				Provider:      domain.TrackerProviderGitHub,
+				MaxConcurrent: 8,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("rewrite same project config: %v", err)
+	}
+	evs, err = s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Type != "project_config_changed" {
+		t.Fatalf("same-value config rewrite events = %#v, want one project_config_changed", evs)
+	}
+	payload = struct {
+		ID     string         `json:"id"`
+		Before map[string]any `json:"before"`
+		After  map[string]any `json:"after"`
+	}{}
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatalf("same-value config payload JSON: %v", err)
+	}
+	if _, ok := payload.Before["trackerIntake"].(map[string]any); !ok {
+		t.Fatalf("same-value payload before missing trackerIntake object: %#v", payload.Before)
+	}
+	if _, ok := payload.After["trackerIntake"].(map[string]any); !ok {
+		t.Fatalf("same-value payload after missing trackerIntake object: %#v", payload.After)
+	}
+	if _, ok := payload.Before["env"]; ok {
+		t.Fatalf("same-value payload before leaked env secrets: %#v", payload.Before)
+	}
+	if _, ok := payload.After["env"]; ok {
+		t.Fatalf("same-value payload after leaked env secrets: %#v", payload.After)
+	}
+
+	base = evs[0].Seq
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "mer",
+		Path:         "/tmp/mer",
+		RegisteredAt: now,
+		Config: domain.ProjectConfig{
+			Env: map[string]string{"GITHUB_TOKEN": "rotated-secret"},
+			TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:       true,
+				Provider:      domain.TrackerProviderGitHub,
+				MaxConcurrent: 9,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("rewrite changed project config: %v", err)
+	}
+	evs, err = s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Type != "project_config_changed" {
+		t.Fatalf("changed config rewrite events = %#v, want one project_config_changed", evs)
+	}
+	payload = struct {
+		ID     string         `json:"id"`
+		Before map[string]any `json:"before"`
+		After  map[string]any `json:"after"`
+	}{}
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatalf("changed config payload JSON: %v", err)
+	}
+	if _, ok := payload.Before["trackerIntake"].(map[string]any); !ok {
+		t.Fatalf("payload before missing trackerIntake object: %#v", payload.Before)
+	}
+	if _, ok := payload.Before["env"]; ok {
+		t.Fatalf("payload before leaked env secrets: %#v", payload.Before)
+	}
+	if _, ok := payload.After["env"]; ok {
+		t.Fatalf("payload after leaked env secrets: %#v", payload.After)
+	}
+
+	base, err = s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "newcfg",
+		Path:         "/tmp/newcfg",
+		RegisteredAt: now,
+		Config: domain.ProjectConfig{
+			DefaultBranch: "develop",
+			Env:           map[string]string{"API_TOKEN": "secret"},
+		},
+	}); err != nil {
+		t.Fatalf("insert project with config: %v", err)
+	}
+	evs, err = s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].ProjectID != "newcfg" || evs[0].Type != "project_config_changed" {
+		t.Fatalf("insert config events = %#v, want one project_config_changed for newcfg", evs)
+	}
+	payload = struct {
+		ID     string         `json:"id"`
+		Before map[string]any `json:"before"`
+		After  map[string]any `json:"after"`
+	}{}
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatalf("insert config payload JSON: %v", err)
+	}
+	if payload.ID != "newcfg" || len(payload.Before) != 0 || payload.After["defaultBranch"] != "develop" {
+		t.Fatalf("insert config payload = %#v, want redacted before/after config", payload)
+	}
+	if _, ok := payload.After["env"]; ok {
+		t.Fatalf("insert config payload leaked env secrets: %#v", payload.After)
+	}
+}
+
 func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

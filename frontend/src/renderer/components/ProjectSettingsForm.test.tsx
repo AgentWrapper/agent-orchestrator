@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -178,6 +178,8 @@ describe("ProjectSettingsForm", () => {
 						permissions: "bypass-permissions",
 					},
 					reviewers: [{ harness: "claude-code" }],
+					workerMix: undefined,
+					trackerIntake: undefined,
 				},
 			},
 		});
@@ -186,6 +188,84 @@ describe("ProjectSettingsForm", () => {
 			body: { projectId: "proj-1", clean: true },
 		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+	}, 20_000);
+
+	it("does not fabricate an explicit intake disable after a mounted form refetches enabled intake", async () => {
+		const project = {
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		};
+		mockProject(project);
+
+		const queryClient = renderSettings();
+		expect(await screen.findByLabelText("Enable issue intake")).not.toBeChecked();
+
+		act(() => {
+			queryClient.setQueryData(["project", "proj-1"], {
+				...project,
+				config: {
+					...project.config,
+					trackerIntake: {
+						enabled: true,
+						provider: "github",
+						assignee: "octocat",
+						maxConcurrent: 3,
+					},
+				},
+			});
+		});
+
+		await userEvent.type(screen.getByLabelText("Session prefix"), "ao");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toBeUndefined();
+	}, 20_000);
+
+	it("preserves hidden intake fields when saving a disabled intake config", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				trackerIntake: {
+					provider: "github",
+					assignee: "octocat",
+					maxConcurrent: 3,
+					excludeLabels: ["no-ao"],
+				},
+			},
+		});
+
+		renderSettings();
+		expect(await screen.findByLabelText("Enable issue intake")).not.toBeChecked();
+
+		await userEvent.type(screen.getByLabelText("Session prefix"), "ao");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: false,
+			provider: "github",
+			assignee: "octocat",
+			maxConcurrent: 3,
+			excludeLabels: ["no-ao"],
+		});
 	}, 20_000);
 
 	it("loads an existing worker mix and saves added rows summing to 100", async () => {
@@ -560,6 +640,49 @@ describe("ProjectSettingsForm", () => {
 		const body = putMock.mock.calls[0]?.[1]?.body;
 		expect(body.config.trackerIntake).toEqual({
 			enabled: true,
+			provider: "github",
+			assignee: "octocat",
+			maxConcurrent: 3,
+			excludeLabels: ["no-ao"],
+		});
+	});
+
+	it("sends an explicit tracker intake disable sentinel when unchecked", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+						trackerIntake: {
+							enabled: true,
+							provider: "github",
+							assignee: "octocat",
+							maxConcurrent: 3,
+							excludeLabels: ["no-ao"],
+						},
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: false,
 			provider: "github",
 			assignee: "octocat",
 			maxConcurrent: 3,
