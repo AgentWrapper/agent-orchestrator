@@ -45,11 +45,11 @@ That's it — there are no plugin-level config keys.
 
 ## Environment variables
 
-| Variable        | Set by AO                      | Purpose                                             |
-| --------------- | ------------------------------ | --------------------------------------------------- |
-| `AO_SESSION_ID` | ✓                              | Unique AO session identifier                        |
-| `AO_ISSUE_ID`   | ✓ (when spawned from an issue) | Issue identifier                                    |
-| `CLAUDECODE`    | ✓                              | Signals to Claude that it's running under a harness |
+| Variable        | Set by AO                      | Purpose                                                         |
+| --------------- | ------------------------------ | --------------------------------------------------------------- |
+| `AO_SESSION_ID` | ✓                              | Unique AO session identifier                                    |
+| `AO_ISSUE_ID`   | ✓ (when spawned from an issue) | Canonical tracker issue id when resolved; otherwise supplied id |
+| `CLAUDECODE`    | ✓                              | Signals to Claude that it's running under a harness             |
 
 Your Anthropic API key comes from wherever `claude` normally reads it — `~/.claude/`, env, etc. AO doesn't touch it.
 

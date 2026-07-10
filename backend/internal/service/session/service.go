@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/trackerintake"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -165,6 +166,14 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.Session{}, err
 	}
+	if issueID, ok := trackerintake.CanonicalIssueIDFromRef(project, cfg.IssueID); ok {
+		cfg.IssueID = issueID
+	} else if cfg.Kind == domain.KindWorker && strings.TrimSpace(string(cfg.IssueID)) == "" {
+		if issueID, ok := trackerintake.CanonicalIssueIDFromAddressIssuePrompt(project, cfg.Prompt); ok {
+			cfg.IssueID = issueID
+			cfg.DisplayName = ""
+		}
+	}
 	start := s.now()
 	firstSession, err := s.isFirstSession(ctx)
 	if err != nil {
@@ -197,6 +206,9 @@ func (s *Service) resolveIssueTitle(ctx context.Context, project domain.ProjectR
 		return existing
 	}
 	if s.issueTitles == nil || strings.TrimSpace(string(cfg.IssueID)) == "" {
+		return ""
+	}
+	if _, ok := trackerintake.IssueTrackerID(project, cfg.IssueID); !ok {
 		return ""
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, issueTitleLookupTimeout)

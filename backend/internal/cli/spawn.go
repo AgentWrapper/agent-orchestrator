@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/trackerintake"
 )
 
 // maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
@@ -83,6 +85,16 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return err
 			}
 			opts.project = project.ID
+			// `ao spawn` creates worker sessions. The daemon canonicalizes again
+			// and gates prompt inference by kind; doing it here preserves issue
+			// linkage when a newer CLI talks to an older daemon.
+			if issueID, ok := trackerintake.CanonicalIssueIDFromRef(spawnProjectRecord(project), domain.IssueID(opts.issue)); ok {
+				opts.issue = string(issueID)
+			} else if strings.TrimSpace(opts.issue) == "" {
+				if issueID, ok := trackerintake.CanonicalIssueIDFromAddressIssuePrompt(spawnProjectRecord(project), opts.prompt); ok {
+					opts.issue = string(issueID)
+				}
+			}
 
 			harness, err := resolveSpawnHarness(opts.harness, cmd.Flags().Changed("harness"), opts.model, project)
 			if err != nil {
@@ -164,12 +176,26 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.model, "model", "", "Model override for this session (default: project/role agentConfig.model or agent default)")
-	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
+	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session (inferred for exact /address-issue prompts)")
 	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (default: computed by the daemon as `<repoKey> #<issue> <slug>`, max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
 	return cmd
+}
+
+func spawnProjectRecord(project projectDetails) domain.ProjectRecord {
+	rec := domain.ProjectRecord{
+		ID:            project.ID,
+		RepoOriginURL: project.Repo,
+	}
+	if project.Config != nil {
+		rec.Config.TrackerIntake = domain.TrackerIntakeConfig{
+			Provider: domain.TrackerProvider(project.Config.TrackerIntake.Provider),
+			Repo:     project.Config.TrackerIntake.Repo,
+		}
+	}
+	return rec
 }
 
 func (c *commandContext) fetchAgentInventory(ctx context.Context, refresh bool) (agentInventory, error) {

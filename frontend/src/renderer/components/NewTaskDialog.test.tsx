@@ -93,13 +93,57 @@ describe("NewTaskDialog", () => {
 				projectId: "proj-1",
 				kind: "worker",
 				harness: undefined,
-				issueId: "Fix fallback renderer",
+				displayName: "Fix fallback rendere",
 				prompt: "Restore the fallback renderer after WebGL init fails.",
 				branch: undefined,
 			},
 		});
 		expect(onCreated).toHaveBeenCalledWith("task-1");
 		expect(onOpenChange).toHaveBeenCalledWith(false);
+	}, 10_000);
+
+	it("still sends a display name for tracked address-issue tasks", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Issue 170");
+		await user.type(screen.getByLabelText("Brief"), "/address-issue 170");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions", {
+			body: {
+				projectId: "proj-1",
+				kind: "worker",
+				harness: undefined,
+				displayName: "Issue 170",
+				prompt: "/address-issue 170",
+				branch: undefined,
+			},
+		});
+	}, 10_000);
+
+	it("keeps the title for invalid address-issue prompts", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Issue zero");
+		await user.type(screen.getByLabelText("Brief"), "/address-issue 0");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions", {
+			body: {
+				projectId: "proj-1",
+				kind: "worker",
+				harness: undefined,
+				displayName: "Issue zero",
+				prompt: "/address-issue 0",
+				branch: undefined,
+			},
+		});
 	}, 10_000);
 
 	it("sends the chosen harness when the user overrides the default", async () => {

@@ -124,10 +124,10 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
 	}
-	// displayName is optional at the API (the desktop new-task dialog omits it
-	// and the read model falls back to the session id). `ao spawn` makes it
-	// required CLI-side. When present, it is held to the same length cap here so
-	// a direct API call cannot exceed it.
+	// displayName is optional at the API, and the read model falls back to the
+	// session id. `ao spawn` leaves it empty unless --name is explicit. When
+	// present, it is held to the same length cap here so a direct API call cannot
+	// exceed it.
 	displayName := strings.TrimSpace(in.DisplayName)
 	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)

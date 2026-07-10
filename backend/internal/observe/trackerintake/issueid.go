@@ -1,6 +1,7 @@
 package trackerintake
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -9,9 +10,9 @@ import (
 // IssueTrackerID is the inverse of CanonicalIssueID: it maps a session's stored
 // issue id back to the tracker id needed to fetch that issue.
 //
-// Two forms reach it. Sessions created by intake carry the canonical
+// Two forms reach it. Current tracker-linked sessions carry the canonical
 // `provider:native` id CanonicalIssueID produced ("github:owner/repo#146").
-// Sessions created by `ao spawn --issue 146` carry a bare issue number, which
+// Older rows and direct API callers can still carry a bare issue number, which
 // only means something relative to the project's own tracker repo — so the repo
 // is resolved from the project's intake config, falling back to its git origin.
 //
@@ -35,8 +36,8 @@ func IssueTrackerID(project domain.ProjectRecord, issue domain.IssueID) (domain.
 		}
 		return domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: strings.TrimSpace(native)}, true
 	}
-	number := strings.TrimPrefix(raw, "#")
-	if !isIssueNumber(number) {
+	number, ok := canonicalIssueNumber(strings.TrimPrefix(raw, "#"))
+	if !ok {
 		return domain.TrackerID{}, false
 	}
 	repo, ok := trackerRepo(project, project.Config.TrackerIntake)
@@ -44,6 +45,65 @@ func IssueTrackerID(project domain.ProjectRecord, issue domain.IssueID) (domain.
 		return domain.TrackerID{}, false
 	}
 	return domain.TrackerID{Provider: repo.Provider, Native: repo.Native + "#" + number}, true
+}
+
+// CanonicalIssueIDFromRef maps an explicit session issue ref to the same stored
+// issue id tracker intake uses. Non-GitHub or non-issue refs are left alone by
+// callers when this returns false.
+func CanonicalIssueIDFromRef(project domain.ProjectRecord, ref domain.IssueID) (domain.IssueID, bool) {
+	id, ok := IssueTrackerID(project, ref)
+	if !ok {
+		return "", false
+	}
+	id, ok = normalizeGitHubIssueTrackerID(id)
+	if !ok {
+		return "", false
+	}
+	return CanonicalIssueID(id), true
+}
+
+// CanonicalIssueIDFromAddressIssuePrompt recognizes AO's canonical worker
+// dispatch prompt and returns the same stored issue id tracker intake would.
+func CanonicalIssueIDFromAddressIssuePrompt(project domain.ProjectRecord, prompt string) (domain.IssueID, bool) {
+	fields := strings.Fields(strings.TrimSpace(prompt))
+	if len(fields) != 2 || fields[0] != "/address-issue" {
+		return "", false
+	}
+	return CanonicalIssueIDFromRef(project, domain.IssueID(fields[1]))
+}
+
+func normalizeGitHubIssueTrackerID(id domain.TrackerID) (domain.TrackerID, bool) {
+	// IssueTrackerID only returns GitHub tracker IDs today; keep this guard so a
+	// future provider cannot be rewritten by a GitHub-specific number normalizer.
+	if id.Provider != "" && id.Provider != domain.TrackerProviderGitHub {
+		return id, false
+	}
+	repo, number, ok := strings.Cut(strings.TrimSpace(id.Native), "#")
+	if !ok {
+		return id, false
+	}
+	canonical, ok := canonicalIssueNumber(number)
+	if !ok {
+		return id, false
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return id, false
+	}
+	id.Provider = domain.TrackerProviderGitHub
+	id.Native = repo + "#" + canonical
+	return id, true
+}
+
+func canonicalIssueNumber(s string) (string, bool) {
+	if !isIssueNumber(s) {
+		return "", false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return "", false
+	}
+	return strconv.Itoa(n), true
 }
 
 func isIssueNumber(s string) bool {

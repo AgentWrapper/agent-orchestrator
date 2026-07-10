@@ -39,13 +39,13 @@ No plugin-level config.
 
 ## Environment variables
 
-| Variable                     | Set by AO | Purpose                                             |
-| ---------------------------- | --------- | --------------------------------------------------- |
-| `AO_SESSION_ID`              | ✓         | AO session id                                       |
-| `AO_ISSUE_ID`                | ✓         | Issue identifier                                    |
-| `PATH`                       | ✓         | Prepends `~/.ao/bin` for the wrappers               |
-| `GH_PATH`                    | ✓         | Absolute path to the real `gh`, used by the wrapper |
-| `CODEX_DISABLE_UPDATE_CHECK` | ✓ (`1`)   | Skip version check                                  |
+| Variable                     | Set by AO | Purpose                                                         |
+| ---------------------------- | --------- | --------------------------------------------------------------- |
+| `AO_SESSION_ID`              | ✓         | AO session id                                                   |
+| `AO_ISSUE_ID`                | ✓         | Canonical tracker issue id when resolved; otherwise supplied id |
+| `PATH`                       | ✓         | Prepends `~/.ao/bin` for the wrappers                           |
+| `GH_PATH`                    | ✓         | Absolute path to the real `gh`, used by the wrapper             |
+| `CODEX_DISABLE_UPDATE_CHECK` | ✓ (`1`)   | Skip version check                                              |
 
 OpenAI API credentials come from wherever `codex` reads them — AO doesn't set them.
 

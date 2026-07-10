@@ -96,7 +96,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 					projectId,
 					kind: "worker",
 					harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
-					issueId: cleanTitle,
+					displayName: displayNameFromTitle(cleanTitle),
 					prompt: cleanPrompt,
 					branch: cleanBranch || undefined,
 				},
@@ -233,4 +233,8 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
+}
+
+function displayNameFromTitle(title: string): string {
+	return Array.from(title).slice(0, 20).join("");
 }

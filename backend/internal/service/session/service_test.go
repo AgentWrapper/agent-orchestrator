@@ -1215,8 +1215,8 @@ func TestSpawnResolvesIssueTitleWhenAbsent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	if titles.calls != 1 || titles.gotIss != "146" {
-		t.Fatalf("resolver calls=%d issue=%q, want one lookup for 146", titles.calls, titles.gotIss)
+	if titles.calls != 1 || titles.gotIss != "github:acme/demo#146" {
+		t.Fatalf("resolver calls=%d issue=%q, want one lookup for canonical 146", titles.calls, titles.gotIss)
 	}
 	if mgr.gotCfg.IssueTitle != "Naming, done forever" {
 		t.Fatalf("IssueTitle = %q, want the resolved tracker title", mgr.gotCfg.IssueTitle)
@@ -1239,6 +1239,77 @@ func TestSpawnKeepsProvidedIssueTitle(t *testing.T) {
 	}
 	if mgr.gotCfg.IssueTitle != "from intake" {
 		t.Fatalf("IssueTitle = %q, want the caller's title preserved", mgr.gotCfg.IssueTitle)
+	}
+}
+
+func TestSpawnInfersIssueFromAddressIssuePrompt(t *testing.T) {
+	titles := &fakeIssueTitles{title: "Spawn linkage regression"}
+	svc, mgr := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", Kind: domain.KindWorker, Prompt: "/address-issue 170",
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if mgr.gotCfg.IssueID != "github:acme/demo#170" {
+		t.Fatalf("IssueID = %q, want inferred canonical issue id", mgr.gotCfg.IssueID)
+	}
+	if titles.calls != 1 || titles.gotIss != "github:acme/demo#170" {
+		t.Fatalf("resolver calls=%d issue=%q, want one lookup for inferred issue", titles.calls, titles.gotIss)
+	}
+	if mgr.gotCfg.IssueTitle != "Spawn linkage regression" {
+		t.Fatalf("IssueTitle = %q, want resolved title for inferred issue", mgr.gotCfg.IssueTitle)
+	}
+}
+
+func TestSpawnPromptInferredIssueIgnoresClientDisplayName(t *testing.T) {
+	titles := &fakeIssueTitles{title: "Spawn linkage regression"}
+	svc, mgr := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", Kind: domain.KindWorker, Prompt: "/address-issue 170", DisplayName: "Client title",
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if mgr.gotCfg.IssueID != "github:acme/demo#170" {
+		t.Fatalf("IssueID = %q, want inferred canonical issue id", mgr.gotCfg.IssueID)
+	}
+	if mgr.gotCfg.DisplayName != "" {
+		t.Fatalf("DisplayName = %q, want daemon to compute tracked issue name", mgr.gotCfg.DisplayName)
+	}
+}
+
+func TestSpawnDoesNotInferAddressIssuePromptForOrchestrator(t *testing.T) {
+	titles := &fakeIssueTitles{title: "unused"}
+	svc, mgr := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", Kind: domain.KindOrchestrator, Prompt: "/address-issue 170",
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if mgr.gotCfg.IssueID != "" {
+		t.Fatalf("IssueID = %q, want no inferred issue for orchestrator spawn", mgr.gotCfg.IssueID)
+	}
+	if titles.calls != 0 {
+		t.Fatalf("resolver called %d times, want 0 without inferred worker issue", titles.calls)
+	}
+}
+
+func TestSpawnPreservesNonIssueRefIssueID(t *testing.T) {
+	titles := &fakeIssueTitles{title: "unused"}
+	svc, mgr := newTitleTestService(t, titles)
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo", Kind: domain.KindWorker, IssueID: "Fix fallback renderer", Prompt: "Restore the fallback renderer",
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if mgr.gotCfg.IssueID != "Fix fallback renderer" {
+		t.Fatalf("IssueID = %q, want free-text issue id preserved", mgr.gotCfg.IssueID)
+	}
+	if titles.calls != 0 {
+		t.Fatalf("resolver called %d times, want 0 for non-issue ref", titles.calls)
 	}
 }
 

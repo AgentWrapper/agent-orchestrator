@@ -138,7 +138,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	seen := seenIssueIDs(sessions)
+	seen := seenIssueIDs(enabledProjects, sessions)
 	liveByProject := liveWorkersByProject(sessions)
 	runningByProject := runningWorkerBucketsByProject(sessions)
 	for _, project := range enabledProjects {
@@ -364,11 +364,20 @@ func containsFold(values []string, needle string) bool {
 	return false
 }
 
-func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
+func seenIssueIDs(projects []domain.ProjectRecord, sessions []domain.SessionRecord) map[domain.IssueID]bool {
 	seen := make(map[domain.IssueID]bool, len(sessions))
+	projectByID := make(map[domain.ProjectID]domain.ProjectRecord, len(projects))
+	for _, project := range projects {
+		projectByID[domain.ProjectID(project.ID)] = project
+	}
 	for _, sess := range sessions {
 		if sess.IssueID != "" {
 			seen[sess.IssueID] = true
+			if project, ok := projectByID[sess.ProjectID]; ok {
+				if canonical, ok := CanonicalIssueIDFromRef(project, sess.IssueID); ok {
+					seen[canonical] = true
+				}
+			}
 		}
 	}
 	return seen

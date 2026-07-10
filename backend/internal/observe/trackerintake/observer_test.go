@@ -447,6 +447,28 @@ func TestLiveWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) {
 	}
 }
 
+func TestSeenIssueIDsCanonicalizesLegacyBareNumbers(t *testing.T) {
+	projects := []domain.ProjectRecord{{
+		ID: "ao",
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+			Provider: domain.TrackerProviderGitHub,
+			Repo:     "acme/other",
+		}},
+	}}
+	sessions := []domain.SessionRecord{{
+		ProjectID: "ao",
+		IssueID:   "170",
+	}}
+
+	seen := seenIssueIDs(projects, sessions)
+	if !seen["170"] {
+		t.Fatal("raw legacy issue id was not preserved in seen map")
+	}
+	if !seen["github:acme/other#170"] {
+		t.Fatal("legacy issue id was not canonicalized with project tracker repo")
+	}
+}
+
 // TestBuildIssuePromptIsRouterInvocationOnly pins the permanent contract from
 // GH #118: an intake-spawned worker is handed EXACTLY `/address-issue <id>` and
 // nothing else. The router reads the issue itself, so no title/url/labels/body

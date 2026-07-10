@@ -98,3 +98,100 @@ func TestIssueTrackerIDInvertsCanonicalIssueID(t *testing.T) {
 		t.Fatalf("round trip = %#v, want %#v", roundTripped, original)
 	}
 }
+
+func TestCanonicalIssueIDFromAddressIssuePrompt(t *testing.T) {
+	project := domain.ProjectRecord{ID: "ao", RepoOriginURL: "git@github.com:acme/demo.git"}
+	configured := domain.ProjectRecord{
+		ID:            "ao",
+		RepoOriginURL: "git@github.com:acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Repo: "acme/other"}},
+	}
+
+	for _, tc := range []struct {
+		name    string
+		project domain.ProjectRecord
+		prompt  string
+		want    domain.IssueID
+		wantOK  bool
+	}{{
+		name:    "bare number",
+		project: project,
+		prompt:  "/address-issue 170",
+		want:    "github:acme/demo#170",
+		wantOK:  true,
+	}, {
+		name:    "hash-prefixed number",
+		project: project,
+		prompt:  "/address-issue #170",
+		want:    "github:acme/demo#170",
+		wantOK:  true,
+	}, {
+		name:    "canonical ref",
+		project: project,
+		prompt:  "/address-issue github:acme/demo#170",
+		want:    "github:acme/demo#170",
+		wantOK:  true,
+	}, {
+		name:    "zero-padded number normalizes",
+		project: project,
+		prompt:  "/address-issue 007",
+		want:    "github:acme/demo#7",
+		wantOK:  true,
+	}, {
+		name:    "configured tracker repo wins",
+		project: configured,
+		prompt:  "/address-issue 170",
+		want:    "github:acme/other#170",
+		wantOK:  true,
+	}, {
+		name:    "extra tokens are ignored",
+		project: project,
+		prompt:  "/address-issue 170 --now",
+		wantOK:  false,
+	}, {
+		name:    "garbage prompt is ignored",
+		project: project,
+		prompt:  "work on maybe #170",
+		wantOK:  false,
+	}, {
+		name:    "zero issue is ignored",
+		project: project,
+		prompt:  "/address-issue 0",
+		wantOK:  false,
+	}, {
+		name:    "canonical zero issue is ignored",
+		project: project,
+		prompt:  "/address-issue github:acme/demo#0",
+		wantOK:  false,
+	}, {
+		name:    "canonical non-numeric issue is ignored",
+		project: project,
+		prompt:  "/address-issue github:acme/demo#abc",
+		wantOK:  false,
+	}, {
+		name:    "canonical ref without issue number is ignored",
+		project: project,
+		prompt:  "/address-issue github:acme/demo",
+		wantOK:  false,
+	}, {
+		name:    "non-numeric ref is ignored",
+		project: project,
+		prompt:  "/address-issue agent-orchestrator-abc",
+		wantOK:  false,
+	}, {
+		name:    "unresolvable repo is ignored",
+		project: domain.ProjectRecord{ID: "ao"},
+		prompt:  "/address-issue 170",
+		wantOK:  false,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := CanonicalIssueIDFromAddressIssuePrompt(tc.project, tc.prompt)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (got %q)", ok, tc.wantOK, got)
+			}
+			if got != tc.want {
+				t.Fatalf("IssueID = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

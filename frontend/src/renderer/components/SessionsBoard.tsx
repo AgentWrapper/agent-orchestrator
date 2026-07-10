@@ -369,7 +369,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					{issueId && (
 						<span
 							className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
-							title={`Intake issue: ${issueId}`}
+							title={`Issue: ${issueId}`}
 						>
 							{issueId}
 						</span>

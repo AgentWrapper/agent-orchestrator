@@ -166,9 +166,8 @@ export type WorkspaceSession = {
 const TRACKER_PROVIDER_PREFIXES = ["github:"] as const;
 
 /**
- * The provider-prefixed issue id if `issueId` came from tracker intake, or
- * undefined for manually created sessions (whose issueId, if any, is a plain
- * task title with no provider prefix).
+ * The provider-prefixed issue id if `issueId` is linked to a tracker issue, or
+ * undefined for manually created sessions with no tracker issue.
  */
 export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 	if (!issueId) return undefined;
