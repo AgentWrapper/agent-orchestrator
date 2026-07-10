@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -228,6 +229,30 @@ func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now
 	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128})
 }
 
+func TestDispatchOrderIsDeterministic(t *testing.T) {
+	obs := map[string]ports.SCMObservation{
+		"a#9": {PR: ports.SCMPRObservation{Number: 9}},
+		"a#7": {PR: ports.SCMPRObservation{Number: 7}},
+		"b#3": {PR: ports.SCMPRObservation{Number: 3}},
+	}
+	subjects := map[string]*subject{
+		"a#9": {session: domain.SessionRecord{ID: "sess-a"}},
+		"a#7": {session: domain.SessionRecord{ID: "sess-a"}},
+		"b#3": {session: domain.SessionRecord{ID: "sess-b"}},
+	}
+	want := []string{"a#7", "a#9", "b#3"}
+	for run := 0; run < 8; run++ {
+		got := dispatchOrder(obs, subjects)
+		if len(got) != len(want) {
+			t.Fatalf("run %d: got %d keys, want %d (%v)", run, len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("run %d: order[%d]=%q, want %q (full %v)", run, i, got[i], want[i], got)
+			}
+		}
+	}
+}
 func quietSlog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func testStoreWithSession() *fakeStore {
@@ -631,7 +656,7 @@ func TestPoll_DiscoversWorkspaceChildRepoPR(t *testing.T) {
 func TestPoll_DiscoversWorkspaceChildRepoUpstreamPR(t *testing.T) {
 	oldRemoteURLs := gitRemoteURLsFunc
 	gitRemoteURLsFunc = func(path string) []string {
-		if strings.HasSuffix(path, "/api") {
+		if strings.HasSuffix(filepath.ToSlash(path), "/api") {
 			return []string{"https://github.com/o/api.git", "https://github.com/upstream/api.git"}
 		}
 		return nil

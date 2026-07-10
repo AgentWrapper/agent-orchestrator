@@ -9,10 +9,9 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
-import { BrowserPanelView } from "./BrowserPanel";
+import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 
@@ -76,6 +75,7 @@ export function SessionInspector({
 	session,
 	onOpenReviewerTerminal,
 	browserPoppedOut = false,
+	browserAnnotationQueue,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
 	browserView,
@@ -85,6 +85,7 @@ export function SessionInspector({
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 	browserPoppedOut?: boolean;
+	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	browserView?: BrowserViewModel;
@@ -141,6 +142,7 @@ export function SessionInspector({
 				{view === "browser" ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}
+						browserAnnotationQueue={browserAnnotationQueue}
 						browserView={browserView}
 						isActive={isInspectorVisible && !browserPoppedOut}
 						onTogglePopOut={onToggleBrowserPopOut}
@@ -737,35 +739,33 @@ function BrowserView({
 	session,
 	isActive,
 	browserPoppedOut,
+	browserAnnotationQueue,
 	onTogglePopOut,
 	browserView,
 }: {
 	session: WorkspaceSession;
 	isActive: boolean;
 	browserPoppedOut: boolean;
+	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	onTogglePopOut?: (next: boolean) => void;
 	browserView?: BrowserViewModel;
 }) {
+	// While maximized, the browser is a full-window overlay that covers the rail,
+	// so the inspector's Browser tab has nothing to show (and must not mount a
+	// second BrowserPanelView — it would fight the overlay over the shared native
+	// view slot). Exit is via the overlay's own minimize button.
 	if (browserPoppedOut) {
-		return (
-			<div role="tabpanel">
-				<div className="inspector-empty inspector-empty--browser">
-					<p>Browser preview is in the center pane.</p>
-					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
-						Return to panel
-					</Button>
-				</div>
-			</div>
-		);
+		return null;
 	}
 
-	if (!browserView) {
+	if (!browserView || !browserAnnotationQueue) {
 		return null;
 	}
 
 	return (
 		<BrowserPanelView
 			active={isActive}
+			annotationQueue={browserAnnotationQueue}
 			browserView={browserView}
 			onTogglePopOut={(next) => onTogglePopOut?.(next)}
 			poppedOut={false}

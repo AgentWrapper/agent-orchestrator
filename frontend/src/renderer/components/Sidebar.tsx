@@ -15,12 +15,13 @@ import {
 	Plus,
 	Search,
 	Settings,
+	Smartphone,
 	Sun,
 	Trash2,
 	X,
 	XCircle,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import {
 	attentionZone,
@@ -37,6 +38,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
+import { ConnectMobileModal } from "./ConnectMobileModal";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -56,6 +58,7 @@ import {
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
+	SidebarRail,
 	SidebarMenuSub,
 	SidebarMenuSubItem,
 	SidebarTrigger,
@@ -86,6 +89,10 @@ const HOVER_ACTION_CLASS =
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
 const MAX_DISPLAY_NAME_LEN = 20;
+const SIDEBAR_DEFAULT_WIDTH = 240;
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
@@ -149,11 +156,33 @@ export function Sidebar({
 }: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
-	const { state } = useSidebar();
+	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
+	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	const theme = useUiStore((s) => s.theme);
 	const toggleTheme = useUiStore((s) => s.toggleTheme);
 	const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+
+	useEffect(() => {
+		if (isCollapsed) {
+			setExpandedChromeVisible(false);
+			return;
+		}
+
+		const reducedMotion =
+			typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		if (reducedMotion) {
+			setExpandedChromeVisible(true);
+			return;
+		}
+
+		const timer = window.setTimeout(() => setExpandedChromeVisible(true), 160);
+		return () => window.clearTimeout(timer);
+	}, [isCollapsed]);
+
+	// Connect Mobile pairing modal, opened from the Settings menu.
+	const [mobileOpen, setMobileOpen] = useState(false);
+
 	// Disclosure state: projects are expanded by default; a project id present in
 	// this set is collapsed (sessions hidden).
 	const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -176,277 +205,291 @@ export function Sidebar({
 	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
 	// which the provider forwards into shadcn's --sidebar-width.
-	const { onPointerDown: onResizePointerDown, onDoubleClick: onResizeDoubleClick } = useResizable({
+	const {
+		onPointerDown: onResizePointerDown,
+		onCollapsedPointerDown: onCollapsedResizePointerDown,
+		onDoubleClick: onResizeDoubleClick,
+	} = useResizable({
 		cssVar: "--ao-sidebar-w",
 		storageKey: "ao-sidebar-w",
-		defaultWidth: 240,
-		min: 200,
-		max: 420,
+		defaultWidth: SIDEBAR_DEFAULT_WIDTH,
+		min: SIDEBAR_MIN_WIDTH,
+		max: SIDEBAR_MAX_WIDTH,
 		edge: "right",
+		collapseBelow: SIDEBAR_COLLAPSE_THRESHOLD,
+		onCollapse: () => setOpen(false),
+		onExpand: () => setOpen(true),
 	});
 
 	return (
-		<>
-			{/* The container is fixed-positioned by the shadcn primitive; offset it
-			below the 56px shell topbar so the bar runs edge-to-edge above it
-			(same override as shadcn's header-above-sidebar block). */}
-			<SidebarRoot
-				collapsible="icon"
-				className={cn("border-border", underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!")}
-			>
-				<SidebarHeader className="gap-0 p-0 pl-2.5 pr-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
-					{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
+		// The container is fixed-positioned by the shadcn primitive; offset it
+		// below the 56px shell topbar so the bar runs edge-to-edge above it
+		// (same override as shadcn's header-above-sidebar block).
+		<SidebarRoot
+			collapsible="icon"
+			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
+			className={cn("border-border", underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!")}
+		>
+			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
+				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
-					<div className="flex shrink-0 items-center gap-2.5 px-2 pb-[18px] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
+				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-[18px] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label="Orchestrator board"
+								className={cn(
+									"grid h-[22px] w-[22px] shrink-0 place-items-center",
+									"group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:rounded-lg",
+									selection.isHome
+										? "group-data-[collapsible=icon]:bg-interactive-active"
+										: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
+								)}
+								onClick={selection.goHome}
+								type="button"
+							>
+								<img src={aoLogo} alt="" aria-hidden="true" className="h-[22px] w-[22px] rounded-[6px] object-cover" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right" hidden={state !== "collapsed"}>
+							Orchestrator board
+						</TooltipContent>
+					</Tooltip>
+					{!isMac && (
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<button
-									aria-label="Orchestrator board"
-									className={cn(
-										"grid h-[22px] w-[22px] shrink-0 place-items-center",
-										"group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:rounded-lg",
-										selection.isHome
-											? "group-data-[collapsible=icon]:bg-interactive-active"
-											: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
-									)}
-									onClick={selection.goHome}
-									type="button"
-								>
-									<img
-										src={aoLogo}
-										alt=""
-										aria-hidden="true"
-										className="h-[22px] w-[22px] rounded-[6px] object-cover"
-									/>
-								</button>
+								<SidebarTrigger
+									aria-label="Expand sidebar"
+									className="hidden size-9 shrink-0 rounded-lg text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:grid [&_svg]:size-4"
+								/>
 							</TooltipTrigger>
-							<TooltipContent side="right" hidden={state !== "collapsed"}>
-								Orchestrator board
-							</TooltipContent>
+							<TooltipContent side="right">Expand sidebar · ⌘B</TooltipContent>
 						</Tooltip>
-						<span className="min-w-0 flex-1 truncate text-[14px] font-bold tracking-[-0.015em] text-foreground group-data-[collapsible=icon]:hidden">
-							Agent Orchestrator
+					)}
+					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-[14px] font-bold tracking-[-0.015em] text-foreground group-data-[collapsible=icon]:hidden">
+						Agent Orchestrator
+					</span>
+					{isNightly && (
+						<span
+							className="sidebar-expanded-chrome shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none group-data-[collapsible=icon]:hidden"
+							style={{
+								color: "var(--purple)",
+								background: "color-mix(in srgb, var(--purple) 12%, transparent)",
+							}}
+						>
+							nightly
 						</span>
-						{isNightly && (
-							<span
-								className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none group-data-[collapsible=icon]:hidden"
-								style={{
-									color: "var(--purple)",
-									background: "color-mix(in srgb, var(--purple) 12%, transparent)",
-								}}
-							>
-								nightly
-							</span>
-						)}
-						{/* On macOS the toggle lives in the titlebar cluster instead. */}
-						{!isMac && (
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<SidebarTrigger className="size-[18px] shrink-0 rounded-[4px] p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-[15px]" />
-								</TooltipTrigger>
-								<TooltipContent>Collapse sidebar · ⌘B</TooltipContent>
-							</Tooltip>
-						)}
+					)}
+					{/* On macOS the toggle lives in the titlebar cluster instead. */}
+					{!isMac && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<SidebarTrigger
+									aria-label="Collapse sidebar"
+									className="sidebar-expanded-chrome size-[18px] shrink-0 rounded-[4px] p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-[15px]"
+								/>
+							</TooltipTrigger>
+							<TooltipContent>Collapse sidebar · ⌘B</TooltipContent>
+						</Tooltip>
+					)}
+				</div>
+			</SidebarHeader>
+
+			<SidebarContent className="gap-0 pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				<SidebarGroup className="p-0">
+					{/* Section label (project-sidebar__nav-label) */}
+					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
+						<SidebarGroupLabel className="h-auto rounded-none p-0 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-passive">
+							Projects
+						</SidebarGroupLabel>
+						<CreateProjectButton onCreateProject={onCreateProject} />
 					</div>
-				</SidebarHeader>
 
-				<SidebarContent className="gap-0 pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-					<SidebarGroup className="p-0">
-						{/* Section label (project-sidebar__nav-label) */}
-						<div className="flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
-							<SidebarGroupLabel className="h-auto rounded-none p-0 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-passive">
-								Projects
-							</SidebarGroupLabel>
-							<CreateProjectButton onCreateProject={onCreateProject} />
-						</div>
+					{/* Tree (project-sidebar__tree) */}
+					<SidebarGroupContent>
+						{workspaceError ? (
+							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
+								<p className="text-[12px] text-foreground">Could not load projects.</p>
+								<p className="mt-1 text-[11px] text-passive">{workspaceError}</p>
+							</div>
+						) : workspaces.length === 0 ? (
+							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
+								<p className="text-[12px] text-passive">No projects yet.</p>
+								<p className="mt-1 text-[11px] text-passive">
+									Click <span className="text-foreground">+</span> above to register a repo or workspace.
+								</p>
+							</div>
+						) : (
+							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
+								{workspaces.map((workspace) => (
+									<ProjectItem
+										key={workspace.id}
+										workspace={workspace}
+										expanded={!collapsedIds.has(workspace.id)}
+										selection={selection}
+										onToggle={() => toggleCollapsed(workspace.id)}
+										onRemoveProject={onRemoveProject}
+									/>
+								))}
+								{isCollapsed && <CreateProjectListItem onCreateProject={onCreateProject} />}
+							</SidebarMenu>
+						)}
+					</SidebarGroupContent>
+				</SidebarGroup>
+			</SidebarContent>
 
-						{/* Tree (project-sidebar__tree) */}
-						<SidebarGroupContent>
-							{workspaceError ? (
-								<div className="px-2 py-3 group-data-[collapsible=icon]:hidden">
-									<p className="text-[12px] text-foreground">Could not load projects.</p>
-									<p className="mt-1 text-[11px] text-passive">{workspaceError}</p>
-								</div>
-							) : workspaces.length === 0 ? (
-								<div className="px-2 py-3 group-data-[collapsible=icon]:hidden">
-									<p className="text-[12px] text-passive">No projects yet.</p>
-									<p className="mt-1 text-[11px] text-passive">
-										Click <span className="text-foreground">+</span> above to register a repo or workspace.
-									</p>
-								</div>
-							) : (
-								<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
-									{workspaces.map((workspace) => (
-										<ProjectItem
-											key={workspace.id}
-											workspace={workspace}
-											expanded={!collapsedIds.has(workspace.id)}
-											selection={selection}
-											onToggle={() => toggleCollapsed(workspace.id)}
-											onRemoveProject={onRemoveProject}
-										/>
-									))}
-									{isCollapsed && <CreateProjectListItem onCreateProject={onCreateProject} />}
-								</SidebarMenu>
-							)}
-						</SidebarGroupContent>
-					</SidebarGroup>
-				</SidebarContent>
-
-				{/* Footer (project-sidebar__footer) — single Settings menu. Divergence
+			{/* Footer (project-sidebar__footer) — single Settings menu. Divergence
           (user-requested 2026-06-10): the trigger stretches the full row width
           (flex-1) with a uniform 7px footer inset on all sides (reference uses
           12px top, 0 bottom, content-hugging button). The icon rail keeps the
           icon-only settings action plus expand toggle (off macOS). */}
-				<SidebarFooter className="mt-auto gap-0 border-t border-border p-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-2">
-					<div className="flex w-full flex-col gap-1 group-data-[collapsible=icon]:hidden">
-						<button
-							aria-label="Feedback"
-							className="flex w-full items-center justify-start gap-2.5 rounded-md p-2 text-[13px] font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-[15px] [&_svg]:text-passive"
-							onClick={() => setIsFeedbackOpen(true)}
-							type="button"
+			<SidebarFooter className="relative mt-auto min-h-[95px] gap-0 overflow-hidden border-t border-border p-[7px] transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[88px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				<div className="sidebar-expanded-chrome relative flex min-h-[81px] w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
+					<button
+						aria-label="Feedback"
+						className="flex w-full items-center justify-start gap-2.5 rounded-md p-2 text-[13px] font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-[15px] [&_svg]:text-passive"
+						onClick={() => setIsFeedbackOpen(true)}
+						type="button"
+					>
+						<MessageSquare aria-hidden="true" />
+						<span className="tracking-[-0.01em]">Feedback</span>
+					</button>
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<button
+								aria-label="Settings"
+								className="flex flex-1 items-center justify-start gap-2.5 rounded-md p-2 text-[13px] font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-[15px] [&_svg]:text-passive"
+								type="button"
+							>
+								<Settings aria-hidden="true" />
+								<span className="tracking-[-0.01em]">Settings</span>
+							</button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent
+							align="start"
+							className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-0"
+							side="top"
 						>
-							<MessageSquare aria-hidden="true" />
-							<span className="tracking-[-0.01em]">Feedback</span>
-						</button>
-						<div className="relative flex w-full items-center">
-							<DropdownMenu>
+							<DropdownMenuItem onSelect={toggleTheme}>
+								{theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+								{theme === "dark" ? "Light mode" : "Dark mode"}
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={selection.goPrs}>
+								<GitPullRequest aria-hidden="true" />
+								Pull requests
+							</DropdownMenuItem>
+							<DropdownMenuItem disabled>
+								<Search aria-hidden="true" />
+								Search
+								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setTimeout(() => setMobileOpen(true), 0)}>
+								<Smartphone aria-hidden="true" />
+								Connect Mobile
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							{selection.activeProjectId && (
+								<DropdownMenuItem onSelect={() => selection.goSettings(selection.activeProjectId!)}>
+									<Settings aria-hidden="true" />
+									Project settings
+								</DropdownMenuItem>
+							)}
+							<DropdownMenuItem onSelect={selection.goGlobalSettings}>
+								<Settings aria-hidden="true" />
+								Global settings
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+					<Tooltip>
+						<TooltipContent side="top">
+							daemon {daemonStatus.state}
+							{eventsConnection === "disconnected" && " · events offline"}
+						</TooltipContent>
+					</Tooltip>
+				</div>
+				<div className="pointer-events-none absolute inset-x-1.5 top-[7px] flex min-h-[74px] flex-col items-center justify-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label="Feedback"
+								className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
+								onClick={() => setIsFeedbackOpen(true)}
+								type="button"
+							>
+								<MessageSquare aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right">Feedback</TooltipContent>
+					</Tooltip>
+					<DropdownMenu>
+						<Tooltip>
+							<TooltipTrigger asChild>
 								<DropdownMenuTrigger asChild>
 									<button
 										aria-label="Settings"
-										className="flex flex-1 items-center justify-start gap-2.5 rounded-md p-2 text-[13px] font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-[15px] [&_svg]:text-passive"
+										className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
 										type="button"
 									>
 										<Settings aria-hidden="true" />
-										<span className="tracking-[-0.01em]">Settings</span>
 									</button>
 								</DropdownMenuTrigger>
-								<DropdownMenuContent
-									align="start"
-									className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-0"
-									side="top"
-								>
-									<DropdownMenuItem onSelect={toggleTheme}>
-										{theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-										{theme === "dark" ? "Light mode" : "Dark mode"}
-									</DropdownMenuItem>
-									<DropdownMenuSeparator />
-									<DropdownMenuItem onSelect={selection.goPrs}>
-										<GitPullRequest aria-hidden="true" />
-										Pull requests
-									</DropdownMenuItem>
-									<DropdownMenuItem disabled>
-										<Search aria-hidden="true" />
-										Search
-										<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
-									</DropdownMenuItem>
-									<DropdownMenuSeparator />
-									{selection.activeProjectId && (
-										<DropdownMenuItem onSelect={() => selection.goSettings(selection.activeProjectId!)}>
-											<Settings aria-hidden="true" />
-											Project settings
-										</DropdownMenuItem>
-									)}
-									<DropdownMenuItem onSelect={selection.goGlobalSettings}>
-										<Settings aria-hidden="true" />
-										Global settings
-									</DropdownMenuItem>
-								</DropdownMenuContent>
-							</DropdownMenu>
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<span
-										aria-label={`Daemon ${daemonStatus.state}`}
-										className={cn(
-											"absolute right-1.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full",
-											daemonStatus.state === "ready" && eventsConnection !== "disconnected" ? "bg-success" : "bg-amber",
-										)}
-									/>
-								</TooltipTrigger>
-								<TooltipContent side="top">
-									daemon {daemonStatus.state}
-									{eventsConnection === "disconnected" && " · events offline"}
-								</TooltipContent>
-							</Tooltip>
-						</div>
-					</div>
-					<div className="hidden flex-col items-center gap-1 pb-3.5 group-data-[collapsible=icon]:flex">
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									aria-label="Feedback"
-									className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
-									onClick={() => setIsFeedbackOpen(true)}
-									type="button"
-								>
-									<MessageSquare aria-hidden="true" />
-								</button>
 							</TooltipTrigger>
-							<TooltipContent side="right">Feedback</TooltipContent>
+							<TooltipContent side="right">Settings</TooltipContent>
 						</Tooltip>
-						<DropdownMenu>
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<DropdownMenuTrigger asChild>
-										<button
-											aria-label="Settings"
-											className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
-											type="button"
-										>
-											<Settings aria-hidden="true" />
-										</button>
-									</DropdownMenuTrigger>
-								</TooltipTrigger>
-								<TooltipContent side="right">Settings</TooltipContent>
-							</Tooltip>
-							<DropdownMenuContent align="start" className="min-w-0" side="top">
-								<DropdownMenuItem onSelect={toggleTheme}>
-									{theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-									{theme === "dark" ? "Light mode" : "Dark mode"}
-								</DropdownMenuItem>
-								<DropdownMenuSeparator />
-								<DropdownMenuItem onSelect={selection.goPrs}>
-									<GitPullRequest aria-hidden="true" />
-									Pull requests
-								</DropdownMenuItem>
-								<DropdownMenuItem disabled>
-									<Search aria-hidden="true" />
-									Search
-									<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
-								</DropdownMenuItem>
-								<DropdownMenuSeparator />
-								{selection.activeProjectId && (
-									<DropdownMenuItem onSelect={() => selection.goSettings(selection.activeProjectId!)}>
-										<Settings aria-hidden="true" />
-										Project settings
-									</DropdownMenuItem>
-								)}
-								<DropdownMenuItem onSelect={selection.goGlobalSettings}>
+						<DropdownMenuContent align="start" className="min-w-0" side="top">
+							<DropdownMenuItem onSelect={toggleTheme}>
+								{theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+								{theme === "dark" ? "Light mode" : "Dark mode"}
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={selection.goPrs}>
+								<GitPullRequest aria-hidden="true" />
+								Pull requests
+							</DropdownMenuItem>
+							<DropdownMenuItem disabled>
+								<Search aria-hidden="true" />
+								Search
+								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setTimeout(() => setMobileOpen(true), 0)}>
+								<Smartphone aria-hidden="true" />
+								Connect Mobile
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							{selection.activeProjectId && (
+								<DropdownMenuItem onSelect={() => selection.goSettings(selection.activeProjectId!)}>
 									<Settings aria-hidden="true" />
-									Global settings
+									Project settings
 								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-						{!isMac && (
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<SidebarTrigger className="size-9 rounded-lg text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4" />
-								</TooltipTrigger>
-								<TooltipContent side="right">Expand sidebar · ⌘B</TooltipContent>
-							</Tooltip>
-						)}
-					</div>
-				</SidebarFooter>
+							)}
+							<DropdownMenuItem onSelect={selection.goGlobalSettings}>
+								<Settings aria-hidden="true" />
+								Global settings
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			</SidebarFooter>
 
-				<div
-					className="resize-handle resize-handle--right group-data-[collapsible=icon]:hidden"
-					onPointerDown={onResizePointerDown}
-					onDoubleClick={onResizeDoubleClick}
-					style={noDragStyle}
-				/>
-			</SidebarRoot>
+			<div
+				className="resize-handle resize-handle--right group-data-[collapsible=icon]:hidden"
+				onPointerDown={onResizePointerDown}
+				onDoubleClick={onResizeDoubleClick}
+				style={noDragStyle}
+			/>
+			<SidebarRail
+				aria-label="Expand sidebar"
+				className="group-data-[state=expanded]:hidden hover:after:bg-transparent"
+				onClick={() => setOpen(true)}
+				onPointerDown={onCollapsedResizePointerDown}
+			/>
+
+			<ConnectMobileModal open={mobileOpen} onOpenChange={setMobileOpen} />
 			<ReportProblemDialog open={isFeedbackOpen} onOpenChange={setIsFeedbackOpen} />
-		</>
+		</SidebarRoot>
 	);
 }
 
@@ -561,7 +604,9 @@ function ProjectItem({
 					aria-hidden="true"
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
-				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+					{workspace.name}
+				</span>
 				<span className="hidden h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive">
 					{sessions.length}
 				</span>
@@ -571,7 +616,7 @@ function ProjectItem({
 			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
 			<div
 				className={cn(
-					"absolute top-0 right-1 z-10 flex h-9 items-center gap-px",
+					"sidebar-expanded-chrome absolute top-0 right-1 z-10 flex h-9 items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
 			>
@@ -641,7 +686,7 @@ function ProjectItem({
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="mx-0 ml-[18px] translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
+				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-[18px] translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
 					{sessions.map((session) => (
 						<SessionRow
 							key={session.id}

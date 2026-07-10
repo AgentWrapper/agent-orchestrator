@@ -1,4 +1,4 @@
-// Package kiro implements the Kiro (AWS) agent adapter: launching new headless
+// Package kiro implements the Kiro (AWS) agent adapter: launching interactive
 // sessions, resuming hook-tracked sessions, installing workspace-local hooks,
 // and reading hook-derived session info.
 //
@@ -8,9 +8,9 @@
 // approval flow. See https://kiro.dev/docs/cli/headless/ and
 // https://kiro.dev/docs/cli/reference/cli-commands/.
 //
-// Launch delivers the initial prompt as a positional argument after `--` so a
-// leading "-" is not parsed as a flag. Permission/approval modes map onto
-// Kiro's tool-trust flags (`--trust-all-tools`, `--trust-tools=<categories>`).
+// Worker prompts are delivered after startup so AO keeps Kiro's interactive
+// TUI. Permission/approval modes map onto Kiro's tool-trust flags
+// (`--trust-all-tools`, `--trust-tools=<categories>`).
 // Restore uses `kiro-cli chat --resume-id <UUID>` with the native session id
 // captured from a Kiro hook payload.
 //
@@ -22,6 +22,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -63,8 +64,10 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // `kiro-cli chat --agent ao [trust flags] [-- <prompt>]`.
 //
 // The prompt is passed as a positional argument after `--` so a leading "-" is
-// not read as a flag. Kiro runs interactively for both workers and orchestrators;
-// standing instructions come from the generated custom agent.
+// not read as a flag for non-worker launches. Worker prompts are sent after
+// startup so AO keeps the interactive TUI and avoids Kiro's current positional
+// input submission gap. Kiro runs interactively for both workers and
+// orchestrators; standing instructions come from the generated custom agent.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kiroBinary(ctx)
 	if err != nil {
@@ -75,7 +78,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	prompt := cfg.Prompt
-	if prompt != "" {
+	if prompt != "" && cfg.Kind == domain.KindOrchestrator {
 		cmd = append(cmd, "--", prompt)
 	}
 
@@ -90,13 +93,31 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.Launch
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if cfg.Prompt != "" {
+	if cfg.Prompt != "" && cfg.Kind == domain.KindOrchestrator {
 		return ports.PromptDeliveryInCommand, nil
+	}
+	if cfg.Prompt != "" && cfg.Kind != domain.KindOrchestrator {
+		return ports.PromptDeliveryAfterStart, nil
 	}
 	if cfg.Kind == domain.KindOrchestrator {
 		return ports.PromptDeliveryCustomAgent, nil
 	}
 	return ports.PromptDeliveryInCommand, nil
+}
+
+// PromptReadinessHints waits for Kiro's interactive prompt before AO injects
+// the worker's first task.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 500 * time.Millisecond,
+		Patterns:     []string{"ask a question or describe a task"},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      8 * time.Second,
+		Lines:        80,
+	}, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Kiro session.

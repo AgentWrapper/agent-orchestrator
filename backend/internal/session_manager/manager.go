@@ -72,6 +72,7 @@ type lifecycleRecorder interface {
 type runtimeController interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
+	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 	// IsAlive reports whether the handle's runtime session still exists. Used by
 	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
@@ -316,7 +317,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
-		if err := m.messenger.Send(ctx, id, prompt); err != nil {
+		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
 			m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
@@ -757,7 +758,17 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", rec.ID, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
-		if err := m.messenger.Send(ctx, rec.ID, rec.Metadata.Prompt); err != nil {
+		launchCfg := ports.LaunchConfig{
+			DataDir:       m.dataDir,
+			SessionID:     string(rec.ID),
+			WorkspacePath: ws.Path,
+			Kind:          rec.Kind,
+			Prompt:        rec.Metadata.Prompt,
+			SystemPrompt:  systemPrompt,
+			Config:        agentConfig,
+			Permissions:   agentConfig.Permissions,
+		}
+		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
 			_ = m.lcm.MarkTerminated(ctx, rec.ID)
 			return domain.SessionRecord{}, fmt.Errorf("restore %s: deliver prompt: %w", rec.ID, err)
@@ -1851,6 +1862,89 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 		}
 	}
 	return nil
+}
+
+func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle, id domain.SessionID, prompt string) error {
+	if err := m.waitForPromptReadiness(ctx, agent, cfg, handle); err != nil {
+		return err
+	}
+	return m.messenger.Send(ctx, id, prompt)
+}
+
+func (m *Manager) waitForPromptReadiness(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle) error {
+	provider, ok := agent.(ports.AgentPromptReadinessProvider)
+	if !ok {
+		return nil
+	}
+	hints, err := provider.PromptReadinessHints(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("prompt readiness: %w", err)
+	}
+	if hints.InitialDelay > 0 {
+		if err := sleepContext(ctx, hints.InitialDelay); err != nil {
+			return err
+		}
+	}
+	if len(hints.Patterns) == 0 || hints.Timeout <= 0 {
+		return nil
+	}
+	poll := hints.PollInterval
+	if poll <= 0 {
+		poll = 200 * time.Millisecond
+	}
+	lines := hints.Lines
+	if lines <= 0 {
+		lines = 80
+	}
+
+	deadline := time.NewTimer(hints.Timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	for {
+		output, err := m.runtime.GetOutput(ctx, handle, lines)
+		if err == nil && promptOutputContains(output, hints.Patterns) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			// Prompt readiness is best-effort: a missing terminal marker must not
+			// block spawn forever or be treated as confirmed readiness. Fall back
+			// to delivering the prompt and make the degraded path observable.
+			m.logger.Warn("prompt readiness timed out; falling back to after-start prompt delivery",
+				"sessionID", cfg.SessionID,
+				"kind", string(cfg.Kind),
+				"timeout", hints.Timeout.String(),
+				"pollInterval", poll.String(),
+				"lines", lines,
+			)
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func promptOutputContains(output string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if pattern != "" && strings.Contains(output, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's

@@ -33,6 +33,7 @@ func TestGetLaunchCommandBuildsInteractiveArgv(t *testing.T) {
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
+		Kind:        domain.KindWorker,
 		Prompt:      "-fix this",
 	})
 	if err != nil {
@@ -43,7 +44,6 @@ func TestGetLaunchCommandBuildsInteractiveArgv(t *testing.T) {
 		"kiro-cli", "chat",
 		"--agent", "ao",
 		"--trust-all-tools",
-		"--", "-fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
@@ -87,10 +87,11 @@ func TestGetLaunchCommandPromptlessWorkerStaysInteractive(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandPromptTakesPrecedenceOverSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandPromptedWorkerKeepsPromptOutOfArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:         domain.KindWorker,
 		Prompt:       "fix the failing test",
 		SystemPrompt: "standing role instructions",
 	})
@@ -101,7 +102,27 @@ func TestGetLaunchCommandPromptTakesPrecedenceOverSystemPrompt(t *testing.T) {
 	want := []string{
 		"kiro-cli", "chat",
 		"--agent", "ao",
-		"--", "fix the failing test",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandPromptedOrchestratorCarriesPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:   domain.KindOrchestrator,
+		Prompt: "do the explicit task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+		"--", "do the explicit task",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
@@ -184,6 +205,21 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	}
 }
 
+func TestGetPromptDeliveryStrategyPromptedWorkerIsAfterStart(t *testing.T) {
+	plugin := &Plugin{}
+
+	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+		Kind:   domain.KindWorker,
+		Prompt: "do this task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryAfterStart {
+		t.Fatalf("unexpected strategy: %q", got)
+	}
+}
+
 func TestGetPromptDeliveryStrategyOrchestratorUsesCustomAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 
@@ -208,6 +244,16 @@ func TestGetPromptDeliveryStrategyPromptedOrchestratorUsesCommand(t *testing.T) 
 	}
 	if got != ports.PromptDeliveryInCommand {
 		t.Fatalf("unexpected strategy: %q", got)
+	}
+}
+
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
 	}
 }
 

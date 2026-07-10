@@ -233,6 +233,19 @@ select {
 	height: 100%;
 }
 
+/* Normal-buffer panes (codex, a plain shell) now keep scrollback (scrollback:5000
+   in XtermTerminal), so the viewport becomes scrollable. Hide the scrollbar so it
+   doesn't reserve width and shift the cell grid; the wheel still scrolls via the
+   terminal's wheel handler. */
+.xterm .xterm-viewport {
+	scrollbar-width: none;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
 .terminal-pane-frame:fullscreen {
 	background: var(--bg);
 }
@@ -335,14 +348,6 @@ select {
 	color: var(--fg-muted);
 }
 
-:root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.12);
-}
-
-:root[data-theme="light"] .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.2);
-}
-
 @keyframes status-pulse {
 	0%,
 	100% {
@@ -420,6 +425,28 @@ body.is-resizing-x {
 body.is-resizing-x [data-slot="sidebar-gap"],
 body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
+}
+
+/* Expanded-only sidebar chrome waits for the rail width transition to finish
+ * before painting, so tap-to-expand does not flash labels inside the narrow
+ * collapsed rail. */
+.sidebar-expanded-chrome {
+	transition: opacity 150ms ease-out;
+}
+
+[data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
+	opacity: 0;
+	pointer-events: none;
+}
+
+[data-slot="sidebar-container"][data-expanded-chrome="visible"] .sidebar-expanded-chrome {
+	opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sidebar-expanded-chrome {
+		transition: none;
+	}
 }
 
 /* ── Shell topbar (agent-orchestrator .dashboard-app-header) ──────────────
@@ -1324,32 +1351,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	text-align: center;
 }
 
-.inspector-empty--browser {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 9px;
-	padding: 48px 18px;
-	text-align: center;
-}
-
-.inspector-empty--browser svg {
-	width: 30px;
-	height: 30px;
-	color: var(--fg-passive);
-}
-
-.inspector-empty--browser p {
-	font-size: 12.5px;
-	color: var(--fg-muted);
-}
-
-.inspector-empty--browser span {
-	font-size: 11.5px;
-	color: var(--fg-passive);
-	line-height: 1.5;
-}
-
 .inspector-kv {
 	display: flex;
 	flex-direction: column;
@@ -1522,6 +1523,21 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: var(--bg);
 }
 
+/* Maximized browser overlay: a fixed layer over the whole app window (portaled
+   to <body>, so it covers the sidebar + topbar too, not just the session area).
+   The panel goes edge-to-edge, so drop its border/radius. */
+.browser-popout-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	background: var(--bg);
+}
+
+.browser-popout-overlay .browser-panel {
+	border: 0;
+	border-radius: 0;
+}
+
 .browser-panel__toolbar {
 	display: flex;
 	align-items: center;
@@ -1537,6 +1553,27 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	position: relative;
 	min-width: 0;
 	flex: 1;
+}
+
+.browser-panel__annotate-btn[aria-pressed="true"] {
+	background: var(--accent-weak);
+	color: var(--fg);
+}
+
+.browser-panel__annotation-status {
+	max-width: 96px;
+	overflow: hidden;
+	color: var(--fg-muted);
+	font-size: 11px;
+	font-weight: 650;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.browser-panel__annotation-status--error {
+	max-width: 160px;
+	color: var(--red);
 }
 
 .browser-panel__url-icon {
