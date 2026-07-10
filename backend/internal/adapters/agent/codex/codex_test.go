@@ -122,6 +122,44 @@ func TestResolveCodexBinaryFindsNVMInstallWhenPathIsSparse(t *testing.T) {
 	}
 }
 
+func TestResolveCodexBinaryPrefersNPMOverWindowsAppsExecutable(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows resolver only")
+	}
+	root := t.TempDir()
+	appData := filepath.Join(root, "Roaming")
+	npmDir := filepath.Join(appData, "npm")
+	want := filepath.Join(npmDir, "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("native codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(npmDir, "codex.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	windowsApps := filepath.Join(root, "WindowsApps", "OpenAI.Codex_1.0.0.0_x64__test", "app", "resources")
+	if err := os.MkdirAll(windowsApps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(windowsApps, "codex.exe")
+	if err := os.WriteFile(blocked, []byte("blocked codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("APPDATA", appData)
+	t.Setenv("PATH", windowsApps)
+
+	got, err := ResolveCodexBinary(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveCodexBinary: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolveCodexBinary = %q, want %q", got, want)
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
