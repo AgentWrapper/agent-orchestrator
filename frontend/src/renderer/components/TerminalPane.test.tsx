@@ -4,8 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
+const xtermTerminalMock = vi.hoisted(() =>
+	vi.fn((_: { paneScrollsByKeyboard?: boolean }) => <div data-testid="xterm" />),
+);
+
 vi.mock("./XtermTerminal", () => ({
-	XtermTerminal: () => <div data-testid="xterm" />,
+	XtermTerminal: xtermTerminalMock,
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
@@ -51,6 +55,10 @@ function renderPane(session?: WorkspaceSession) {
 			window.ao = previousAO;
 		},
 	};
+}
+
+function terminalPaneProps() {
+	return xtermTerminalMock.mock.calls.at(-1)?.[0] as { paneScrollsByKeyboard?: boolean } | undefined;
 }
 
 describe("TerminalPane empty states", () => {
@@ -111,5 +119,27 @@ describe("providerScrollsByKeyboard", () => {
 
 	it("is false when the provider is unknown", () => {
 		expect(providerScrollsByKeyboard(undefined)).toBe(false);
+	});
+});
+
+describe("TerminalPane keyboard-scroll providers", () => {
+	it("enables PageUp/PageDown wheel routing for Kilo Code sessions", () => {
+		const view = renderPane({ ...worker, provider: "kilocode", terminalHandleId: "sess-1/terminal_0" });
+		try {
+			expect(screen.getByTestId("xterm")).toBeInTheDocument();
+			expect(terminalPaneProps()?.paneScrollsByKeyboard).toBe(true);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("leaves non-keyboard-scroll providers on normal wheel routing", () => {
+		const view = renderPane({ ...worker, provider: "codex", terminalHandleId: "sess-1/terminal_0" });
+		try {
+			expect(screen.getByTestId("xterm")).toBeInTheDocument();
+			expect(terminalPaneProps()?.paneScrollsByKeyboard).toBe(false);
+		} finally {
+			view.restore();
+		}
 	});
 });

@@ -542,7 +542,7 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[<64;1;1M".repeat(3), "wheel");
 	});
 
-	it("sends PageUp/PageDown for keyboard-scroll panes even under a mux (opencode on macOS/Linux)", () => {
+	it("sends PageUp/PageDown for keyboard-scroll panes even under a mux (opencode/kilocode)", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" paneScrollsByKeyboard onReady={(terminal) => terminal.onUserInput(onInput)} />);
 		// Linux (beforeEach) + mouse tracking on: without the paneScrollsByKeyboard
@@ -551,6 +551,9 @@ describe("XtermTerminal", () => {
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
 	});
 
 	it("opens terminal links via window.open so Electron routes them to the OS browser", () => {
