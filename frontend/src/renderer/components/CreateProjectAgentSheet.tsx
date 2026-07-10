@@ -32,6 +32,7 @@ type CreateProjectAgentSheetProps = {
 	onSubmit: (selection: CreateProjectAgentSelection) => Promise<void>;
 	open: boolean;
 	path: string | null;
+	repositorySetupNeeded?: boolean;
 };
 
 type SheetError = {
@@ -83,6 +84,7 @@ export function CreateProjectAgentSheet({
 	onSubmit,
 	open,
 	path,
+	repositorySetupNeeded = false,
 }: CreateProjectAgentSheetProps) {
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
@@ -213,6 +215,12 @@ export function CreateProjectAgentSheet({
 						<div className="border-t border-border pt-4">
 							<IntakeFields form={intake} onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))} compact />
 						</div>
+
+						{repositorySetupNeeded && (
+							<div className="rounded-md border border-border bg-surface/80 px-3 py-2.5 text-[12px] leading-5 text-muted-foreground">
+								If this folder needs Git setup, AO will initialize it and create the first commit before starting.
+							</div>
+						)}
 
 						{sheetError && (
 							<div

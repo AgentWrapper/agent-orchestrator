@@ -12,9 +12,6 @@ export type CreateProjectInput = { path: string; asWorkspace?: boolean } & Creat
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 
-const SETUP_CONFIRMATION =
-	"AO will initialize Git if needed, stage this folder's files, and create the first commit before importing it.";
-
 // Shared create-project flow (native folder picker -> agent sheet -> create).
 // Sidebar enables the import-type picker; first-run board CTAs keep the direct
 // single-repo picker while still using the same Git setup recovery path.
@@ -40,27 +37,30 @@ export function CreateProjectFlow({
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
+	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 
 	const hasModePicker = mode === "choose";
 	const isBusy = isChoosingPath || isCreating || isInitializing;
 
 	const openFolderStep = (kind: ProjectKind) => {
-		setError(null);
-		setValidationScan(null);
-		setSelectedKind(kind);
 		setModePickerOpen(false);
-		window.requestAnimationFrame(() => setFolderPickerOpen(true));
+		void chooseDirectory(kind);
 	};
 
 	const chooseDirectory = async (kind: ProjectKind) => {
 		setError(null);
 		setValidationScan(null);
+		setRepositorySetup(null);
 		setSelectedKind(kind);
 		setIsChoosingPath(true);
 		try {
 			const path = await aoBridge.app.chooseDirectory(
 				kind === "workspace" ? "Choose a workspace folder" : "Choose a project repository",
 			);
+			if (path && kind === "single_repo") {
+				const setupCode = await repositorySetupRequired(path);
+				setRepositorySetup(setupCode);
+			}
 			if (path) {
 				setSelectedPath(path);
 				setFolderPickerOpen(false);
@@ -86,37 +86,20 @@ export function CreateProjectFlow({
 		setError(null);
 		setIsCreating(true);
 		try {
+			if (selectedKind === "single_repo" && repositorySetup) {
+				setIsCreating(false);
+				setIsInitializing(true);
+				await onInitializeProject(selectedPath);
+				setRepositorySetup(null);
+				setIsInitializing(false);
+				setIsCreating(true);
+			}
 			await onCreateProject({ path: selectedPath, asWorkspace: selectedKind === "workspace", ...selection });
 			setSelectedPath(null);
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
 			const message = err instanceof Error ? err.message : "Could not add project";
-			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) {
-				const confirmed = window.confirm(`Set up Git for ${selectedPath}? ${SETUP_CONFIRMATION}`);
-				if (!confirmed) {
-					setError(message);
-					return;
-				}
-				setIsCreating(false);
-				setIsInitializing(true);
-				try {
-					await onInitializeProject(selectedPath);
-				} catch (setupErr) {
-					setError(setupErr instanceof Error ? `Setup failed: ${setupErr.message}` : "Setup failed");
-					return;
-				} finally {
-					setIsInitializing(false);
-				}
-
-				setIsCreating(true);
-				try {
-					await onCreateProject({ path: selectedPath, asWorkspace: false, ...selection });
-					setSelectedPath(null);
-				} catch (retryErr) {
-					setError(retryErr instanceof Error ? retryErr.message : "Could not add project");
-				}
-				return;
-			}
+			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) setRepositorySetup(code);
 			setError(message);
 			if (hasModePicker) {
 				if (shouldScanCreateFailure(message)) {
@@ -137,6 +120,7 @@ export function CreateProjectFlow({
 			}
 		} finally {
 			setIsCreating(false);
+			setIsInitializing(false);
 		}
 	};
 
@@ -199,12 +183,15 @@ export function CreateProjectFlow({
 				onOpenChange={(open) => {
 					if (!open) {
 						setSelectedPath(null);
-						if (!folderPickerOpen) setError(null);
+						if (!folderPickerOpen) {
+							setError(null);
+						}
 					}
 				}}
 				onSubmit={createProject}
 				open={selectedPath !== null}
 				path={selectedPath}
+				repositorySetupNeeded={repositorySetup !== null}
 			/>
 			{error && !hasModePicker && (
 				<span className="sr-only" role="status">
@@ -215,9 +202,20 @@ export function CreateProjectFlow({
 	);
 }
 
-function isRepositorySetupRecoveryCode(code: string | undefined): boolean {
+function isRepositorySetupRecoveryCode(code: string | undefined): code is "NOT_A_GIT_REPO" | "PROJECT_UNBORN" {
 	return code === "NOT_A_GIT_REPO" || code === "PROJECT_UNBORN";
 }
+
+async function repositorySetupRequired(path: string): Promise<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null> {
+	try {
+		const scan = await aoBridge.app.scanImportFolder({ path, mode: "project" });
+		if (scan.repos.length === 0) return "NOT_A_GIT_REPO";
+		return scan.repos[0]?.reason === "Repository must have at least one commit." ? "PROJECT_UNBORN" : null;
+	} catch {
+		return null;
+	}
+}
+
 
 function shouldScanCreateFailure(message: string): boolean {
 	if (/daemon|server|conflict|already exists|not ready|start|orchestrator|permission denied/i.test(message))
