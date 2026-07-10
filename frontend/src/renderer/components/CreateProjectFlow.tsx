@@ -43,7 +43,8 @@ export function CreateProjectFlow({
 	const isBusy = isChoosingPath || isCreating || isInitializing;
 
 	const openFolderStep = (kind: ProjectKind) => {
-		setModePickerOpen(false);
+		// Keep the selector mounted behind the native picker. Closing it first
+		// exposes a blank compositor frame on Windows before Explorer takes focus.
 		void chooseDirectory(kind);
 	};
 
@@ -62,6 +63,7 @@ export function CreateProjectFlow({
 				setRepositorySetup(setupCode);
 			}
 			if (path) {
+				setModePickerOpen(false);
 				setSelectedPath(path);
 				setFolderPickerOpen(false);
 			}
