@@ -177,6 +177,33 @@ func TestObserverFailingSessionsDoesNotFabricateZombies(t *testing.T) {
 	}
 }
 
+// TestObserverScopesErrorDoesNotClearZombieAlert: the mirror of the
+// session-outage case. Once the zombie alert is firing, a tick where the scope
+// collector FAILS must not report zero scopes/zero zombies and thereby clear the
+// alert — the zombie count is unknown that tick.
+func TestObserverScopesErrorDoesNotClearZombieAlert(t *testing.T) {
+	sessions := fakeSessions{rows: nil} // no live sessions
+	o := New(Deps{
+		Sessions: sessions,
+		Scopes:   fakeScopes{m: map[string]uint64{"leaked": 10}},
+	}, Config{Clock: fixedClock(), Logger: quietLogger(), Thresholds: Thresholds{ZombieSustainTicks: 2}})
+	o.Tick(context.Background()) // tick 1
+	snap := o.Tick(context.Background())
+	if len(snap.Alerts) != 1 || snap.Alerts[0].Kind != AlertZombies {
+		t.Fatalf("want zombie firing after two ticks, got %+v", snap.Alerts)
+	}
+	// tick 3: scope collection fails → must hold, not clear.
+	o.deps.Scopes = fakeScopes{err: context.DeadlineExceeded}
+	snap = o.Tick(context.Background())
+	if len(snap.Alerts) != 1 || snap.Alerts[0].Kind != AlertZombies {
+		t.Fatalf("zombie alert must survive a scope-collect failure, got %+v", snap.Alerts)
+	}
+	if snap.Zombies != 0 {
+		// zombies not authoritative this tick; count reported as 0 but alert held
+		t.Logf("zombies reported %d on unknown tick (expected 0, alert held)", snap.Zombies)
+	}
+}
+
 // TestObserverAlertZombieSurvivesSessionOutage: once the zombie alert is firing,
 // a tick where the session list fails must hold the alert (no spurious clear).
 func TestObserverAlertZombieSurvivesSessionOutage(t *testing.T) {

@@ -13,8 +13,15 @@ type fakeTelemetry struct {
 	err  error
 }
 
-func (f fakeTelemetry) ListTelemetryEventsSince(context.Context, time.Time, int64) ([]gen.TelemetryEvent, error) {
-	return f.rows, f.err
+func (f fakeTelemetry) ListTelemetryEventsSince(_ context.Context, _ time.Time, limit int64) ([]gen.TelemetryEvent, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	// Mimic the SQL LIMIT so tests exercise the real truncation path.
+	if limit > 0 && int64(len(f.rows)) > limit {
+		return f.rows[:limit], nil
+	}
+	return f.rows, nil
 }
 
 func TestStoreCostAggregatorSums(t *testing.T) {
@@ -63,9 +70,10 @@ func TestParseCostPayloadTotalDerivation(t *testing.T) {
 
 func TestParseCostPayloadRejectsNonFiniteAndNegative(t *testing.T) {
 	cases := []string{
-		`{"input_tokens":1e400}`, // +Inf after decode
 		`{"cost_usd":-1.5}`,      // negative cost
 		`{"input_tokens":-10}`,   // negative tokens
+		`{"input_tokens":1e300}`, // finite but out of range → int64() would be UB
+		`{"cost_usd":1e300}`,     // finite but absurd → would risk +Inf on sum
 	}
 	for _, p := range cases {
 		if _, _, _, _, ok := parseCostPayload(p); ok {
@@ -86,27 +94,46 @@ func TestParseCostPayloadRejectsNonFiniteAndNegative(t *testing.T) {
 }
 
 func TestStoreCostAggregatorMarksTruncated(t *testing.T) {
-	// Fill exactly the scan limit → truncation signalled.
-	rows := make([]gen.TelemetryEvent, costScanLimit)
-	for i := range rows {
-		rows[i] = gen.TelemetryEvent{PayloadJson: `{"input_tokens":1}`}
+	newAgg := func(n int) *StoreCostAggregator {
+		rows := make([]gen.TelemetryEvent, n)
+		for i := range rows {
+			rows[i] = gen.TelemetryEvent{PayloadJson: `{"input_tokens":1}`}
+		}
+		a := NewStoreCostAggregator(fakeTelemetry{rows: rows})
+		a.limit = 5 // small deterministic cap; the fake honours it (fetches limit+1)
+		return a
 	}
-	agg := NewStoreCostAggregator(fakeTelemetry{rows: rows})
-	c, err := agg.Aggregate(context.Background(), time.Now())
+
+	// More rows than the cap -> truncated, and only the newest `limit` aggregated.
+	c, err := newAgg(20).Aggregate(context.Background(), time.Now())
 	if err != nil {
 		t.Fatalf("Aggregate: %v", err)
 	}
 	if !c.Truncated {
-		t.Error("hitting the scan limit must set Truncated")
+		t.Error("more rows than the cap must set Truncated")
+	}
+	if c.InputTokens != 5 {
+		t.Errorf("only the newest 5 events must be aggregated, got InputTokens=%d", c.InputTokens)
 	}
 
-	// Below the limit → not truncated.
-	agg2 := NewStoreCostAggregator(fakeTelemetry{rows: rows[:3]})
-	c2, err := agg2.Aggregate(context.Background(), time.Now())
+	// Exactly the cap -> NOT truncated (boundary must not false-positive).
+	c2, err := newAgg(5).Aggregate(context.Background(), time.Now())
 	if err != nil {
 		t.Fatalf("Aggregate: %v", err)
 	}
 	if c2.Truncated {
-		t.Error("under the scan limit must not set Truncated")
+		t.Error("exactly the cap with nothing dropped must NOT set Truncated")
+	}
+	if c2.InputTokens != 5 {
+		t.Errorf("all 5 events must be aggregated, got %d", c2.InputTokens)
+	}
+
+	// Below the cap -> not truncated.
+	c3, err := newAgg(3).Aggregate(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if c3.Truncated {
+		t.Error("under the cap must not set Truncated")
 	}
 }

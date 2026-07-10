@@ -171,9 +171,17 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 	}
 
 	var scopeMem map[string]uint64
+	// scopesKnown is false when a wired scope collector failed this tick. The
+	// zombie count is derived from scopes with no live session; if scope
+	// collection failed we cannot judge zombies, so a scope error must not be
+	// read as "zero scopes / zero zombies" and spuriously CLEAR a firing zombie
+	// alert (the mirror of the sessions-error case). A nil collector is a valid
+	// "no scopes" configuration and stays known.
+	scopesKnown := true
 	if o.deps.Scopes != nil {
 		if scopes, err := o.deps.Scopes.Scopes(ctx); err != nil {
 			o.logger.Warn("metrics observer: scope collect failed", "err", err)
+			scopesKnown = false
 		} else {
 			scopeMem = scopes
 		}
@@ -194,8 +202,11 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 		}
 	}
 
-	snap.zombiesKnown = sessionsKnown
-	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem, sessionsKnown)
+	// Zombies are trustworthy only when BOTH the live session set and the scope
+	// set are known this tick.
+	zombiesKnown := sessionsKnown && scopesKnown
+	snap.zombiesKnown = zombiesKnown
+	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem, zombiesKnown)
 
 	if o.deps.Cost != nil {
 		if cost, err := o.deps.Cost.Aggregate(ctx, now.Add(-o.costWindow)); err != nil {

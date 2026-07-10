@@ -46,12 +46,20 @@ func (t tmuxPaneLister) panes(ctx context.Context) ([]pane, error) {
 	cmd := exec.CommandContext(ctx, t.binary, "list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}")
 	out, err := cmd.Output()
 	if err != nil {
+		// Check the context FIRST: on a deadline hit, CommandContext kills the
+		// process, so Wait surfaces an *exec.ExitError ("signal: killed"), not
+		// context.DeadlineExceeded — the ExitError branch below would otherwise
+		// misclassify a wedged tmux server as "no panes" and silently report a
+		// healthy, zombie-free fleet. A cancelled context is a genuine failure.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		// Distinguish "no server / no sessions" (a nonzero tmux exit, which is
 		// normal and means "no panes") from a real failure to run tmux at all
-		// (binary missing on PATH, permission denied, or the context deadline).
-		// The former degrades to zero scopes; the latter is a genuine tick error
-		// so the observer does not silently report a healthy, zombie-free fleet
-		// when it simply cannot see tmux.
+		// (binary missing on PATH, permission denied). The former degrades to
+		// zero scopes; the latter is a genuine tick error so the observer does
+		// not silently report a healthy, zombie-free fleet when it cannot see
+		// tmux.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return nil, nil //nolint:nilerr // nonzero tmux exit == no panes, not a tick failure

@@ -39,15 +39,22 @@ func (a *StoreCostAggregator) Aggregate(ctx context.Context, since time.Time) (C
 	if a == nil || a.reader == nil {
 		return Cost{}, nil
 	}
-	rows, err := a.reader.ListTelemetryEventsSince(ctx, since, a.limit)
+	// Fetch one more than the aggregation cap so we can tell "exactly limit rows,
+	// nothing dropped" from "more than limit, oldest dropped" without a
+	// false-positive on the boundary. Rows are newest-first, so the extra row (if
+	// any) is the oldest and is discarded.
+	fetch := a.limit
+	if fetch > 0 {
+		fetch++
+	}
+	rows, err := a.reader.ListTelemetryEventsSince(ctx, since, fetch)
 	if err != nil {
 		return Cost{}, err
 	}
 	var c Cost
-	// The query returns rows newest-first capped at a.limit, so hitting the cap
-	// means the window held more events than we aggregated (oldest dropped).
-	if a.limit > 0 && int64(len(rows)) >= a.limit {
+	if a.limit > 0 && int64(len(rows)) > a.limit {
 		c.Truncated = true
+		rows = rows[:a.limit] // aggregate only the newest a.limit events
 	}
 	for _, row := range rows {
 		in, out, total, cost, ok := parseCostPayload(row.PayloadJson)
@@ -107,8 +114,19 @@ func numField(m map[string]any, key string) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+	// Reject non-finite, negative, and implausibly large values. A finite but
+	// out-of-range float (e.g. 1e300) would make int64(f) implementation-defined
+	// and could overflow the running token totals; an enormous cost_usd could sum
+	// to +Inf, which json.Marshal cannot encode (the /api/v1/metrics response
+	// would then fail). maxNumericField is far above any real fleet-hour token or
+	// cost total yet safely within int64 and float64 summation range.
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > maxNumericField {
 		return 0, false
 	}
 	return f, true
 }
+
+// maxNumericField caps an individual telemetry numeric field. 1e15 dwarfs any
+// realistic per-window token count or cost while staying well inside int64 and
+// leaving headroom to sum costScanLimit events without reaching +Inf.
+const maxNumericField = 1e15

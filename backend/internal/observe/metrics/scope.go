@@ -1,6 +1,9 @@
 package metrics
 
-import "context"
+import (
+	"context"
+	"log/slog"
+)
 
 // pane is one tmux pane: which session it belongs to and its leaf process PID.
 // The observer maps a pane's PID to its cgroup scope to charge memory to the
@@ -39,6 +42,8 @@ type cgroupScopeCollector struct {
 	lister   paneLister
 	resolver cgroupResolver
 	memory   cgroupMemReader
+	// logger surfaces the all-dropped diagnostic; nil falls back to slog.Default.
+	logger *slog.Logger
 }
 
 // Scopes returns per-session memory keyed by tmux session name.
@@ -95,6 +100,17 @@ func (c cgroupScopeCollector) Scopes(ctx context.Context) (map[string]uint64, er
 		}
 		seen[cg] = struct{}{}
 		out[p.session] += mem
+	}
+	// Surface a silent all-drop: panes were visible but none mapped to a managed
+	// per-session scope (e.g. a host where ao does not wrap tmux in systemd
+	// scopes). Without this the observer would report zero scopes / zero zombies
+	// indistinguishably from a genuinely healthy, empty fleet.
+	if len(panes) > 0 && len(out) == 0 {
+		lg := c.logger
+		if lg == nil {
+			lg = slog.Default()
+		}
+		lg.Warn("metrics observer: tmux panes present but no managed per-session scope resolved; per-session memory and zombie detection unavailable this tick", "panes", len(panes))
 	}
 	return out, nil
 }
