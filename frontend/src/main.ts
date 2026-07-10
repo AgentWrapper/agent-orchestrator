@@ -4,6 +4,7 @@ import {
 	clipboard,
 	dialog,
 	ipcMain,
+	Menu,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
@@ -51,6 +52,7 @@ import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
+import { installApplicationMenu } from "./main/app-menu";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -1205,6 +1207,12 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	installApplicationMenu({
+		Menu,
+		platform: process.platform,
+		isDev,
+		openExternal: (url) => shell.openExternal(url),
+	});
 	createWindow();
 	void startDaemon();
 	initAutoUpdates();

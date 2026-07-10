@@ -1,8 +1,9 @@
-import type { ForgeConfig } from "@electron-forge/shared-types";
+import type { ForgeConfig, IForgePlugin } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
+import { prepareBrandedDevElectronExecutable } from "./src/main/dev-electron-branding";
 
 // Default GitHub release target (production). aoagents was the temporary rewrite
 // home; releases land on AgentWrapper (spec §1.1).
@@ -153,6 +154,21 @@ const config: ForgeConfig = {
 		},
 	],
 	plugins: [
+		// Forge dev mode launches Electron's stock macOS binary directly. Returning
+		// a branded alias keeps the native app menu from showing "Electron".
+		{
+			__isElectronForgePlugin: true,
+			name: "branded-dev-electron",
+			init: () => {},
+			startLogic: async () => {
+				try {
+					return prepareBrandedDevElectronExecutable({ platform: process.platform }) ?? false;
+				} catch (err) {
+					console.warn("failed to brand Electron dev executable:", err);
+					return false;
+				}
+			},
+		} satisfies IForgePlugin,
 		new VitePlugin({
 			build: [
 				{ entry: "src/main.ts", config: "vite.main.config.ts", target: "main" },
