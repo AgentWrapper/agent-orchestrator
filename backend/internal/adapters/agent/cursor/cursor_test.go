@@ -274,6 +274,7 @@ func TestContextCancellationPerMethod(t *testing.T) {
 }
 
 func TestGetAgentHooksInstallsCursorHooks(t *testing.T) {
+	home := isolateCursorHome(t)
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	workspace := t.TempDir()
 	hooksDir := filepath.Join(workspace, ".cursor")
@@ -328,9 +329,28 @@ func TestGetAgentHooksInstallsCursorHooks(t *testing.T) {
 	if !strings.Contains(string(data), "keep me") {
 		t.Fatalf("unmanaged field 'customField' was dropped: %s", data)
 	}
+	trustPath := cursorWorkspaceTrustPath(home, workspace)
+	trustData, err := os.ReadFile(trustPath)
+	if err != nil {
+		t.Fatalf("read trust marker: %v", err)
+	}
+	var trust cursorWorkspaceTrust
+	if err := json.Unmarshal(trustData, &trust); err != nil {
+		t.Fatalf("parse trust marker: %v", err)
+	}
+	if trust.WorkspacePath != workspace {
+		t.Fatalf("trust workspacePath = %q, want %q", trust.WorkspacePath, workspace)
+	}
+	if trust.TrustMethod != "cli-flag" {
+		t.Fatalf("trustMethod = %q, want cli-flag", trust.TrustMethod)
+	}
+	if trust.TrustedAt == "" {
+		t.Fatal("trustedAt is empty")
+	}
 }
 
 func TestUninstallHooksRemovesOnlyAOHooks(t *testing.T) {
+	isolateCursorHome(t)
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	workspace := t.TempDir()
 	hooksPath := filepath.Join(workspace, ".cursor", "hooks.json")
@@ -397,6 +417,23 @@ func TestGetAgentHooksRequiresWorkspacePath(t *testing.T) {
 	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{}); err == nil {
 		t.Fatal("want error for empty WorkspacePath")
 	}
+}
+
+func TestCursorWorkspaceProjectName(t *testing.T) {
+	got := cursorWorkspaceProjectName("/Users/example/.ao/data/worktrees/project/session-1")
+	want := "Users-example-ao-data-worktrees-project-session-1"
+	if got != want {
+		t.Fatalf("project name = %q, want %q", got, want)
+	}
+}
+
+func isolateCursorHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	original := cursorUserHomeDir
+	cursorUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { cursorUserHomeDir = original })
+	return home
 }
 
 func contains(values []string, needle string) bool {
