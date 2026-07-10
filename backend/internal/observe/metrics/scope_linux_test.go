@@ -49,14 +49,21 @@ func TestTmuxPaneListerTimeoutIsError(t *testing.T) {
 
 // TestTmuxPaneListerNonzeroExitIsNoPanes: a nonzero exit from a runnable binary
 // (no tmux server) is "no panes", not a tick failure.
-func TestTmuxPaneListerNonzeroExitIsNoPanes(t *testing.T) {
-	l := tmuxPaneLister{binary: "false"} // exits 1, no output
+func TestTmuxPaneListerNoServerExitIsNoPanes(t *testing.T) {
+	l := tmuxPaneLister{binary: "testdata/tmux-no-server"}
 	panes, err := l.panes(context.Background())
 	if err != nil {
-		t.Fatalf("nonzero exit must degrade to no panes, got err=%v", err)
+		t.Fatalf("no-server exit must degrade to no panes, got err=%v", err)
 	}
 	if len(panes) != 0 {
 		t.Fatalf("want zero panes, got %d", len(panes))
+	}
+}
+
+func TestTmuxPaneListerOtherNonzeroExitIsError(t *testing.T) {
+	l := tmuxPaneLister{binary: "false"}
+	if _, err := l.panes(context.Background()); err == nil {
+		t.Fatal("unexpected nonzero tmux exits must return an error")
 	}
 }
 

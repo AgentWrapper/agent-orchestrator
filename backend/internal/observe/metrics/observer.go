@@ -216,7 +216,7 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 	// set are known this tick.
 	zombiesKnown := sessionsKnown && scopesKnown
 	snap.ZombiesKnown = zombiesKnown
-	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem, zombiesKnown)
+	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem, sessionsKnown, scopesKnown)
 
 	if o.deps.Cost != nil {
 		if cost, err := o.deps.Cost.Aggregate(ctx, now.Add(-o.costWindow)); err != nil {
@@ -303,8 +303,10 @@ func (o *Observer) Snapshots() (history []Snapshot, latest Snapshot, hasLatest b
 // sessionsKnown reports whether the live session set is trustworthy this tick.
 // When it is false (no session source, or the query failed) the live-handle set
 // is unreliable, so scopes are reported as unmatched=unknown and NO zombies are
-// counted — a DB hiccup must not masquerade as a fleet-wide leak.
-func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64, sessionsKnown bool) ([]Project, []Scope, int) {
+// counted — a DB hiccup must not masquerade as a fleet-wide leak. scopesKnown
+// separately reports whether an empty scope set is authoritative for zombie
+// accounting.
+func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64, sessionsKnown bool, scopesKnown bool) ([]Project, []Scope, int) {
 	byProject := map[string]*Project{}
 	// handle id -> live ao session record, for matching cgroup scopes.
 	liveHandles := map[string]domain.SessionRecord{}
@@ -360,7 +362,7 @@ func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint
 			scope.SessionID = string(rec.ID)
 		}
 		scopes = append(scopes, scope)
-		if sessionsKnown && !matched && owned {
+		if sessionsKnown && scopesKnown && !matched && owned {
 			zombies++
 		}
 	}

@@ -59,8 +59,6 @@ func (s *Store) ListTelemetryEventsSince(ctx context.Context, since time.Time, l
 	return rows, nil
 }
 
-// PruneTelemetryEventsBefore deletes at most limit rows older than before and
-// returns how many rows were removed.
 // ListCostTelemetryEventsSince returns only telemetry rows that contain one of
 // the cost-bearing payload keys the metrics observer aggregates, newest-first
 // from a time boundary and capped by limit. Filtering in SQL keeps unrelated
@@ -76,6 +74,8 @@ func (s *Store) ListCostTelemetryEventsSince(ctx context.Context, since time.Tim
 	return rows, nil
 }
 
+// PruneTelemetryEventsBefore deletes at most limit rows older than before and
+// returns how many rows were removed.
 func (s *Store) PruneTelemetryEventsBefore(ctx context.Context, before time.Time, limit int64) (int64, error) {
 	n, err := s.qw.PruneTelemetryEventsBefore(ctx, gen.PruneTelemetryEventsBeforeParams{
 		OccurredAt: before.UTC(),

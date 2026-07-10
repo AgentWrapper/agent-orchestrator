@@ -362,6 +362,22 @@ func agentOperations() []operation {
 	}
 }
 
+// metricsOperations declares the single /metrics operation. Must stay 1:1 with
+// the route MetricsController.Register mounts (enforced by the parity test).
+func metricsOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/metrics", id: "getMetrics", tag: "metrics",
+			summary: "Return the latest resource metrics snapshot plus a short history",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MetricsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
 // importOperations declares the 2 /import operations. Must stay 1:1 with
 // the routes ImportController.Register mounts (enforced by the parity test).
 func importOperations() []operation {
@@ -388,26 +404,6 @@ func importOperations() []operation {
 }
 
 func notificationOperations() []operation {
-	return notificationOperationsList()
-}
-
-// metricsOperations declares the single /metrics operation. Must stay 1:1 with
-// the route MetricsController.Register mounts (enforced by the parity test).
-func metricsOperations() []operation {
-	return []operation{
-		{
-			method: http.MethodGet, path: "/api/v1/metrics", id: "getMetrics", tag: "metrics",
-			summary: "Return the latest resource metrics snapshot plus a short history",
-			resps: []respUnit{
-				{http.StatusOK, controllers.MetricsResponse{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-	}
-}
-
-func notificationOperationsList() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/notifications", id: "listNotifications", tag: "notifications",

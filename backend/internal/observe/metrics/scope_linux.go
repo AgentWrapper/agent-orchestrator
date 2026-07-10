@@ -54,15 +54,17 @@ func (t tmuxPaneLister) panes(ctx context.Context) ([]pane, error) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		// Distinguish "no server / no sessions" (a nonzero tmux exit, which is
-		// normal and means "no panes") from a real failure to run tmux at all
-		// (binary missing on PATH, permission denied). The former degrades to
-		// zero scopes; the latter is a genuine tick error so the observer does
-		// not silently report a healthy, zombie-free fleet when it cannot see
-		// tmux.
+		// Distinguish "no server / no sessions" (normal, no panes) from a
+		// runnable tmux server rejecting the query (socket mismatch, protocol
+		// skew, permission issue). Only the no-server shape is authoritative zero;
+		// other nonzero exits are a collector failure so zombie alerts hold.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return nil, nil //nolint:nilerr // nonzero tmux exit == no panes, not a tick failure
+			msg := strings.ToLower(strings.TrimSpace(string(exitErr.Stderr)))
+			if strings.Contains(msg, "no server running") || strings.Contains(msg, "failed to connect to server") {
+				return nil, nil //nolint:nilerr // no tmux server == no panes, not a tick failure
+			}
+			return nil, err
 		}
 		return nil, err
 	}
