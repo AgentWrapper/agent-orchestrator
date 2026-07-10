@@ -437,16 +437,18 @@ export default function TerminalScreen() {
 	const known = sessions.find((s) => s.id === id) ?? orchestrators.find((o) => o.id === id) ?? null;
 	const dead = notFound || (known ? isTerminalStatus(known.status) : false);
 
-	// iOS doesn't resize the layout when the keyboard opens, so the key bar would
-	// hide behind it - reserve kbHeight so the bar rides above the keyboard.
-	// (Android's adjustResize shrinks the window for us, so no height needed there.)
+	// Neither platform shrinks the layout for the keyboard: iOS never has, and on
+	// Android edge-to-edge (edgeToEdgeEnabled) defeats windowSoftInputMode=adjustResize
+	// so the window no longer resizes - the keyboard just draws over our content.
+	// So reserve kbHeight on BOTH platforms and let the screen pad itself above the
+	// keyboard, else the key/compose bar (and its send button) hide behind it.
 	useEffect(() => {
 		const isIOS = Platform.OS === "ios";
 		const showEvt = isIOS ? "keyboardWillShow" : "keyboardDidShow";
 		const hideEvt = isIOS ? "keyboardWillHide" : "keyboardDidHide";
 		const show = Keyboard.addListener(showEvt, (e) => {
 			setKbVisible(true);
-			if (isIOS) setKbHeight(e.endCoordinates.height);
+			setKbHeight(e.endCoordinates.height);
 		});
 		const hide = Keyboard.addListener(hideEvt, () => {
 			setKbVisible(false);
@@ -750,8 +752,14 @@ export default function TerminalScreen() {
 			// Custom drag/momentum scroll + input hardening (see TERMINAL_ENHANCE_JS).
 			// Prepend the platform flag the enhance script branches on for scrolling.
 			injectedJavaScript: `var IS_ANDROID=${Platform.OS === "android"};\n${TERMINAL_ENHANCE_JS}`,
-			androidLayerType: "hardware" as const,
+			// NOTE: do NOT force androidLayerType:"hardware" here. xterm renders into a
+			// <canvas>, and a hardware layer makes the Android WebView's render process
+			// composite/crash blank on many devices (black terminal, no dims ever
+			// reported). Leaving it at the default keeps the canvas visible.
 			nestedScrollEnabled: true,
+			// Surface an Android WebView render-process crash instead of a silent black
+			// screen, so the user can tell the terminal died vs. never loaded.
+			onRenderProcessGone: () => setBanner("Terminal renderer crashed - reopen the session (Back, then tap it again)."),
 		}),
 		[],
 	);
@@ -769,7 +777,7 @@ export default function TerminalScreen() {
 	const bottomPad = kbHeight > 0 ? 8 : insets.bottom > 0 ? insets.bottom : 8;
 
 	return (
-		<View style={[styles.screen, Platform.OS === "ios" && { paddingBottom: kbHeight }]}>
+		<View style={[styles.screen, kbHeight > 0 && { paddingBottom: kbHeight }]}>
 			<TextInput
 				ref={kbInputRef}
 				value=""
