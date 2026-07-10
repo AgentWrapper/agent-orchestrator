@@ -164,6 +164,13 @@ type LaunchConfig struct {
 	SystemPrompt     string
 	SystemPromptFile string
 	WorkspacePath    string
+	// Env is the environment overrides the runtime will export into the spawned
+	// agent process (project env plus AO-internal vars), on top of the daemon's
+	// inherited environment. Adapters that resolve paths from environment
+	// variables (e.g. Cursor's CURSOR_DATA_DIR) must consult it before the
+	// daemon's own environment so they see the same value the launched process
+	// will. May be nil (e.g. reviewer launches), meaning no overrides.
+	Env map[string]string
 }
 
 // WorkspaceHookConfig carries inputs needed to install workspace-local agent hooks.
@@ -186,6 +193,9 @@ type RestoreConfig struct {
 	// resume — it is not part of the transcript — so adapters whose CLI has a
 	// system-prompt flag should re-apply this in their resume command.
 	SystemPrompt string
+	// Env mirrors LaunchConfig.Env: the environment overrides the runtime will
+	// export into the resumed agent process. May be nil.
+	Env map[string]string
 }
 
 // SessionRef identifies an AO session whose agent-owned metadata may be read.

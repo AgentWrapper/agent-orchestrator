@@ -88,3 +88,21 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	return os.Rename(tmpName, path)
 }
+
+// WorkspacePathVariants returns the trimmed workspace path plus its
+// symlink-resolved form when the two differ, or nil for a blank path. Agent
+// CLIs look workspace trust up by the canonicalized cwd first and the literal
+// path second, which on macOS commonly differ (/tmp vs /private/tmp), so
+// trust must be recorded under both. Shared by the codex and cursor adapters
+// so the canonicalization rules cannot drift between them.
+func WorkspacePathVariants(workspacePath string) []string {
+	path := strings.TrimSpace(workspacePath)
+	if path == "" {
+		return nil
+	}
+	variants := []string{path}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
+		variants = append(variants, resolved)
+	}
+	return variants
+}

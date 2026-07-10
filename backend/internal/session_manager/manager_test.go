@@ -135,6 +135,9 @@ type fakeLCM struct {
 	completed int
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
+	// switched counts MarkSwitched calls; switching tracks the in-flight guard.
+	switched  int
+	switching map[domain.SessionID]bool
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
@@ -156,6 +159,42 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
 	l.store.sessions[id] = rec
 	return nil
+}
+func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error {
+	l.switched++
+	rec := l.store.sessions[id]
+	rec.Harness = harness
+	rec.IsTerminated = false
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
+	if metadata.WorkspacePath != "" {
+		rec.Metadata.WorkspacePath = metadata.WorkspacePath
+	}
+	if metadata.Branch != "" {
+		rec.Metadata.Branch = metadata.Branch
+	}
+	if metadata.LaunchedHarnesses != nil {
+		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
+	}
+	rec.Metadata.AgentSessionID = ""
+	l.store.sessions[id] = rec
+	return nil
+}
+func (l *fakeLCM) TryBeginSwitch(id domain.SessionID) bool {
+	if l.switching == nil {
+		l.switching = map[domain.SessionID]bool{}
+	}
+	if l.switching[id] {
+		return false
+	}
+	l.switching[id] = true
+	return true
+}
+func (l *fakeLCM) EndSwitch(id domain.SessionID) {
+	if l.switching == nil {
+		return
+	}
+	delete(l.switching, id)
 }
 
 type fakeRuntime struct {

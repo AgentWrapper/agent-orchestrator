@@ -59,6 +59,11 @@ type Manager struct {
 	clock     func() time.Time
 	react     reactionState
 	telemetry ports.EventSink
+	// switching holds sessions currently mid agent-switch: the old runtime has
+	// been (or is about to be) torn down and the new one is not yet live, so a
+	// reaper "dead" fact would otherwise wrongly terminate them.
+	// ApplyRuntimeObservation skips any session in this set. Guarded by mu.
+	switching map[domain.SessionID]struct{}
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -68,7 +73,7 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState()}
+	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), switching: make(map[domain.SessionID]struct{})}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -99,6 +104,11 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // failed probe or liveness disagreement is ignored; no transient lifecycle state is stored.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		// A session mid agent-switch has no live runtime by design; ignore the
+		// reaper's "dead" fact so the swap is not mistaken for a crash.
+		if _, sw := m.switching[id]; sw {
+			return cur, false
+		}
 		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
@@ -261,6 +271,81 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
 		return cur, true
 	})
+}
+
+// TryBeginSwitch atomically claims the switch guard for id: it returns true and
+// marks the session mid-switch, or false if a switch is already in flight. The
+// check-and-set is a single critical section so two concurrent switches cannot
+// both proceed and race two teardown/relaunch cycles over one worktree. While
+// the guard is held, ApplyRuntimeObservation ignores the reaper's "dead" fact
+// (the window where the old runtime is gone and the new one is not yet live).
+// Pair a true result with EndSwitch (defer it).
+func (m *Manager) TryBeginSwitch(id domain.SessionID) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.switching[id]; ok {
+		return false
+	}
+	m.switching[id] = struct{}{}
+	return true
+}
+
+// EndSwitch clears the mid-switch guard set by BeginSwitch. Idempotent.
+func (m *Manager) EndSwitch(id domain.SessionID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.switching, id)
+}
+
+// IsSwitching reports whether a switch is currently in flight for id, so a
+// caller can reject a concurrent switch on the same session.
+func (m *Manager) IsSwitching(id domain.SessionID) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.switching[id]
+	return ok
+}
+
+// MarkSwitched atomically re-points a live session at a new agent harness and
+// runtime handle, clearing the harness-specific native resume id. Unlike
+// MarkSpawned (whose mergeMetadata only sets non-empty fields) it both changes
+// the persisted harness and CLEARS AgentSessionID, so a later restore does not
+// try to native-resume the previous agent's session. Activity resets to idle
+// and the first-signal receipt clears so the new agent re-proves its hook
+// pipeline (a hookless harness will read as no_signal after the grace period).
+func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, metadata domain.SessionMetadata) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("lifecycle: MarkSwitched for unknown session %q", id)
+	}
+	now := m.clock()
+	rec.Harness = harness
+	rec.IsTerminated = false
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.FirstSignalAt = time.Time{}
+	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
+	// Persist the launch worktree: a terminated relaunch may restore to a
+	// different path (changed session prefix / managed root), and a stale
+	// WorkspacePath/Branch would break later terminal/workspace/cleanup ops.
+	if metadata.WorkspacePath != "" {
+		rec.Metadata.WorkspacePath = metadata.WorkspacePath
+	}
+	if metadata.Branch != "" {
+		rec.Metadata.Branch = metadata.Branch
+	}
+	if metadata.LaunchedHarnesses != nil {
+		rec.Metadata.LaunchedHarnesses = metadata.LaunchedHarnesses
+	}
+	// The new agent starts without the old agent's native resume id; its own
+	// hook re-reports one after launch.
+	rec.Metadata.AgentSessionID = ""
+	rec.UpdatedAt = now
+	return m.store.UpdateSession(ctx, rec)
 }
 
 // sameActivity reports whether two activity signals describe the same state.
