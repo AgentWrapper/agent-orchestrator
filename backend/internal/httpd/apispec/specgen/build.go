@@ -71,6 +71,8 @@ func Build() ([]byte, error) {
 			"Server-sent CDC event stream with durable replay"),
 		*(&openapi31.Tag{Name: "import"}).WithDescription(
 			"Legacy AO project import (availability probe and run)"),
+		*(&openapi31.Tag{Name: "metrics"}).WithDescription(
+			"Daemon resource metrics (host, per-project, per-session-scope)"),
 	}
 
 	for _, op := range operations() {
@@ -208,6 +210,17 @@ var schemaNames = map[string]string{
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
 	"ControllersImportRunResponse":    "ImportRunResponse",
+	// httpd/controllers + observe/metrics: resource metrics
+	"ControllersMetricsResponse": "MetricsResponse",
+	"MetricsSnapshot":            "MetricsSnapshot",
+	"MetricsHost":                "MetricsHost",
+	"MetricsProject":             "MetricsProject",
+	"MetricsScope":               "MetricsScope",
+	"MetricsCostTotals":          "MetricsCostTotals",
+	"MetricsProjectCost":         "MetricsProjectCost",
+	"MetricsHarnessCost":         "MetricsHarnessCost",
+	"MetricsCost":                "MetricsCost",
+	"MetricsAlert":               "MetricsAlert",
 	// legacyimport report
 	"LegacyimportReport": "ImportReport",
 	// service/project entities + DTOs
@@ -302,6 +315,7 @@ func operations() []operation {
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, importOperations()...)
+	ops = append(ops, metricsOperations()...)
 	return ops
 }
 
@@ -341,6 +355,22 @@ func agentOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProbeAgentResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// metricsOperations declares the single /metrics operation. Must stay 1:1 with
+// the route MetricsController.Register mounts (enforced by the parity test).
+func metricsOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/metrics", id: "getMetrics", tag: "metrics",
+			summary: "Return the latest resource metrics snapshot plus a short history",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MetricsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,6 +12,9 @@ func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
 	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+		t.Setenv(k, "")
+	}
+	for _, k := range []string{"AO_METRICS_INTERVAL", "AO_METRICS_DISK_FREE_PCT", "AO_METRICS_MEM_AVAIL_PCT", "AO_METRICS_LOAD_PER_CORE", "AO_METRICS_ZOMBIE_TICKS"} {
 		t.Setenv(k, "")
 	}
 
@@ -53,6 +57,80 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.AgentHealthInterval != DefaultAgentHealthInterval {
 		t.Errorf("AgentHealthInterval = %s, want %s", cfg.AgentHealthInterval, DefaultAgentHealthInterval)
+	}
+	if cfg.Metrics.Interval != DefaultMetricsInterval {
+		t.Errorf("Metrics.Interval = %s, want %s", cfg.Metrics.Interval, DefaultMetricsInterval)
+	}
+	if cfg.Metrics.DiskFreePercent != DefaultMetricsDiskFreePercent {
+		t.Errorf("Metrics.DiskFreePercent = %v, want %v", cfg.Metrics.DiskFreePercent, float64(DefaultMetricsDiskFreePercent))
+	}
+	if cfg.Metrics.MemAvailablePercent != DefaultMetricsMemAvailablePercent {
+		t.Errorf("Metrics.MemAvailablePercent = %v, want %v", cfg.Metrics.MemAvailablePercent, float64(DefaultMetricsMemAvailablePercent))
+	}
+	if cfg.Metrics.LoadPerCore != DefaultMetricsLoadPerCore {
+		t.Errorf("Metrics.LoadPerCore = %v, want %v", cfg.Metrics.LoadPerCore, DefaultMetricsLoadPerCore)
+	}
+	if cfg.Metrics.ZombieSustainTicks != DefaultMetricsZombieSustainTicks {
+		t.Errorf("Metrics.ZombieSustainTicks = %d, want %d", cfg.Metrics.ZombieSustainTicks, DefaultMetricsZombieSustainTicks)
+	}
+}
+
+func TestLoadMetricsOverrides(t *testing.T) {
+	t.Setenv("AO_METRICS_INTERVAL", "0") // disables the observer
+	t.Setenv("AO_METRICS_DISK_FREE_PCT", "5")
+	t.Setenv("AO_METRICS_MEM_AVAIL_PCT", "0") // disables mem_low alert
+	t.Setenv("AO_METRICS_LOAD_PER_CORE", "2.5")
+	t.Setenv("AO_METRICS_ZOMBIE_TICKS", "3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Metrics.Interval != 0 {
+		t.Errorf("Interval = %s, want 0 (disabled)", cfg.Metrics.Interval)
+	}
+	if cfg.Metrics.DiskFreePercent != 5 {
+		t.Errorf("DiskFreePercent = %v, want 5", cfg.Metrics.DiskFreePercent)
+	}
+	if cfg.Metrics.MemAvailablePercent != 0 {
+		t.Errorf("MemAvailablePercent = %v, want 0", cfg.Metrics.MemAvailablePercent)
+	}
+	if cfg.Metrics.LoadPerCore != 2.5 {
+		t.Errorf("LoadPerCore = %v, want 2.5", cfg.Metrics.LoadPerCore)
+	}
+	if cfg.Metrics.ZombieSustainTicks != 3 {
+		t.Errorf("ZombieSustainTicks = %d, want 3", cfg.Metrics.ZombieSustainTicks)
+	}
+}
+
+func TestLoadMetricsInvalid(t *testing.T) {
+	cases := map[string]string{
+		"AO_METRICS_INTERVAL":      "nope",
+		"AO_METRICS_DISK_FREE_PCT": "150",
+		"AO_METRICS_MEM_AVAIL_PCT": "-1",
+		"AO_METRICS_LOAD_PER_CORE": "-2",
+		"AO_METRICS_ZOMBIE_TICKS":  "-1",
+		// Non-finite values must be rejected: NaN<0 and Inf>100 are both false,
+		// so without an explicit guard they would silently disable/overflow a
+		// threshold.
+		"AO_METRICS_LOAD_PER_CORE_NAN": "NaN",
+		"AO_METRICS_DISK_FREE_PCT_INF": "Inf",
+	}
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			// Allow two distinct cases for one env var via a "_SUFFIX" test key.
+			envKey := k
+			if i := strings.Index(k, "_NAN"); i >= 0 {
+				envKey = k[:i]
+			}
+			if i := strings.Index(k, "_INF"); i >= 0 {
+				envKey = k[:i]
+			}
+			t.Setenv(envKey, v)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load with %s=%q should fail", envKey, v)
+			}
+		})
 	}
 }
 

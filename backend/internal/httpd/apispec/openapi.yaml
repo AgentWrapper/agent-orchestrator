@@ -214,6 +214,31 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/metrics:
+    get:
+      operationId: getMetrics
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the latest resource metrics snapshot plus a short history
+      tags:
+      - metrics
   /api/v1/notifications:
     get:
       operationId: listNotifications
@@ -2117,6 +2142,272 @@ components:
       - prNumber
       - method
       type: object
+    MetricsAlert:
+      properties:
+        kind:
+          type: string
+        message:
+          type: string
+        severity:
+          type: string
+        threshold:
+          format: double
+          type: number
+        value:
+          format: double
+          type: number
+      required:
+      - kind
+      - severity
+      - message
+      - value
+      - threshold
+      type: object
+    MetricsCost:
+      properties:
+        byHarness:
+          items:
+            $ref: '#/components/schemas/MetricsHarnessCost'
+          type: array
+        byProject:
+          items:
+            $ref: '#/components/schemas/MetricsProjectCost'
+          type: array
+        costUsd:
+          format: double
+          type: number
+        events:
+          format: int64
+          type: integer
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        totalTokens:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+        windowSeconds:
+          format: int64
+          type: integer
+      required:
+      - windowSeconds
+      - inputTokens
+      - outputTokens
+      - totalTokens
+      - costUsd
+      - events
+      - byProject
+      - byHarness
+      - truncated
+      type: object
+    MetricsCostTotals:
+      properties:
+        costUsd:
+          format: double
+          type: number
+        events:
+          format: int64
+          type: integer
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - inputTokens
+      - outputTokens
+      - totalTokens
+      - costUsd
+      - events
+      type: object
+    MetricsHarnessCost:
+      properties:
+        costUsd:
+          format: double
+          type: number
+        events:
+          format: int64
+          type: integer
+        harness:
+          type: string
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - harness
+      - inputTokens
+      - outputTokens
+      - totalTokens
+      - costUsd
+      - events
+      type: object
+    MetricsHost:
+      properties:
+        diskFreeBytes:
+          minimum: 0
+          type: integer
+        diskKnown:
+          type: boolean
+        diskTotalBytes:
+          minimum: 0
+          type: integer
+        loadAvg1:
+          format: double
+          type: number
+        loadAvg5:
+          format: double
+          type: number
+        loadAvg15:
+          format: double
+          type: number
+        loadKnown:
+          type: boolean
+        memAvailableBytes:
+          minimum: 0
+          type: integer
+        memKnown:
+          type: boolean
+        memTotalBytes:
+          minimum: 0
+          type: integer
+        numCpu:
+          type: integer
+      required:
+      - numCpu
+      - loadKnown
+      - loadAvg1
+      - loadAvg5
+      - loadAvg15
+      - memKnown
+      - memTotalBytes
+      - memAvailableBytes
+      - diskKnown
+      - diskTotalBytes
+      - diskFreeBytes
+      type: object
+    MetricsProject:
+      properties:
+        byActivity:
+          additionalProperties:
+            type: integer
+          type:
+          - object
+          - "null"
+        cost:
+          $ref: '#/components/schemas/MetricsCostTotals'
+        projectId:
+          type: string
+        sessions:
+          type: integer
+      required:
+      - projectId
+      - sessions
+      - byActivity
+      - cost
+      type: object
+    MetricsProjectCost:
+      properties:
+        costUsd:
+          format: double
+          type: number
+        events:
+          format: int64
+          type: integer
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        projectId:
+          type: string
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - projectId
+      - inputTokens
+      - outputTokens
+      - totalTokens
+      - costUsd
+      - events
+      type: object
+    MetricsResponse:
+      properties:
+        history:
+          items:
+            $ref: '#/components/schemas/MetricsSnapshot'
+          type: array
+        latest:
+          $ref: '#/components/schemas/MetricsSnapshot'
+      required:
+      - history
+      type: object
+    MetricsScope:
+      properties:
+        matched:
+          type: boolean
+        memBytes:
+          minimum: 0
+          type: integer
+        name:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - name
+      - memBytes
+      - matched
+      type: object
+    MetricsSnapshot:
+      properties:
+        alerts:
+          items:
+            $ref: '#/components/schemas/MetricsAlert'
+          type: array
+        collectedAt:
+          format: date-time
+          type: string
+        cost:
+          $ref: '#/components/schemas/MetricsCost'
+        host:
+          $ref: '#/components/schemas/MetricsHost'
+        projects:
+          items:
+            $ref: '#/components/schemas/MetricsProject'
+          type: array
+        scopes:
+          items:
+            $ref: '#/components/schemas/MetricsScope'
+          type: array
+        zombies:
+          type: integer
+        zombiesKnown:
+          type: boolean
+      required:
+      - collectedAt
+      - host
+      - projects
+      - scopes
+      - zombies
+      - zombiesKnown
+      - cost
+      - alerts
+      type: object
     NotificationEnvelope:
       properties:
         notification:
@@ -3229,3 +3520,5 @@ tags:
   name: events
 - description: Legacy AO project import (availability probe and run)
   name: import
+- description: Daemon resource metrics (host, per-project, per-session-scope)
+  name: metrics

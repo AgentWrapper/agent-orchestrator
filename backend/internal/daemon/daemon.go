@@ -158,6 +158,13 @@ func Run() error {
 	// be alerted when a login expires. Async + bounded — never gates readiness.
 	agentHealth, agentHealthDone := startAgentHealth(ctx, agentHealthConfig{Interval: cfg.AgentHealthInterval, DefaultAgent: cfg.Agent}, agentSvc, projectSvc, log)
 
+	// Resource metrics observer: coarse-tick sampling of host load/memory/disk,
+	// per-session cgroup-scope memory, per-project session/zombie counts, and
+	// token/cost aggregates. Disabled when AO_METRICS_INTERVAL=0 (metricsObs is
+	// then nil and the /api/v1/metrics endpoint reports not-implemented). Alert
+	// transitions flow onto the telemetry bus as resource_alert events.
+	metricsObs, metricsDone := startMetricsObserver(ctx, cfg, store, "", telemetrySink, log)
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		ProjectCapacity:    projectsvc.NewWorkerCapacity(store, agentHealth),
@@ -172,11 +179,13 @@ func Run() error {
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
 		Telemetry:          telemetrySink,
+		Metrics:            metricsProvider(metricsObs),
 	})
 	if err != nil {
 		stop()
 		<-previewDone
 		<-agentHealthDone
+		<-metricsDone
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
@@ -226,6 +235,7 @@ func Run() error {
 	<-orchestratorSupervisorDone
 	<-previewDone
 	<-agentHealthDone
+	<-metricsDone
 	lcStack.Stop()
 	if err := cdcPipe.Stop(); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)
