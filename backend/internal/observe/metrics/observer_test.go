@@ -69,7 +69,7 @@ func TestObserverTickProducesSnapshot(t *testing.T) {
 		}},
 		Host:   fakeHost{h: Host{NumCPU: 4, LoadAvg1: 1, MemTotalBytes: 100, MemAvailableBytes: 80, DiskTotalBytes: 100, DiskFreeBytes: 90}},
 		Scopes: fakeScopes{m: map[string]uint64{"a": 1000, "b": 2000, "zombie1": 500}},
-		Cost:   fakeCost{c: Cost{InputTokens: 10, OutputTokens: 5, TotalTokens: 15, CostUSD: 0.5, Events: 2}},
+		Cost:   fakeCost{c: Cost{CostTotals: CostTotals{InputTokens: 10, OutputTokens: 5, TotalTokens: 15, CostUSD: 0.5, Events: 2}, ByProject: []ProjectCost{{ProjectID: "proj1", CostTotals: CostTotals{InputTokens: 7, TotalTokens: 7, Events: 1}}}}},
 		Alerts: sink,
 	}, Config{Clock: fixedClock(), Logger: quietLogger(), CostWindow: time.Hour})
 
@@ -100,6 +100,9 @@ func TestObserverTickProducesSnapshot(t *testing.T) {
 	}
 	if snap.Cost.TotalTokens != 15 || snap.Cost.WindowSeconds != 3600 {
 		t.Errorf("cost wrong: %+v", snap.Cost)
+	}
+	if snap.Projects[0].Cost.TotalTokens != 7 || snap.Projects[1].Cost.Events != 0 {
+		t.Errorf("project cost not attached correctly: %+v", snap.Projects)
 	}
 
 	// Latest/History exposed.

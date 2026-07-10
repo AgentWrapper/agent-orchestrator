@@ -57,6 +57,25 @@ func TestTelemetryStore_CreateListAndPrune(t *testing.T) {
 	}
 }
 
+func TestTelemetryStore_ListLimitZeroMeansNoRows(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	projectID := domain.ProjectID("mer")
+	seedProject(t, s, string(projectID))
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.CreateTelemetryEvent(ctx, telemetryRecord("tev_1", now, &projectID, nil)); err != nil {
+		t.Fatalf("CreateTelemetryEvent: %v", err)
+	}
+
+	rows, err := s.ListTelemetryEventsSince(ctx, now.Add(-time.Second), 0)
+	if err != nil {
+		t.Fatalf("ListTelemetryEventsSince limit 0: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("limit 0 must return no rows, got %+v", rows)
+	}
+}
+
 func telemetryRecord(id string, at time.Time, projectID *domain.ProjectID, sessionID *domain.SessionID) sqlitestore.TelemetryEventRecord {
 	return sqlitestore.TelemetryEventRecord{
 		ID:          id,

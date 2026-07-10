@@ -800,6 +800,8 @@ export interface components {
             value: number;
         };
         MetricsCost: {
+            byHarness: components["schemas"]["MetricsHarnessCost"][];
+            byProject: components["schemas"]["MetricsProjectCost"][];
             /** Format: double */
             costUsd: number;
             /** Format: int64 */
@@ -813,6 +815,31 @@ export interface components {
             truncated: boolean;
             /** Format: int64 */
             windowSeconds: number;
+        };
+        MetricsCostTotals: {
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            totalTokens: number;
+        };
+        MetricsHarnessCost: {
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            harness: string;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            totalTokens: number;
         };
         MetricsHost: {
             diskFreeBytes: number;
@@ -831,8 +858,22 @@ export interface components {
             byActivity: {
                 [key: string]: number;
             } | null;
+            cost: components["schemas"]["MetricsCostTotals"];
             projectId: string;
             sessions: number;
+        };
+        MetricsProjectCost: {
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            projectId: string;
+            /** Format: int64 */
+            totalTokens: number;
         };
         MetricsResponse: {
             history: components["schemas"]["MetricsSnapshot"][];

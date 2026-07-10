@@ -2159,6 +2159,14 @@ components:
       type: object
     MetricsCost:
       properties:
+        byHarness:
+          items:
+            $ref: '#/components/schemas/MetricsHarnessCost'
+          type: array
+        byProject:
+          items:
+            $ref: '#/components/schemas/MetricsProjectCost'
+          type: array
         costUsd:
           format: double
           type: number
@@ -2186,7 +2194,60 @@ components:
       - totalTokens
       - costUsd
       - events
+      - byProject
+      - byHarness
       - truncated
+      type: object
+    MetricsCostTotals:
+      properties:
+        costUsd:
+          format: double
+          type: number
+        events:
+          format: int64
+          type: integer
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - inputTokens
+      - outputTokens
+      - totalTokens
+      - costUsd
+      - events
+      type: object
+    MetricsHarnessCost:
+      properties:
+        costUsd:
+          format: double
+          type: number
+        events:
+          format: int64
+          type: integer
+        harness:
+          type: string
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - harness
+      - inputTokens
+      - outputTokens
+      - totalTokens
+      - costUsd
+      - events
       type: object
     MetricsHost:
       properties:
@@ -2231,6 +2292,8 @@ components:
           type:
           - object
           - "null"
+        cost:
+          $ref: '#/components/schemas/MetricsCostTotals'
         projectId:
           type: string
         sessions:
@@ -2239,6 +2302,34 @@ components:
       - projectId
       - sessions
       - byActivity
+      - cost
+      type: object
+    MetricsProjectCost:
+      properties:
+        costUsd:
+          format: double
+          type: number
+        events:
+          format: int64
+          type: integer
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        projectId:
+          type: string
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - projectId
+      - inputTokens
+      - outputTokens
+      - totalTokens
+      - costUsd
+      - events
       type: object
     MetricsResponse:
       properties:

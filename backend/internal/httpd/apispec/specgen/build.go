@@ -216,6 +216,9 @@ var schemaNames = map[string]string{
 	"MetricsHost":                "MetricsHost",
 	"MetricsProject":             "MetricsProject",
 	"MetricsScope":               "MetricsScope",
+	"MetricsCostTotals":          "MetricsCostTotals",
+	"MetricsProjectCost":         "MetricsProjectCost",
+	"MetricsHarnessCost":         "MetricsHarnessCost",
 	"MetricsCost":                "MetricsCost",
 	"MetricsAlert":               "MetricsAlert",
 	// legacyimport report

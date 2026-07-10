@@ -2,8 +2,11 @@ package metrics
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"math"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
@@ -17,6 +20,11 @@ type telemetryReader interface {
 // costScanLimit bounds how many telemetry rows one aggregation reads so a busy
 // fleet cannot make a tick scan an unbounded backlog.
 const costScanLimit = 10000
+
+type parsedCostPayload struct {
+	CostTotals
+	Harness string
+}
 
 // StoreCostAggregator sums token/cost fields from telemetry_event payloads over
 // a rolling window. It reads the allowlisted numeric payload keys the agent
@@ -51,52 +59,114 @@ func (a *StoreCostAggregator) Aggregate(ctx context.Context, since time.Time) (C
 	if err != nil {
 		return Cost{}, err
 	}
-	var c Cost
+	c := Cost{ByProject: []ProjectCost{}, ByHarness: []HarnessCost{}}
+	byProject := map[string]*ProjectCost{}
+	byHarness := map[string]*HarnessCost{}
 	if a.limit > 0 && int64(len(rows)) > a.limit {
 		c.Truncated = true
 		rows = rows[:a.limit] // aggregate only the newest a.limit events
 	}
 	for _, row := range rows {
-		in, out, total, cost, ok := parseCostPayload(row.PayloadJson)
+		parsed, ok := parseCostPayload(row.PayloadJson)
 		if !ok {
 			continue
 		}
-		c.InputTokens += in
-		c.OutputTokens += out
-		c.TotalTokens += total
-		c.CostUSD += cost
-		c.Events++
+		addCost(&c.CostTotals, parsed.CostTotals)
+		if projectID, ok := nullString(row.ProjectID); ok {
+			pc := byProject[projectID]
+			if pc == nil {
+				pc = &ProjectCost{ProjectID: projectID}
+				byProject[projectID] = pc
+			}
+			addCost(&pc.CostTotals, parsed.CostTotals)
+		}
+		harness := parsed.Harness
+		if harness == "" {
+			harness = strings.TrimSpace(row.Source)
+		}
+		if harness != "" {
+			hc := byHarness[harness]
+			if hc == nil {
+				hc = &HarnessCost{Harness: harness}
+				byHarness[harness] = hc
+			}
+			addCost(&hc.CostTotals, parsed.CostTotals)
+		}
 	}
+	c.ByProject = sortedProjectCosts(byProject)
+	c.ByHarness = sortedHarnessCosts(byHarness)
 	return c, nil
+}
+
+func addCost(c *CostTotals, add CostTotals) {
+	c.InputTokens += add.InputTokens
+	c.OutputTokens += add.OutputTokens
+	c.TotalTokens += add.TotalTokens
+	c.CostUSD += add.CostUSD
+	c.Events += add.Events
+}
+
+func nullString(v sql.NullString) (string, bool) {
+	if !v.Valid {
+		return "", false
+	}
+	s := strings.TrimSpace(v.String)
+	return s, s != ""
+}
+
+func sortedProjectCosts(m map[string]*ProjectCost) []ProjectCost {
+	out := make([]ProjectCost, 0, len(m))
+	for _, v := range m {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProjectID < out[j].ProjectID })
+	return out
+}
+
+func sortedHarnessCosts(m map[string]*HarnessCost) []HarnessCost {
+	out := make([]HarnessCost, 0, len(m))
+	for _, v := range m {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Harness < out[j].Harness })
+	return out
 }
 
 // parseCostPayload extracts token/cost fields from a telemetry payload JSON
 // object. It returns ok=false when the payload is not a JSON object or carries
 // none of the recognised fields. When total_tokens is absent it is derived from
 // input+output so callers always get a usable total.
-func parseCostPayload(payload string) (in, out, total int64, cost float64, ok bool) {
+func parseCostPayload(payload string) (parsedCostPayload, bool) {
 	if payload == "" {
-		return 0, 0, 0, 0, false
+		return parsedCostPayload{}, false
 	}
 	var m map[string]any
 	if err := json.Unmarshal([]byte(payload), &m); err != nil {
-		return 0, 0, 0, 0, false
+		return parsedCostPayload{}, false
 	}
 	inV, inOK := numField(m, "input_tokens")
 	outV, outOK := numField(m, "output_tokens")
 	totV, totOK := numField(m, "total_tokens")
 	costV, costOK := numField(m, "cost_usd")
 	if !inOK && !outOK && !totOK && !costOK {
-		return 0, 0, 0, 0, false
+		return parsedCostPayload{}, false
 	}
-	in = int64(inV)
-	out = int64(outV)
+	in := int64(inV)
+	out := int64(outV)
+	total := in + out
 	if totOK {
 		total = int64(totV)
-	} else {
-		total = in + out
 	}
-	return in, out, total, costV, true
+	return parsedCostPayload{
+		CostTotals: CostTotals{
+			InputTokens:  in,
+			OutputTokens: out,
+			TotalTokens:  total,
+			CostUSD:      costV,
+			Events:       1,
+		},
+		Harness: stringField(m, "harness"),
+	}, true
 }
 
 // numField reads a numeric field from a decoded JSON object, accepting the
@@ -130,3 +200,15 @@ func numField(m map[string]any, key string) (float64, bool) {
 // realistic per-window token count or cost while staying well inside int64 and
 // leaving headroom to sum costScanLimit events without reaching +Inf.
 const maxNumericField = 1e15
+
+func stringField(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}

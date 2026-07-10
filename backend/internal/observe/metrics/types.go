@@ -96,6 +96,10 @@ type Project struct {
 	// ByActivity counts non-terminated sessions by their persisted activity
 	// state (active, idle, waiting_input, blocked, exited).
 	ByActivity map[string]int `json:"byActivity"`
+	// Cost holds token/cost aggregates for this project over the observer's
+	// rolling window. It is zero when no cost-bearing telemetry was observed for
+	// the project.
+	Cost CostTotals `json:"cost"`
 }
 
 // Scope is a single per-session cgroup-scope memory reading.
@@ -112,11 +116,8 @@ type Scope struct {
 	Matched bool `json:"matched"`
 }
 
-// Cost holds token/cost aggregates derived from telemetry events over the
-// observer's rolling window.
-type Cost struct {
-	// WindowSeconds is the length of the rolling aggregation window.
-	WindowSeconds int64 `json:"windowSeconds"`
+// CostTotals is a token/cost aggregate for one dimension.
+type CostTotals struct {
 	// InputTokens/OutputTokens/TotalTokens sum the matching numeric payload
 	// fields across telemetry events in the window.
 	InputTokens  int64 `json:"inputTokens"`
@@ -127,6 +128,34 @@ type Cost struct {
 	// Events is the number of cost-bearing telemetry events aggregated in the
 	// window (events carrying at least one recognised token/cost field).
 	Events int64 `json:"events"`
+}
+
+// ProjectCost is a cost aggregate grouped by telemetry project_id.
+type ProjectCost struct {
+	// ProjectID is the telemetry project id for this aggregate.
+	ProjectID string `json:"projectId"`
+	CostTotals
+}
+
+// HarnessCost is a cost aggregate grouped by the agent harness reported in
+// telemetry payload metadata.
+type HarnessCost struct {
+	// Harness is the agent harness key (for example claude-code or codex).
+	Harness string `json:"harness"`
+	CostTotals
+}
+
+// Cost holds token/cost aggregates derived from telemetry events over the
+// observer's rolling window. The top-level fields are fleet-wide totals; the
+// grouped slices expose the same totals by project and by harness.
+type Cost struct {
+	// WindowSeconds is the length of the rolling aggregation window.
+	WindowSeconds int64 `json:"windowSeconds"`
+	CostTotals
+	// ByProject groups cost-bearing telemetry by project_id.
+	ByProject []ProjectCost `json:"byProject"`
+	// ByHarness groups cost-bearing telemetry by payload harness metadata.
+	ByHarness []HarnessCost `json:"byHarness"`
 	// Truncated is true when the window held more telemetry rows than the scan
 	// limit, so the aggregate covers only the most recent costScanLimit events.
 	Truncated bool `json:"truncated"`

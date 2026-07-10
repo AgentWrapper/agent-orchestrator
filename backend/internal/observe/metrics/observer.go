@@ -156,7 +156,7 @@ func (o *Observer) pollErr(ctx context.Context) error {
 // drive cycles deterministically. It returns the snapshot it produced.
 func (o *Observer) Tick(ctx context.Context) Snapshot {
 	now := o.clock().UTC()
-	snap := Snapshot{CollectedAt: now}
+	snap := Snapshot{CollectedAt: now, Cost: Cost{ByProject: []ProjectCost{}, ByHarness: []HarnessCost{}}}
 
 	if o.deps.Host != nil {
 		// The collector returns a partially-filled Host plus the first error; a
@@ -214,6 +214,7 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 		} else {
 			cost.WindowSeconds = int64(o.costWindow / time.Second)
 			snap.Cost = cost
+			attachProjectCost(snap.Projects, cost.ByProject)
 		}
 	}
 
@@ -339,9 +340,25 @@ func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint
 
 	projects := make([]Project, 0, len(byProject))
 	for _, p := range byProject {
+		if p.ByActivity == nil {
+			p.ByActivity = map[string]int{}
+		}
 		projects = append(projects, *p)
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].ProjectID < projects[j].ProjectID })
 
 	return projects, scopes, zombies
+}
+
+func attachProjectCost(projects []Project, costs []ProjectCost) {
+	if len(projects) == 0 || len(costs) == 0 {
+		return
+	}
+	byID := make(map[string]CostTotals, len(costs))
+	for _, c := range costs {
+		byID[c.ProjectID] = c.CostTotals
+	}
+	for i := range projects {
+		projects[i].Cost = byID[projects[i].ProjectID]
+	}
 }

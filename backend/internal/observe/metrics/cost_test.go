@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -26,8 +27,8 @@ func (f fakeTelemetry) ListTelemetryEventsSince(_ context.Context, _ time.Time, 
 
 func TestStoreCostAggregatorSums(t *testing.T) {
 	agg := NewStoreCostAggregator(fakeTelemetry{rows: []gen.TelemetryEvent{
-		{PayloadJson: `{"input_tokens":100,"output_tokens":50,"cost_usd":0.25}`},
-		{PayloadJson: `{"input_tokens":10,"output_tokens":5,"total_tokens":15,"cost_usd":0.05}`},
+		{ProjectID: sql.NullString{String: "proj-b", Valid: true}, Source: "codex", PayloadJson: `{"input_tokens":100,"output_tokens":50,"cost_usd":0.25}`},
+		{ProjectID: sql.NullString{String: "proj-a", Valid: true}, PayloadJson: `{"input_tokens":10,"output_tokens":5,"total_tokens":15,"cost_usd":0.05,"harness":"claude-code"}`},
 		{PayloadJson: `{"unrelated":"field"}`}, // no cost fields → skipped
 		{PayloadJson: `not json`},              // malformed → skipped
 		{PayloadJson: ``},                      // empty → skipped
@@ -49,6 +50,12 @@ func TestStoreCostAggregatorSums(t *testing.T) {
 	if c.Events != 2 {
 		t.Errorf("events = %d, want 2 (only cost-bearing rows counted)", c.Events)
 	}
+	if len(c.ByProject) != 2 || c.ByProject[0].ProjectID != "proj-a" || c.ByProject[0].TotalTokens != 15 || c.ByProject[1].ProjectID != "proj-b" || c.ByProject[1].TotalTokens != 150 {
+		t.Errorf("project aggregates not sorted/grouped correctly: %+v", c.ByProject)
+	}
+	if len(c.ByHarness) != 2 || c.ByHarness[0].Harness != "claude-code" || c.ByHarness[0].TotalTokens != 15 || c.ByHarness[1].Harness != "codex" || c.ByHarness[1].TotalTokens != 150 {
+		t.Errorf("harness aggregates not sorted/grouped correctly: %+v", c.ByHarness)
+	}
 }
 
 func TestStoreCostAggregatorNilReader(t *testing.T) {
@@ -58,13 +65,24 @@ func TestStoreCostAggregatorNilReader(t *testing.T) {
 	}
 }
 
+func TestStoreCostAggregatorEmptyGroupsAreNonNil(t *testing.T) {
+	agg := NewStoreCostAggregator(fakeTelemetry{})
+	c, err := agg.Aggregate(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if c.ByProject == nil || c.ByHarness == nil {
+		t.Fatalf("empty grouped cost slices must be non-nil for stable JSON arrays: %+v", c)
+	}
+}
+
 func TestParseCostPayloadTotalDerivation(t *testing.T) {
-	in, out, total, cost, ok := parseCostPayload(`{"input_tokens":3,"output_tokens":4}`)
+	got, ok := parseCostPayload(`{"input_tokens":3,"output_tokens":4,"harness":" codex "}`)
 	if !ok {
 		t.Fatal("want ok")
 	}
-	if in != 3 || out != 4 || total != 7 || cost != 0 {
-		t.Errorf("got in=%d out=%d total=%d cost=%v", in, out, total, cost)
+	if got.InputTokens != 3 || got.OutputTokens != 4 || got.TotalTokens != 7 || got.CostUSD != 0 || got.Harness != "codex" {
+		t.Errorf("got %+v", got)
 	}
 }
 
@@ -76,7 +94,7 @@ func TestParseCostPayloadRejectsNonFiniteAndNegative(t *testing.T) {
 		`{"cost_usd":1e300}`,     // finite but absurd → would risk +Inf on sum
 	}
 	for _, p := range cases {
-		if _, _, _, _, ok := parseCostPayload(p); ok {
+		if _, ok := parseCostPayload(p); ok {
 			// A payload whose only recognised field is non-finite/negative must
 			// not be treated as a cost-bearing event.
 			t.Errorf("payload %q must be rejected (non-finite/negative)", p)
@@ -84,12 +102,12 @@ func TestParseCostPayloadRejectsNonFiniteAndNegative(t *testing.T) {
 	}
 	// NaN cannot be expressed in JSON literals, but a mixed payload with a valid
 	// field and a negative one must drop only the bad field.
-	in, out, _, cost, ok := parseCostPayload(`{"input_tokens":5,"cost_usd":-9}`)
+	got, ok := parseCostPayload(`{"input_tokens":5,"cost_usd":-9}`)
 	if !ok {
 		t.Fatal("want ok for the valid input_tokens field")
 	}
-	if in != 5 || out != 0 || cost != 0 {
-		t.Errorf("negative cost must be dropped: in=%d out=%d cost=%v", in, out, cost)
+	if got.InputTokens != 5 || got.OutputTokens != 0 || got.CostUSD != 0 {
+		t.Errorf("negative cost must be dropped: %+v", got)
 	}
 }
 
