@@ -50,32 +50,91 @@ const TERMINAL_ENHANCE_JS = `
     } catch (_) {}
   }
 
-  // Scale the whole terminal so its full width (cols x cell) fits the screen. The
-  // daemon may hold the grid wider than the phone (a co-viewing desktop drives the
-  // size), so instead of clipping/garbling we shrink uniformly to fit; vertical
-  // history still scrolls. Never scales up past 1 (a phone-sized grid stays crisp).
+  // ---- Zoom & pan -----------------------------------------------------------
+  // The daemon may hold the grid wider than the phone (a co-viewing desktop
+  // drives the size). The resting view shrinks the whole grid uniformly to fit
+  // the width (overview — may be tiny). Pinch zooms between that fit scale and
+  // 1:1 (crisp, readable); while zoomed, one finger pans the viewport (vertical
+  // overshoot spills into scrollback) and double-tap toggles overview <-> 1:1.
+  // While zoomed we auto-pan to keep the cursor framed, so the prompt/output
+  // stays in view without chasing it by hand.
+  function term() { return window.terminal; }
+  var Z = { s: 1, min: 1, tx: 0, ty: 0, zoomed: false, lastPan: 0 };
+  function box() {
+    var root = document.querySelector('.xterm');
+    var screen = document.querySelector('.xterm-screen');
+    var host = document.getElementById('terminal') || document.body;
+    if (!root || !screen || !host) return null;
+    return { root: root, natW: screen.offsetWidth, natH: screen.offsetHeight,
+             contW: host.clientWidth || window.innerWidth,
+             contH: host.clientHeight || window.innerHeight };
+  }
+  function clampT(b) {
+    var minTx = Math.min(0, b.contW - b.natW * Z.s);
+    var minTy = Math.min(0, b.contH - b.natH * Z.s);
+    if (Z.tx < minTx) Z.tx = minTx; if (Z.tx > 0) Z.tx = 0;
+    if (Z.ty < minTy) Z.ty = minTy; if (Z.ty > 0) Z.ty = 0;
+  }
+  function applyTransform(b) {
+    b.root.style.transformOrigin = 'top left';
+    b.root.style.transform = 'translate(' + Z.tx + 'px,' + Z.ty + 'px) scale(' + Z.s + ')';
+  }
+  // Fit-to-width baseline, re-run on grid/container changes. Tracks the fit
+  // scale while at overview; preserves (re-clamps) the user's zoom otherwise.
   function applyScale() {
     try {
-      var root = document.querySelector('.xterm');
-      var screen = document.querySelector('.xterm-screen');
-      var host = document.getElementById('terminal') || document.body;
-      if (!root || !screen || !host) return;
-      root.style.transformOrigin = 'top left';
-      var natW = screen.offsetWidth;           // cols x cellWidth (unscaled)
-      var contW = host.clientWidth || window.innerWidth;
-      if (!natW || !contW) return;
-      var scale = Math.min(1, contW / natW);
-      root.style.transform = scale < 1 ? 'scale(' + scale + ')' : 'none';
+      var b = box(); if (!b || !b.natW || !b.contW) return;
+      Z.min = Math.min(1, b.contW / b.natW);
+      if (!Z.zoomed) { Z.s = Z.min; Z.tx = 0; Z.ty = 0; }
+      else { if (Z.s < Z.min) Z.s = Z.min; clampT(b); }
+      applyTransform(b);
+    } catch (_) {}
+  }
+  // Zoom to scale s keeping the content under screen point (ax, ay) fixed.
+  function setZoom(s, ax, ay) {
+    var b = box(); if (!b) return;
+    if (s < Z.min) s = Z.min; if (s > 1) s = 1;
+    var px = (ax - Z.tx) / Z.s, py = (ay - Z.ty) / Z.s;
+    Z.s = s; Z.tx = ax - px * s; Z.ty = ay - py * s;
+    Z.zoomed = s > Z.min + 0.001;
+    if (!Z.zoomed) { Z.s = Z.min; Z.tx = 0; Z.ty = 0; }
+    clampT(b); applyTransform(b);
+  }
+  // Auto-pan so the cursor stays framed while zoomed in. Backs off for a few
+  // seconds after a manual pan/pinch (never fight the finger) and only follows
+  // the live screen — not while the user is reading scrollback.
+  function followCursor() {
+    try {
+      if (!Z.zoomed || Date.now() - Z.lastPan < 4000) return;
+      var T = term(); var b = box(); if (!T || !b || !T.cols || !T.rows) return;
+      var buf = T.buffer && T.buffer.active; if (!buf) return;
+      if (buf.viewportY !== buf.baseY) return;
+      var cx = (buf.cursorX + 0.5) * (b.natW / T.cols) * Z.s;
+      var cy = (buf.cursorY + 0.5) * (b.natH / T.rows) * Z.s;
+      var mX = Math.min(48, b.contW / 4), mY = Math.min(48, b.contH / 4);
+      if (Z.tx + cx < mX) Z.tx = mX - cx;
+      else if (Z.tx + cx > b.contW - mX) Z.tx = b.contW - mX - cx;
+      if (Z.ty + cy < mY) Z.ty = mY - cy;
+      else if (Z.ty + cy > b.contH - mY) Z.ty = b.contH - mY - cy;
+      clampT(b); applyTransform(b);
     } catch (_) {}
   }
 
   // When the grid changes, keep it pinned to the bottom (latest output).
   function pinBottom() { try { window.terminal.scrollToBottom(); } catch (_) {} }
+  var cfTimer = 0;
   (function wire() {
     if (window.terminal && window.terminal.onResize && window.fitAddon) {
       // The grid changes only when the daemon tells RN the authoritative size and
       // RN calls resize(); re-fit-to-width and pin on every such change.
       window.terminal.onResize(function () { setTimeout(function () { applyScale(); pinBottom(); }, 0); });
+      // Throttled cursor-follow: cursor moves fire in bursts while output streams.
+      if (window.terminal.onCursorMove) {
+        window.terminal.onCursorMove(function () {
+          if (cfTimer) return;
+          cfTimer = setTimeout(function () { cfTimer = 0; followCursor(); }, 120);
+        });
+      }
       // On box changes (keyboard/rotation) re-report the fit and re-scale, but do
       // NOT fit() — the daemon owns the grid; fitting would fight it.
       try {
@@ -94,10 +153,10 @@ const TERMINAL_ENHANCE_JS = `
   // or steal first-responder. The keyboard button shows/hides the keyboard.
 
   // Gesture routing (canvas is pointer-events:none, so we read touches here):
-  //  - quick drag -> native scroll (we don't preventDefault)
-  //  - long-press -> select the line; drag extends by lines; release copies
-  //  - single tap -> nothing   - double-tap -> focus (keyboard)
-  function term() { return window.terminal; }
+  //  • quick drag -> scrollback scroll (overview) / viewport pan (zoomed)
+  //  • pinch -> zoom between fit-to-width and 1:1
+  //  • long-press -> select the line; drag extends by lines; release copies
+  //  • single tap -> nothing   • double-tap -> toggle overview <-> 1:1
   function lineAt(clientY) {
     var T = term(), screen = document.querySelector('.xterm-screen');
     if (!T || !screen) return 0;
@@ -116,16 +175,33 @@ const TERMINAL_ENHANCE_JS = `
   }
 
   var sX = 0, sY = 0, mode = 'idle', anchor = 0, lpTimer = 0;
-  var MOVE = 10, LONGPRESS = 350;
-  // Android: we drive the viewport's scrollTop directly off finger movement -
+  var MOVE = 10, LONGPRESS = 350, DBLTAP = 300;
+  // Android: we drive the viewport's scrollTop directly off finger movement —
   // its native overflow-scroll doesn't respond to touch reliably in the WebView,
   // which is why the terminal felt unscrollable there. iOS keeps native momentum.
   var _vp = null, startScroll = 0;
+  var lX = 0, lY = 0;                       // last touch point (zoomed pan deltas)
+  var pinch0 = null;                        // pinch anchor {d, s, mx, my}
+  var lastTap = 0, ltX = 0, ltY = 0;        // double-tap detection
   function clearLP() { if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; } }
+  function touchDist(e) {
+    var a = e.touches[0], b = e.touches[1];
+    var dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
 
   document.addEventListener('touchstart', function (e) {
+    if (e.touches && e.touches.length >= 2) {
+      // Second finger down -> pinch. Cancel any pending tap/long-press/scroll.
+      clearLP(); mode = 'pinch';
+      pinch0 = { d: touchDist(e) || 1, s: Z.s,
+                 mx: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+                 my: (e.touches[0].clientY + e.touches[1].clientY) / 2 };
+      try { term() && term().clearSelection(); } catch (_) {}
+      return;
+    }
     var t = e.touches ? e.touches[0] : e;
-    sX = t.clientX; sY = t.clientY; mode = 'pending';
+    sX = t.clientX; sY = t.clientY; lX = sX; lY = sY; mode = 'pending';
     _vp = document.querySelector('.xterm-viewport');
     startScroll = _vp ? _vp.scrollTop : 0;
     try { term() && term().clearSelection(); } catch (_) {}
@@ -138,16 +214,48 @@ const TERMINAL_ENHANCE_JS = `
   }, { capture: true, passive: true });
 
   document.addEventListener('touchmove', function (e) {
+    if (mode === 'pinch') {
+      if (!e.touches || e.touches.length < 2 || !pinch0) return;
+      if (e.cancelable) e.preventDefault();  // keep the page/viewport from moving
+      var mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      var my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      // Two-finger drag pans while pinching; the scale keeps the content under
+      // the midpoint anchored so the zoom feels centered on the fingers.
+      Z.tx += mx - pinch0.mx; Z.ty += my - pinch0.my;
+      setZoom(pinch0.s * (touchDist(e) / pinch0.d), mx, my);
+      pinch0.mx = mx; pinch0.my = my;
+      Z.lastPan = Date.now();
+      return;
+    }
     var t = e.touches ? e.touches[0] : e;
     if (mode === 'pending') {
       if (Math.abs(t.clientX - sX) > MOVE || Math.abs(t.clientY - sY) > MOVE) {
-        mode = 'scroll'; clearLP();
+        mode = 'scroll'; clearLP(); lX = t.clientX; lY = t.clientY;
       }
       return;
     }
     if (mode === 'scroll') {
-      // Android: move the viewport ourselves, 1:1 with the finger. iOS: leave it
-      // to the viewport's native momentum scroll (don't preventDefault).
+      if (Z.zoomed) {
+        // Zoomed in: one finger pans the viewport over the big grid. Vertical
+        // overshoot past the grid edge spills into scrollback scrolling (divide
+        // by scale: scrollTop is in unscaled content px, the finger in screen px).
+        if (e.cancelable) e.preventDefault();
+        var b = box();
+        if (b) {
+          Z.tx += t.clientX - lX;
+          var wantTy = Z.ty + (t.clientY - lY);
+          Z.ty = wantTy;
+          clampT(b);
+          var spill = wantTy - Z.ty;
+          if (spill !== 0 && _vp) _vp.scrollTop -= spill / Z.s;
+          applyTransform(b);
+        }
+        Z.lastPan = Date.now();
+        lX = t.clientX; lY = t.clientY;
+        return;
+      }
+      // Overview: scrollback scroll. Android: move the viewport ourselves, 1:1
+      // with the finger. iOS: leave it to native momentum (don't preventDefault).
       if (IS_ANDROID && _vp) {
         _vp.scrollTop = startScroll - (t.clientY - sY);
         if (e.cancelable) e.preventDefault();
@@ -161,9 +269,24 @@ const TERMINAL_ENHANCE_JS = `
     }
   }, { capture: true, passive: false });
 
-  document.addEventListener('touchend', function () {
+  document.addEventListener('touchend', function (e) {
     clearLP();
-    if (mode === 'select') copySel(); // a tap (no move) does nothing
+    if (mode === 'pinch') {
+      // Stay in pinch while two fingers remain; otherwise done (the leftover
+      // finger must lift and re-touch to start a new gesture).
+      if (!e.touches || e.touches.length < 2) { mode = 'idle'; pinch0 = null; }
+      return;
+    }
+    if (mode === 'select') copySel();
+    if (mode === 'pending') {
+      // A tap. Two taps close together toggle overview <-> 1:1 at the tap point.
+      var now = Date.now();
+      if (now - lastTap < DBLTAP && Math.abs(sX - ltX) < 40 && Math.abs(sY - ltY) < 40) {
+        lastTap = 0;
+        if (Z.zoomed) setZoom(Z.min, 0, 0);
+        else { setZoom(1, sX, sY); Z.lastPan = Date.now(); }
+      } else { lastTap = now; ltX = sX; ltY = sY; }
+    }
     mode = 'idle';
   }, { capture: true, passive: true });
 
