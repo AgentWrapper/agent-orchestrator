@@ -49,7 +49,7 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
+func TestGetLaunchCommandIgnoresPermissionsWithPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
@@ -59,24 +59,22 @@ func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"amp", "--permission-mode", "bypassPermissions", "--", "-add a health check"}
+	want := []string{"amp", "--", "-add a health check"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
 }
 
-func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
+func TestGetLaunchCommandIgnoresPermissionModes(t *testing.T) {
 	tests := []struct {
-		name       string
-		mode       ports.PermissionMode
-		want       []string
-		wantAbsent string
+		name string
+		mode ports.PermissionMode
 	}{
-		{"default omits flag", ports.PermissionModeDefault, []string{"amp"}, "--permission-mode"},
-		{"empty omits flag", "", []string{"amp"}, "--permission-mode"},
-		{"accept edits", ports.PermissionModeAcceptEdits, []string{"amp", "--permission-mode", "acceptEdits"}, ""},
-		{"auto", ports.PermissionModeAuto, []string{"amp", "--permission-mode", "auto"}, ""},
-		{"bypass", ports.PermissionModeBypassPermissions, []string{"amp", "--permission-mode", "bypassPermissions"}, ""},
+		{"default", ports.PermissionModeDefault},
+		{"empty", ""},
+		{"accept edits", ports.PermissionModeAcceptEdits},
+		{"auto", ports.PermissionModeAuto},
+		{"bypass", ports.PermissionModeBypassPermissions},
 	}
 
 	for _, tt := range tests {
@@ -86,14 +84,13 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(cmd, tt.want) {
-				t.Fatalf("cmd = %#v, want %#v", cmd, tt.want)
+			want := []string{"amp"}
+			if !reflect.DeepEqual(cmd, want) {
+				t.Fatalf("cmd = %#v, want %#v", cmd, want)
 			}
-			if tt.wantAbsent != "" {
-				for _, arg := range cmd {
-					if arg == tt.wantAbsent {
-						t.Fatalf("cmd = %#v unexpectedly contains %q", cmd, tt.wantAbsent)
-					}
+			for _, arg := range cmd {
+				if arg == "--permission-mode" {
+					t.Fatalf("cmd = %#v unexpectedly contains unsupported Amp permission flag", cmd)
 				}
 			}
 		})
@@ -159,7 +156,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	want := []string{"amp", "--permission-mode", "bypassPermissions", "--resume", "T-abc123"}
+	want := []string{"amp", "--resume", "T-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
