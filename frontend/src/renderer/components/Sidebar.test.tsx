@@ -483,8 +483,8 @@ describe("Sidebar", () => {
 	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {
 		renderSidebar();
 
-		const resizeHandle = document.querySelector(".resize-handle--right");
-		if (!(resizeHandle instanceof HTMLElement)) throw new Error("Resize handle not found");
+		const resizeHandle = screen.getByTestId("resize-handle");
+		expect(resizeHandle).toBeInTheDocument();
 
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 
@@ -523,8 +523,7 @@ describe("Sidebar", () => {
 		try {
 			renderSidebar();
 
-			const resizeHandle = document.querySelector(".resize-handle--right");
-			if (!(resizeHandle instanceof HTMLElement)) throw new Error("Resize handle not found");
+			const resizeHandle = screen.getByTestId("resize-handle");
 
 			fireEvent.pointerDown(resizeHandle, { clientX: 240 });
 			fireEvent.pointerMove(window, { clientX: 205 });

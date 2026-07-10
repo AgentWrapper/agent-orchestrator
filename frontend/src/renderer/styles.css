@@ -408,22 +408,20 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * before painting, so tap-to-expand does not flash labels inside the narrow
  * collapsed rail. */
 .sidebar-expanded-chrome {
-  transition: opacity 150ms ease-out;
+	transition: opacity 150ms ease-out;
 }
-[data-slot="sidebar-container"][data-expanded-chrome="hidden"]
-  .sidebar-expanded-chrome {
-  opacity: 0;
-  pointer-events: none;
+[data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
+	opacity: 0;
+	pointer-events: none;
 }
-[data-slot="sidebar-container"][data-expanded-chrome="visible"]
-  .sidebar-expanded-chrome {
-  opacity: 1;
+[data-slot="sidebar-container"][data-expanded-chrome="visible"] .sidebar-expanded-chrome {
+	opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar-expanded-chrome {
-    transition: none;
-  }
+	.sidebar-expanded-chrome {
+		transition: none;
+	}
 }
 
 /* ── Shell topbar (agent-orchestrator .dashboard-app-header) ──────────────
@@ -435,193 +433,193 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * 2026-06-12), so its bottom border runs edge-to-edge and the sidebar border
  * stops at the header instead of crossing the traffic-light strip. */
 .dashboard-app-header {
-  display: flex;
-  height: 56px;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 13px;
-  padding: 0 16px 0 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-  z-index: 10;
+	display: flex;
+	height: 56px;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 13px;
+	padding: 0 16px 0 14px;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg);
+	z-index: 10;
 }
 
 .dashboard-app-header__project {
-  font-size: 14.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1;
-  color: var(--fg);
-  white-space: nowrap;
+	font-size: 14.5px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1;
+	color: var(--fg);
+	white-space: nowrap;
 }
 
 .topbar-project-line {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 6px;
 }
 
 .dashboard-app-header__spacer {
-  flex: 1;
-  min-width: 0;
+	flex: 1;
+	min-width: 0;
 }
 
 .dashboard-app-header__actions {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 6px;
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 6px;
 }
 
 .dashboard-app-header__icon-btn {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 7px;
-  color: var(--fg-muted);
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+	display: grid;
+	width: 34px;
+	height: 34px;
+	place-items: center;
+	border-radius: 7px;
+	color: var(--fg-muted);
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
 }
 
 .dashboard-app-header__icon-btn:hover {
-  background: var(--interactive-hover);
-  color: var(--fg);
+	background: var(--interactive-hover);
+	color: var(--fg);
 }
 
 .dashboard-app-header__kill-btn {
-  display: inline-flex;
-  height: 30px;
-  align-items: center;
-  gap: 5px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, var(--red) 58%, transparent);
-  background: color-mix(in srgb, var(--red) 5%, transparent);
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1;
-  color: var(--red);
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+	display: inline-flex;
+	height: 30px;
+	align-items: center;
+	gap: 5px;
+	border-radius: 6px;
+	border: 1px solid color-mix(in srgb, var(--red) 58%, transparent);
+	background: color-mix(in srgb, var(--red) 5%, transparent);
+	padding: 0 10px;
+	font-size: 12px;
+	font-weight: 650;
+	line-height: 1;
+	color: var(--red);
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
 }
 
 .dashboard-app-header__kill-btn:hover {
-  background: color-mix(in srgb, var(--red) 12%, transparent);
-  border-color: color-mix(in srgb, var(--red) 75%, transparent);
+	background: color-mix(in srgb, var(--red) 12%, transparent);
+	border-color: color-mix(in srgb, var(--red) 75%, transparent);
 }
 
 .dashboard-app-header__kill-confirm {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
 }
 
 .dashboard-app-header__kill-confirm-btn {
-  display: inline-flex;
-  height: 34px;
-  align-items: center;
-  gap: 6px;
-  border-radius: 7px;
-  border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--red);
-  background: color-mix(in srgb, var(--red) 10%, transparent);
-  transition: background 0.12s ease;
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	gap: 6px;
+	border-radius: 7px;
+	border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+	padding: 0 12px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	color: var(--red);
+	background: color-mix(in srgb, var(--red) 10%, transparent);
+	transition: background 0.12s ease;
 }
 
 .dashboard-app-header__kill-confirm-btn:hover {
-  background: color-mix(in srgb, var(--red) 16%, transparent);
+	background: color-mix(in srgb, var(--red) 16%, transparent);
 }
 
 .dashboard-app-header__kill-confirm-btn:disabled {
-  opacity: 0.6;
+	opacity: 0.6;
 }
 
 .dashboard-app-header__kill-cancel-btn {
-  display: inline-flex;
-  height: 34px;
-  align-items: center;
-  border-radius: 7px;
-  padding: 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--fg-muted);
-  transition: color 0.12s ease;
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	border-radius: 7px;
+	padding: 0 10px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	color: var(--fg-muted);
+	transition: color 0.12s ease;
 }
 
 .dashboard-app-header__kill-cancel-btn:hover {
-  color: var(--fg);
+	color: var(--fg);
 }
 
 .dashboard-app-header__kill-error {
-  font-size: 11px;
-  color: var(--red);
+	font-size: 11px;
+	color: var(--red);
 }
 
 .dashboard-app-header__primary-btn {
-  display: inline-flex;
-  height: 34px;
-  align-items: center;
-  gap: 6px;
-  border-radius: 7px;
-  padding: 0 15px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  background: var(--accent);
-  color: var(--accent-fg);
-  transition: filter 0.12s ease;
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	gap: 6px;
+	border-radius: 7px;
+	padding: 0 15px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	background: var(--accent);
+	color: var(--accent-fg);
+	transition: filter 0.12s ease;
 }
 
 .dashboard-app-header__primary-btn:hover {
-  filter: brightness(1.08);
+	filter: brightness(1.08);
 }
 
 .dashboard-app-header__primary-btn:disabled {
-  opacity: 0.6;
+	opacity: 0.6;
 }
 
 .dashboard-app-header__primary-btn--compact {
-  height: 32px;
-  border-radius: 7px;
-  padding: 0 14px;
-  font-size: 13px;
+	height: 32px;
+	border-radius: 7px;
+	padding: 0 14px;
+	font-size: 13px;
 }
 
 .dashboard-app-header__accent-btn {
-  display: inline-flex;
-  height: 34px;
-  align-items: center;
-  gap: 6px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  padding: 0 15px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  background: var(--raised);
-  color: var(--fg-muted);
-  transition: background 0.12s ease;
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	gap: 6px;
+	border-radius: 7px;
+	border: 1px solid var(--border);
+	padding: 0 15px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	background: var(--raised);
+	color: var(--fg-muted);
+	transition: background 0.12s ease;
 }
 
 .dashboard-app-header__accent-btn:hover {
-  background: var(--surface);
-  color: var(--fg);
+	background: var(--surface);
+	color: var(--fg);
 }
 
 .session-topbar__lead {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 13px;
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 13px;
 }
 
 /* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
@@ -633,261 +631,260 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * starts a 13px group gap after them (the .dashboard-app-header gap), so
  * the toggle reads as its own group rather than a fourth light. */
 .titlebar-nav {
-  position: fixed;
-  top: 0;
-  left: 79px;
-  z-index: 20;
-  display: flex;
-  height: 56px;
-  align-items: center;
-  gap: 2px;
+	position: fixed;
+	top: 0;
+	left: 79px;
+	z-index: 20;
+	display: flex;
+	height: 56px;
+	align-items: center;
+	gap: 2px;
 }
 
 .titlebar-nav__btn {
-  width: 28px;
-  height: 28px;
+	width: 28px;
+	height: 28px;
 }
 
 /* macOS: the full-width header starts its content past the lights + fixed
  * cluster: cluster right edge 79 + 3×28 + 2×2 = 167px, + the header's 13px
  * group gap = 180px. */
 .dashboard-app-header.is-under-titlebar-nav {
-  padding-left: 180px;
+	padding-left: 180px;
 }
 
 .topbar-project-pills-group {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
 }
 
 .topbar-identity-sep {
-  font-size: 12px;
-  line-height: 1;
-  color: var(--fg-passive);
+	font-size: 12px;
+	line-height: 1;
+	color: var(--fg-passive);
 }
 
 .session-detail-mode-badge {
-  display: inline-flex;
-  height: 24px;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0 8px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.05em;
+	display: inline-flex;
+	height: 24px;
+	align-items: center;
+	gap: 4px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 0 8px;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	letter-spacing: 0.05em;
 }
 
 .session-detail-mode-badge--neutral {
-  background: var(--surface);
-  color: var(--fg-muted);
+	background: var(--surface);
+	color: var(--fg-muted);
 }
 
 .session-topbar__identity {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 11px;
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 11px;
 }
 
 .session-topbar__branch {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  line-height: 1;
-  color: var(--fg-passive);
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 5px;
+	font-family: var(--font-mono);
+	font-size: 10.5px;
+	line-height: 1;
+	color: var(--fg-passive);
 }
 
 /* ── Session inspector rail (agent-orchestrator SessionInspector) ───────── */
 .session-inspector {
-  container-type: inline-size;
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg);
+	container-type: inline-size;
+	display: flex;
+	height: 100%;
+	min-height: 0;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--bg);
 }
 
 .session-inspector__tabs {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 47px;
-  flex-shrink: 0;
-  padding: 0 11px;
-  border-bottom: 1px solid var(--border);
+	display: flex;
+	align-items: center;
+	gap: 3px;
+	height: 47px;
+	flex-shrink: 0;
+	padding: 0 11px;
+	border-bottom: 1px solid var(--border);
 }
 
 .session-inspector__tab {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 7px 6px;
-  border-radius: 7px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--fg-passive);
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+	flex: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 7px 6px;
+	border-radius: 7px;
+	font-size: 11.5px;
+	font-weight: 600;
+	color: var(--fg-passive);
+	cursor: pointer;
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
 }
 
 .session-inspector__tab:hover {
-  background: var(--interactive-hover);
-  color: var(--fg);
+	background: var(--interactive-hover);
+	color: var(--fg);
 }
 
 .session-inspector__tab.is-active {
-  background: var(--interactive-active);
-  color: var(--fg);
+	background: var(--interactive-active);
+	color: var(--fg);
 }
 
 .session-inspector__tab-icon {
-  display: inline-flex;
-  flex-shrink: 0;
+	display: inline-flex;
+	flex-shrink: 0;
 }
 
 .session-inspector__tab-icon svg {
-  width: 14px;
-  height: 14px;
+	width: 14px;
+	height: 14px;
 }
 
 .session-inspector__tab-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .session-inspector__body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 18px 18px 40px;
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 18px 18px 40px;
 }
 
 /* Browser tab: the panel fills the rail edge-to-edge, so drop the body padding
    and the panel's own border/radius so it sits flush against the resize handle. */
 .session-inspector__body.session-inspector__body--browser {
-  padding: 0;
-  overflow: hidden;
+	padding: 0;
+	overflow: hidden;
 }
 
 .session-inspector__body--browser .browser-panel {
-  border: 0;
-  border-radius: 0;
+	border: 0;
+	border-radius: 0;
 }
 
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
  * transparent grab strip whose centered 1px line lights accent on hover, drag
  * (rrp sets data-separator="active"), and keyboard focus. */
 .session-inspector__resize-handle {
-  width: 7px;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
+	width: 7px;
+	cursor: col-resize;
+	background: transparent;
+	touch-action: none;
 }
 
 .session-inspector__resize-handle::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
-  transform: translateX(-50%);
-  background: var(--border-1);
-  transition: background 0.12s ease;
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+	background: var(--border-1);
+	transition: background 0.12s ease;
 }
 
 .session-inspector__resize-handle:hover::after,
 .session-inspector__resize-handle:focus-visible::after,
 .session-inspector__resize-handle[data-separator="active"]::after {
-  background: var(--border);
+	background: var(--border);
 }
 
 .reviewer-terminal-header {
-  display: flex;
-  height: 36px;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--term-bg);
-  padding: 0 14px;
-  font-family: var(--font-mono);
+	display: flex;
+	height: 36px;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 12px;
+	border-bottom: 1px solid var(--border);
+	background: var(--term-bg);
+	padding: 0 14px;
+	font-family: var(--font-mono);
 }
 
 .reviewer-terminal-header__back {
-  display: inline-flex;
-  height: 24px;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 5px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-1);
-  padding: 0 8px;
-  font-size: 11px;
-  color: var(--fg-muted);
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+	display: inline-flex;
+	height: 24px;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 5px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: var(--bg-1);
+	padding: 0 8px;
+	font-size: 11px;
+	color: var(--fg-muted);
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
 }
 
 .reviewer-terminal-header__back:hover {
-  background: var(--interactive-hover);
-  color: var(--fg);
+	background: var(--interactive-hover);
+	color: var(--fg);
 }
 
 .reviewer-terminal-header__back svg,
 .reviewer-terminal-header__role svg {
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
+	width: 13px;
+	height: 13px;
+	flex-shrink: 0;
 }
 
 .reviewer-terminal-header__role {
-  display: inline-flex;
-  height: 24px;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 6px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, var(--green) 34%, transparent);
-  background: color-mix(in srgb, var(--green) 9%, transparent);
-  padding: 0 9px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #8bdc75;
-  text-transform: uppercase;
+	display: inline-flex;
+	height: 24px;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 6px;
+	border-radius: 6px;
+	border: 1px solid color-mix(in srgb, var(--green) 34%, transparent);
+	background: color-mix(in srgb, var(--green) 9%, transparent);
+	padding: 0 9px;
+	font-size: 11px;
+	font-weight: 700;
+	color: #8bdc75;
+	text-transform: uppercase;
 }
 
 :root[data-theme="light"] .reviewer-terminal-header__role {
-  color: var(--green);
+	color: var(--green);
 }
 
 .reviewer-terminal-header__harness {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--fg);
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 650;
+	color: var(--fg);
 }
-
 
 /* Collapse/expand animation for the inspector panel: rrp v4 drives panel
  * sizes via flex-grow, which is animatable. Suppress it while the separator
