@@ -306,7 +306,7 @@ func (o *Observer) Snapshots() (history []Snapshot, latest Snapshot, hasLatest b
 // counted — a DB hiccup must not masquerade as a fleet-wide leak. scopesKnown
 // separately reports whether an empty scope set is authoritative for zombie
 // accounting.
-func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64, sessionsKnown bool, scopesKnown bool) ([]Project, []Scope, int) {
+func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64, sessionsKnown, scopesKnown bool) ([]Project, []Scope, int) {
 	byProject := map[string]*Project{}
 	// handle id -> live ao session record, for matching cgroup scopes.
 	liveHandles := map[string]domain.SessionRecord{}
