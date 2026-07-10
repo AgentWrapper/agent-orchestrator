@@ -576,7 +576,7 @@ flowchart TD
 
 ```
 
-**Key principle:** Failed probes are NOT proof of death. A session is only terminated when the runtime and process are **both** clearly dead and recent activity doesn't contradict that.
+**Key principle:** Failed probes are NOT proof of death — and neither is a single dead reading. A session is only terminated when the runtime has read dead for several consecutive probes, the runtime and process are **both** clearly dead, and recent activity doesn't contradict that.
 
 ---
 
