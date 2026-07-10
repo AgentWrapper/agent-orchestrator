@@ -9,7 +9,8 @@
 		"android": "expo run:android",
 		"ios": "expo run:ios",
 		"typecheck": "tsc --noEmit",
-		"build": "npm run typecheck"
+		"build": "npm run typecheck",
+		"postinstall": "patch-package"
 	},
 	"dependencies": {
 		"@expo/vector-icons": "^15.0.3",
@@ -31,6 +32,7 @@
 	},
 	"devDependencies": {
 		"@types/react": "~19.1.10",
+		"patch-package": "^8.0.1",
 		"typescript": "~5.9.2"
 	}
 }
