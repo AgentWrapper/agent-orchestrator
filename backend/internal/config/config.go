@@ -41,6 +41,22 @@ const (
 	// DefaultTelemetryPostHogHost is the default PostHog ingestion host when
 	// remote telemetry is enabled and AO_TELEMETRY_POSTHOG_HOST is unset.
 	DefaultTelemetryPostHogHost = "https://us.i.posthog.com"
+	// DefaultMetricsInterval is how often the resource metrics observer samples
+	// host/session/cost facts. A coarse loop by design: resource pressure is a
+	// human-timescale signal, so a ~30s tick keeps sampling cheap.
+	DefaultMetricsInterval = 30 * time.Second
+	// DefaultMetricsDiskFreePercent fires the disk_low alert when free space on
+	// the data-dir volume drops below this percent.
+	DefaultMetricsDiskFreePercent = 10
+	// DefaultMetricsMemAvailablePercent fires the mem_low alert when available
+	// memory drops below this percent.
+	DefaultMetricsMemAvailablePercent = 10
+	// DefaultMetricsLoadPerCore fires the load_high alert when 1-min loadavg per
+	// core exceeds this ratio.
+	DefaultMetricsLoadPerCore = 1.0
+	// DefaultMetricsZombieSustainTicks is how many consecutive ticks the zombie
+	// count must stay above zero before the zombies alert fires.
+	DefaultMetricsZombieSustainTicks = 2
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -60,6 +76,25 @@ type TelemetryConfig struct {
 	Remote      TelemetryRemote
 	PostHogKey  string
 	PostHogHost string
+}
+
+// MetricsConfig controls the resource metrics observer: its sampling interval
+// (0 disables the observer entirely) and the alert thresholds. A zero threshold
+// disables that specific alert while leaving the observer and /api/v1/metrics
+// running.
+type MetricsConfig struct {
+	// Interval is the observer sampling period. Zero disables the observer.
+	Interval time.Duration
+	// DiskFreePercent is the disk_low threshold (percent free). Zero disables it.
+	DiskFreePercent float64
+	// MemAvailablePercent is the mem_low threshold (percent available). Zero
+	// disables it.
+	MemAvailablePercent float64
+	// LoadPerCore is the load_high threshold (loadavg per core). Zero disables it.
+	LoadPerCore float64
+	// ZombieSustainTicks is how many consecutive ticks zombies>0 must persist
+	// before the zombies alert fires. Zero disables it.
+	ZombieSustainTicks int
 }
 
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
@@ -102,6 +137,8 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// Metrics controls the resource metrics observer.
+	Metrics MetricsConfig
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -129,6 +166,11 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
 //	AO_TELEMETRY_POSTHOG_KEY   PostHog project key
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
+//	AO_METRICS_INTERVAL        resource observer tick (Go duration >= 0, 0 disables, default 30s)
+//	AO_METRICS_DISK_FREE_PCT   disk_low threshold, percent free (0-100, 0 disables, default 10)
+//	AO_METRICS_MEM_AVAIL_PCT   mem_low threshold, percent available (0-100, 0 disables, default 10)
+//	AO_METRICS_LOAD_PER_CORE   load_high threshold, loadavg per core (>=0, 0 disables, default 1)
+//	AO_METRICS_ZOMBIE_TICKS    zombies alert sustain ticks (int >=0, 0 disables, default 2)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -143,6 +185,13 @@ func Load() (Config, error) {
 		Telemetry: TelemetryConfig{
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
+		},
+		Metrics: MetricsConfig{
+			Interval:            DefaultMetricsInterval,
+			DiskFreePercent:     DefaultMetricsDiskFreePercent,
+			MemAvailablePercent: DefaultMetricsMemAvailablePercent,
+			LoadPerCore:         DefaultMetricsLoadPerCore,
+			ZombieSustainTicks:  DefaultMetricsZombieSustainTicks,
 		},
 	}
 
@@ -232,6 +281,42 @@ func Load() (Config, error) {
 		cfg.Telemetry.PostHogHost = raw
 	}
 
+	if raw := os.Getenv("AO_METRICS_INTERVAL"); raw != "" {
+		d, err := parseNonNegativeDuration("AO_METRICS_INTERVAL", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.Interval = d
+	}
+	if raw := os.Getenv("AO_METRICS_DISK_FREE_PCT"); raw != "" {
+		v, err := parseNonNegativePercent("AO_METRICS_DISK_FREE_PCT", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.DiskFreePercent = v
+	}
+	if raw := os.Getenv("AO_METRICS_MEM_AVAIL_PCT"); raw != "" {
+		v, err := parseNonNegativePercent("AO_METRICS_MEM_AVAIL_PCT", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.MemAvailablePercent = v
+	}
+	if raw := os.Getenv("AO_METRICS_LOAD_PER_CORE"); raw != "" {
+		v, err := parseNonNegativeFloat("AO_METRICS_LOAD_PER_CORE", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.LoadPerCore = v
+	}
+	if raw := os.Getenv("AO_METRICS_ZOMBIE_TICKS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return Config{}, fmt.Errorf("invalid AO_METRICS_ZOMBIE_TICKS %q: must be an integer >= 0", raw)
+		}
+		cfg.Metrics.ZombieSustainTicks = n
+	}
+
 	runFile, err := resolveRunFilePath()
 	if err != nil {
 		return Config{}, err
@@ -295,6 +380,32 @@ func parseNonNegativeDuration(name, raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid %s %q: must be >= 0", name, raw)
 	}
 	return d, nil
+}
+
+// parseNonNegativeFloat accepts zero (the "disable this alert" sentinel) but
+// rejects negatives and malformed values.
+func parseNonNegativeFloat(name, raw string) (float64, error) {
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	if f < 0 {
+		return 0, fmt.Errorf("invalid %s %q: must be >= 0", name, raw)
+	}
+	return f, nil
+}
+
+// parseNonNegativePercent parses a percent threshold: a non-negative float that
+// must not exceed 100. Zero disables the alert.
+func parseNonNegativePercent(name, raw string) (float64, error) {
+	f, err := parseNonNegativeFloat(name, raw)
+	if err != nil {
+		return 0, err
+	}
+	if f > 100 {
+		return 0, fmt.Errorf("invalid %s %q: must be within 0-100", name, raw)
+	}
+	return f, nil
 }
 
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE

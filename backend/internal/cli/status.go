@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,7 @@ type daemonStatus struct {
 	Health    string      `json:"health,omitempty"`
 	Ready     string      `json:"ready,omitempty"`
 	Error     string      `json:"error,omitempty"`
+	Resources string      `json:"resources,omitempty"`
 	owned     bool
 }
 
@@ -133,6 +135,7 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	st.Ready = ready.Status
 	if ready.Status == string(stateReady) {
 		st.State = stateReady
+		st.Resources = c.readResourceSummary(ctx, info.Port)
 		return st, nil
 	}
 	st.State = stateNotReady
@@ -175,6 +178,82 @@ func verifyProbeOwner(probe probeResult, wantPID int, path string) error {
 	return nil
 }
 
+// metricsSummary is the minimal slice of GET /api/v1/metrics the status command
+// needs for its one-line resource summary. It mirrors the daemon's
+// controllers.MetricsResponse / observe/metrics.Snapshot wire shapes but stays a
+// local copy so the CLI does not import daemon internals.
+type metricsSummary struct {
+	Latest *struct {
+		Host struct {
+			NumCPU            int     `json:"numCpu"`
+			LoadAvg1          float64 `json:"loadAvg1"`
+			MemTotalBytes     uint64  `json:"memTotalBytes"`
+			MemAvailableBytes uint64  `json:"memAvailableBytes"`
+			DiskTotalBytes    uint64  `json:"diskTotalBytes"`
+			DiskFreeBytes     uint64  `json:"diskFreeBytes"`
+		} `json:"host"`
+		Zombies int `json:"zombies"`
+		Alerts  []struct {
+			Kind string `json:"kind"`
+		} `json:"alerts"`
+	} `json:"latest"`
+}
+
+// readResourceSummary fetches the metrics snapshot and renders a compact
+// one-line summary. It is best-effort: any failure (endpoint disabled, no
+// snapshot yet, transport error) returns "" so status still reports daemon
+// health without the resource line.
+func (c *commandContext) readResourceSummary(ctx context.Context, port int) string {
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	url := fmt.Sprintf("http://%s:%d/api/v1/metrics", config.LoopbackHost, port)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return ""
+	}
+	resp, err := c.deps.HTTPClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var body metricsSummary
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Latest == nil {
+		return ""
+	}
+	return formatResourceSummary(body)
+}
+
+// formatResourceSummary builds the compact resource line, skipping fields the
+// collector could not read (zero total → unknown on this platform).
+func formatResourceSummary(m metricsSummary) string {
+	l := m.Latest
+	parts := make([]string, 0, 4)
+	if l.Host.NumCPU > 0 {
+		parts = append(parts, fmt.Sprintf("load %.2f/%dcpu", l.Host.LoadAvg1, l.Host.NumCPU))
+	}
+	if l.Host.MemTotalBytes > 0 {
+		pct := 100 * float64(l.Host.MemAvailableBytes) / float64(l.Host.MemTotalBytes)
+		parts = append(parts, fmt.Sprintf("mem %.0f%% free", pct))
+	}
+	if l.Host.DiskTotalBytes > 0 {
+		pct := 100 * float64(l.Host.DiskFreeBytes) / float64(l.Host.DiskTotalBytes)
+		parts = append(parts, fmt.Sprintf("disk %.0f%% free", pct))
+	}
+	parts = append(parts, fmt.Sprintf("zombies %d", l.Zombies))
+	summary := strings.Join(parts, ", ")
+	if n := len(l.Alerts); n > 0 {
+		kinds := make([]string, 0, n)
+		for _, a := range l.Alerts {
+			kinds = append(kinds, a.Kind)
+		}
+		summary += fmt.Sprintf(" [ALERT: %s]", strings.Join(kinds, ","))
+	}
+	return summary
+}
+
 func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 	out := cmd.OutOrStdout()
 	if _, err := fmt.Fprintf(out, "AO daemon: %s\n", st.State); err != nil {
@@ -213,6 +292,11 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 	}
 	if st.Ready != "" {
 		if _, err := fmt.Fprintf(out, "  readyz: %s\n", st.Ready); err != nil {
+			return err
+		}
+	}
+	if st.Resources != "" {
+		if _, err := fmt.Fprintf(out, "  resources: %s\n", st.Resources); err != nil {
 			return err
 		}
 	}

@@ -107,6 +107,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the latest resource metrics snapshot plus a short history */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notifications": {
         parameters: {
             query?: never;
@@ -772,6 +789,69 @@ export interface components {
             method: string;
             ok: boolean;
             prNumber: number;
+        };
+        MetricsAlert: {
+            kind: string;
+            message: string;
+            severity: string;
+            /** Format: double */
+            threshold: number;
+            /** Format: double */
+            value: number;
+        };
+        MetricsCost: {
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            totalTokens: number;
+            /** Format: int64 */
+            windowSeconds: number;
+        };
+        MetricsHost: {
+            diskFreeBytes: number;
+            diskTotalBytes: number;
+            /** Format: double */
+            loadAvg1: number;
+            /** Format: double */
+            loadAvg5: number;
+            /** Format: double */
+            loadAvg15: number;
+            memAvailableBytes: number;
+            memTotalBytes: number;
+            numCpu: number;
+        };
+        MetricsProject: {
+            byActivity: {
+                [key: string]: number;
+            } | null;
+            projectId: string;
+            sessions: number;
+        };
+        MetricsResponse: {
+            history: components["schemas"]["MetricsSnapshot"][];
+            latest?: components["schemas"]["MetricsSnapshot"];
+        };
+        MetricsScope: {
+            matched: boolean;
+            memBytes: number;
+            name: string;
+            sessionId?: string;
+        };
+        MetricsSnapshot: {
+            alerts: components["schemas"]["MetricsAlert"][];
+            /** Format: date-time */
+            collectedAt: string;
+            cost: components["schemas"]["MetricsCost"];
+            host: components["schemas"]["MetricsHost"];
+            projects: components["schemas"]["MetricsProject"][];
+            scopes: components["schemas"]["MetricsScope"][];
+            zombies: number;
         };
         NotificationEnvelope: {
             notification: components["schemas"]["NotificationResponse"];
@@ -1465,6 +1545,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportRunResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsResponse"];
                 };
             };
             /** @description Internal Server Error */

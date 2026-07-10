@@ -33,6 +33,7 @@ type APIDeps struct {
 	CDC                cdc.Source
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
+	Metrics            controllers.MetricsProvider
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -47,6 +48,7 @@ type API struct {
 	notifications *controllers.NotificationsController
 	imports       *controllers.ImportController
 	events        *EventsController
+	metrics       *controllers.MetricsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -72,6 +74,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		metrics:       &controllers.MetricsController{Provider: deps.Metrics},
 	}
 }
 
@@ -96,6 +99,7 @@ func (a *API) Register(root chi.Router) {
 			a.reviews.Register(r)
 			a.notifications.Register(r)
 			a.imports.Register(r)
+			a.metrics.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
