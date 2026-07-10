@@ -58,13 +58,7 @@ describe("CreateProjectAgentSheet", () => {
 
 	it("caps the agent menu height with a theme token", async () => {
 		render(
-			<RequiredAgentField
-				id="agent"
-				label="Agent"
-				onChange={() => undefined}
-				placeholder="Project default"
-				value=""
-			/>,
+			<RequiredAgentField id="agent" label="Agent" onChange={() => undefined} placeholder="Project default" value="" />,
 		);
 
 		await userEvent.click(screen.getByLabelText("Agent"));
