@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+	buildHumanMergeRequiredStatusPayload,
 	buildStatusPayload,
+	evaluateAutonomousMergeStatuses,
 	evaluateFinalReviewStatuses,
 	normalizeRepoSlug,
 	parseStatusDescription,
@@ -10,6 +16,7 @@ import {
 
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
 const OTHER = "fedcba9876543210fedcba9876543210fedcba98";
+const CLI = new URL("./final-review-status.mjs", import.meta.url);
 
 describe("final-review status payload", () => {
 	it("emits a success commit status for a clean verdict on the reviewed head", () => {
@@ -29,8 +36,49 @@ describe("final-review status payload", () => {
 		);
 	});
 
-	it("emits a failure commit status for a parked verdict", () => {
+	it("emits a failure commit status for an unclean parked verdict", () => {
 		assert.equal(buildStatusPayload({ sha: HEAD, verdict: "parked", reviewerFamily: "claude" }).state, "failure");
+	});
+
+	it("emits a green review status and a separate merge park marker for clean human-gated reviews", () => {
+		assert.deepEqual(
+			buildStatusPayload({
+				sha: HEAD,
+				verdict: "clean",
+				reviewerFamily: "codex",
+			}),
+			{
+				context: "final-review",
+				description: `verdict=clean reviewer_family=codex head=${HEAD}`,
+				state: "success",
+			},
+		);
+		assert.deepEqual(
+			buildHumanMergeRequiredStatusPayload({
+				sha: HEAD,
+				reviewerFamily: "codex",
+				targetUrl: "https://github.example/pr/180",
+			}),
+			{
+				context: "merge-park",
+				description: `reason=human-required reviewer_family=codex head=${HEAD}`,
+				state: "success",
+				target_url: "https://github.example/pr/180",
+			},
+		);
+	});
+
+	it("rejects a misleading humanMergeRequired core payload option", () => {
+		assert.throws(
+			() =>
+				buildStatusPayload({
+					sha: HEAD,
+					verdict: "clean",
+					reviewerFamily: "codex",
+					humanMergeRequired: true,
+				}),
+			/buildHumanMergeRequiredStatusPayload/,
+		);
 	});
 
 	it("rejects non-full SHA values so the gate cannot bless an ambiguous ref", () => {
@@ -168,6 +216,196 @@ describe("final-review status evaluation", () => {
 
 		assert.deepEqual(parsed, {});
 		assert.equal(evaluateFinalReviewStatuses([], HEAD).reason, "missing-final-review-status");
+	});
+});
+
+describe("autonomous merge evaluation", () => {
+	it("passes the human review gate but rejects autonomous merge when a current-head human park marker exists", () => {
+		const statuses = [
+			{
+				context: "final-review",
+				state: "success",
+				description: `verdict=clean reviewer_family=codex head=${HEAD}`,
+				created_at: "2026-07-08T00:01:00Z",
+			},
+			{
+				context: "merge-park",
+				state: "success",
+				description: `reason=human-required reviewer_family=codex head=${HEAD}`,
+				created_at: "2026-07-08T00:02:00Z",
+			},
+		];
+
+		assert.equal(evaluateFinalReviewStatuses(statuses, HEAD).ok, true);
+		assert.deepEqual(evaluateAutonomousMergeStatuses(statuses, HEAD), {
+			ok: false,
+			reason: "human-merge-required",
+			reviewerFamily: "codex",
+			head: HEAD,
+			state: "success",
+		});
+	});
+
+	it("rejects merge park markers that declare a different head", () => {
+		assert.deepEqual(
+			evaluateAutonomousMergeStatuses(
+				[
+					{
+						context: "final-review",
+						state: "success",
+						description: `verdict=clean reviewer_family=codex head=${HEAD}`,
+					},
+					{
+						context: "merge-park",
+						state: "success",
+						description: `reason=human-required reviewer_family=codex head=${OTHER}`,
+					},
+				],
+				HEAD,
+			),
+			{
+				ok: false,
+				reason: "invalid-merge-park-status",
+				head: HEAD,
+				state: "success",
+			},
+		);
+	});
+
+	it("rejects malformed merge park markers on the current head", () => {
+		assert.deepEqual(
+			evaluateAutonomousMergeStatuses(
+				[
+					{
+						context: "final-review",
+						state: "success",
+						description: `verdict=clean reviewer_family=codex head=${HEAD}`,
+					},
+					{
+						context: "merge-park",
+						state: "success",
+						description: `reason=manual reviewer_family=codex head=${HEAD}`,
+					},
+				],
+				HEAD,
+			),
+			{
+				ok: false,
+				reason: "invalid-merge-park-status",
+				head: HEAD,
+				state: "success",
+			},
+		);
+	});
+
+	it("rejects human park markers without a reviewer family", () => {
+		assert.deepEqual(
+			evaluateAutonomousMergeStatuses(
+				[
+					{
+						context: "final-review",
+						state: "success",
+						description: `verdict=clean reviewer_family=codex head=${HEAD}`,
+					},
+					{
+						context: "merge-park",
+						state: "success",
+						description: `reason=human-required head=${HEAD}`,
+					},
+				],
+				HEAD,
+			),
+			{
+				ok: false,
+				reason: "missing-merge-park-reviewer-family",
+				head: HEAD,
+				state: "success",
+			},
+		);
+	});
+});
+
+describe("final-review status CLI validation", () => {
+	it("posts the human merge park guard before the green final-review status", () => {
+		const dir = mkdtempSync(join(tmpdir(), "final-review-gh-"));
+		const log = join(dir, "gh.log");
+		const gh = join(dir, "gh");
+		writeFileSync(
+			gh,
+			`#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");
+process.stdout.write("{}\\n");
+`,
+		);
+		chmodSync(gh, 0o755);
+
+		const result = spawnSync(
+			process.execPath,
+			[
+				CLI.pathname,
+				"set",
+				"--repo",
+				"owner/repo",
+				"--sha",
+				HEAD,
+				"--verdict",
+				"clean",
+				"--reviewer-family",
+				"codex",
+				"--human-merge-required",
+			],
+			{
+				encoding: "utf8",
+				env: {
+					...process.env,
+					GH_LOG: log,
+					PATH: `${dir}:${process.env.PATH}`,
+				},
+			},
+		);
+
+		assert.equal(result.status, 0, result.stderr);
+		const calls = readFileSync(log, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		const contexts = calls.map((args) => args.find((arg) => arg.startsWith("context=")));
+		assert.deepEqual(contexts, ["context=merge-park", "context=final-review"]);
+	});
+
+	it("rejects human merge required with an unclean review verdict before posting statuses", () => {
+		const result = spawnSync(
+			process.execPath,
+			[
+				CLI.pathname,
+				"set",
+				"--repo",
+				"owner/repo",
+				"--sha",
+				HEAD,
+				"--verdict",
+				"parked",
+				"--reviewer-family",
+				"codex",
+				"--human-merge-required",
+			],
+			{ encoding: "utf8" },
+		);
+
+		assert.equal(result.status, 1);
+		assert.match(result.stderr, /only valid with --verdict clean/);
+	});
+
+	it("validates check mode before shelling out to gh", () => {
+		const result = spawnSync(
+			process.execPath,
+			[CLI.pathname, "check", "--repo", "owner/repo", "--sha", HEAD, "--mode", "robot"],
+			{ encoding: "utf8", env: { ...process.env, PATH: "" } },
+		);
+
+		assert.equal(result.status, 1);
+		assert.match(result.stderr, /--mode must be human or autonomous/);
 	});
 });
 

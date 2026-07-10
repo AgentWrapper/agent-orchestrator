@@ -1,6 +1,8 @@
 export const FINAL_REVIEW_CONTEXT = "final-review";
+export const MERGE_PARK_CONTEXT = "merge-park";
 export const CLEAN_VERDICT = "clean";
 export const PARKED_VERDICT = "parked";
+export const HUMAN_MERGE_REQUIRED_REASON = "human-required";
 
 const FULL_SHA_RE = /^[0-9a-f]{40}$/i;
 const REVIEWER_FAMILY_RE = /^[A-Za-z0-9_.-]{1,48}$/;
@@ -45,7 +47,11 @@ export function buildStatusDescription({ sha, verdict, reviewerFamily }) {
 	return description;
 }
 
-export function buildStatusPayload({ sha, verdict, reviewerFamily, targetUrl = "" }) {
+export function buildStatusPayload(options) {
+	if (Object.hasOwn(options ?? {}, "humanMergeRequired")) {
+		throw new Error("human merge park status must be built separately with buildHumanMergeRequiredStatusPayload");
+	}
+	const { sha, verdict, reviewerFamily, targetUrl = "" } = options ?? {};
 	const normalizedVerdict = normalizeVerdict(verdict);
 	const payload = {
 		context: FINAL_REVIEW_CONTEXT,
@@ -57,16 +63,28 @@ export function buildStatusPayload({ sha, verdict, reviewerFamily, targetUrl = "
 	return payload;
 }
 
+export function buildHumanMergeRequiredStatusPayload({ sha, reviewerFamily, targetUrl = "" }) {
+	const normalizedSHA = assertFullSHA(sha);
+	const normalizedReviewer = normalizeReviewerFamily(reviewerFamily);
+	const description = `reason=${HUMAN_MERGE_REQUIRED_REASON} reviewer_family=${normalizedReviewer} head=${normalizedSHA}`;
+	if (description.length > 140) {
+		throw new Error("merge park status description exceeds GitHub's 140-character limit");
+	}
+	const payload = {
+		context: MERGE_PARK_CONTEXT,
+		description,
+		state: "success",
+	};
+	const trimmedTargetUrl = String(targetUrl ?? "").trim();
+	if (trimmedTargetUrl) payload.target_url = trimmedTargetUrl;
+	return payload;
+}
+
 export function parseStatusDescription(description) {
 	const raw = String(description ?? "").trim();
 	if (!raw) return {};
 
-	const values = {};
-	for (const token of raw.split(/\s+/)) {
-		const idx = token.indexOf("=");
-		if (idx <= 0) continue;
-		values[token.slice(0, idx)] = token.slice(idx + 1);
-	}
+	const values = parseKeyValueTokens(raw);
 
 	const verdict = values.verdict;
 	if (verdict !== CLEAN_VERDICT && verdict !== PARKED_VERDICT) return {};
@@ -79,14 +97,41 @@ export function parseStatusDescription(description) {
 	return parsed;
 }
 
+export function parseHumanMergeRequiredDescription(description) {
+	const raw = String(description ?? "").trim();
+	if (!raw) return {};
+
+	const values = parseKeyValueTokens(raw);
+
+	const parsed = {};
+	if (FULL_SHA_RE.test(values.head ?? "")) parsed.head = values.head.toLowerCase();
+	if (REVIEWER_FAMILY_RE.test(values.reviewer_family ?? "")) {
+		parsed.reviewerFamily = values.reviewer_family;
+	}
+	if (values.reason !== HUMAN_MERGE_REQUIRED_REASON) return parsed;
+
+	parsed.reason = values.reason;
+	return parsed;
+}
+
+function parseKeyValueTokens(raw) {
+	const values = {};
+	for (const token of raw.split(/\s+/)) {
+		const idx = token.indexOf("=");
+		if (idx <= 0) continue;
+		values[token.slice(0, idx)] = token.slice(idx + 1);
+	}
+	return values;
+}
+
 function statusTimestamp(status) {
 	const value = Date.parse(status?.updated_at ?? status?.created_at ?? "");
 	return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 }
 
-function latestFinalReviewStatus(statuses) {
+function latestContextStatus(statuses, context) {
 	return (Array.isArray(statuses) ? statuses : [])
-		.filter((status) => status?.context === FINAL_REVIEW_CONTEXT)
+		.filter((status) => status?.context === context)
 		.reduce((latest, status) => {
 			if (!latest) return status;
 			const candidateTime = statusTimestamp(status);
@@ -95,6 +140,14 @@ function latestFinalReviewStatus(statuses) {
 			if (candidateTime === latestTime && latest.state === "success" && status.state !== "success") return status;
 			return latest;
 		}, null);
+}
+
+function latestFinalReviewStatus(statuses) {
+	return latestContextStatus(statuses, FINAL_REVIEW_CONTEXT);
+}
+
+function latestMergeParkStatus(statuses) {
+	return latestContextStatus(statuses, MERGE_PARK_CONTEXT);
 }
 
 export function evaluateFinalReviewStatuses(statuses, expectedHead) {
@@ -155,5 +208,49 @@ export function evaluateFinalReviewStatuses(statuses, expectedHead) {
 		reviewerFamily: parsed.reviewerFamily,
 		head: normalizedHead,
 		state: latest.state,
+	};
+}
+
+export function evaluateAutonomousMergeStatuses(statuses, expectedHead) {
+	const review = evaluateFinalReviewStatuses(statuses, expectedHead);
+	if (!review.ok) return review;
+
+	const park = latestMergeParkStatus(statuses);
+	if (!park) return review;
+
+	const parsed = parseHumanMergeRequiredDescription(park.description);
+	if (parsed.head && parsed.head !== review.head) {
+		return {
+			ok: false,
+			reason: "invalid-merge-park-status",
+			head: review.head,
+			state: park.state ?? "",
+		};
+	}
+
+	if (!parsed.reason) {
+		return {
+			ok: false,
+			reason: "invalid-merge-park-status",
+			head: review.head,
+			state: park.state ?? "",
+		};
+	}
+
+	if (!parsed.reviewerFamily) {
+		return {
+			ok: false,
+			reason: "missing-merge-park-reviewer-family",
+			head: review.head,
+			state: park.state ?? "",
+		};
+	}
+
+	return {
+		ok: false,
+		reason: "human-merge-required",
+		reviewerFamily: parsed.reviewerFamily,
+		head: review.head,
+		state: park.state ?? "",
 	};
 }

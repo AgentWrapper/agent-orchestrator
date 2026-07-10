@@ -160,14 +160,19 @@ sensitive-path membership is never a reason to skip working a ticket.
 
 `/final-review` emits its verdict as a GitHub commit status on the reviewed head
 SHA, using context `final-review`. A clean review writes `state=success`; a
-parked or non-clean review writes `state=failure`. The status description is the
-parseable contract: `verdict=<clean|parked> reviewer_family=<family>
-head=<full-head-sha>`.
+non-clean, inconclusive, or timed-out review writes `state=failure`. The status
+description is the parseable contract: `verdict=<clean|parked>
+reviewer_family=<family> head=<full-head-sha>`. A clean review that is parked
+only because repo policy requires a human merge still writes
+`final-review=success`; the human gate is recorded separately as a current-head
+`merge-park` status with `reason=human-required`.
 
-Merge gates and autonomous-merge paths check that status on the **current** PR
-head SHA. If the PR receives a new push, the old status is tied to the old SHA
-and no longer counts. This replaces the interim PR-comment protocol; do not use
-comments or free-form summaries as the gate.
+Human merge gates check the `final-review` status on the **current** PR head
+SHA. Autonomous-merge paths check the same clean review status and additionally
+refuse to merge when a current-head `merge-park` signal exists. If the PR
+receives a new push, the old statuses are tied to the old SHA and no longer
+count. This replaces the interim PR-comment protocol; do not use comments or
+free-form summaries as the gate.
 
 ao's native review API (`GET /sessions/{id}/reviews`, with states such as
 `ineligible` or `needs_review`) is a separate ao reviewer system. It is useful
@@ -177,8 +182,10 @@ as the final-review merge verdict.
 Repos that carry `ops/final-review-status.mjs` use it as the status helper:
 `node ops/final-review-status.mjs set --repo <owner/repo> --sha
 <full-head-sha> --verdict <clean|parked> --reviewer-family <family>` after the
-review loop, and `node ops/final-review-status.mjs check --repo <owner/repo>
---sha <current-head-sha>` in the merge gate.
+review loop; add `--human-merge-required` when a clean review must park for
+human merge authority. Use `node ops/final-review-status.mjs check --repo
+<owner/repo> --sha <current-head-sha>` for a human-authorized merge gate, and
+add `--mode autonomous` for autonomous merge eligibility.
 
 ## Session habits
 

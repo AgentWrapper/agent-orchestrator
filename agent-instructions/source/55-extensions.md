@@ -38,8 +38,9 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   Autonomous merge is blocked unless GitHub has a clean final-review verdict for
   the current head SHA, backed by both required artifacts: the final-review PR
   comment naming that SHA and a successful `review-passed` commit status/check
-  on that SHA. Any missing, stale, failing, inconclusive, or different-SHA
-  artifact parks the PR instead of merging.
+  on that SHA. It is also blocked by any current-head human-merge-required
+  signal such as `merge-park`. Any missing, stale, failing, inconclusive,
+  human-gated, or different-SHA artifact parks the PR instead of merging.
 
 - **Deploy target:** ao production is the local self-hosted user daemon and
   browser-mode web surface, not an external PaaS. Deploy command:
