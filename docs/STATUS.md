@@ -50,6 +50,9 @@ surface (`npm run sqlc`, `npm run api`).
   ([#75](https://github.com/aoagents/agent-orchestrator/issues/75),
   [#108](https://github.com/aoagents/agent-orchestrator/issues/108),
   [#109](https://github.com/aoagents/agent-orchestrator/issues/109)).
+- Tracker intake observer (`internal/observe/trackerintake`) wired into the
+  daemon: opt-in per-project GitHub issue polling claims matching issues and
+  spawns one worker per issue through the normal session manager path.
 - Terminal mux over WebSocket (`/mux`): per-client `tmux attach` PTY on
   Darwin/Linux; conpty loopback pty-host on Windows.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
@@ -83,9 +86,11 @@ surface (`npm run sqlc`, `npm run api`).
 
 ## In flight / not yet a runtime feature
 
-- **Tracker lane**: GitHub tracker adapter exists, but there is no daemon
-  observer loop or agent-lifecycle→issue mirroring yet, so the tracker does
-  nothing at runtime ([#112](https://github.com/aoagents/agent-orchestrator/issues/112)).
+- **Fleet automation guardrails**: the tracker intake loop is runtime-live, but
+  operational hardening remains open for audited intake-disable/config updates
+  ([#150](https://github.com/polymath-ventures/agent-orchestrator/issues/150))
+  and kickoff/wake nudges when an orchestrator is idle or missing
+  ([#151](https://github.com/polymath-ventures/agent-orchestrator/issues/151)).
 - **Full raw PR/tracker fact surfacing**: the SCM observer writes facts and the
   desktop consumes concise PR summaries, but exposing the full raw `pr_*` /
   `tracker_*` CDC events to live consumers

@@ -124,10 +124,11 @@ immediately; thereafter the daemon ensures one exists (ensure-on-load).
 
 ## 5. Slack notifier
 
-`ops/ao-slack-notifier.mjs` — read-only glue per decision D-b: consumes the
-daemon's SSE stream (`GET /api/v1/events`) and posts `needs_input`,
-`ready_to_merge`, `pr_merged`, and park events to Slack. It reads ao and
-changes nothing; no workflow logic lives in it.
+`ops/ao-slack-notifier.mjs` — read-only glue per decision D-b: catches up unread
+daemon notifications and follows `GET /api/v1/notifications/stream`, posting
+`needs_input`, `ready_to_merge`, `pr_merged`, and closed/unmerged PR events to
+Slack. It reads ao and changes nothing except marking notifications read after a
+successful Slack delivery; no workflow logic lives in it.
 
 Configuration comes from the environment or
 `~/agent-orchestrator/.env`: **`SLACK_BOT_TOKEN` + `SLACK_CHANNEL`**
@@ -137,30 +138,27 @@ exits at startup with a pointed error.
 
 ## 5a. Two-way attention system (issue #82)
 
-The one-way `ao-slack-notifier` above is complemented by the **two-way
-attention system** — outbound alerts Nick can trust plus an inbound
-reply-to-unblock path — all in the ops/nickify layer (vanilla rule: reads ao's
-public HTTP API + shells `ao send`; no ao core change). The two share work by
-disjoint ownership (session-derived attention here; PR/merge events stay on the
-legacy notifier). See `docs/attention-system.md` for the full design. Summary:
+The one-way `ao-slack-notifier` above is now the single outbound notifier. The
+remaining **two-way attention system** piece is the inbound reply-to-unblock
+path, still in the ops/nickify layer (vanilla rule: shells `ao send`; no ao core
+change). See `docs/attention-system.md` for the full design. Summary:
 
-- **`ops/attention-notifier.mjs`** (`ao-attention-notifier.service`) polls the
-  authoritative `GET /api/v1/sessions` surface, @mentions Nick on every new
-  attention transition (`needs_input`, `blocked`, parked sensitive merge, dead
-  orchestrator, daemon unhealthy), **dedupes** unchanged states, keeps a single
-  edited-in-place **"what needs me"** Slack digest, and self-alerts if it loses
-  the daemon (silence never means healthy).
+- **`ops/attention-notifier.mjs`** (`ao-attention-notifier.service`) is retired
+  as an outbound service. `ops/install-attention.sh` disables any leftover unit
+  so it cannot duplicate pages from `ao-slack-notifier.service`.
 - **`ops/attention-reply-listener.mjs`** (`ao-attention-reply.service`) is a
-  loopback Slack Events API endpoint: a signed, Nick-authored threaded reply
-  (or `send <session> <msg>`) is verified and routed back to the originating
-  session via `ao send`.
-- **`ops/what-needs-me.mjs`** is the terminal equivalent of the digest.
+  loopback Slack Events API endpoint: a signed, Nick-authored explicit send
+  command is verified and routed via `ao send`. Threaded replies still work only
+  for legacy thread→session bindings; the current Slack notifier does not create
+  new bindings.
+- **`ops/what-needs-me.mjs`** is the terminal view of current session-derived
+  attention.
 - **`ops/install-attention.sh`** is the nickify/deploy wiring — it installs the
-  units and checks that `SLACK_MEMBER_ID`, `SLACK_SIGNING_SECRET`, and a Slack
-  sink are present in the env layer. `ops/deploy.sh` runs it whenever `ops/`
-  changes. The notifier reads **`SLACK_MEMBER_ID` natively** (the legacy
-  `SLACK_MENTION_USER_ID` alias is only a fallback), closing the config bug
-  that made #6 inert.
+  reply unit, disables the retired outbound attention notifier, and checks that
+  `SLACK_MEMBER_ID`, `SLACK_SIGNING_SECRET`, and a Slack sink are present in the
+  env layer. `ops/deploy.sh` runs it whenever `ops/` changes. The notifier reads
+  **`SLACK_MEMBER_ID` natively** (the legacy `SLACK_MENTION_USER_ID` alias is
+  only a fallback), closing the config bug that made #6 inert.
 
 ## 6. Tracked deltas from upstream (the vanilla rule)
 
