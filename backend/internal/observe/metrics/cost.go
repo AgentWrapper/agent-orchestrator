@@ -196,10 +196,11 @@ func numField(m map[string]any, key string) (float64, bool) {
 	return f, true
 }
 
-// maxNumericField caps an individual telemetry numeric field. 1e15 dwarfs any
-// realistic per-window token count or cost while staying well inside int64 and
-// leaving headroom to sum costScanLimit events without reaching +Inf.
-const maxNumericField = 1e15
+// maxNumericField caps an individual telemetry numeric field. 1e14 dwarfs any
+// realistic per-event token count or cost while leaving headroom to sum
+// costScanLimit events (plus derived total_tokens from input+output) without
+// overflowing int64 or reaching +Inf.
+const maxNumericField = 1e14
 
 func stringField(m map[string]any, key string) string {
 	v, ok := m[key]

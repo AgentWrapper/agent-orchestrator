@@ -70,6 +70,22 @@ func TestEvaluatorUnknownHostFactsHoldFiringAlerts(t *testing.T) {
 	}
 }
 
+func TestEvaluatorKnownHostZeroTotalsHoldFiringAlerts(t *testing.T) {
+	e := newEvaluator(Thresholds{DiskFreePercent: 10, MemAvailablePercent: 10, LoadPerCore: 1})
+	e.evaluate(Snapshot{Host: Host{
+		DiskKnown: true, DiskTotalBytes: 100, DiskFreeBytes: 5,
+		MemKnown: true, MemTotalBytes: 100, MemAvailableBytes: 5,
+		LoadKnown: true, NumCPU: 1, LoadAvg1: 2,
+	}})
+	alerts, tr := e.evaluate(Snapshot{Host: Host{DiskKnown: true, MemKnown: true, LoadKnown: true}})
+	if len(alerts) != 3 {
+		t.Fatalf("known-but-zero host facts should hold prior firing alerts, got %+v", alerts)
+	}
+	if len(tr) != 0 {
+		t.Fatalf("known-but-zero host facts must not emit false clear transitions, got %+v", tr)
+	}
+}
+
 func TestEvaluatorZombieSustain(t *testing.T) {
 	e := newEvaluator(Thresholds{ZombieSustainTicks: 2})
 

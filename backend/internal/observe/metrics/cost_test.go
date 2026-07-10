@@ -76,6 +76,12 @@ func TestStoreCostAggregatorEmptyGroupsAreNonNil(t *testing.T) {
 	}
 }
 
+func TestMaxNumericFieldLeavesAggregateHeadroom(t *testing.T) {
+	if maxNumericField*float64(costScanLimit)*2 >= float64(^uint64(0)>>1) {
+		t.Fatalf("maxNumericField=%g leaves insufficient int64 headroom for scan limit %d", maxNumericField, costScanLimit)
+	}
+}
+
 func TestParseCostPayloadTotalDerivation(t *testing.T) {
 	got, ok := parseCostPayload(`{"input_tokens":3,"output_tokens":4,"harness":" codex "}`)
 	if !ok {

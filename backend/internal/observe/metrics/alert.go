@@ -94,9 +94,9 @@ func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 	// disk_low: when disk facts are unknown this tick, carry the prior state so
 	// a transient statfs failure cannot emit a false recovery transition.
 	if e.th.DiskFreePercent > 0 {
-		if !s.Host.DiskKnown {
+		if !s.Host.DiskKnown || s.Host.DiskTotalBytes == 0 {
 			carryPrior(next, e.firing, AlertDiskLow)
-		} else if s.Host.DiskTotalBytes > 0 {
+		} else {
 			if pct := s.Host.DiskFreePercent(); pct < e.th.DiskFreePercent {
 				next[AlertDiskLow] = Alert{
 					Kind: AlertDiskLow, Severity: SeverityWarn, Value: pct, Threshold: e.th.DiskFreePercent,
@@ -108,9 +108,9 @@ func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 
 	// mem_low: when memory facts are unknown this tick, carry the prior state.
 	if e.th.MemAvailablePercent > 0 {
-		if !s.Host.MemKnown {
+		if !s.Host.MemKnown || s.Host.MemTotalBytes == 0 {
 			carryPrior(next, e.firing, AlertMemLow)
-		} else if s.Host.MemTotalBytes > 0 {
+		} else {
 			if pct := s.Host.MemAvailablePercent(); pct < e.th.MemAvailablePercent {
 				next[AlertMemLow] = Alert{
 					Kind: AlertMemLow, Severity: SeverityWarn, Value: pct, Threshold: e.th.MemAvailablePercent,
@@ -122,9 +122,9 @@ func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 
 	// load_high: when load facts are unknown this tick, carry the prior state.
 	if e.th.LoadPerCore > 0 {
-		if !s.Host.LoadKnown {
+		if !s.Host.LoadKnown || s.Host.NumCPU <= 0 {
 			carryPrior(next, e.firing, AlertLoadHigh)
-		} else if s.Host.NumCPU > 0 {
+		} else {
 			if lpc := s.Host.LoadPerCore(); lpc > e.th.LoadPerCore {
 				next[AlertLoadHigh] = Alert{
 					Kind: AlertLoadHigh, Severity: SeverityWarn, Value: lpc, Threshold: e.th.LoadPerCore,

@@ -98,6 +98,9 @@ func parsePaneLines(s string) []pane {
 type procCgroupResolver struct{}
 
 func (procCgroupResolver) cgroupOf(pid int) (string, bool) {
+	// Build the path with string concat rather than filepath.Join: gocritic's
+	// filepathJoin flags a Join arg that itself contains a separator ("/proc"),
+	// and /proc paths are always forward-slash on Linux anyway.
 	cg, ok := readProcCgroup("/proc/" + strconv.Itoa(pid) + "/cgroup")
 	if !ok {
 		return "", false
@@ -135,9 +138,6 @@ func (procCgroupResolver) selfCgroup() (string, bool) {
 // readProcCgroup extracts the cgroup v2 unified path from a /proc/<pid>/cgroup
 // file. The v2 line is "0::/user.slice/.../tmux-spawn-<uuid>.scope".
 func readProcCgroup(path string) (string, bool) {
-	// Build the path with string concat rather than filepath.Join: gocritic's
-	// filepathJoin flags a Join arg that itself contains a separator ("/proc"),
-	// and /proc paths are always forward-slash on Linux anyway.
 	data, err := os.ReadFile(path) //nolint:gosec // fixed /proc path
 	if err != nil {
 		return "", false
