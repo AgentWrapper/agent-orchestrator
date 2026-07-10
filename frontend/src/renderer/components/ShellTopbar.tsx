@@ -42,6 +42,7 @@ const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: 
 	active: { label: "Working", tone: "var(--color-working)", breathe: true },
 	idle: { label: "Idle", tone: "var(--color-text-muted)", breathe: false },
 	waiting_input: { label: "Input Needed", tone: "var(--color-warning)", breathe: false },
+	blocked: { label: "Awaiting Decision", tone: "var(--color-warning)", breathe: false },
 	exited: { label: "Exited", tone: "var(--color-text-muted)", breathe: false },
 	unknown: { label: "Unknown", tone: "var(--color-text-muted)", breathe: false },
 };

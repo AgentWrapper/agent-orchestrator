@@ -14,6 +14,9 @@ func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
 	case "permission-request":
+		// waiting_input, not blocked: codex installs no pre/post-tool-use
+		// hooks, so a blocked state could never be cleared before the turn
+		// ends. waiting_input still suppresses automated nudges.
 		return domain.ActivityWaitingInput, true
 	case "stop":
 		return domain.ActivityIdle, true
