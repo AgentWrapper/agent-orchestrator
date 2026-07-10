@@ -220,7 +220,11 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
 			continue
 		}
-		if reviewState.LatestRun != nil && reviewState.LatestRun.Status != domain.ReviewRunFailed && reviewState.LatestRun.Status != domain.ReviewRunRunning && reviewState.LatestRun.Verdict == domain.VerdictNone {
+		if reviewState.LatestRun != nil &&
+			reviewState.LatestRun.Status != domain.ReviewRunFailed &&
+			reviewState.LatestRun.Status != domain.ReviewRunCancelled &&
+			reviewState.LatestRun.Status != domain.ReviewRunRunning &&
+			reviewState.LatestRun.Verdict == domain.VerdictNone {
 			superseded, err := e.store.SupersedeReviewRun(ctx, reviewState.LatestRun.ID, "superseded by a new review trigger")
 			if err != nil {
 				return TriggerResult{}, err

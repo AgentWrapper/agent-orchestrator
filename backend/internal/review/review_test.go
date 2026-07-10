@@ -530,6 +530,26 @@ func TestTriggerRetriesAfterFailedRunForSameCommit(t *testing.T) {
 	}
 }
 
+func TestTriggerRetriesAfterCancelledRunForSameCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-cancelled", ReviewID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunCancelled}},
+	}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.ID == "run-cancelled" {
+		t.Fatalf("expected retry to create a new run, got %+v", res)
+	}
+	if len(store.runs) != 2 || !launcher.spawned {
+		t.Fatalf("expected new launch/run after cancelled pass: launched=%v runs=%+v", launcher.spawned, store.runs)
+	}
+}
+
 func TestTriggerCreatesRunsForMultipleEligiblePRsWithOneReviewer(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{handle: "review-mer-1"}
