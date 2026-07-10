@@ -3,7 +3,7 @@
 Current `main` ships a working single-user local loop: the Go daemon and the
 Electron/React frontend both drive a live daemon over HTTP/SSE/WebSocket. The
 core GitHub flow works end-to-end: add project → spawn session/orchestrator →
-attach terminal → observe PR → merge.
+attach terminal → observe PR → ready for manual merge.
 
 This file tracks progress. For what the product _is_ and how to run it, see the
 top-level [`README.md`](../README.md); for the backend mental model see
@@ -36,8 +36,6 @@ surface (`npm run sqlc`, `npm run api`).
   rollback, cleanup, send, activity, PR claim/list. Orchestrator routes
   (list/spawn/get) are wired too.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
-- PR action engine wired into the API: `POST /prs/{id}/merge` and
-  `/prs/{id}/resolve-comments`.
 - Review routes registered: `GET /reviews`, `POST /reviews/execute`,
   `POST /reviews/{id}/send`.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
@@ -93,7 +91,10 @@ surface (`npm run sqlc`, `npm run api`).
   `ao session get` ([#111](https://github.com/aoagents/agent-orchestrator/issues/111))
   is still open.
 - **CLI parity for PR/review actions**: merge, resolve-comments, and review are
-  HTTP-only (frontend-driven); there are no `ao pr` / `ao review` commands.
+  not exposed through `ao pr` / `ao review` commands.
+- **Runtime PR actions**: `POST /prs/{id}/merge` and
+  `/prs/{id}/resolve-comments` exist in the API surface, but the production
+  daemon does not wire merge/comment-resolution behavior yet.
 
 Tracking milestone:
 [`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1).

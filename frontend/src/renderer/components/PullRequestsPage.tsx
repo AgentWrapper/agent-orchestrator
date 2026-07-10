@@ -1,10 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useQueries } from "@tanstack/react-query";
+import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import {
-	sessionScmSummaryQueryKey,
 	sessionScmSummaryQueryOptions,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
@@ -33,9 +30,8 @@ type PRRow = {
 
 // The PR board, ported from agent-orchestrator's PullRequestsPage. One row per
 // attributed PR — a session can own several (a stack or independent PRs), so we
-// flatMap the session's prs list rather than assuming one. Actions hit
-// /prs/{number}/merge and /resolve-comments. Per-PR CI/review facts also live on
-// the session route's inspector.
+// flatMap the session's prs list rather than assuming one. Per-PR CI/review
+// facts also live on the session route's inspector.
 export function PullRequestsPage() {
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
@@ -53,7 +49,7 @@ export function PullRequestsPage() {
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<DashboardSubhead
 				title="Pull requests"
-				subtitle="Open PRs across every agent session, ready to resolve and merge."
+				subtitle="Open PRs across every agent session."
 				count={rows.length}
 			/>
 
@@ -92,42 +88,6 @@ export function PullRequestsPage() {
 }
 
 function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
-	const queryClient = useQueryClient();
-	const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
-	const refresh = () => {
-		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
-	};
-
-	const merge = useMutation({
-		mutationFn: async () => {
-			const { data, error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
-				params: { path: { id: String(row.pr.number) } },
-			});
-			if (error) throw new Error(apiErrorMessage(error));
-			return data;
-		},
-		onSuccess: (data) => {
-			setNote({ ok: true, text: `merged (${data?.method ?? "squash"})` });
-			refresh();
-		},
-		onError: (e) => setNote({ ok: false, text: e instanceof Error ? e.message : "merge failed" }),
-	});
-
-	const resolve = useMutation({
-		mutationFn: async () => {
-			const { error } = await apiClient.POST("/api/v1/prs/{id}/resolve-comments", {
-				params: { path: { id: String(row.pr.number) } },
-			});
-			if (error) throw new Error(apiErrorMessage(error));
-		},
-		onSuccess: () => {
-			setNote({ ok: true, text: "comments resolved" });
-			refresh();
-		},
-		onError: (e) => setNote({ ok: false, text: e instanceof Error ? e.message : "resolve failed" }),
-	});
-
 	const actionable = row.pr.state === "open" || row.pr.state === "draft";
 
 	return (
@@ -153,29 +113,17 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 				</Badge>
 			</TableCell>
 			<TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-				{note ? (
-					<span className={cn("text-[11px]", note.ok ? "text-success" : "text-error")}>{note.text}</span>
-				) : actionable ? (
-					<div className="flex items-center justify-end gap-1.5">
-						<Button
-							size="sm"
-							variant="ghost"
-							className="h-6 px-2 text-[11px]"
-							disabled={resolve.isPending}
-							onClick={() => resolve.mutate()}
-						>
-							{resolve.isPending ? "…" : "Resolve"}
-						</Button>
-						<Button
-							size="sm"
-							variant="primary"
-							className="h-6 px-2 text-[11px]"
-							disabled={merge.isPending}
-							onClick={() => merge.mutate()}
-						>
-							{merge.isPending ? "Merging…" : "Merge"}
-						</Button>
-					</div>
+				{actionable ? (
+					<Button
+						size="sm"
+						variant="secondary"
+						className="h-6 px-2 text-[11px]"
+						disabled
+						aria-label="PR actions unavailable"
+						title="PR merge and comment resolution are unavailable in this build"
+					>
+						Unavailable
+					</Button>
 				) : (
 					<span className="text-[11px] text-passive">—</span>
 				)}
