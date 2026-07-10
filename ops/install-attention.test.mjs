@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile, mkdir, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir, readdir, access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,5 +112,91 @@ describe("install-attention.sh (reply listener wiring; outbound notifier retired
 			AO_ATTENTION_DRY_RUN: "0",
 		});
 		assert.doesNotMatch(r.out, /Slack sink/);
+	});
+
+	it("removes the retired outbound notifier state file so frozen ghosts do not linger", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const envFile = path.join(home, ".env");
+		const legacyState = path.join(home, ".ao", "attention-state.json");
+		await mkdir(path.dirname(legacyState), { recursive: true });
+		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
+		await writeFile(legacyState, '{"tracker":{"open":[["ao/a#orchestrator_dead",{}]]}}\n');
+
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_LEGACY_STATE: legacyState,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "0",
+		});
+
+		assert.equal(r.code, 0, r.err);
+		await assert.rejects(() => access(legacyState));
+		assert.match(r.out, /Removed retired outbound attention state/);
+	});
+
+	it("uses AO_ATTENTION_STATE as the retired state path when no cleanup-specific override is set", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const envFile = path.join(home, ".env");
+		const legacyState = path.join(home, "custom-attention-state.json");
+		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
+		await writeFile(legacyState, '{"tracker":{"open":[["ao/a#no_signal",{}]]}}\n');
+
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_STATE: legacyState,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "0",
+		});
+
+		assert.equal(r.code, 0, r.err);
+		await assert.rejects(() => access(legacyState));
+		assert.match(r.out, /Removed retired outbound attention state/);
+	});
+
+	it("warns without failing when retired state cleanup cannot remove the path", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const envFile = path.join(home, ".env");
+		const legacyState = path.join(home, ".ao", "attention-state.json");
+		await mkdir(legacyState, { recursive: true });
+		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
+
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_LEGACY_STATE: legacyState,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "0",
+		});
+
+		assert.equal(r.code, 0, r.err);
+		assert.match(r.out, /WARN: failed to remove retired outbound attention state/);
+	});
+
+	it("does not claim retired state deletion during dry-run", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const envFile = path.join(home, ".env");
+		const legacyState = path.join(home, ".ao", "attention-state.json");
+		await mkdir(path.dirname(legacyState), { recursive: true });
+		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
+		await writeFile(legacyState, '{"tracker":{"open":[]}}\n');
+
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_LEGACY_STATE: legacyState,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "1",
+		});
+
+		assert.equal(r.code, 0, r.err);
+		await access(legacyState);
+		assert.match(r.out, /Would remove retired outbound attention state/);
+		assert.doesNotMatch(r.out, /Removed retired outbound attention state/);
 	});
 });

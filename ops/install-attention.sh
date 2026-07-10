@@ -18,6 +18,7 @@ units_dir="${AO_ATTENTION_UNITS_DIR:-${HOME}/.config/systemd/user}"
 env_file="${AO_ENV_FILE:-${HOME}/agent-orchestrator/.env}"
 dry_run="${AO_ATTENTION_DRY_RUN:-0}"
 do_start="${AO_ATTENTION_START:-1}"
+legacy_state="${AO_ATTENTION_LEGACY_STATE:-${AO_ATTENTION_STATE:-${HOME}/.ao/attention-state.json}}"
 
 log() { printf '%s\n' "$*"; }
 run() {
@@ -77,6 +78,15 @@ run cp "${repo_root}/ops/${unit}" "${units_dir}/${unit}"
 # outbound attention notifier unit left from a previous #82 install.
 run_soft systemctl --user daemon-reload
 run_soft systemctl --user disable --now ao-attention-notifier.service
+if [[ -e "${legacy_state}" ]]; then
+  if [[ "${dry_run}" == "1" ]]; then
+    log "Would remove retired outbound attention state: ${legacy_state}"
+  elif rm -f "${legacy_state}"; then
+    log "Removed retired outbound attention state: ${legacy_state}"
+  else
+    log "WARN: failed to remove retired outbound attention state: ${legacy_state}"
+  fi
+fi
 
 if [[ "${do_start}" == "1" ]]; then
   run_soft systemctl --user enable "${unit}"

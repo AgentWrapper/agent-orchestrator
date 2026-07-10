@@ -9,6 +9,7 @@
 //   SLACK_MEMBER_ID                   -> user id to @mention for attention
 //   AO_PORT (default 3001)
 //   AO_SLACK_NOTIFIER_STATE           -> persisted dedup cursor
+//   AO_SESSION_ATTENTION_POLL_MS      -> session attention poll period (0 disables)
 //   AO_AGENT_HEALTH_POLL_MS           -> agent-health poll period (0 disables)
 //   AO_AGENT_HEALTH_NOTIFIER_STATE    -> persisted per-harness health cursor
 //
@@ -17,6 +18,10 @@
 //   ready_to_merge -> plain post, or @mention when server-marked sensitive
 //   pr_merged      -> plain post
 //   pr_closed_unmerged -> plain post
+//
+// It also polls GET /api/v1/sessions and @mentions on blocked, no_signal,
+// orchestrator_dead, and daemon_unhealthy conditions. A changed "what needs
+// me" digest is posted when the current attention set changes.
 //
 // It also polls GET /api/v1/agents/health and @mentions on a harness going
 // unhealthy (login expired / binary missing), with a recovery post — see
@@ -35,7 +40,14 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { AgentHealthNotifier } from "./agent-health-core.mjs";
-import { resolveMentionUserId } from "./attention-core.mjs";
+import {
+	AttentionTracker,
+	attentionFromSessions,
+	renderAlert,
+	renderDigest,
+	resolveMentionUserId,
+	signature,
+} from "./attention-core.mjs";
 
 const ENV_FILE = process.env.AO_ENV_FILE || "/home/orchestrator/agent-orchestrator/.env";
 try {
@@ -57,6 +69,7 @@ const SEEN_LIMIT = Number(process.env.AO_SLACK_NOTIFIER_SEEN_LIMIT || 2_000);
 const HEARTBEAT_MS = Number(process.env.AO_SLACK_NOTIFIER_HEARTBEAT_MS || 15 * 60 * 1000);
 const RECONNECT_MS = Number(process.env.AO_SLACK_NOTIFIER_RECONNECT_MS || 10_000);
 const BOOTSTRAP_MODE = process.env.AO_SLACK_NOTIFIER_BOOTSTRAP_MODE || "attention_only";
+const SESSION_ATTENTION_POLL_MS = parsePollMs(process.env.AO_SESSION_ATTENTION_POLL_MS, 10_000);
 
 if (isMain() && !(TOKEN && CHANNEL) && !WEBHOOK) {
 	console.error(
@@ -77,7 +90,7 @@ async function post(text) {
 		});
 		const j = await r.json();
 		if (!j.ok) throw new Error(`slack error: ${j.error}`);
-		return;
+		return { ts: j.ts };
 	}
 	const r = await fetch(WEBHOOK, {
 		method: "POST",
@@ -87,7 +100,20 @@ async function post(text) {
 	if (r && r.ok === false) throw new Error(`slack webhook: HTTP ${r.status}`);
 }
 
+async function updatePost(ts, text) {
+	if (!(TOKEN && CHANNEL && ts)) return false;
+	const r = await fetch("https://slack.com/api/chat.update", {
+		method: "POST",
+		headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+		body: JSON.stringify({ channel: CHANNEL, ts, text, unfurl_links: false }),
+	});
+	const j = await r.json();
+	if (!j.ok) throw new Error(`slack update error: ${j.error}`);
+	return true;
+}
+
 const INTERESTING = new Set(["needs_input", "ready_to_merge", "pr_merged", "pr_closed_unmerged"]);
+const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal"]);
 const ICONS = {
 	needs_input: "🖐️",
 	ready_to_merge: "🟢",
@@ -95,6 +121,36 @@ const ICONS = {
 	pr_merged: "🚀",
 	pr_closed_unmerged: "🗑️",
 };
+
+export function digestContentKey(records) {
+	return (records ?? [])
+		.filter((r) => r && r.attention)
+		.map((r) => `${signature(r)}|${r.title}|${r.url ?? ""}`)
+		.sort()
+		.join("\n");
+}
+
+export function parsePollMs(raw, fallback) {
+	if (raw == null || raw === "") return fallback;
+	const n = Number(raw);
+	if (!Number.isFinite(n) || n < 0) return fallback;
+	if (n === 0) return 0;
+	return Math.max(1_000, n);
+}
+
+function sleep(ms, signal) {
+	if (signal?.aborted) return Promise.resolve();
+	return new Promise((resolve) => {
+		let timer;
+		const done = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener?.("abort", done);
+			resolve();
+		};
+		timer = setTimeout(done, ms);
+		signal?.addEventListener?.("abort", done, { once: true });
+	});
+}
 
 function isMain() {
 	return process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
@@ -172,6 +228,13 @@ export function parseSSEFrames(buffer) {
 	return { frames, rest };
 }
 
+function requireSessionListPayload(payload) {
+	if (Array.isArray(payload)) return;
+	if (Array.isArray(payload?.sessions)) return;
+	if (Array.isArray(payload?.data)) return;
+	throw new Error("sessions: invalid payload shape");
+}
+
 export function loadState(file = STATE_FILE) {
 	try {
 		const raw = JSON.parse(readFileSync(file, "utf8"));
@@ -180,9 +243,20 @@ export function loadState(file = STATE_FILE) {
 			lastEventId: String(raw.lastEventId ?? ""),
 			lastHeartbeatAt: Number(raw.lastHeartbeatAt ?? 0),
 			initialized: Boolean(raw.initialized),
+			attentionTracker: AttentionTracker.deserialize(raw.attentionTracker ?? { open: [] }),
+			lastDigestKey: raw.lastDigestKey ?? null,
+			digestTs: raw.digestTs ?? null,
 		};
 	} catch {
-		return { seen: new Set(), lastEventId: "", lastHeartbeatAt: 0, initialized: false };
+		return {
+			seen: new Set(),
+			lastEventId: "",
+			lastHeartbeatAt: 0,
+			initialized: false,
+			attentionTracker: new AttentionTracker(),
+			lastDigestKey: null,
+			digestTs: null,
+		};
 	}
 }
 
@@ -197,6 +271,9 @@ export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
 				lastEventId: state.lastEventId || "",
 				lastHeartbeatAt: state.lastHeartbeatAt || 0,
 				initialized: Boolean(state.initialized),
+				attentionTracker: state.attentionTracker ? JSON.parse(state.attentionTracker.serialize()) : { open: [] },
+				lastDigestKey: state.lastDigestKey ?? null,
+				digestTs: state.digestTs ?? null,
 			}),
 			"utf8",
 		);
@@ -208,10 +285,11 @@ export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
 export class SlackNotificationNotifier {
 	constructor({
 		baseUrl = `http://127.0.0.1:${PORT}/api/v1`,
-		state = loadState(),
+		state,
 		stateFile = STATE_FILE,
 		mentionUserId = MENTION_USER_ID,
 		postMessage = post,
+		updateMessage = updatePost,
 		fetchImpl = globalThis.fetch,
 		logger = console,
 		clock = () => new Date(),
@@ -220,12 +298,14 @@ export class SlackNotificationNotifier {
 		seenLimit = SEEN_LIMIT,
 		bootstrapMode = BOOTSTRAP_MODE,
 		pageLimit = 100,
+		sessionPollMs = SESSION_ATTENTION_POLL_MS,
 	} = {}) {
 		this.baseUrl = baseUrl.replace(/\/$/, "");
-		this.state = state;
 		this.stateFile = stateFile;
+		this.state = state ?? loadState(this.stateFile);
 		this.mentionUserId = mentionUserId;
 		this.postMessage = postMessage;
+		this.updateMessage = updateMessage;
 		this.fetchImpl = fetchImpl;
 		this.logger = logger;
 		this.clock = clock;
@@ -234,7 +314,15 @@ export class SlackNotificationNotifier {
 		this.seenLimit = seenLimit;
 		this.bootstrapMode = bootstrapMode;
 		this.pageLimit = pageLimit;
+		this.sessionPollMs = parsePollMs(sessionPollMs, SESSION_ATTENTION_POLL_MS);
 		this.consecutiveErrors = 0;
+		this.consecutiveSessionPollErrors = 0;
+		this.streamUnhealthyPaged = false;
+		this.sessionUnhealthyPaged = false;
+		this.emptySessionPolls = 0;
+		this.state.attentionTracker ??= new AttentionTracker();
+		this.state.lastDigestKey ??= null;
+		this.state.digestTs ??= null;
 	}
 
 	async catchUpUnread() {
@@ -320,14 +408,114 @@ export class SlackNotificationNotifier {
 	}
 
 	async alertUnhealthy(message) {
-		if (this.consecutiveErrors !== 3) return;
+		if (this.consecutiveErrors < 3) return;
+		await this.alertDaemonUnhealthy(
+			"stream",
+			`Slack notifier cannot reach ao notifications (${message}) — alerts may be delayed until catch-up succeeds.`,
+		);
+	}
+
+	async alertSessionPollUnhealthy(message) {
+		if (this.consecutiveSessionPollErrors < 3) return;
+		await this.alertDaemonUnhealthy(
+			"session",
+			`Slack notifier cannot poll ao sessions (${message}) — blocked/no-signal alerts may be delayed until this recovers.`,
+		);
+	}
+
+	async alertDaemonUnhealthy(source, message) {
+		const ownLatch = source === "session" ? "sessionUnhealthyPaged" : "streamUnhealthyPaged";
+		if (this[ownLatch]) return;
 		const prefix = this.mentionUserId ? `<@${this.mentionUserId}> ` : "";
 		try {
-			await this.postMessage(
-				`${prefix}❤️‍🩹 *daemon_unhealthy* Slack notifier cannot reach ao notifications (${message}) — alerts may be delayed until catch-up succeeds.`,
-			);
+			await this.postMessage(`${prefix}❤️‍🩹 *daemon_unhealthy* ${message}`);
+			this[ownLatch] = true;
 		} catch (e) {
 			this.logger.error?.("ao-slack-notifier: health alert failed:", e.message);
+		}
+	}
+
+	async pollSessionAttention() {
+		let payload;
+		try {
+			const res = await this.fetchImpl(`${this.baseUrl}/sessions?active=true`, {
+				headers: { accept: "application/json" },
+			});
+			if (!res.ok) throw new Error(`sessions: HTTP ${res.status}`);
+			payload = await res.json();
+			requireSessionListPayload(payload);
+			this.consecutiveSessionPollErrors = 0;
+			this.sessionUnhealthyPaged = false;
+		} catch (e) {
+			this.consecutiveSessionPollErrors += 1;
+			this.logger.error?.("ao-slack-notifier: session poll failed:", e.message);
+			await this.alertSessionPollUnhealthy(e.message);
+			return { alerted: [], resolved: [], error: true };
+		}
+
+		const current = attentionFromSessions(payload);
+		const hadAttentionDigest = (this.state.lastDigestKey ?? "") !== "";
+		if (current.length === 0 && (this.state.attentionTracker.pending().length > 0 || hadAttentionDigest)) {
+			this.emptySessionPolls += 1;
+			if (this.emptySessionPolls < 2) {
+				return {
+					alerted: [],
+					resolved: [],
+					current: this.state.attentionTracker.pending(),
+					pendingEmptyConfirmation: true,
+				};
+			}
+		} else {
+			this.emptySessionPolls = 0;
+		}
+		const resolved = this.state.attentionTracker.reconcile(current);
+		let changed = resolved.length > 0;
+		const alerted = [];
+		for (const rec of current) {
+			if (!POLL_ALERT_KINDS.has(rec.kind)) continue;
+			if (this.state.attentionTracker.isOpen(rec)) continue;
+			try {
+				await this.postMessage(renderAlert(rec, this.mentionUserId));
+				this.state.attentionTracker.markOpen(rec);
+				alerted.push(rec);
+				changed = true;
+			} catch (e) {
+				this.logger.error?.("ao-slack-notifier: session attention post failed:", e.message);
+			}
+		}
+
+		changed = (await this.refreshAttentionDigest(current)) || changed;
+		if (changed) saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+		return { alerted, resolved, current };
+	}
+
+	async refreshAttentionDigest(current) {
+		const key = digestContentKey(current);
+		if (key === this.state.lastDigestKey) return false;
+		if (this.state.lastDigestKey === null && key === "") {
+			this.state.lastDigestKey = key;
+			return true;
+		}
+		const text = renderDigest(current, { now: this.clock(), mentionUserId: "" });
+		try {
+			if (this.state.digestTs) {
+				try {
+					if (await this.updateMessage(this.state.digestTs, text)) {
+						this.state.lastDigestKey = key;
+						return true;
+					}
+				} catch (e) {
+					this.logger.error?.("ao-slack-notifier: attention digest update failed:", e.message);
+					this.state.digestTs = null;
+				}
+			}
+			const posted = await this.postMessage(text);
+			if (posted?.ts) this.state.digestTs = posted.ts;
+			this.state.lastDigestKey = key;
+			return true;
+		} catch (e) {
+			this.logger.error?.("ao-slack-notifier: attention digest post failed:", e.message);
+			return false;
 		}
 	}
 
@@ -339,6 +527,7 @@ export class SlackNotificationNotifier {
 		const res = await this.fetchImpl(`${this.baseUrl}/notifications/stream`, { headers, signal });
 		if (!res.ok || !res.body) throw new Error(`notifications stream: HTTP ${res.status}`);
 		this.consecutiveErrors = 0;
+		this.streamUnhealthyPaged = false;
 		this.logger.info?.("connected to ao notification stream");
 		let buf = "";
 		for await (const chunk of res.body) {
@@ -372,20 +561,45 @@ export class SlackNotificationNotifier {
 				this.consecutiveErrors += 1;
 				this.logger.error?.("notification stream error, reconnecting:", e.message);
 				await this.alertUnhealthy(e.message);
-				await new Promise((r) => setTimeout(r, this.reconnectMs));
+				await sleep(this.reconnectMs, signal);
 			}
+		}
+	}
+
+	async runSessionAttention({ signal } = {}) {
+		if (this.sessionPollMs <= 0) return;
+		this.logger.info?.(`ao-slack-notifier: polling ${this.baseUrl}/sessions for attention`);
+		for (;;) {
+			if (signal?.aborted) return;
+			try {
+				await this.pollSessionAttention();
+			} catch (e) {
+				this.logger.error?.("ao-slack-notifier: session attention loop error:", e.message);
+			}
+			await sleep(this.sessionPollMs, signal);
 		}
 	}
 }
 
 if (isMain()) {
 	const notifier = new SlackNotificationNotifier();
+	const controller = new AbortController();
+	process.once("SIGINT", () => controller.abort());
+	process.once("SIGTERM", () => controller.abort());
 	const loops = [
-		notifier.run().catch((e) => {
+		notifier.run({ signal: controller.signal }).catch((e) => {
 			console.error("ao-slack-notifier fatal:", e.message);
 			process.exit(1);
 		}),
 	];
+	if (SESSION_ATTENTION_POLL_MS > 0) {
+		loops.push(
+			notifier.runSessionAttention({ signal: controller.signal }).catch((e) => {
+				console.error("ao-slack-notifier session attention fatal:", e.message);
+				process.exit(1);
+			}),
+		);
+	}
 	// Agent-health alerting shares this process (and the same Slack sink) so a
 	// deploy that restarts ao-slack-notifier.service picks it up. Disabled with
 	// AO_AGENT_HEALTH_POLL_MS=0 for hosts that don't want it.

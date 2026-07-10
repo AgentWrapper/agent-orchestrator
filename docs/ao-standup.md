@@ -125,9 +125,13 @@ immediately; thereafter the daemon ensures one exists (ensure-on-load).
 ## 5. Slack notifier
 
 `ops/ao-slack-notifier.mjs` — read-only glue per decision D-b: catches up unread
-daemon notifications and follows `GET /api/v1/notifications/stream`, posting
-`needs_input`, `ready_to_merge`, `pr_merged`, and closed/unmerged PR events to
-Slack. It reads ao and changes nothing except marking notifications read after a
+daemon notifications, follows `GET /api/v1/notifications/stream`, and polls
+`GET /api/v1/sessions` for blocked/no-signal/dead-orchestrator attention. It
+posts `needs_input`, sensitive `ready_to_merge`, `blocked`,
+`orchestrator_dead`, worker `no_signal`, daemon-unhealthy, merge, close, and
+"what needs me" digest messages to Slack. With bot-token delivery, the digest is
+updated in place; webhook fallback reposts it when the content changes. It reads
+ao and changes nothing except marking daemon notifications read after a
 successful Slack delivery; no workflow logic lives in it.
 
 Configuration comes from the environment or
@@ -145,7 +149,8 @@ change). See `docs/attention-system.md` for the full design. Summary:
 
 - **`ops/attention-notifier.mjs`** (`ao-attention-notifier.service`) is retired
   as an outbound service. `ops/install-attention.sh` disables any leftover unit
-  so it cannot duplicate pages from `ao-slack-notifier.service`.
+  and removes the retired `~/.ao/attention-state.json` file so it cannot
+  duplicate pages or preserve frozen ghost attention records.
 - **`ops/attention-reply-listener.mjs`** (`ao-attention-reply.service`) is a
   loopback Slack Events API endpoint: a signed, Nick-authored explicit send
   command is verified and routed via `ao send`. Threaded replies still work only

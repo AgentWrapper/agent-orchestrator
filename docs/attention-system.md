@@ -11,46 +11,47 @@ is ops-only and touches no sensitive backend path.
 
 ## Components
 
-| File                               | Unit                         | Role                                                                                                                                        |
-| ---------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ops/attention-core.mjs`           | —                            | Pure logic: attention classification, dedup state machine, alert/digest rendering, `SLACK_MEMBER_ID` resolution, session→attention mapping. |
-| `ops/agent-health-core.mjs`        | —                            | Pure logic used by the Slack notifier for agent-harness health checks and recovery alerts.                                                  |
-| `ops/slack-reply-core.mjs`         | —                            | Pure logic: Slack request-signature verification, thread↔session map, reply routing → `ao send` intent.                                     |
-| `ops/slack-client.mjs`             | —                            | Thin Slack Web API / webhook sink (`postMessage`, `update`).                                                                                |
-| `ops/ao-slack-notifier.mjs`        | `ao-slack-notifier.service`  | Single outbound engine: catches up unread daemon notifications, follows `/notifications/stream`, posts Slack alerts, and self-health pages. |
-| `ops/attention-notifier.mjs`       | — (retired)                  | Historical session-poll outbound engine. It is not installed or run in the current deploy topology.                                         |
-| `ops/attention-reply-listener.mjs` | `ao-attention-reply.service` | Inbound Slack Events endpoint → `ao send`.                                                                                                  |
-| `ops/what-needs-me.mjs`            | — (CLI)                      | Terminal "what needs me" view.                                                                                                              |
-| `ops/install-attention.sh`         | —                            | Nickify/deploy wiring: install units + verify env.                                                                                          |
+| File                               | Unit                         | Role                                                                                                                                                                                                                |
+| ---------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ops/attention-core.mjs`           | —                            | Pure logic: attention classification, dedup state machine, alert/digest rendering, `SLACK_MEMBER_ID` resolution, session→attention mapping.                                                                         |
+| `ops/agent-health-core.mjs`        | —                            | Pure logic used by the Slack notifier for agent-harness health checks and recovery alerts.                                                                                                                          |
+| `ops/slack-reply-core.mjs`         | —                            | Pure logic: Slack request-signature verification, thread↔session map, reply routing → `ao send` intent.                                                                                                             |
+| `ops/slack-client.mjs`             | —                            | Thin Slack Web API / webhook sink (`postMessage`, `update`).                                                                                                                                                        |
+| `ops/ao-slack-notifier.mjs`        | `ao-slack-notifier.service`  | Single outbound engine: catches up unread daemon notifications, follows `/notifications/stream`, polls `/sessions` for blocked/no-signal/dead-orchestrator coverage, posts the Slack digest, and self-health pages. |
+| `ops/attention-notifier.mjs`       | — (retired)                  | Historical session-poll outbound engine. It is not installed or run in the current deploy topology.                                                                                                                 |
+| `ops/attention-reply-listener.mjs` | `ao-attention-reply.service` | Inbound Slack Events endpoint → `ao send`.                                                                                                                                                                          |
+| `ops/what-needs-me.mjs`            | — (CLI)                      | Terminal "what needs me" view.                                                                                                                                                                                      |
+| `ops/install-attention.sh`         | —                            | Nickify/deploy wiring: install units + verify env.                                                                                                                                                                  |
 
 ## 1. Outbound alerts (single-notifier topology)
 
 Current deploys run `ao-slack-notifier.service` as the only outbound Slack
 notifier. It reads the daemon's durable notification API, performs replay-safe
-catch-up of unread notifications, follows `/api/v1/notifications/stream`, and
+catch-up of unread notifications, follows `/api/v1/notifications/stream`, polls
+`/api/v1/sessions` for current blocked/no-signal/dead-orchestrator state, and
 alerts through the configured Slack sink. This avoids double-paging while still
 letting ao core remain the source of notification truth.
 
 The former `ao-attention-notifier.service` session-poll engine is retired by
 `ops/install-attention.sh` and `ops/deploy.sh`; the reply listener remains live.
-Alerting parity for urgency that previously came from session polling
-(`blocked`, `no_signal`, and dead-orchestrator style cases) is tracked in
-[#153](https://github.com/polymath-ventures/agent-orchestrator/issues/153).
+The retired engine's urgency coverage now lives inside the single notifier. The
+notifier polls `GET /api/v1/sessions` — the **authoritative current state**
+across all projects — so it can page on states that are not first-class daemon
+notifications today. `needs_input` remains owned by the durable notification
+stream and appears in the digest; the poll path does not send a second
+`needs_input` @mention. Each poll:
 
-### Historical design: session-poll outbound notifier
-
-The notifier polls `GET /api/v1/sessions` — the **authoritative current state**
-across all projects — rather than only listening for creation events, so a
-notifier restart cannot miss an in-flight `needs_input`. Each poll:
-
-1. Maps every session's `activity.state` / `status` to an attention record
-   (`waiting_input`/`needs_input` → `needs_input`; `blocked` → `blocked`).
-   `ready_to_merge` on a sensitive backend path becomes `parked_sensitive_merge`.
+1. Maps every session's `activity.state` / `status` to an attention record.
+   Poll-path @mentions are limited to `blocked`, worker `no_signal`, and
+   `orchestrator_dead`; `needs_input` is digest-only here because the
+   notification stream already pages it.
 2. `AttentionTracker.reconcile()` drops signatures no longer present (resolved),
-   so a later re-entry alerts again; `observe()` alerts **once** per new
-   `(project, session, kind)` signature and never re-spams an unchanged state.
-3. New attention records are posted with an `<@SLACK_MEMBER_ID>` @mention; the
-   posted message's `thread_ts` is bound to the session for the reply path.
+   so a later re-entry alerts again; `isOpen()`/`markOpen()` alert **once** per
+   new `(project, session, kind)` signature after Slack delivery succeeds and
+   never re-spam an unchanged state.
+3. New attention records are posted with an `<@SLACK_MEMBER_ID>` @mention.
+   The session-attention tracker and digest key persist in
+   `AO_SLACK_NOTIFIER_STATE`, not the retired `~/.ao/attention-state.json`.
 
 ## 2. Inbound reply-to-unblock (the missing half)
 
@@ -75,8 +76,10 @@ fronts the web surface (configure the Events API request URL accordingly).
 ## 3. "What needs me" view
 
 - **Slack:** `ao-slack-notifier.service` posts operator-relevant notification
-  events, with replay-safe unread catch-up after restarts. It does not run the
-  retired session-poll digest loop.
+  events, with replay-safe unread catch-up after restarts. It also posts a
+  "what needs me" digest when the current session-derived attention set
+  changes. With `SLACK_BOT_TOKEN` + `SLACK_CHANNEL`, the digest is updated in
+  place; with webhook-only delivery, it is reposted when the content changes.
 - **Terminal:** `node ops/what-needs-me.mjs` prints the current session-derived
   attention aggregation for a shell, exiting non-zero if the daemon is
   unreachable.
@@ -94,35 +97,44 @@ missing binaries.
 `ops/install-attention.sh` installs and restarts the reply listener, verifies
 the env layer carries `SLACK_MEMBER_ID`, `SLACK_SIGNING_SECRET`, and a Slack
 sink (`SLACK_BOT_TOKEN`+`SLACK_CHANNEL` or `SLACK_WEBHOOK_URL`), and disables
-any leftover `ao-attention-notifier.service`. `ops/deploy.sh` invokes that
-installer whenever `ops/` changes and restarts `ao-slack-notifier.service` as
-the single outbound notifier. The notifier reads `SLACK_MEMBER_ID` natively —
-the legacy `SLACK_MENTION_USER_ID` alias remains only as a fallback for
-un-migrated hosts.
+any leftover `ao-attention-notifier.service` and removes the retired state file
+(`AO_ATTENTION_LEGACY_STATE`, then `AO_ATTENTION_STATE`, then
+`~/.ao/attention-state.json`) so frozen legacy attention records do not appear
+live. `ops/deploy.sh` invokes that installer whenever `ops/` changes and
+restarts `ao-slack-notifier.service` as the single outbound notifier. The
+notifier reads `SLACK_MEMBER_ID` natively — the legacy `SLACK_MENTION_USER_ID`
+alias remains only as a fallback for un-migrated hosts.
 
 ## Delivery-robustness notes
 
 - **Alert delivery is retried.** A signature is only committed as "alerted"
   _after_ a successful Slack post, so a transient Slack failure is retried on
   the next poll rather than silently dropped.
-- **Webhook mode is supported.** Without a bot token, alerts use the incoming
-  webhook sink instead of `chat.postMessage`; there is no current Slack digest
-  to edit in place.
-- **Replies see legacy late bindings.** The reply listener re-reads the retired
-  attention-notifier state file per request and merges any thread→session
-  bindings persisted after the listener started. New `ao-slack-notifier`
-  messages do not add bindings, so explicit `send` syntax is the live fallback.
+- **Webhook mode is supported.** Without a bot token, alerts and digest updates
+  use the incoming webhook sink instead of `chat.postMessage`; the digest is
+  reposted only when its content changes.
+- **Replies use explicit send syntax in the live topology.** New
+  `ao-slack-notifier` messages do not add thread bindings, and install/deploy
+  cleanup removes the retired state file. Explicit `send <session> <message>`
+  / `<session>: <message>` is the supported reply path.
+- **Empty attention clears are confirmed.** The session poller waits for two
+  consecutive valid empty `/sessions?active=true` results before rewriting the
+  digest to "Nothing needs you", avoiding transient all-clear flicker.
 
 ## Env keys
 
-| Key                                 | Used by          | Purpose                                      |
-| ----------------------------------- | ---------------- | -------------------------------------------- |
-| `SLACK_MEMBER_ID`                   | notifier + reply | @mention target; inbound allow-list          |
-| `SLACK_SIGNING_SECRET`              | reply            | inbound request verification                 |
-| `SLACK_BOT_TOKEN` + `SLACK_CHANNEL` | notifier         | Slack Web API posting via `chat.postMessage` |
-| `SLACK_WEBHOOK_URL`                 | notifier         | fallback incoming-webhook sink               |
-| `AO_PORT`                           | all              | ao daemon port (default 3001)                |
-| `AO_ATTENTION_REPLY_PORT`           | reply            | inbound listener port (default 3002)         |
+| Key                                 | Used by          | Purpose                                                                  |
+| ----------------------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `SLACK_MEMBER_ID`                   | notifier + reply | @mention target; inbound allow-list                                      |
+| `SLACK_SIGNING_SECRET`              | reply            | inbound request verification                                             |
+| `SLACK_BOT_TOKEN` + `SLACK_CHANNEL` | notifier         | Slack Web API posting via `chat.postMessage`                             |
+| `SLACK_WEBHOOK_URL`                 | notifier         | fallback incoming-webhook sink                                           |
+| `AO_PORT`                           | all              | ao daemon port (default 3001)                                            |
+| `AO_SESSION_ATTENTION_POLL_MS`      | notifier         | session attention poll period; `0` disables; positive values floor at 1s |
+| `AO_SLACK_NOTIFIER_STATE`           | notifier         | notifier dedup, attention tracker, and digest cursor state file          |
+| `AO_ATTENTION_REPLY_PORT`           | reply            | inbound listener port (default 3002)                                     |
+| `AO_ATTENTION_STATE`                | cleanup          | legacy retired attention state path                                      |
+| `AO_ATTENTION_LEGACY_STATE`         | cleanup          | cleanup-specific override for the retired attention state path           |
 
 ## Testing
 
