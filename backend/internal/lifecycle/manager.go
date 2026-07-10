@@ -59,6 +59,11 @@ type Manager struct {
 	clock     func() time.Time
 	react     reactionState
 	telemetry ports.EventSink
+	// deadStreaks counts consecutive ProbeDead readings per session, guarded
+	// by mu. Kept in memory only: a probe streak is arbitration state, not a
+	// durable session fact, and losing it on daemon restart merely delays a
+	// termination by a few reaper ticks.
+	deadStreaks map[domain.SessionID]int
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -68,7 +73,7 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState()}
+	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), deadStreaks: map[domain.SessionID]int{}}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -97,11 +102,31 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 
 // ApplyRuntimeObservation only writes when runtime liveness is unambiguous. A
 // failed probe or liveness disagreement is ignored; no transient lifecycle state is stored.
+// A dead reading terminates only after it has repeated for deadProbeConfirmations
+// consecutive probes AND recent activity does not contradict it — a single dead
+// sample is no more proof of death than a failed one (#2501).
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+		if cur.IsTerminated {
+			delete(m.deadStreaks, id)
 			return cur, false
 		}
+		switch f.Probe {
+		case ports.ProbeDead:
+			m.deadStreaks[id]++
+		case ports.ProbeAlive:
+			delete(m.deadStreaks, id)
+			return cur, false
+		default:
+			// A failed probe carries no liveness information: it neither
+			// builds the dead streak nor resets it (a flaky probe must not
+			// shield a really-dead session from the backstop).
+			return cur, false
+		}
+		if m.deadStreaks[id] < deadProbeConfirmations || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+			return cur, false
+		}
+		delete(m.deadStreaks, id)
 		next := cur
 		next.IsTerminated = true
 		next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
@@ -149,6 +174,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	if s.State == domain.ActivityExited {
 		next.IsTerminated = true
+		delete(m.deadStreaks, id)
 	}
 	next.UpdatedAt = now
 	if err := m.store.UpdateSession(ctx, next); err != nil {
@@ -242,6 +268,8 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	now := m.clock()
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	// A fresh runtime voids any dead readings taken against the previous one.
+	delete(m.deadStreaks, id)
 	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
 	// a relaunch with broken hooks degrades to no_signal instead of inheriting
 	// a stale "signals worked once" fact.
@@ -254,6 +282,7 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 // MarkTerminated marks a session terminated without tearing down external resources.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		delete(m.deadStreaks, id)
 		if cur.IsTerminated {
 			return cur, false
 		}

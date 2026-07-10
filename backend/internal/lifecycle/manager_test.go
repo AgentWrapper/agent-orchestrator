@@ -89,17 +89,110 @@ func working(id domain.SessionID) domain.SessionRecord {
 	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}}
 }
 
+// stale returns a session whose last activity predates the recent-activity
+// window, so only the dead-probe streak stands between it and termination.
+func stale(id domain.SessionID) domain.SessionRecord {
+	rec := working(id)
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	return rec
+}
+
+func observe(t *testing.T, m *Manager, id domain.SessionID, probe ports.ProbeResult, times int) {
+	t.Helper()
+	for i := 0; i < times; i++ {
+		if err := m.ApplyRuntimeObservation(ctx, id, ports.RuntimeFacts{Probe: probe}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
 	m, st, _ := newManager()
-	rec := working("mer-1")
-	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
-	st.sessions["mer-1"] = rec
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
-		t.Fatal(err)
-	}
+	st.sessions["mer-1"] = stale("mer-1")
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations)
 	got := st.sessions["mer-1"]
 	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+}
+
+func TestRuntimeObservation_UnconfirmedDeadProbeDoesNotTerminate(t *testing.T) {
+	// Regression for #2501: hook delivery is best-effort, so activity can go
+	// stale on a genuinely live session; a transient dead reading landing in
+	// that window must not kill the session irreversibly.
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = stale("mer-1")
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations-1)
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("dead streak below confirmation threshold must not terminate, got %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestRuntimeObservation_AliveResetsDeadStreak(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = stale("mer-1")
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations-1)
+	observe(t, m, "mer-1", ports.ProbeAlive, 1)
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations-1)
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("an alive reading must reset the dead streak, got %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestRuntimeObservation_FailedProbeKeepsDeadStreak(t *testing.T) {
+	// A failed probe carries no liveness information: it must not reset the
+	// streak (a flaky probe would shield a really-dead session from the
+	// backstop) and must not extend it either.
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = stale("mer-1")
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations-1)
+	observe(t, m, "mer-1", ports.ProbeFailed, 1)
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("failed probe must not extend the dead streak, got %+v", st.sessions["mer-1"])
+	}
+	observe(t, m, "mer-1", ports.ProbeDead, 1)
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated {
+		t.Fatalf("dead streak interrupted only by failed probes must still terminate, got %+v", got)
+	}
+}
+
+func TestRuntimeObservation_DeadStreakAccruesWhileActivityRecent(t *testing.T) {
+	// Readings taken while recent activity still vetoes termination count
+	// toward confirmation, so a genuinely dead runtime terminates the moment
+	// its activity goes stale — the streak adds no latency on top of the
+	// recent-activity window.
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations)
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("recent activity must veto termination")
+	}
+	rec := st.sessions["mer-1"]
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+	observe(t, m, "mer-1", ports.ProbeDead, 1)
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("confirmed-dead runtime must terminate once activity goes stale, got %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestRuntimeObservation_RespawnResetsDeadStreak(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = stale("mer-1")
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations-1)
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{RuntimeHandleID: "h2"}); err != nil {
+		t.Fatal(err)
+	}
+	// The fresh runtime's activity goes stale and reads dead once (e.g. a
+	// probe races a slow relaunch); the prior spawn's readings must not count
+	// toward its confirmation.
+	rec := st.sessions["mer-1"]
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+	observe(t, m, "mer-1", ports.ProbeDead, deadProbeConfirmations-1)
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("respawn must reset the dead streak, got %+v", st.sessions["mer-1"])
 	}
 }
 
