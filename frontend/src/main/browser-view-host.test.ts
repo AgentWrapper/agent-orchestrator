@@ -8,10 +8,12 @@ import {
 } from "./browser-view-host";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
+type EventHandler = (event: unknown, ...args: unknown[]) => void;
 
 function setupHost() {
 	let currentURL = "";
 	const webContents = {
+		id: 99,
 		canGoBack: () => false,
 		canGoForward: () => false,
 		clearHistory: () => undefined,
@@ -25,7 +27,7 @@ function setupHost() {
 		}),
 		on: () => undefined,
 		reload: () => undefined,
-		send: () => undefined,
+		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
 		close: () => undefined,
@@ -36,16 +38,17 @@ function setupHost() {
 		setVisible: () => undefined,
 	};
 	const handlers = new Map<string, InvokeHandler>();
-	const sent: BrowserNavState[] = [];
+	const eventHandlers = new Map<string, EventHandler>();
+	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const host = createBrowserViewHost({
 		mainWindow: {
 			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-			webContents: { id: 1, send: (_channel: string, state: BrowserNavState) => sent.push(state) },
+			webContents: { id: 1, send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
 		} as never,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
-			on: () => undefined,
+			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
@@ -58,7 +61,9 @@ function setupHost() {
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<BrowserNavState>;
-	return { host, invoke, webContents };
+	const send = (channel: string, senderId: number, ...args: unknown[]) =>
+		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
+	return { host, invoke, send, sent, webContents };
 }
 
 describe("normalizeBrowserURL", () => {
@@ -111,6 +116,62 @@ describe("browser:clear", () => {
 
 		expect(webContents.loadURL).toHaveBeenLastCalledWith("about:blank");
 		expect(state.url).toBe("");
+	});
+});
+
+describe("browser annotation IPC", () => {
+	it("routes renderer mode changes to the matching preview webContents", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+	});
+
+	it("ignores annotation mode changes for views owned by a different renderer", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:annotation:setMode", { viewId: "2:sess-1", enabled: true });
+
+		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+	});
+
+	it("forwards preview annotation submissions to the renderer-owned view", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			context: {
+				url: "http://localhost:5173/",
+				tag: "button",
+				classes: [],
+				selector: "button",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				computedStyle: {},
+			},
+		});
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({
+				viewId: "1:sess-1",
+				instruction: "Make this button blue.",
+				context: expect.objectContaining({ selector: "button" }),
+			}),
+		});
+	});
+
+	it("ignores preview annotation events after the view is destroyed", async () => {
+		const { host, invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		host.destroy("1:sess-1");
+		send("browser:annotation:cancel", 99, { reason: "escape" });
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:canceled")).toBe(false);
 	});
 });
 

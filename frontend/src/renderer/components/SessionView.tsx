@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
-import { BrowserPanelView } from "./BrowserPanel";
+import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionInspector, type InspectorView } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
@@ -64,6 +64,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		terminated: session?.status === "terminated",
 		previewUrl,
 		previewRevision,
+	});
+	const browserAnnotationQueue = useBrowserAnnotationQueue({
+		sessionId: session?.id,
+		sessionStatus: session?.status,
+		navUrl: browserView.navState.url,
 	});
 
 	useEffect(() => {
@@ -213,6 +218,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
                   the pane clips instead of reflowing the inspector mid-collapse. */}
 							<div className="h-full min-w-inspector-min">
 								<SessionInspector
+									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}
 									isInspectorVisible={isInspectorOpen}
 									onOpenReviewerTerminal={({ handleId, harness }) =>
@@ -239,6 +245,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						<div className="browser-popout-overlay">
 							<BrowserPanelView
 								active
+								annotationQueue={browserAnnotationQueue}
 								browserView={browserView}
 								onTogglePopOut={setBrowserPoppedOut}
 								poppedOut

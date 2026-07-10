@@ -1,6 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, MousePointer2, RefreshCw, X } from "lucide-react";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
+import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -13,6 +15,193 @@ type BrowserPanelProps = {
 	onTogglePopOut: (next: boolean) => void;
 };
 
+type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
+
+export type BrowserAnnotationQueueModel = {
+	status: AnnotationStatus;
+	error: string;
+	queuedCount: number;
+	beginPicking: () => void;
+	cancelPicking: () => void;
+	enqueue: (payload: BrowserAnnotationSubmitPayload) => void;
+	failPicking: (message: string) => void;
+	retryQueued: () => void;
+};
+
+export function useBrowserAnnotationQueue({
+	sessionId,
+	sessionStatus,
+	navUrl,
+}: {
+	sessionId?: string;
+	sessionStatus?: WorkspaceSession["status"];
+	navUrl?: string;
+}): BrowserAnnotationQueueModel {
+	const [state, setState] = useState<{ status: AnnotationStatus; error: string; queuedCount: number }>({
+		status: "idle",
+		error: "",
+		queuedCount: 0,
+	});
+	const annotationQueueRef = useRef<BrowserAnnotationSubmitPayload[]>([]);
+	const annotationSendingRef = useRef(false);
+	const annotationWaitingForAgentCycleRef = useRef(false);
+	const annotationWaitAfterCycleRef = useRef(0);
+	const annotationSawAgentWorkingRef = useRef(sessionStatus === "working");
+	const annotationAgentCycleRef = useRef(0);
+	const sessionReadyForAnnotationRef = useRef(sessionStatus === "needs_input");
+	const sessionIdRef = useRef(sessionId ?? "");
+	const generationRef = useRef(0);
+
+	const resetQueue = useCallback(() => {
+		generationRef.current += 1;
+		annotationQueueRef.current = [];
+		annotationSendingRef.current = false;
+		annotationWaitingForAgentCycleRef.current = false;
+		annotationWaitAfterCycleRef.current = annotationAgentCycleRef.current;
+		setState({ status: "idle", error: "", queuedCount: 0 });
+	}, []);
+
+	const drainAnnotationQueue = useCallback(() => {
+		if (
+			annotationSendingRef.current ||
+			!sessionIdRef.current ||
+			!sessionReadyForAnnotationRef.current ||
+			annotationWaitingForAgentCycleRef.current
+		) {
+			return;
+		}
+
+		const payload = annotationQueueRef.current.shift();
+		setState((current) => ({ ...current, queuedCount: annotationQueueRef.current.length }));
+		if (!payload) return;
+
+		annotationSendingRef.current = true;
+		const sendGeneration = generationRef.current;
+		const sendSessionId = sessionIdRef.current;
+		const sendCycle = annotationAgentCycleRef.current;
+		setState({ status: "sending", error: "", queuedCount: annotationQueueRef.current.length });
+
+		void (async () => {
+			let sent = false;
+			let failureMessage = "Unable to send annotation.";
+			try {
+				const message = formatBrowserAnnotationMessage(payload);
+				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+					params: { path: { sessionId: sendSessionId } },
+					body: { message },
+				});
+				if (error) {
+					failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+					return;
+				}
+				sent = true;
+			} catch (error) {
+				failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+			} finally {
+				if (sendGeneration !== generationRef.current || sendSessionId !== sessionIdRef.current) return;
+				annotationSendingRef.current = false;
+				if (!sent) {
+					annotationQueueRef.current.unshift(payload);
+					setState({
+						status: "error",
+						error: failureMessage,
+						queuedCount: annotationQueueRef.current.length,
+					});
+					return;
+				}
+
+				annotationWaitingForAgentCycleRef.current = true;
+				annotationWaitAfterCycleRef.current = sendCycle;
+				if (
+					sessionReadyForAnnotationRef.current &&
+					annotationAgentCycleRef.current > annotationWaitAfterCycleRef.current
+				) {
+					annotationWaitingForAgentCycleRef.current = false;
+				}
+
+				const queuedCount = annotationQueueRef.current.length;
+				setState({ status: queuedCount > 0 ? "queued" : "sent", error: "", queuedCount });
+				if (!annotationWaitingForAgentCycleRef.current && queuedCount > 0) drainAnnotationQueue();
+			}
+		})();
+	}, []);
+
+	useEffect(() => {
+		sessionIdRef.current = sessionId ?? "";
+		annotationAgentCycleRef.current = 0;
+		resetQueue();
+	}, [resetQueue, sessionId]);
+
+	useEffect(() => {
+		if (navUrl) return;
+		resetQueue();
+	}, [navUrl, resetQueue]);
+
+	useEffect(() => {
+		const nextWorking = sessionStatus === "working";
+		const nextReady = sessionStatus === "needs_input";
+		sessionReadyForAnnotationRef.current = nextReady;
+
+		if (nextWorking) {
+			annotationSawAgentWorkingRef.current = true;
+			return;
+		}
+
+		if (!nextReady) return;
+		if (annotationSawAgentWorkingRef.current) {
+			annotationAgentCycleRef.current += 1;
+			annotationSawAgentWorkingRef.current = false;
+		}
+		if (annotationWaitingForAgentCycleRef.current) {
+			if (annotationAgentCycleRef.current <= annotationWaitAfterCycleRef.current) return;
+			annotationWaitingForAgentCycleRef.current = false;
+		}
+		drainAnnotationQueue();
+	}, [drainAnnotationQueue, sessionStatus]);
+
+	const beginPicking = useCallback(() => {
+		setState((current) => ({ ...current, status: "picking", error: "" }));
+	}, []);
+
+	const cancelPicking = useCallback(() => {
+		setState((current) => ({
+			status: annotationQueueRef.current.length > 0 ? "queued" : current.status === "sending" ? "sending" : "idle",
+			error: "",
+			queuedCount: annotationQueueRef.current.length,
+		}));
+	}, []);
+
+	const failPicking = useCallback((message: string) => {
+		setState({ status: "error", error: message, queuedCount: annotationQueueRef.current.length });
+	}, []);
+
+	const enqueue = useCallback(
+		(payload: BrowserAnnotationSubmitPayload) => {
+			annotationQueueRef.current.push(payload);
+			setState({ status: "queued", error: "", queuedCount: annotationQueueRef.current.length });
+			drainAnnotationQueue();
+		},
+		[drainAnnotationQueue],
+	);
+
+	const retryQueued = useCallback(() => {
+		if (annotationQueueRef.current.length === 0) return;
+		setState({ status: "queued", error: "", queuedCount: annotationQueueRef.current.length });
+		drainAnnotationQueue();
+	}, [drainAnnotationQueue]);
+
+	return {
+		status: state.status,
+		error: state.error,
+		queuedCount: state.queuedCount,
+		beginPicking,
+		cancelPicking,
+		enqueue,
+		failPicking,
+		retryQueued,
+	};
+}
+
 export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
 	const browserView = useBrowserView({
 		sessionId: session.id,
@@ -21,9 +210,15 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
 	});
+	const annotationQueue = useBrowserAnnotationQueue({
+		sessionId: session.id,
+		sessionStatus: session.status,
+		navUrl: browserView.navState.url,
+	});
 	return (
 		<BrowserPanelView
 			active={active}
+			annotationQueue={annotationQueue}
 			browserView={browserView}
 			onTogglePopOut={onTogglePopOut}
 			poppedOut={poppedOut}
@@ -33,23 +228,80 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
+	session,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
-}: BrowserPanelProps & { browserView: BrowserViewModel }) {
-	const { navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
+	annotationQueue,
+}: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
+	const { viewId, navState, slotRef, navigate, goBack, goForward, reload, stop, annotationMode, setAnnotationMode } =
+		browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
+		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
+	const sessionBusy = session.status === "working";
+	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
+	const canRetryAnnotation = status === "error" && queuedCount > 0;
 
 	useEffect(() => {
 		setUrlInput(navState.url);
 	}, [navState.url]);
+
+	useEffect(() => {
+		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
+			if (payload.viewId !== viewId) return;
+			enqueue(payload);
+		});
+		const offCancel = window.ao?.browser.onAnnotationCancel((payload) => {
+			if (payload.viewId !== viewId) return;
+			cancelPicking();
+		});
+		return () => {
+			offSubmit?.();
+			offCancel?.();
+		};
+	}, [cancelPicking, enqueue, viewId]);
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		const nextURL = urlInput.trim();
 		if (nextURL) void navigate(nextURL);
 	};
+
+	const toggleAnnotationMode = async () => {
+		if (!canAnnotate || status === "sending") return;
+		if (canRetryAnnotation) {
+			retryQueued();
+			return;
+		}
+		const next = !(annotationMode || status === "picking");
+		try {
+			await setAnnotationMode(next);
+			if (next) {
+				beginPicking();
+			} else {
+				cancelPicking();
+			}
+		} catch (error) {
+			failPicking(error instanceof Error ? error.message : "Unable to start annotation.");
+		}
+	};
+
+	const annotationStatusLabel =
+		status === "picking"
+			? "Pick element"
+			: status === "queued"
+				? queuedCount > 1
+					? `Queued (${queuedCount})`
+					: "Queued"
+				: status === "sending"
+					? "Sending"
+					: status === "sent"
+						? "Sent"
+						: status === "error"
+							? error
+							: "";
 
 	return (
 		<div
@@ -93,11 +345,40 @@ export function BrowserPanelView({
 						<RefreshCw aria-hidden="true" className="size-icon-base" />
 					)}
 				</Button>
+				<Button
+					aria-label={
+						canRetryAnnotation
+							? "Retry annotation"
+							: annotationMode || status === "picking"
+								? "Cancel annotation"
+								: "Annotate page"
+					}
+					aria-pressed={annotationMode || status === "picking"}
+					className="browser-panel__annotate-btn"
+					disabled={!canAnnotate || status === "sending"}
+					onClick={() => void toggleAnnotationMode()}
+					size="icon-sm"
+					title={canRetryAnnotation ? "Retry annotation" : "Annotate page"}
+					type="button"
+					variant="ghost"
+				>
+					<MousePointer2 aria-hidden="true" className="h-4 w-4" />
+				</Button>
+				{annotationStatusLabel ? (
+					<span
+						className={
+							status === "error"
+								? "browser-panel__annotation-status browser-panel__annotation-status--error"
+								: "browser-panel__annotation-status"
+						}
+					>
+						{annotationStatusLabel}
+					</span>
+				) : sessionBusy ? (
+					<span className="browser-panel__annotation-status">Agent working</span>
+				) : null}
 				<div className="relative min-w-0 flex-1">
-					<Globe2
-						aria-hidden="true"
-						className="pointer-events-none absolute left-2.25 top-1/2 size-icon-md -translate-y-1/2 text-passive"
-					/>
+					<Globe2 aria-hidden="true" className="pointer-events-none absolute left-2.25 top-1/2 size-icon-md -translate-y-1/2 text-passive" />
 					<Input
 						aria-label="Browser URL"
 						className="h-browser-url pl-browser-url font-mono text-xs"

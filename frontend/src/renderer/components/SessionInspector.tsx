@@ -9,7 +9,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
-import { BrowserPanelView } from "./BrowserPanel";
+import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -113,6 +113,7 @@ export function SessionInspector({
 	session,
 	onOpenReviewerTerminal,
 	browserPoppedOut = false,
+	browserAnnotationQueue,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
 	browserView,
@@ -122,6 +123,7 @@ export function SessionInspector({
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 	browserPoppedOut?: boolean;
+	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	browserView?: BrowserViewModel;
@@ -183,6 +185,7 @@ export function SessionInspector({
 				{view === "browser" ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}
+						browserAnnotationQueue={browserAnnotationQueue}
 						browserView={browserView}
 						isActive={isInspectorVisible && !browserPoppedOut}
 						onTogglePopOut={onToggleBrowserPopOut}
@@ -787,12 +790,14 @@ function BrowserView({
 	session,
 	isActive,
 	browserPoppedOut,
+	browserAnnotationQueue,
 	onTogglePopOut,
 	browserView,
 }: {
 	session: WorkspaceSession;
 	isActive: boolean;
 	browserPoppedOut: boolean;
+	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	onTogglePopOut?: (next: boolean) => void;
 	browserView?: BrowserViewModel;
 }) {
@@ -813,13 +818,14 @@ function BrowserView({
 		);
 	}
 
-	if (!browserView) {
+	if (!browserView || !browserAnnotationQueue) {
 		return null;
 	}
 
 	return (
 		<BrowserPanelView
 			active={isActive}
+			annotationQueue={browserAnnotationQueue}
 			browserView={browserView}
 			onTogglePopOut={(next) => onTogglePopOut?.(next)}
 			poppedOut={false}

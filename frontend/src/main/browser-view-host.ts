@@ -1,4 +1,11 @@
 import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent, Rectangle, View, WebContents } from "electron";
+import type {
+	BrowserAnnotationCancelPayload,
+	BrowserAnnotationModeInput,
+	BrowserAnnotationPageCancelPayload,
+	BrowserAnnotationPageSubmitPayload,
+	BrowserAnnotationSubmitPayload,
+} from "../shared/browser-annotations";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -25,6 +32,7 @@ type BrowserNavigateInput = {
 
 type BrowserWebContents = Pick<
 	WebContents,
+	| "id"
 	| "canGoBack"
 	| "canGoForward"
 	| "clearHistory"
@@ -83,6 +91,7 @@ export type BrowserViewHost = {
 type BrowserEntry = {
 	view: BrowserViewLike;
 	state: BrowserNavState;
+	annotationEnabled: boolean;
 };
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
@@ -136,6 +145,7 @@ export function clampBoundsToWindow(
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserEntry>();
+	const viewIdsByWebContentsId = new Map<number, string>();
 	const ipcDisposers: Array<() => void> = [];
 
 	const ensure = (viewId: string): BrowserEntry => {
@@ -155,8 +165,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		options.mainWindow.contentView.addChildView(view);
 
 		const state: BrowserNavState = emptyNavState(viewId);
-		const entry = { view, state };
+		const entry = { view, state, annotationEnabled: false };
 		entries.set(viewId, entry);
+		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
 		return entry;
@@ -177,6 +188,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
 		const entry = ensure(viewId);
+		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error("Unsupported browser URL");
@@ -191,6 +203,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	// empty state.
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
 		const entry = ensure(viewId);
+		cancelAnnotation(options, entry, "navigation");
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
 		await entry.view.webContents.loadURL("about:blank");
@@ -202,6 +215,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = entries.get(viewId);
 		if (!entry) return;
 		entries.delete(viewId);
+		viewIdsByWebContentsId.delete(entry.view.webContents.id);
 		// When the window is already gone (dispose fired from mainWindow "closed"),
 		// Electron has torn down contentView and the child WebContentsViews. Touching
 		// them throws "Object has been destroyed", so just drop our reference.
@@ -212,11 +226,64 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.view.webContents.close?.();
 	};
 
-	const invokeNav = (viewId: string, action: (contents: BrowserWebContents) => void): BrowserNavState => {
+	const invokeNav = (
+		viewId: string,
+		action: (contents: BrowserWebContents) => void,
+		cancelForNavigation = false,
+	): BrowserNavState => {
 		const entry = entries.get(viewId);
 		if (!entry) return emptyNavState(viewId);
+		if (cancelForNavigation) cancelAnnotation(options, entry, "navigation");
 		action(entry.view.webContents);
 		return pushNavState(options, entry);
+	};
+
+	const setAnnotationMode = (event: IpcMainInvokeEvent, input: BrowserAnnotationModeInput): void => {
+		if (!isRendererOwnedViewId(event, input.viewId)) return;
+		const entry = entries.get(input.viewId);
+		if (!entry) return;
+		entry.annotationEnabled = input.enabled;
+		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+	};
+
+	const forwardAnnotationSubmit = (
+		event: IpcMainEvent,
+		payload: BrowserAnnotationPageSubmitPayload | undefined,
+	): void => {
+		const viewId = viewIdsByWebContentsId.get(event.sender.id);
+		const entry = viewId ? entries.get(viewId) : undefined;
+		if (
+			!viewId ||
+			!entry ||
+			!payload ||
+			typeof payload.instruction !== "string" ||
+			typeof payload.context !== "object" ||
+			payload.context === null
+		) {
+			return;
+		}
+		entry.annotationEnabled = false;
+		const forwarded: BrowserAnnotationSubmitPayload = {
+			viewId,
+			instruction: payload.instruction,
+			context: payload.context,
+		};
+		options.mainWindow.webContents.send("browser:annotation:submitted", forwarded);
+	};
+
+	const forwardAnnotationCancel = (
+		event: IpcMainEvent,
+		payload: BrowserAnnotationPageCancelPayload | undefined,
+	): void => {
+		const viewId = viewIdsByWebContentsId.get(event.sender.id);
+		const entry = viewId ? entries.get(viewId) : undefined;
+		if (!viewId || !entry) return;
+		entry.annotationEnabled = false;
+		const forwarded: BrowserAnnotationCancelPayload = {
+			viewId,
+			reason: payload?.reason ?? "cancel",
+		};
+		options.mainWindow.webContents.send("browser:annotation:canceled", forwarded);
 	};
 
 	const handle = <Args extends unknown[], Result>(
@@ -235,11 +302,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:setBounds", (_event, input: BrowserBoundsInput) => setBounds(input));
 	handle("browser:navigate", (_event, input: BrowserNavigateInput) => navigate(input));
 	handle("browser:clear", (_event, viewId: string) => clear(viewId));
-	handle("browser:goBack", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goBack()));
-	handle("browser:goForward", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goForward()));
-	handle("browser:reload", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.reload()));
+	handle("browser:goBack", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goBack(), true));
+	handle("browser:goForward", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goForward(), true));
+	handle("browser:reload", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.reload(), true));
 	handle("browser:stop", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.stop()));
+	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (_event, viewId: string) => destroy(viewId));
+	on("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
+		forwardAnnotationSubmit(event, payload),
+	);
+	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
+		forwardAnnotationCancel(event, payload),
+	);
 
 	return {
 		dispose: () => {
@@ -304,6 +378,10 @@ function scopedViewId(event: IpcMainInvokeEvent, sessionId: string): string {
 	return `${event.sender.id}:${sessionId}`;
 }
 
+function isRendererOwnedViewId(event: IpcMainInvokeEvent, viewId: string): boolean {
+	return viewId.startsWith(`${event.sender.id}:`);
+}
+
 function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
 	contents.setWindowOpenHandler(({ url }) => {
 		if (isAllowedBrowserURL(url, options.rendererOrigin)) {
@@ -329,12 +407,26 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 	contents.on("did-navigate", update);
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
-	contents.on("did-start-loading", update);
+	contents.on("did-start-loading", () => {
+		cancelAnnotation(options, entry, "navigation");
+		update();
+	});
 	contents.on("did-stop-loading", update);
 	contents.on("did-fail-load", (_event, _errorCode, errorDescription) => {
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		options.mainWindow.webContents.send("browser:navState", entry.state);
 	});
+}
+
+function cancelAnnotation(
+	options: BrowserViewHostOptions,
+	entry: BrowserEntry,
+	reason: BrowserAnnotationCancelPayload["reason"],
+): void {
+	if (!entry.annotationEnabled) return;
+	entry.annotationEnabled = false;
+	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
+	options.mainWindow.webContents.send("browser:annotation:canceled", { viewId: entry.state.viewId, reason });
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {

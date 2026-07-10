@@ -58,6 +58,16 @@ vi.mock("./BrowserPanel", () => ({
 			{poppedOut ? "browser center" : "browser rail"}
 		</button>
 	),
+	useBrowserAnnotationQueue: () => ({
+		status: "idle",
+		error: "",
+		queuedCount: 0,
+		beginPicking: vi.fn(),
+		cancelPicking: vi.fn(),
+		enqueue: vi.fn(),
+		failPicking: vi.fn(),
+		retryQueued: vi.fn(),
+	}),
 }));
 const browserDestroy = vi.hoisted(() => vi.fn());
 vi.mock("../hooks/useBrowserView", () => ({

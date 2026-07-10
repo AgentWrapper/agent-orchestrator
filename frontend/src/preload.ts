@@ -4,6 +4,11 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type {
+	BrowserAnnotationCancelPayload,
+	BrowserAnnotationModeInput,
+	BrowserAnnotationSubmitPayload,
+} from "./shared/browser-annotations";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -71,11 +76,27 @@ const api = {
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
 		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
+		setAnnotationMode: (input: BrowserAnnotationModeInput) =>
+			ipcRenderer.invoke("browser:annotation:setMode", input) as Promise<void>,
 		onNavState: (listener: (state: BrowserNavState) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserNavState) => listener(state);
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		onAnnotationSubmit: (listener: (payload: BrowserAnnotationSubmitPayload) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, payload: BrowserAnnotationSubmitPayload) => listener(payload);
+			ipcRenderer.on("browser:annotation:submitted", wrapped);
+			return () => {
+				ipcRenderer.off("browser:annotation:submitted", wrapped);
+			};
+		},
+		onAnnotationCancel: (listener: (payload: BrowserAnnotationCancelPayload) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, payload: BrowserAnnotationCancelPayload) => listener(payload);
+			ipcRenderer.on("browser:annotation:canceled", wrapped);
+			return () => {
+				ipcRenderer.off("browser:annotation:canceled", wrapped);
 			};
 		},
 	},
