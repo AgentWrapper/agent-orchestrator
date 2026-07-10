@@ -408,7 +408,7 @@ export function LandingFeaturesScroll() {
 	];
 
 	return (
-		<section ref={containerRef} id="features-scroll" data-testid="features-scroll" className="relative">
+		<section ref={containerRef} id="features" data-testid="features-scroll" className="relative">
 			{/* Desktop: pinned pi-style scroll — mockup centered first, shifts right as text appears. */}
 			<div ref={pinRef} className="relative hidden h-screen overflow-hidden lg:block">
 				<div className="container-page flex h-full w-full flex-col pt-17">
