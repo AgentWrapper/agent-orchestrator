@@ -52,6 +52,29 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   rebuilds the web bundle); if `ops/` changed it restarts
   `ao-slack-notifier.service`.
 
+### Codex-family reviewers run in the foreground only
+
+Operator standing rule: **codex and codex-fugu run in the foreground under
+all circumstances — never in the background, no exceptions.** Invoke them as
+blocking, attached commands that run to completion in view.
+
+- **Never** `nohup`, `&`, `setsid`, `disown`, a detached background shell, or
+  any launch-and-poll pattern that starts codex and returns to poll it later.
+  Backgrounded reviewers stall silently at MCP startup, die with exit 144,
+  and leave workers polling a process that is already dead — the exact
+  failures this rule exists to prevent. Foreground runs are attached,
+  observable, and fail loudly.
+- A long review uses the **maximum foreground timeout**; if it still does not
+  fit, split it into smaller foreground passes and re-run — never detach to
+  dodge a shell's time cap.
+- If codex hangs at MCP startup, the fallback is to disable MCP for that run
+  (`-c 'mcp_servers={}'`), still in the foreground — not to background it.
+- This binds every codex invocation a worker or orchestrator drives: review
+  passes (`/codex:review`, `/final-review`), diagnosis, and rescue runs. ao's
+  own daemon exec of codex — worker/orchestrator session launch into a tmux
+  TTY and the `#143` model probe — is already blocking/attached and stays
+  that way.
+
 ### Deploy
 
 - **Command:** `ops/deploy.sh`
