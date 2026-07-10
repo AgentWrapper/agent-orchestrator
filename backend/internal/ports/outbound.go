@@ -177,8 +177,8 @@ type WorkspaceConfig struct {
 	ProjectID domain.ProjectID
 	SessionID domain.SessionID
 	Kind      domain.SessionKind
-	// SessionPrefix is the human-readable project prefix used to name the
-	// orchestrator worktree. Defaults to a truncation of ProjectID when empty.
+	// SessionPrefix carries the resolved project prefix for compatibility with
+	// existing workspace adapters. Defaults to a truncation of ProjectID when empty.
 	SessionPrefix string
 	Branch        string
 	// BaseBranch is the per-project default branch new session branches are

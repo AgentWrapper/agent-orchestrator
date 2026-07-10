@@ -729,7 +729,7 @@ func validateConfig(cfg ports.WorkspaceConfig) error {
 	}
 	if cfg.Kind == domain.KindOrchestrator {
 		prefix := resolvedSessionPrefix(cfg)
-		if err := validatePathComponent("session prefix", prefix); err != nil {
+		if err := validatePathComponent("project prefix", prefix); err != nil {
 			return err
 		}
 	} else {
@@ -772,8 +772,9 @@ func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
 	return w.validateManagedPath(path)
 }
 
-// resolvedSessionPrefix returns cfg.SessionPrefix when set, otherwise the first
-// 12 characters of the project ID (matching the display-prefix convention).
+// resolvedSessionPrefix returns the resolved project prefix carried in
+// cfg.SessionPrefix for adapter compatibility, otherwise the project-id-derived
+// fallback.
 func resolvedSessionPrefix(cfg ports.WorkspaceConfig) string {
 	if p := strings.TrimSpace(cfg.SessionPrefix); p != "" {
 		return p

@@ -271,7 +271,7 @@ These fields are valid in a local project config:
 | `opencodeIssueSessionStrategy` | `string`   | Duplicate OpenCode issue-session behavior    |
 | `decomposer`                   | `object`   | Advanced decomposition settings              |
 
-Identity fields such as `projectId`, `path`, `storageKey`, `originUrl`, and `sessionPrefix` belong to the global registry, not the local config.
+Identity fields such as `projectId`, `path`, `storageKey`, `originUrl`, and `projectPrefix` belong to the global registry, not the local config.
 
 ## Common Problems
 
@@ -285,7 +285,7 @@ Add `.env` or the relevant tool config directory to `symlinks`. AO does not copy
 Check `postCreate`. A failing command stops the session before the agent launches.
 
 **Two projects get confusing session names**  
-Set `sessionPrefix` in the global project registry or through project registration/settings. Session prefixes must use letters, numbers, underscores, or hyphens.
+Set `projectPrefix` in the global project registry or through project registration/settings. Project prefixes must use letters, numbers, underscores, or hyphens. Existing `sessionPrefix` config is still accepted as a compatibility alias.
 
 **GitHub or GitLab calls fail**  
 Make sure the corresponding CLI or token is authenticated for the plugin you use. AO does not store provider tokens in project config.

@@ -27,6 +27,7 @@ type legacyProjectConfig struct {
 	// re-resolved from the repo path at import time.
 	Repo          *yaml.Node         `yaml:"repo"`
 	DefaultBranch string             `yaml:"defaultBranch"`
+	ProjectPrefix string             `yaml:"projectPrefix"`
 	SessionPrefix string             `yaml:"sessionPrefix"`
 	Env           map[string]string  `yaml:"env"`
 	Symlinks      []string           `yaml:"symlinks"`

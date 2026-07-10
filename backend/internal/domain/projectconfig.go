@@ -45,12 +45,16 @@ func (m WorkspaceMode) IsKnown() bool {
 //
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
 // PostCreate, AgentConfig, and the role overrides are consumed at spawn;
-// SessionPrefix feeds the display prefix. TrackerIntake feeds the background
+// ProjectPrefix feeds project-wide naming. TrackerIntake feeds the background
 // issue-intake loop.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
-	// SessionPrefix overrides the displayed session-id prefix.
+	// ProjectPrefix is the short project-wide identifier used in display names,
+	// worker branches, and worktree naming.
+	ProjectPrefix string `json:"projectPrefix,omitempty"`
+	// SessionPrefix is a deprecated JSON alias for ProjectPrefix. It is accepted
+	// for existing config blobs and old clients; new writes normalize it away.
 	SessionPrefix string `json:"sessionPrefix,omitempty"`
 	// Workspace is the project-wide default workspace mode. Empty resolves to
 	// WorkspaceModeWorktree (today's behavior), so existing projects are
@@ -176,6 +180,7 @@ func DefaultProjectConfig() ProjectConfig {
 // WithDefaults overlays DefaultProjectConfig onto c, filling only fields the
 // project left unset. A set field is always preserved.
 func (c ProjectConfig) WithDefaults() ProjectConfig {
+	c = c.Normalized()
 	def := DefaultProjectConfig()
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
@@ -193,13 +198,35 @@ func (c ProjectConfig) IsZero() bool {
 	return reflect.DeepEqual(c, ProjectConfig{})
 }
 
+// EffectiveProjectPrefix returns the canonical project prefix, accepting the
+// legacy sessionPrefix field as an input alias. projectPrefix wins when both
+// fields are present.
+func (c ProjectConfig) EffectiveProjectPrefix() string {
+	if p := strings.TrimSpace(c.ProjectPrefix); p != "" {
+		return p
+	}
+	return strings.TrimSpace(c.SessionPrefix)
+}
+
+// Normalized converts legacy sessionPrefix input into canonical projectPrefix
+// storage. It intentionally clears SessionPrefix so new JSON emits only the
+// canonical field.
+func (c ProjectConfig) Normalized() ProjectConfig {
+	if strings.TrimSpace(c.ProjectPrefix) == "" {
+		c.ProjectPrefix = strings.TrimSpace(c.SessionPrefix)
+	}
+	c.SessionPrefix = ""
+	return c
+}
+
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than surfacing at spawn.
 func (c ProjectConfig) Validate() error {
+	c = c.Normalized()
 	if err := c.AgentConfig.Validate(); err != nil {
 		return err
 	}
-	if err := validateNameComponent("sessionPrefix", c.SessionPrefix); err != nil {
+	if err := validateNameComponent("projectPrefix", c.ProjectPrefix); err != nil {
 		return err
 	}
 	if c.Workspace != "" && !c.Workspace.IsKnown() {

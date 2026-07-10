@@ -15,7 +15,7 @@ const (
 )
 
 // DefaultProjectPrefix returns the project-ID-derived prefix used when no
-// explicit sessionPrefix applies.
+// explicit projectPrefix applies.
 func DefaultProjectPrefix(id string) string {
 	if len(id) <= DefaultProjectPrefixLength {
 		return id

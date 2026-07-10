@@ -47,7 +47,7 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
-			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"sessionPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
 			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
 		default:
@@ -79,7 +79,8 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 	if got.Config.Workspace != "in-place" {
 		t.Fatalf("workspace = %q, want in-place", got.Config.Workspace)
 	}
-	if got.Config.SessionPrefix != "fleet" ||
+	if got.Config.ProjectPrefix != "fleet" ||
+		got.Config.SessionPrefix != "" ||
 		got.Config.Env["FOO"] != "bar" ||
 		got.Config.AgentConfig.Permissions != "auto" ||
 		got.Config.Worker.Agent != "codex" ||
@@ -434,7 +435,7 @@ func TestProjectList_Success(t *testing.T) {
 	if capture.method != http.MethodGet || capture.path != "/api/v1/projects" {
 		t.Fatalf("request = %s %s, want GET /api/v1/projects", capture.method, capture.path)
 	}
-	if !strings.Contains(out, "ID") || !strings.Contains(out, "SESSION PREFIX") {
+	if !strings.Contains(out, "ID") || !strings.Contains(out, "PROJECT PREFIX") {
 		t.Fatalf("output missing table header:\n%s", out)
 	}
 	if strings.Index(out, "alpha") > strings.Index(out, "zeta") {

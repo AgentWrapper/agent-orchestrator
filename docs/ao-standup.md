@@ -103,7 +103,7 @@ ao project add --path ~/agent-orchestrator   # etc. per project
 config="$(ao project get agent-orchestrator --json \
   | jq -c '.project.config
       | .defaultBranch = "main"
-      | .sessionPrefix = "ao"
+      | .projectPrefix = "ao"
       | .worker = ((.worker // {}) | .agent = "claude-code")
       | .orchestrator = ((.orchestrator // {}) | .agent = "claude-code")
       | .agentConfig = ((.agentConfig // {}) | .permissions = "bypass-permissions")

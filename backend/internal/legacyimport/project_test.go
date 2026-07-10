@@ -54,7 +54,7 @@ func TestBuildProjectConfig_RemapAndOmitMain(t *testing.T) {
 	var notes []string
 	pc := legacyProjectConfig{
 		DefaultBranch: "main", // omitted so config stays minimal
-		SessionPrefix: "px",
+		ProjectPrefix: "px",
 		Env:           map[string]string{"K": "V"},
 		AgentConfig:   &legacyAgentConfig{Model: "m", Permissions: "suggest"},
 		Worker:        &legacyRole{Agent: "codex"},
@@ -65,7 +65,7 @@ func TestBuildProjectConfig_RemapAndOmitMain(t *testing.T) {
 	if cfg.DefaultBranch != "" {
 		t.Fatalf("defaultBranch = %q, want omitted for main", cfg.DefaultBranch)
 	}
-	if cfg.SessionPrefix != "px" || cfg.Env["K"] != "V" {
+	if cfg.ProjectPrefix != "px" || cfg.Env["K"] != "V" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.AgentConfig.Permissions != domain.PermissionModeDefault {
@@ -79,6 +79,14 @@ func TestBuildProjectConfig_RemapAndOmitMain(t *testing.T) {
 	}
 	if len(notes) == 0 {
 		t.Fatal("expected lossy/dropped notes")
+	}
+}
+
+func TestBuildProjectConfig_AcceptsLegacySessionPrefixAlias(t *testing.T) {
+	var notes []string
+	cfg := buildProjectConfig(legacyProjectConfig{SessionPrefix: "old"}, &notes)
+	if cfg.ProjectPrefix != "old" || cfg.SessionPrefix != "" {
+		t.Fatalf("prefix = %#v, want canonical projectPrefix", cfg)
 	}
 }
 

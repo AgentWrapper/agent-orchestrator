@@ -16,10 +16,12 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"empty ok", ProjectConfig{}, false},
 		{"good agent config", ProjectConfig{AgentConfig: AgentConfig{Model: "m", Permissions: PermissionModeAuto}}, false},
 		{"bad permission", ProjectConfig{AgentConfig: AgentConfig{Permissions: "yolo"}}, true},
-		{"good session prefix", ProjectConfig{SessionPrefix: "ao"}, false},
+		{"good project prefix", ProjectConfig{ProjectPrefix: "ao"}, false},
+		{"good legacy session prefix", ProjectConfig{SessionPrefix: "ao"}, false},
+		{"project prefix with slash", ProjectConfig{ProjectPrefix: "ao/project"}, true},
+		{"project prefix with backslash", ProjectConfig{ProjectPrefix: `ao\project`}, true},
+		{"project prefix traversal component", ProjectConfig{ProjectPrefix: ".."}, true},
 		{"session prefix with slash", ProjectConfig{SessionPrefix: "ao/project"}, true},
-		{"session prefix with backslash", ProjectConfig{SessionPrefix: `ao\project`}, true},
-		{"session prefix traversal component", ProjectConfig{SessionPrefix: ".."}, true},
 		{"good role override", ProjectConfig{Worker: RoleOverride{Harness: HarnessCodex}}, false},
 		{"unknown role harness", ProjectConfig{Orchestrator: RoleOverride{Harness: "nope"}}, true},
 		{"bad role agent config", ProjectConfig{Worker: RoleOverride{AgentConfig: AgentConfig{Permissions: "nope"}}}, true},
@@ -129,6 +131,36 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 	if d, err := got.Orchestrator.WakeIntervalDuration(); err != nil || d != 30*time.Minute {
 		t.Fatalf("parsed orchestrator wake interval = %s, %v; want 30m", d, err)
+	}
+}
+
+func TestProjectConfigProjectPrefixAlias(t *testing.T) {
+	var legacy ProjectConfig
+	if err := json.Unmarshal([]byte(`{"sessionPrefix":"legacy"}`), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy sessionPrefix: %v", err)
+	}
+	if got := legacy.EffectiveProjectPrefix(); got != "legacy" {
+		t.Fatalf("legacy EffectiveProjectPrefix = %q, want legacy", got)
+	}
+
+	var canonical ProjectConfig
+	if err := json.Unmarshal([]byte(`{"projectPrefix":"canon","sessionPrefix":"legacy"}`), &canonical); err != nil {
+		t.Fatalf("unmarshal projectPrefix: %v", err)
+	}
+	if got := canonical.EffectiveProjectPrefix(); got != "canon" {
+		t.Fatalf("canonical EffectiveProjectPrefix = %q, want canon", got)
+	}
+
+	normalized := legacy.Normalized()
+	if normalized.ProjectPrefix != "legacy" || normalized.SessionPrefix != "" {
+		t.Fatalf("normalized legacy prefix = %#v, want projectPrefix only", normalized)
+	}
+	blob, err := json.Marshal(normalized)
+	if err != nil {
+		t.Fatalf("marshal normalized: %v", err)
+	}
+	if got := string(blob); !strings.Contains(got, `"projectPrefix":"legacy"`) || strings.Contains(got, `"sessionPrefix"`) {
+		t.Fatalf("normalized JSON = %s, want projectPrefix without sessionPrefix", got)
 	}
 }
 

@@ -50,6 +50,7 @@ type projectSummary struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	Kind          string `json:"kind"`
+	ProjectPrefix string `json:"projectPrefix"`
 	SessionPrefix string `json:"sessionPrefix"`
 	ResolveError  string `json:"resolveError,omitempty"`
 }
@@ -132,6 +133,7 @@ type trackerIntakeConfig struct {
 // --config-json.
 type projectConfig struct {
 	DefaultBranch string `json:"defaultBranch,omitempty"`
+	ProjectPrefix string `json:"projectPrefix,omitempty"`
 	SessionPrefix string `json:"sessionPrefix,omitempty"`
 	// Workspace mirrors domain.ProjectConfig.Workspace (the project-wide default
 	// workspace mode). Empty resolves to worktree on the daemon; a --config-json
@@ -168,7 +170,7 @@ func (r setConfigRequest) MarshalJSON() ([]byte, error) {
 
 type projectSetConfigOptions struct {
 	defaultBranch                string
-	sessionPrefix                string
+	projectPrefix                string
 	workspace                    string
 	model                        string
 	permission                   string
@@ -329,7 +331,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
-		Long: "Update a project's per-project config (branch, session prefix, env, " +
+		Long: "Update a project's per-project config (branch, project prefix, env, " +
 			"symlinks, post-create, agent model/permissions, role overrides, tracker intake). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags to merge them into the stored config, pass the whole object with " +
@@ -388,7 +390,8 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
-	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
+	f.StringVar(&opts.projectPrefix, "project-prefix", "", "Short project-wide prefix for names, branches, and worktrees")
+	f.StringVar(&opts.projectPrefix, "session-prefix", "", "Deprecated alias for --project-prefix")
 	f.StringVar(&opts.workspace, "workspace", "", "Session workspace mode: worktree (default) or in-place")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
@@ -430,8 +433,9 @@ func applyProjectConfigFlagPatch(base *projectConfig, patch projectConfig, cmd *
 	if flags.Changed("default-branch") {
 		base.DefaultBranch = patch.DefaultBranch
 	}
-	if flags.Changed("session-prefix") {
-		base.SessionPrefix = patch.SessionPrefix
+	if flags.Changed("project-prefix") || flags.Changed("session-prefix") {
+		base.ProjectPrefix = patch.ProjectPrefix
+		base.SessionPrefix = ""
 	}
 	if flags.Changed("workspace") {
 		base.Workspace = patch.Workspace
@@ -511,7 +515,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	}
 	cfg := projectConfig{
 		DefaultBranch: opts.defaultBranch,
-		SessionPrefix: opts.sessionPrefix,
+		ProjectPrefix: opts.projectPrefix,
 		Workspace:     opts.workspace,
 		Env:           env,
 		Symlinks:      opts.symlink,
@@ -668,7 +672,7 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 	}
 
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ID\tNAME\tKIND\tSESSION PREFIX\tSTATUS"); err != nil {
+	if _, err := fmt.Fprintln(tw, "ID\tNAME\tKIND\tPROJECT PREFIX\tSTATUS"); err != nil {
 		return err
 	}
 	for _, p := range projects {
@@ -680,7 +684,11 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 		if kind == "" {
 			kind = "single_repo"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, kind, p.SessionPrefix, status); err != nil {
+		prefix := p.ProjectPrefix
+		if prefix == "" {
+			prefix = p.SessionPrefix
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, kind, prefix, status); err != nil {
 			return err
 		}
 	}

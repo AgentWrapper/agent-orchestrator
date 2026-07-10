@@ -126,7 +126,7 @@ ao project rm agent-orchestrator -y
 
 ### ao project set-config
 
-Update a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides). The config is resolved when a session spawns. Set fields via flags to merge them into the stored config, pass the whole object with `--config-json` to replace it, or `--clear` to remove all config. Repeatable collection flags replace that field's stored collection with the values passed in this command.
+Update a project's per-project config (branch, project prefix, env, symlinks, post-create, agent model/permissions, role overrides). The config is resolved when a session spawns. Set fields via flags to merge them into the stored config, pass the whole object with `--config-json` to replace it, or `--clear` to remove all config. Repeatable collection flags replace that field's stored collection with the values passed in this command.
 
 **Syntax:**
 ```
@@ -146,7 +146,8 @@ ao project set-config <id> [flags]
 | `--orchestrator-agent string` | Harness override for orchestrator sessions | - |
 | `--permission string` | Permission mode: `default`, `accept-edits`, `auto`, `bypass-permissions` | - |
 | `--post-create stringArray` | Command to run after workspace creation (repeatable) | - |
-| `--session-prefix string` | Displayed session-id prefix | - |
+| `--project-prefix string` | Short project-wide prefix for names, branches, and worktrees | - |
+| `--session-prefix string` | Deprecated alias for `--project-prefix` | - |
 | `--symlink stringArray` | Repo-relative path to symlink into workspaces (repeatable) | - |
 | `--worker-agent string` | Harness override for worker sessions | - |
 

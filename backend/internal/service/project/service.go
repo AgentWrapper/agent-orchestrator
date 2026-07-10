@@ -121,12 +121,14 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	}
 	out := make([]Summary, 0, len(projects))
 	for _, row := range projects {
+		prefix := resolveProjectPrefix(row)
 		out = append(out, Summary{
 			ID:                domain.ProjectID(row.ID),
 			Name:              displayName(row),
 			Path:              row.Path,
 			Kind:              row.Kind.WithDefault(),
-			SessionPrefix:     resolveSessionPrefix(row),
+			ProjectPrefix:     prefix,
+			SessionPrefix:     prefix,
 			OrchestratorAgent: row.Config.Orchestrator.Harness,
 			Config:            row.Config.WithDefaults(),
 		})
@@ -181,7 +183,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err := m.validateProjectConfig(ctx, *in.Config); err != nil {
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
-		projectConfig = *in.Config
+		projectConfig = in.Config.Normalized()
 	}
 
 	m.addMu.Lock()
@@ -321,7 +323,7 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
 
-	row.Config = in.Config
+	row.Config = in.Config.Normalized()
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
@@ -462,6 +464,7 @@ func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 }
 
 func projectConfigPtr(projectConfig domain.ProjectConfig) *domain.ProjectConfig {
+	projectConfig = projectConfig.Normalized()
 	if projectConfig.IsZero() {
 		return nil
 	}
@@ -542,11 +545,10 @@ func validateProjectID(id domain.ProjectID) error {
 	return nil
 }
 
-// resolveSessionPrefix prefers an explicit per-project SessionPrefix and falls
-// back to the id-derived prefix. (Display only; session-id generation is
-// unchanged.)
-func resolveSessionPrefix(row domain.ProjectRecord) string {
-	if p := strings.TrimSpace(row.Config.SessionPrefix); p != "" {
+// resolveProjectPrefix prefers an explicit per-project prefix and falls back to
+// the id-derived prefix.
+func resolveProjectPrefix(row domain.ProjectRecord) string {
+	if p := row.Config.EffectiveProjectPrefix(); p != "" {
 		return p
 	}
 	return sessionPrefix(row.ID)
