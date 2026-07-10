@@ -236,12 +236,17 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 // model pin. Unsupported harnesses fail clearly; adapters without a model-probe
 // capability remain permissive because AO cannot safely infer their model API.
 func (s *Service) ValidateModel(ctx context.Context, harness domain.AgentHarness, model string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+	// An unpinned bucket needs no probe, so resolve it before consulting the
+	// context: a cancelled context must not turn a no-op into an error.
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		// No probe ran, so this says nothing about the model. Classify it as
+		// unavailable rather than letting callers read a cancelled context as
+		// "model unreachable" (#182).
+		return &ports.ProbeUnavailableError{Reason: "model probe context already done", Err: err}
 	}
 	for _, item := range s.agents {
 		if item.Harness != harness {

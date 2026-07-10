@@ -66,8 +66,43 @@ type AgentAuthChecker interface {
 
 // AgentModelValidator is an optional capability for adapters that can make a
 // bounded provider/account probe for one explicit model pin.
+//
+// A non-nil error means one of two very different things, and callers must tell
+// them apart with ProbeUnavailable: either the provider rendered a verdict and
+// rejected the model, or the probe never reached the provider at all.
 type AgentModelValidator interface {
 	ValidateModel(ctx context.Context, model string) error
+}
+
+// ProbeUnavailableError marks a model probe that produced no verdict because the
+// probe machinery itself failed — a missing binary, a CLI flag the pinned agent
+// version does not accept, an exec that never started, or a timeout.
+//
+// It is emphatically NOT "the model is unreachable". Callers that gate a write on
+// model reachability must fail open on this error: a probe defect must never make
+// a config surface read-only, which is exactly what a bad `codex exec` flag did in
+// https://github.com/polymath-ventures/agent-orchestrator/issues/182.
+type ProbeUnavailableError struct {
+	// Reason is an operator-facing description of how the probe failed.
+	Reason string
+	// Err is the underlying cause, if any.
+	Err error
+}
+
+func (e *ProbeUnavailableError) Error() string {
+	if e.Err == nil {
+		return "model probe unavailable: " + e.Reason
+	}
+	return "model probe unavailable: " + e.Reason + ": " + e.Err.Error()
+}
+
+func (e *ProbeUnavailableError) Unwrap() error { return e.Err }
+
+// ProbeUnavailable reports whether err, or any error it wraps, marks a model
+// probe as having failed to render a verdict.
+func ProbeUnavailable(err error) bool {
+	var target *ProbeUnavailableError
+	return errors.As(err, &target)
 }
 
 // AgentTitleCommander is the optional capability for interactive harnesses

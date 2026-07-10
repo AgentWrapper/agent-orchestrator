@@ -8,12 +8,15 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -210,9 +213,47 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	return ports.AgentAuthStatusUnknown, nil
 }
 
+// probeUsageExit is the status clap returns for a CLI usage error — an unknown
+// flag, a bad value. It means AO invoked codex wrong; the provider was never
+// contacted, so it carries no information about the model.
+const probeUsageExit = 2
+
+// probeWaitDelay bounds how long CombinedOutput will keep reading after the
+// context is cancelled. `codex exec` spawns children that inherit the output
+// pipe, so killing codex alone does not close it and the read blocks past the
+// deadline — the probe's timeout would not actually bound wall-clock.
+const probeWaitDelay = 2 * time.Second
+
+// probeArgs builds the `codex exec` invocation used to probe model reachability.
+//
+// Every flag here must exist on `codex exec`, whose surface is narrower than the
+// interactive TUI's. In particular there is no `--ask-for-approval`: `exec` is
+// non-interactive and already runs with approval=never, so the flag was both
+// invalid and redundant (#182).
+func (p *Plugin) probeArgs(model string) []string {
+	args := make([]string, 0, 14)
+	p.appendWrapperFlags(&args)
+	args = append(args,
+		"exec",
+		"--model", model,
+		"--sandbox", "read-only",
+		"--skip-git-repo-check",
+		"--ephemeral",
+		"--ignore-rules",
+		"--color", "never",
+		"Reply exactly OK. Do not use tools.",
+	)
+	return args
+}
+
 // ValidateModel performs a bounded non-interactive Codex call with the requested
 // model. This catches account/provider rejections that namespace validation
 // cannot know about, before a worker-mix bucket is stored.
+//
+// A returned *ports.ProbeUnavailableError means the probe never reached a verdict
+// (the binary is missing, codex rejected our arguments, exec failed to start, or
+// the probe timed out). Callers must not read that as "the model is unreachable".
+// Any other error is a genuine provider/account rejection.
 func (p *Plugin) ValidateModel(ctx context.Context, model string) error {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -220,29 +261,93 @@ func (p *Plugin) ValidateModel(ctx context.Context, model string) error {
 	}
 	binary, err := p.agentBinary(ctx)
 	if err != nil {
-		return err
+		return &ports.ProbeUnavailableError{Reason: "codex binary not resolvable", Err: err}
 	}
-	args := make([]string, 0, 16)
-	p.appendWrapperFlags(&args)
-	args = append(args,
-		"exec",
-		"--model", model,
-		"--sandbox", "read-only",
-		"--ask-for-approval", "never",
-		"--skip-git-repo-check",
-		"--ephemeral",
-		"--ignore-rules",
-		"--color", "never",
-		"Reply exactly OK. Do not use tools.",
-	)
-	out, err := exec.CommandContext(ctx, binary, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, binary, p.probeArgs(model)...)
+	cmd.WaitDelay = probeWaitDelay
+	configureProbeProcessGroup(cmd)
+	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
-		return fmt.Errorf("model probe timed out: %w", ctx.Err())
+		return &ports.ProbeUnavailableError{Reason: "model probe timed out", Err: ctx.Err()}
 	}
 	if err != nil {
+		if unavailable := classifyProbeFailure(err, out); unavailable != nil {
+			return unavailable
+		}
 		return fmt.Errorf("model probe failed: %w%s", err, formatProbeOutput(out))
 	}
 	return nil
+}
+
+// classifyProbeFailure returns a non-nil *ports.ProbeUnavailableError when the
+// probe's failure says nothing about the model, and nil when the exit represents
+// a real provider verdict that should block the write.
+func classifyProbeFailure(err error, out []byte) *ports.ProbeUnavailableError {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		// codex never ran: binary vanished between resolution and exec, not
+		// executable, fork failure.
+		return &ports.ProbeUnavailableError{Reason: "codex exec did not start", Err: err}
+	}
+	if exitErr.ExitCode() == probeUsageExit {
+		return &ports.ProbeUnavailableError{
+			Reason: "codex exec rejected AO's probe arguments" + formatProbeOutput(out),
+			Err:    err,
+		}
+	}
+	if exitErr.ExitCode() < 0 {
+		// Killed by a signal (OOM killer, operator kill) rather than exiting.
+		// The provider was never consulted, so this is no verdict on the model.
+		return &ports.ProbeUnavailableError{Reason: "codex exec was killed by a signal", Err: err}
+	}
+	if !probeSawModelRejection(out) {
+		// codex exits 1 for a model rejection AND for a dropped connection, a TLS
+		// error, a provider 5xx, or a rate limit. Without a response that speaks
+		// to the requested model, we hold no verdict — and blocking here would
+		// recreate the read-only config surface whenever the provider hiccups.
+		return &ports.ProbeUnavailableError{
+			Reason: "codex exec failed without a provider verdict on the model" + formatProbeOutput(out),
+			Err:    err,
+		}
+	}
+	return nil
+}
+
+var (
+	// The provider's error envelope, e.g. `{"type":"error","status":400,...}`.
+	probeStatusJSONRe = regexp.MustCompile(`"status"\s*:\s*(\d{3})`)
+	// A plain-text status line, e.g. `400 model not available`.
+	probeStatusPlainRe = regexp.MustCompile(`(?m)^\s*(?:ERROR:\s*)?(\d{3})\s+\S`)
+)
+
+// probeSawModelRejection reports whether the probe's output contains a provider
+// response that is a definitive statement about the requested model.
+//
+// Only such a response may block a config write. A 5xx, a 429, an auth failure,
+// or no status at all means the provider never judged the model — the probe is
+// unavailable, not the model unreachable.
+func probeSawModelRejection(out []byte) bool {
+	text := string(out)
+	statuses := make([]int, 0, 4)
+	for _, re := range []*regexp.Regexp{probeStatusJSONRe, probeStatusPlainRe} {
+		for _, m := range re.FindAllStringSubmatch(text, -1) {
+			if code, err := strconv.Atoi(m[1]); err == nil {
+				statuses = append(statuses, code)
+			}
+		}
+	}
+
+	rejected := false
+	for _, code := range statuses {
+		switch {
+		case code >= 500, code == 429, code == 408:
+			// Provider fault or backpressure: retryable, never a verdict.
+			return false
+		case code == 400, code == 404, code == 422:
+			rejected = true
+		}
+	}
+	return rejected
 }
 
 func formatProbeOutput(out []byte) string {

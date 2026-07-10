@@ -484,6 +484,75 @@ func TestManager_SetConfigRejectsUnreachableWorkerMixModel(t *testing.T) {
 	}
 }
 
+// TestManager_SetConfigFailsOpenWhenModelProbeUnavailable is the #182 regression at
+// the seam where the incident manifested: a probe that cannot render a verdict must
+// not make the config surface read-only. The pin is stored, unverified, with a warning.
+func TestManager_SetConfigFailsOpenWhenModelProbeUnavailable(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	// Exactly what a bad `codex exec` flag produces.
+	validator := &fakeModelValidator{err: &ports.ProbeUnavailableError{
+		Reason: "codex exec rejected AO's probe arguments",
+		Err:    errors.New("exit status 2"),
+	}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	mix := domain.WorkerMix{
+		{Harness: domain.HarnessCodex, Model: "gpt-5.5", Weight: 55},
+		{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 45},
+	}
+	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config: domain.ProjectConfig{WorkerMix: mix},
+	}); err != nil {
+		t.Fatalf("SetConfig must fail open on an unavailable probe, got %v", err)
+	}
+
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.Config == nil {
+		t.Fatal("worker mix was not persisted despite the probe failing open")
+	}
+	if n := len(got.Project.Config.WorkerMix); n != 2 {
+		t.Fatalf("persisted workerMix has %d entries, want 2", n)
+	}
+}
+
+// TestManager_SetConfigStillRejectsUnreachableAfterFailOpen guards the other side of
+// the classification: fail-open must not degrade into "never validate anything".
+func TestManager_SetConfigStillRejectsUnreachableAfterFailOpen(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeModelValidator{err: errors.New("model probe failed: exit status 1: 400 not supported")}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config: domain.ProjectConfig{
+			WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100},
+			},
+		},
+	})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+}
+
 func TestManager_SetConfigAllowsSessionPrefixChange(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())

@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,6 +62,7 @@ type Service struct {
 	clock          func() time.Time
 	telemetry      ports.EventSink
 	defaultHarness domain.AgentHarness
+	log            *slog.Logger
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -80,6 +82,9 @@ type Deps struct {
 	ModelValidator ModelValidator
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
+	// Logger receives fail-open warnings from config validation. Defaults to
+	// slog.Default() when nil.
+	Logger *slog.Logger
 }
 
 // New returns a project service backed by the given durable store.
@@ -100,6 +105,7 @@ func NewWithDeps(d Deps) *Service {
 		clock:          d.Clock,
 		telemetry:      d.Telemetry,
 		defaultHarness: defaultHarness,
+		log:            d.Logger,
 	}
 	if s.clock == nil {
 		s.clock = time.Now
@@ -332,11 +338,33 @@ func (m *Service) validateProjectConfig(ctx context.Context, cfg domain.ProjectC
 		if model == "" {
 			continue
 		}
-		if err := m.modelValidator.ValidateModel(validateCtx, bucket.Harness, model); err != nil {
+		err := m.modelValidator.ValidateModel(validateCtx, bucket.Harness, model)
+		switch {
+		case err == nil:
+		case ports.ProbeUnavailable(err):
+			// The probe machinery failed, so we hold no verdict about this model.
+			// Blocking here would hand a probe defect the power to make every
+			// project config read-only, which is exactly what a bad `codex exec`
+			// flag did in #182. Store the pin unverified and say so loudly.
+			m.logger().Warn("model probe unavailable; storing worker-mix pin unverified",
+				"field", fmt.Sprintf("workerMix[%d]", i),
+				"harness", string(bucket.Harness),
+				"model", model,
+				"error", err,
+			)
+		default:
 			return fmt.Errorf("workerMix[%d].model %q is not reachable for agent %q: %w", i, model, bucket.Harness, err)
 		}
 	}
 	return nil
+}
+
+// logger returns the configured logger, defaulting to the process default.
+func (m *Service) logger() *slog.Logger {
+	if m.log != nil {
+		return m.log
+	}
+	return slog.Default()
 }
 
 // resolveGitOriginURL returns the project's `origin` remote URL via

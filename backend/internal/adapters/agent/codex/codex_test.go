@@ -445,16 +445,11 @@ func TestValidateModelRunsBoundedEphemeralExec(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake is Unix-specific")
 	}
-	bin := filepath.Join(t.TempDir(), "codex")
+	// The fake validates its flags the way clap does. It used to ignore $@ and
+	// exit 0, which let the probe ship an `--ask-for-approval` that real
+	// `codex exec` rejects with exit 2 (#182).
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	script := `#!/bin/sh
-printf '%s\n' "$@" > "$AO_CODEX_ARGS_FILE"
-exit 0
-`
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AO_CODEX_ARGS_FILE", argsFile)
+	bin := writeClapLikeFake(t, argsFile)
 
 	plugin := &Plugin{resolvedBinary: bin}
 	if err := plugin.ValidateModel(context.Background(), "gpt-5.5-codex"); err != nil {
@@ -469,7 +464,6 @@ exit 0
 		{"exec"},
 		{"--model", "gpt-5.5-codex"},
 		{"--sandbox", "read-only"},
-		{"--ask-for-approval", "never"},
 		{"--skip-git-repo-check"},
 		{"--ephemeral"},
 		{"--ignore-rules"},
@@ -484,16 +478,10 @@ func TestFuguValidateModelPreservesWrapperFlag(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake is Unix-specific")
 	}
-	bin := filepath.Join(t.TempDir(), "codex-fugu")
+	// The flag-checking fake also covers the wrapper path: `--no-update` is a
+	// top-level codex-fugu flag and must precede the `exec` subcommand.
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	script := `#!/bin/sh
-printf '%s\n' "$@" > "$AO_CODEX_ARGS_FILE"
-exit 0
-`
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AO_CODEX_ARGS_FILE", argsFile)
+	bin := writeClapLikeFake(t, argsFile)
 
 	plugin := NewFugu()
 	plugin.resolvedBinary = bin
