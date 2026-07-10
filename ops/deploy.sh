@@ -15,7 +15,7 @@ Environment overrides:
   AO_DEPLOY_BASE            base git ref for changed-path detection
   AO_DEPLOY_HEAD            head git ref for changed-path detection (default: HEAD)
   AO_DEPLOY_WEB_URL         tailnet/public web URL to verify
-  AO_DEPLOY_WAIT_SECONDS    ao restart readiness timeout (default: 30)
+  AO_DEPLOY_WAIT_SECONDS    ao restart + web readiness timeout (default: 30)
   AO_DEPLOY_DRY_RUN=1       print actions without changing the host
 EOF
 }
@@ -217,6 +217,28 @@ web_verify_url() {
   systemd_environment_value AO_WEB_PUBLIC_URL || true
 }
 
+# Emits the HTTP status of $1, or 000 when no response was received at all
+# (connection refused, DNS failure, stalled response). Never fails, so `set -e`
+# cannot kill the caller before it reports which URL was unreachable. $2 caps
+# the whole request: a host that accepts the connection and then stalls would
+# otherwise block forever and the caller's retry budget would never be checked.
+web_url_status() {
+  local status
+  status="$(curl --location --silent --connect-timeout 5 --max-time "$2" --output /dev/null --write-out '%{http_code}' "$1" 2>/dev/null)" || true
+  printf '%s' "${status:-000}"
+}
+
+# Statuses ao-web.service can serve while it is still coming up: no response
+# yet (000, connection refused / stalled) or tailscale serve proxying to a
+# backend that has not bound its port (502/503/504). Anything else — 401, 403,
+# 404, 500 — is a real fault that retrying cannot clear.
+web_status_is_transient() {
+  case "$1" in
+    000 | 502 | 503 | 504) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 verify_tailnet_web() {
   local url
   url="$(web_verify_url)"
@@ -229,13 +251,36 @@ verify_tailnet_web() {
     return 0
   fi
 
-  local status
-  status="$(curl --location --silent --output /dev/null --write-out '%{http_code}' "${url}")"
-  if [[ "${status}" != "200" ]]; then
-    printf '%s returned HTTP %s, expected 200\n' "${url}" "${status}" >&2
-    return 1
-  fi
-  log "${url} returned HTTP 200"
+  # ao-web.service's ExecStartPre rebuilds the web bundle and the node server
+  # then needs a moment to bind, so the URL serves 502 (or refuses the
+  # connection) for a few seconds after a restart. Retry on the same budget as
+  # the daemon readiness loop rather than treating the transient as a failure.
+  local start now status remaining
+  start="$(date +%s)"
+  while true; do
+    now="$(date +%s)"
+    # Cap each probe by what is left of the budget, so the loop honours
+    # wait_seconds even against a host that stalls mid-response. curl treats
+    # --max-time 0 as "no limit", hence the floor of 1.
+    remaining=$(( wait_seconds - (now - start) ))
+    (( remaining < 1 )) && remaining=1
+
+    status="$(web_url_status "${url}" "${remaining}")"
+    if [[ "${status}" == "200" ]]; then
+      log "${url} returned HTTP 200"
+      return 0
+    fi
+    if ! web_status_is_transient "${status}"; then
+      printf '%s returned HTTP %s, expected 200 (not a restart transient; not retrying)\n' "${url}" "${status}" >&2
+      return 1
+    fi
+    now="$(date +%s)"
+    if (( now - start >= wait_seconds )); then
+      printf '%s returned HTTP %s, expected 200 (waited %ss)\n' "${url}" "${status}" "${wait_seconds}" >&2
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 unit_exists() {
@@ -353,8 +398,6 @@ deploy() {
     log "frontend/ unchanged; leaving ${web_unit} running."
   fi
 
-  verify_tailnet_web
-
   if [[ "${ops_changed}" == "true" ]]; then
     log "ops/ changed; restarting ${notifier_unit}."
     restart_unit "${notifier_unit}"
@@ -375,6 +418,11 @@ deploy() {
     log "ops/ unchanged; leaving ${notifier_unit} running."
     log "ops/ unchanged; leaving ${attention_reply_unit} running; outbound attention notifier remains retired."
   fi
+
+  # Verify last: every unit this deploy is responsible for restarting has now
+  # been restarted, so a web URL that is genuinely down still fails the deploy
+  # without leaving the notifier behind on stale code.
+  verify_tailnet_web
 
   if [[ "${dry_run}" != "1" ]]; then
     mkdir -p "${state_dir}"

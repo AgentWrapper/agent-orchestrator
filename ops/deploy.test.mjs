@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,6 +113,167 @@ describe("ao self-deploy script", () => {
 		assert.match(unit, /^KillMode=mixed$/m);
 		assert.match(unit, /^TimeoutStopSec=60s$/m);
 	});
+
+	it("waits out the transient web 502 after ao-web.service restarts instead of failing the deploy", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "frontend", "app.js"), "console.log('frontend changed');\n");
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "deploy-relevant changes");
+
+		// ao-web.service's ExecStartPre rebuilds the bundle and the node server
+		// takes a moment to bind, so the tailnet URL serves 502 briefly.
+		const web = await startFakeWeb({ webFailuresBeforeReady: 2 });
+		const result = await runDeployLive(fixture, web, { AO_DEPLOY_BASE: base.stdout.trim() });
+
+		assert.equal(result.code, 0, `deploy should survive a transient 502\n${result.stdout}\n${result.stderr}`);
+		assert(web.webHits() > 1, `web URL should be probed more than once, got ${web.webHits()}`);
+		assert.match(result.stdout, /returned HTTP 200/);
+
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(
+			systemctlLog,
+			/^--user restart ao-slack-notifier\.service$/m,
+			"a transient web 502 must not abort the deploy before the ops/ notifier restart",
+		);
+		await assert.doesNotReject(access(fixture.stateFile), "a successful deploy records the deployed ref");
+	});
+
+	it("restarts the notifier before web verification, so a genuinely down web still fails the deploy", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		// Never becomes ready: curl gets connection-refused on the web URL.
+		const web = await startFakeWeb({ webFailuresBeforeReady: Number.POSITIVE_INFINITY, closeWebPort: true });
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_DEPLOY_WAIT_SECONDS: "2",
+		});
+
+		assert.notEqual(result.code, 0, "a web URL that never serves 200 must fail the deploy");
+		assert.match(result.stderr, /expected 200/);
+
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(
+			systemctlLog,
+			/^--user restart ao-slack-notifier\.service$/m,
+			"the notifier restart must not be gated behind the web check",
+		);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+	});
+
+	it("gives up on the web probe once the readiness budget is spent", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "frontend", "app.js"), "console.log('frontend changed');\n");
+		await commitFixture(fixture.dir, "frontend change");
+
+		// Serves 502 forever: the loop must bound itself, not spin.
+		const web = await startFakeWeb({ webFailuresBeforeReady: Number.POSITIVE_INFINITY });
+		const started = Date.now();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_DEPLOY_WAIT_SECONDS: "3",
+		});
+		const elapsedSeconds = (Date.now() - started) / 1000;
+
+		assert.notEqual(result.code, 0, "a web URL stuck on 502 must eventually fail the deploy");
+		assert.match(result.stderr, /returned HTTP 502, expected 200 \(waited 3s\)/);
+		assert(web.webHits() > 1, `should retry rather than probe once, got ${web.webHits()} hit(s)`);
+		assert(elapsedSeconds < 30, `should honor the 3s budget, not the 30s default; took ${elapsedSeconds}s`);
+	});
+
+	it("follows redirects and accepts the final 200 rather than the interim 3xx", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "frontend", "app.js"), "console.log('frontend changed');\n");
+		await commitFixture(fixture.dir, "frontend change");
+
+		// curl is invoked with --location; %{http_code} must report the final 200,
+		// not a concatenation of every status in the chain.
+		const web = await startFakeWeb({ redirectFirst: true });
+		const result = await runDeployLive(fixture, web, { AO_DEPLOY_BASE: base.stdout.trim() });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(result.stdout, /returned HTTP 200/);
+	});
+
+	it("bounds each probe so a stalled response cannot hang the deploy past the budget", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "frontend", "app.js"), "console.log('frontend changed');\n");
+		await commitFixture(fixture.dir, "frontend change");
+
+		// Connection is accepted but no response ever arrives: --connect-timeout
+		// alone does not bound this, only a per-request total timeout does.
+		const web = await startFakeWeb({ stall: true });
+		const started = Date.now();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_DEPLOY_WAIT_SECONDS: "3",
+		});
+		const elapsedSeconds = (Date.now() - started) / 1000;
+
+		assert.notEqual(result.code, 0, "a stalled web host must fail the deploy");
+		assert.match(result.stderr, /returned HTTP 000, expected 200 \(waited 3s\)/);
+		assert(elapsedSeconds < 20, `must honor the 3s budget against a stall; took ${elapsedSeconds}s`);
+	});
+
+	it("fails fast on a permanent status instead of burning the whole retry budget", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "frontend", "app.js"), "console.log('frontend changed');\n");
+		await commitFixture(fixture.dir, "frontend change");
+
+		// 404 is a misconfiguration, not a restart transient. Retrying cannot clear it.
+		const web = await startFakeWeb({ fixedStatus: 404 });
+		const started = Date.now();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_DEPLOY_WAIT_SECONDS: "30",
+		});
+		const elapsedSeconds = (Date.now() - started) / 1000;
+
+		assert.notEqual(result.code, 0, "a permanent 404 must fail the deploy");
+		assert.match(result.stderr, /returned HTTP 404, expected 200 \(not a restart transient; not retrying\)/);
+		assert.equal(web.webHits(), 1, `must probe once, not retry; got ${web.webHits()} hits`);
+		assert(elapsedSeconds < 20, `must not burn the 30s budget on a permanent status; took ${elapsedSeconds}s`);
+	});
+
+	it("skips web verification when no web URL is configured", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb({ webFailuresBeforeReady: Number.POSITIVE_INFINITY, closeWebPort: true });
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_DEPLOY_WEB_URL: "",
+			AO_WEB_PUBLIC_URL: "",
+		});
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(result.stdout, /skipping tailnet web HTTP verification/);
+		assert.equal(web.webHits(), 0, "an unconfigured web URL must not be probed at all");
+		await assert.doesNotReject(access(fixture.stateFile));
+	});
 });
 
 async function makeGitFixture() {
@@ -128,19 +290,147 @@ async function makeGitFixture() {
 	await writeFile(path.join(dir, "backend", "cmd", "ao", "main.go"), "package main\nfunc main() {}\n");
 	await writeFile(path.join(dir, "frontend", "app.js"), "console.log('frontend');\n");
 	await writeFile(path.join(dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops');\n");
+	await writeFile(path.join(dir, "ops", "ao.service"), "[Service]\nExecStart=/bin/true\n");
+	await writeFile(path.join(dir, "ops", "install-attention.sh"), "#!/usr/bin/env bash\nexit 0\n");
 	await writeFile(path.join(dir, "README.md"), "fixture\n");
 	await writeFile(path.join(home, ".local", "bin", "ao"), "current ao\n");
+	await chmod(path.join(home, ".local", "bin", "ao"), 0o755);
 	await writeFile(path.join(home, ".local", "bin", "ao.prev"), "previous ao\n");
 
 	await git(dir, ["init", "-b", "main"]);
 	await git(dir, ["config", "user.email", "test@example.com"]);
 	await git(dir, ["config", "user.name", "Test User"]);
 
-	return { dir, home };
+	const stubBin = path.join(home, "stub-bin");
+	const systemctlLog = path.join(home, "systemctl.log");
+	const stateDir = path.join(home, "deploy-state");
+	const stateFile = path.join(stateDir, "agent-orchestrator.last-deployed");
+	await makeStubBin(stubBin);
+
+	return { dir, home, stubBin, systemctlLog, stateDir, stateFile };
+}
+
+// Stubs for the host-mutating commands deploy.sh shells out to. `curl` is
+// deliberately NOT stubbed: the web-readiness probe is the behavior under test.
+async function makeStubBin(stubBin) {
+	await mkdir(stubBin, { recursive: true });
+
+	const stubs = {
+		ao: `#!/usr/bin/env bash
+case "$1" in
+  status) echo "AO daemon: ready" ;;
+  doctor) echo "PASS everything" ;;
+  session) echo "[]" ;;
+  *) exit 1 ;;
+esac
+`,
+		systemctl: `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "\${SYSTEMCTL_LOG}"
+exit 0
+`,
+		go: `#!/usr/bin/env bash
+out=""
+while (( $# > 0 )); do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ -n "\${out}" ]]; then printf 'rebuilt ao\\n' > "\${out}"; chmod +x "\${out}"; fi
+`,
+	};
+
+	for (const [name, body] of Object.entries(stubs)) {
+		const file = path.join(stubBin, name);
+		await writeFile(file, body);
+		await chmod(file, 0o755);
+	}
+}
+
+async function startFakeWeb({
+	webFailuresBeforeReady = 0,
+	closeWebPort = false,
+	redirectFirst = false,
+	fixedStatus = 0,
+	stall = false,
+} = {}) {
+	let webHits = 0;
+
+	const apiServer = http.createServer((req, res) => {
+		res.writeHead(req.url.startsWith("/api/v1/projects") ? 200 : 404, { "content-type": "application/json" });
+		res.end("[]");
+	});
+	const webServer = http.createServer((req, res) => {
+		webHits += 1;
+		// Accepts the TCP connection, then never answers. Without a per-probe
+		// total timeout this hangs the deploy forever.
+		if (stall) {
+			return;
+		}
+		if (fixedStatus) {
+			res.writeHead(fixedStatus);
+			res.end("permanent");
+			return;
+		}
+		if (redirectFirst) {
+			if (req.url === "/") {
+				res.writeHead(302, { location: "/app" });
+				res.end();
+				return;
+			}
+			res.writeHead(200);
+			res.end("ok");
+			return;
+		}
+		// Mirrors the real race: ao-web.service is up but the node server behind
+		// tailscale serve has not bound its port yet, so the proxy returns 502.
+		const ready = webHits > webFailuresBeforeReady;
+		res.writeHead(ready ? 200 : 502);
+		res.end(ready ? "ok" : "bundle still building");
+	});
+
+	await listen(apiServer);
+	await listen(webServer);
+	const apiPort = apiServer.address().port;
+	const webPort = webServer.address().port;
+	cleanup.push(() => closeServer(apiServer));
+	cleanup.push(() => closeServer(webServer));
+
+	if (closeWebPort) {
+		await closeServer(webServer);
+	}
+
+	return { apiPort, webUrl: `http://127.0.0.1:${webPort}/`, webHits: () => webHits };
+}
+
+function listen(server) {
+	return new Promise((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+}
+
+function closeServer(server) {
+	return new Promise((resolve) => {
+		if (!server.listening) {
+			resolve();
+			return;
+		}
+		server.closeAllConnections?.();
+		server.close(() => resolve());
+	});
 }
 
 async function commitFixture(cwd, message) {
-	await git(cwd, ["add", "README.md", "backend/cmd/ao/main.go", "frontend/app.js", "ops/ao-slack-notifier.mjs"]);
+	await git(cwd, [
+		"add",
+		"README.md",
+		"backend/cmd/ao/main.go",
+		"frontend/app.js",
+		"ops/ao-slack-notifier.mjs",
+		"ops/ao.service",
+		"ops/install-attention.sh",
+	]);
 	await git(cwd, ["commit", "-m", message]);
 }
 
@@ -159,6 +449,28 @@ async function runDeployDryRun(repoDir, home, env = {}, args = []) {
 			AO_DEPLOY_WAIT_SECONDS: "1",
 			AO_DEPLOY_WEB_URL: "https://mirrorborn.tailc1fd9.ts.net/",
 			HOME: home,
+		},
+	});
+}
+
+// Runs deploy.sh for real (no AO_DEPLOY_DRY_RUN), with the host-mutating
+// commands stubbed on PATH but curl and the HTTP probes genuinely exercised.
+async function runDeployLive(fixture, web, env = {}) {
+	return run("bash", [deployScript], {
+		cwd: repoRoot,
+		env: {
+			...process.env,
+			PATH: `${fixture.stubBin}${path.delimiter}${process.env.PATH}`,
+			HOME: fixture.home,
+			SYSTEMCTL_LOG: fixture.systemctlLog,
+			AO_PORT: String(web.apiPort),
+			AO_DEPLOY_DRY_RUN: "0",
+			AO_DEPLOY_REPO_ROOT: fixture.dir,
+			AO_DEPLOY_STATE_DIR: fixture.stateDir,
+			AO_DEPLOY_STATE_FILE: fixture.stateFile,
+			AO_DEPLOY_WAIT_SECONDS: "15",
+			AO_DEPLOY_WEB_URL: web.webUrl,
+			...env,
 		},
 	});
 }
