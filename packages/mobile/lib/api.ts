@@ -291,6 +291,40 @@ export async function getPreview(cfg: ServerConfig, id: string): Promise<{ entry
 	return { entry, url };
 }
 
+// ---- Agent catalog ----------------------------------------------------------
+
+export type AgentInfo = {
+	id: string;
+	label: string;
+	authStatus?: "authorized" | "unauthorized" | "unknown";
+};
+
+export type AgentCatalog = {
+	supported: AgentInfo[];
+	installed: AgentInfo[];
+	authorized: AgentInfo[];
+};
+
+export async function getAgents(cfg: ServerConfig): Promise<AgentCatalog> {
+	const res = await req(cfg, `${API}/agents`);
+	const data = await res.json();
+	return {
+		supported: Array.isArray(data?.supported) ? data.supported : [],
+		installed: Array.isArray(data?.installed) ? data.installed : [],
+		authorized: Array.isArray(data?.authorized) ? data.authorized : [],
+	};
+}
+
+export async function refreshAgents(cfg: ServerConfig): Promise<AgentCatalog> {
+	const res = await req(cfg, `${API}/agents/refresh`, { method: "POST" });
+	const data = await res.json();
+	return {
+		supported: Array.isArray(data?.supported) ? data.supported : [],
+		installed: Array.isArray(data?.installed) ? data.installed : [],
+		authorized: Array.isArray(data?.authorized) ? data.authorized : [],
+	};
+}
+
 // ---- Writes / actions -------------------------------------------------------
 
 export async function killSession(cfg: ServerConfig, id: string): Promise<void> {
