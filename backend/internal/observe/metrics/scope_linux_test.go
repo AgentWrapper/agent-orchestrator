@@ -5,6 +5,8 @@ package metrics
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -73,5 +75,23 @@ func TestTmuxPaneListerMissingBinaryIsError(t *testing.T) {
 	l := tmuxPaneLister{binary: "definitely-not-a-real-binary-xyz"}
 	if _, err := l.panes(context.Background()); err == nil {
 		t.Fatal("missing tmux binary must return an error")
+	}
+}
+
+func TestCgroupV2MemReaderAnchorsAbsoluteCgroupUnderRoot(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "user.slice", "ao.scope")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "memory.current"), []byte("12345\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got, ok := (cgroupV2MemReader{root: root}).memBytes("/user.slice/ao.scope")
+	if !ok || got != 12345 {
+		t.Fatalf("memBytes should read under the configured root for absolute cgroups, got %d ok=%v", got, ok)
+	}
+	if _, err := os.Stat(filepath.Join("/user.slice/ao.scope", "memory.current")); err == nil {
+		t.Fatal("test unexpectedly created/read an absolute /user.slice path")
 	}
 }
