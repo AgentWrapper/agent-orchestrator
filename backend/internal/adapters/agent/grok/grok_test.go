@@ -58,10 +58,11 @@ func TestGetLaunchCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	wantPrefix := []string{"grok", "--no-auto-update", "--permission-mode", "bypassPermissions", "-p", "do the thing"}
+	wantPrefix := []string{"grok", "--no-auto-update", "--permission-mode", "bypassPermissions", "--", "do the thing"}
 	if !reflect.DeepEqual(cmd, wantPrefix) {
 		t.Fatalf("cmd = %#v, want prefix %#v", cmd, wantPrefix)
 	}
+	assertNoPromptFlag(t, cmd)
 }
 
 func TestGetLaunchCommandDefaultPerms(t *testing.T) {
@@ -72,12 +73,14 @@ func TestGetLaunchCommandDefaultPerms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(cmd) < 4 || cmd[0] != "grok" || cmd[1] != "--no-auto-update" || cmd[2] != "-p" {
-		t.Fatalf("cmd = %#v, want grok --no-auto-update -p ...", cmd)
+	want := []string{"grok", "--no-auto-update", "--", "fix it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 	if strings.Contains(strings.Join(cmd, " "), "permission-mode") {
 		t.Fatal("should not have --permission-mode for default perms")
 	}
+	assertNoPromptFlag(t, cmd)
 }
 
 func TestGetLaunchCommandAcceptEdits(t *testing.T) {
@@ -89,9 +92,34 @@ func TestGetLaunchCommandAcceptEdits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"grok", "--no-auto-update", "--permission-mode", "acceptEdits", "-p", "refactor auth"}
+	want := []string{"grok", "--no-auto-update", "--permission-mode", "acceptEdits", "--", "refactor auth"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	assertNoPromptFlag(t, cmd)
+}
+
+func TestGetLaunchCommandTerminatesFlagsBeforeLeadingDashPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "grok"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt: "-add a health check",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"grok", "--no-auto-update", "--", "-add a health check"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	assertNoPromptFlag(t, cmd)
+}
+
+func assertNoPromptFlag(t *testing.T, cmd []string) {
+	t.Helper()
+	for _, arg := range cmd {
+		if arg == "-p" || arg == "--single" {
+			t.Fatalf("cmd = %#v unexpectedly contains single-turn prompt flag %q", cmd, arg)
+		}
 	}
 }
 

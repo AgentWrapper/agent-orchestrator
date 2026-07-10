@@ -464,12 +464,306 @@ pre.shiki code {
 	opacity: 1;
 }
 
+/* Installation page download picker. Keeps the recommended desktop path more
+   scannable than a markdown table while staying inside the docs visual system. */
+#nd-docs-layout .ao-install-downloads {
+	margin: 1.25rem 0 2rem;
+}
+
+#nd-docs-layout .ao-install-downloads__header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-bottom: 0.85rem;
+}
+
+#nd-docs-layout .ao-install-downloads__copy {
+	min-width: 0;
+}
+
+#nd-docs-layout .ao-install-downloads__title {
+	color: var(--color-text-primary);
+	font-size: 1.05rem;
+	font-weight: 700;
+	letter-spacing: 0;
+	line-height: 1.35;
+}
+
+#nd-docs-layout .prose a.ao-install-downloads__release {
+	flex: 0 0 auto;
+	margin-top: 0.05rem;
+	padding: 0.45rem 0.65rem;
+	border: 1px solid var(--color-border-subtle);
+	border-radius: 7px;
+	background: transparent;
+	color: var(--color-text-primary);
+	font-size: 0.8125rem;
+	font-weight: 600;
+	line-height: 1.2;
+	text-decoration: none;
+	transition:
+		border-color 0.16s ease,
+		background-color 0.16s ease,
+		color 0.16s ease;
+}
+
+#nd-docs-layout .prose a.ao-install-downloads__release:hover {
+	border-color: var(--docs-accent-border);
+	background: var(--docs-accent-dim);
+	color: var(--docs-accent);
+	text-decoration: none;
+}
+
+#nd-docs-layout .ao-install-downloads__grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.6rem;
+}
+
+#nd-docs-layout .prose a.ao-install-downloads__item {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 0.75rem;
+	min-width: 0;
+	padding: 0.9rem;
+	border: 1px solid var(--color-border-subtle);
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--color-fd-card) 92%, var(--color-bg-elevated));
+	color: var(--color-text-primary);
+	text-decoration: none;
+	transition:
+		border-color 0.16s ease,
+		background-color 0.16s ease,
+		transform 0.16s ease;
+}
+
+#nd-docs-layout .prose a.ao-install-downloads__item:hover {
+	border-color: var(--docs-accent-border);
+	background: color-mix(in srgb, var(--color-fd-card) 86%, var(--docs-accent));
+	text-decoration: none;
+	transform: translateY(-1px);
+}
+
+#nd-docs-layout .ao-install-downloads__icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 2rem;
+	height: 2rem;
+	border: 1px solid var(--color-border-subtle);
+	border-radius: 8px;
+	background: var(--color-bg-subtle);
+}
+
+#nd-docs-layout .ao-install-downloads__meta {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	gap: 0.1rem;
+}
+
+#nd-docs-layout .ao-install-downloads__platform {
+	overflow: hidden;
+	color: var(--color-text-primary);
+	font-size: 0.94rem;
+	font-weight: 650;
+	line-height: 1.25;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+#nd-docs-layout .ao-install-downloads__detail {
+	overflow: hidden;
+	color: var(--color-text-tertiary);
+	font-size: 0.78rem;
+	line-height: 1.35;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+#nd-docs-layout .ao-install-downloads__type {
+	display: inline-flex;
+	align-items: center;
+	min-width: max-content;
+	padding: 0.28rem 0.55rem;
+	border: 1px solid var(--docs-accent-border);
+	border-radius: 7px;
+	background: var(--docs-accent-dim);
+	color: var(--docs-accent);
+	font-size: 0.76rem;
+	font-weight: 650;
+	line-height: 1.3;
+}
+
+#nd-docs-layout .ao-install-downloads__note {
+	margin-top: 0.75rem;
+	color: var(--color-text-secondary);
+	font-size: 0.86rem;
+	line-height: 1.55;
+}
+
+#nd-docs-layout .ao-install-downloads__note a {
+	font-weight: 650;
+}
+
+#nd-docs-layout .ao-compact-tabs {
+	margin-top: 1rem;
+}
+
+#nd-docs-layout .ao-compact-tabs [role="tabpanel"] {
+	min-height: 0;
+}
+
+#nd-docs-layout .ao-compact-tabs figure,
+#nd-docs-layout .ao-compact-tabs pre {
+	margin-bottom: 0;
+}
+
+#nd-docs-layout .ao-legacy-cli-details {
+	margin: 1rem 0 0;
+	border: 1px solid var(--color-border-subtle);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--color-fd-card) 88%, var(--color-bg-elevated));
+	overflow: hidden;
+}
+
+#nd-docs-layout .ao-legacy-cli-details > summary {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.9rem 1rem;
+	cursor: pointer;
+	list-style: none;
+}
+
+#nd-docs-layout .ao-legacy-cli-details > summary::-webkit-details-marker {
+	display: none;
+}
+
+#nd-docs-layout .ao-legacy-cli-summary-copy {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	gap: 0.18rem;
+}
+
+#nd-docs-layout .ao-legacy-cli-summary-title {
+	color: var(--color-text-primary);
+	font-size: 0.94rem;
+	font-weight: 680;
+	line-height: 1.35;
+}
+
+#nd-docs-layout .ao-legacy-cli-summary-note {
+	color: var(--color-text-tertiary);
+	font-size: 0.84rem;
+	line-height: 1.5;
+}
+
+#nd-docs-layout .ao-legacy-cli-summary-icon {
+	width: 1rem;
+	height: 1rem;
+	flex: 0 0 auto;
+	color: var(--color-text-tertiary);
+	font-size: 1.15rem;
+	font-weight: 450;
+	line-height: 0.9rem;
+	text-align: center;
+}
+
+#nd-docs-layout .ao-legacy-cli-summary-icon::before {
+	content: "+";
+}
+
+#nd-docs-layout .ao-legacy-cli-details[open] .ao-legacy-cli-summary-icon::before {
+	content: "-";
+}
+
+#nd-docs-layout .ao-legacy-cli-details__content {
+	padding: 0 1rem 1rem;
+	border-top: 1px solid var(--color-border-subtle);
+}
+
+#nd-docs-layout .ao-legacy-cli-details__content > *:first-child {
+	margin-top: 1rem;
+}
+
+#nd-docs-layout .ao-legacy-cli-details__content > *:last-child {
+	margin-bottom: 0;
+}
+
+#nd-docs-layout .ao-legacy-cli-details__content figure,
+#nd-docs-layout .ao-legacy-cli-details__content pre {
+	margin-top: 1rem;
+	margin-bottom: 0;
+}
+
+/* Fumadocs accordions — match ao-legacy-cli-details sizing and visual weight */
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border {
+	border-color: var(--color-border-subtle);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--color-fd-card) 88%, var(--color-bg-elevated));
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border h3 {
+	margin: 0;
+	font-size: inherit;
+	font-weight: inherit;
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border h3 button {
+	gap: 0.45rem;
+	padding: 0.72rem 1rem;
+	color: var(--color-text-primary);
+	font-size: 0.94rem;
+	font-weight: 620;
+	line-height: 1.35;
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border h3 button svg {
+	width: 0.85rem;
+	height: 0.85rem;
+	flex-shrink: 0;
+	color: var(--color-text-tertiary);
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border [role="region"] > div {
+	padding: 0 1rem 0.9rem;
+	color: var(--color-text-secondary);
+	font-size: 0.86rem;
+	line-height: 1.55;
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border [role="region"] > div :is(p, li) {
+	color: inherit;
+	font-size: inherit;
+	line-height: inherit;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	#nd-docs-layout figure[data-rehype-pretty-code-figure] button,
 	#nd-docs-layout [data-rehype-pretty-code-figure] button[aria-label],
 	#nd-docs-layout [role="tab"],
 	#nd-docs-layout [role="tabpanel"] {
 		transition: none;
+	}
+}
+
+@media (max-width: 720px) {
+	#nd-docs-layout .ao-install-downloads__header {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	#nd-docs-layout .prose a.ao-install-downloads__release {
+		width: fit-content;
+	}
+
+	#nd-docs-layout .ao-install-downloads__grid {
+		grid-template-columns: 1fr;
 	}
 }
 

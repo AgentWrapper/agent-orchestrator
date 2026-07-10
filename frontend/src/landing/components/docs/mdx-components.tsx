@@ -5,6 +5,7 @@
 import type { ReactNode } from "react";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
+import { InstallDownloads } from "./InstallDownloads";
 import { Logo } from "./Logo";
 import { PlatformSupport } from "./PlatformSupport";
 import { PluginCard, PluginGrid } from "./PluginCard";
@@ -29,6 +30,7 @@ export function getMDXComponents(): MDXComponents {
 		...defaultMdxComponents,
 		Accordion,
 		Accordions,
+		InstallDownloads,
 		Logo,
 		PlatformSupport,
 		PluginCard,

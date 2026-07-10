@@ -21,8 +21,10 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
 	case "stop":
-		// End of a turn: the agent is idle but alive (not exited). A following
-		// Notification(idle_prompt) upgrades this to the sticky waiting_input.
+		// End of a turn (including a user interrupt): the agent is idle but
+		// alive (not exited). A following Notification(idle_prompt) also maps to
+		// idle, so an interrupted or finished turn reads Idle until the next
+		// prompt — only a real permission request flips it to waiting_input.
 		return domain.ActivityIdle, true
 	case "notification":
 		return notificationState(payload)
@@ -33,18 +35,23 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	}
 }
 
-// notificationState reports waiting_input only for the notification types that
-// mean "the agent is blocked on the user": a pending tool-permission prompt or
-// an idle prompt awaiting the next instruction. Other types (auth_success,
-// elicitation_*) carry no activity meaning, as does a malformed payload.
+// notificationState reports waiting_input only when the agent is genuinely
+// blocked on the user: a pending tool-permission prompt (permission_prompt).
+// idle_prompt means the agent finished its turn and is sitting idle at the
+// prompt awaiting the next instruction — that is Idle, not a blocking request,
+// so a stop/interrupt reads Idle rather than "Input Needed". Other types
+// (auth_success, elicitation_*) carry no activity meaning, as does a malformed
+// payload.
 func notificationState(payload []byte) (domain.ActivityState, bool) {
 	var p struct {
 		NotificationType string `json:"notification_type"`
 	}
 	_ = json.Unmarshal(payload, &p)
 	switch p.NotificationType {
-	case "idle_prompt", "permission_prompt":
+	case "permission_prompt":
 		return domain.ActivityWaitingInput, true
+	case "idle_prompt":
+		return domain.ActivityIdle, true
 	default:
 		return "", false
 	}

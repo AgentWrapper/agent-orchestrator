@@ -7,8 +7,7 @@ import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
 	sessionIsActive,
-	workerDisplayStatus,
-	type WorkerDisplayStatus,
+	type SessionActivityState,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -29,16 +28,13 @@ const isLinux =
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// Session status → pill tone, mirroring agent-orchestrator's StatusBadge
-// (working=orange & breathing, input=amber, fail=red, ready=green, done=neutral).
-// Tones are theme vars so the pill tracks the light/dark status palettes.
-const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; breathe: boolean }> = {
-	working: { label: "Working", tone: "var(--orange)", breathe: true },
-	needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
-	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
-	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
-	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
-	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
+// Topbar shows only the raw agent activity state. SCM/context badges stay in
+// the inspector Summary > Activity row.
+const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string; breathe: boolean }> = {
+	active: { label: "Working", tone: "var(--orange)", breathe: true },
+	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
+	waiting_input: { label: "Input Needed", tone: "var(--amber)", breathe: false },
+	exited: { label: "Exited", tone: "var(--fg-muted)", breathe: false },
 	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
 };
 
@@ -353,7 +349,8 @@ export function TopbarKillButton({
 // StatusBadge --pill: tinted bordered pill (inset 25%-tone hairline + 7%-tone
 // fill) with a 6px dot that breathes while the agent is working.
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
-	const { label, tone, breathe } = STATUS_PILL[workerDisplayStatus(session)];
+	const activityState = session.activity?.state ?? "unknown";
+	const { label, tone, breathe } = TOPBAR_ACTIVITY_PILL[activityState];
 	return (
 		<span
 			className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold leading-none"

@@ -98,19 +98,23 @@ func TestResolveReviewerHarness(t *testing.T) {
 		t.Fatalf("configured reviewer = %q, want claude-code", got)
 	}
 
-	// No reviewer configured: always use claude-code, regardless of the worker
-	// harness (see #2241).
+	// No reviewer configured: reuse the worker's harness when it is itself a
+	// supported reviewer.
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerClaudeCode {
-		t.Fatalf("default = %q, want reviewer claude-code", got)
+		t.Fatalf("claude-code worker = %q, want reviewer claude-code", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerClaudeCode {
-		t.Fatalf("default = %q, want reviewer claude-code", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerCodex {
+		t.Fatalf("codex worker = %q, want reviewer codex", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerClaudeCode {
-		t.Fatalf("default = %q, want reviewer claude-code", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerOpenCode {
+		t.Fatalf("opencode worker = %q, want reviewer opencode", got)
 	}
 
-	// A worker harness that is not claude-code also falls back to claude-code.
+	// A worker harness that is not itself a reviewer (e.g. crush, aider) falls
+	// back to claude-code.
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCrush); got != FallbackReviewerHarness {
+		t.Fatalf("crush worker = %q, want %q", got, FallbackReviewerHarness)
+	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != FallbackReviewerHarness {
 		t.Fatalf("fallback = %q, want %q", got, FallbackReviewerHarness)
 	}

@@ -1,4 +1,4 @@
-import { httpBase, type ServerConfig } from "./config";
+import { authHeaders, httpBase, type ServerConfig } from "./config";
 import type { AttentionLevel } from "./theme";
 
 // ---- Types (subset of AO's DashboardSession we use on the phone) ------------
@@ -199,7 +199,7 @@ async function req(cfg: ServerConfig, path: string, init?: RequestInit): Promise
 		res = await fetch(url, {
 			...init,
 			signal: controller.signal,
-			headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+			headers: { ...authHeaders(cfg), "Content-Type": "application/json", ...(init?.headers ?? {}) },
 		});
 	} catch (e) {
 		if ((e as { name?: string })?.name === "AbortError") {

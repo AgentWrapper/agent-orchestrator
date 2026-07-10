@@ -80,6 +80,11 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 // and the OS chose one — primarily in tests).
 func (s *Server) Addr() net.Addr { return s.listen.Addr() }
 
+// Handler returns the loopback server's built router so the daemon can share
+// the exact same handler instance with the LAN listener (via NewMobileLAN),
+// keeping the loopback and LAN surfaces identical.
+func (s *Server) Handler() http.Handler { return s.http.Handler }
+
 // Run serves until ctx is cancelled (SIGINT/SIGTERM via signal.NotifyContext),
 // then performs a graceful shutdown bounded by cfg.ShutdownTimeout. It writes
 // running.json before serving and removes it on the way out. Run blocks until

@@ -1,4 +1,4 @@
-import { muxUrl, type ServerConfig } from "./config";
+import { authHeaders, muxUrl, type ServerConfig } from "./config";
 
 // Mirrors AO's mux-protocol.ts (the bits we use).
 export type SessionPatch = {
@@ -129,7 +129,7 @@ export class MuxClient {
 			const WS = WebSocket as unknown as {
 				new (url: string, protocols?: string | string[], options?: { headers?: Record<string, string> }): WebSocket;
 			};
-			ws = new WS(muxUrl(this.cfg), undefined, { headers: { Origin: "http://localhost" } });
+			ws = new WS(muxUrl(this.cfg), undefined, { headers: { Origin: "http://localhost", ...authHeaders(this.cfg) } });
 		} catch (e) {
 			this.handlers.onStatus?.("error", String(e));
 			this.scheduleReconnect();

@@ -49,6 +49,16 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	}
 }
 
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
+	}
+}
+
 // Kimi prompt mode is non-interactive, so AO launches the TUI and lets the
 // session manager inject the task after startup. Because the prompt is not
 // carried with `-p`, approval flags remain valid for prompted workers.

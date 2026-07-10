@@ -163,6 +163,9 @@ type fakeRuntime struct {
 	destroyErr         error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
+	outputs            []string
+	outputCalls        int
+	outputErr          error
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
 	aliveByHandle map[string]bool
 	aliveErr      error
@@ -187,6 +190,20 @@ func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bo
 		return false, r.aliveErr
 	}
 	return r.aliveByHandle[handle.ID], nil
+}
+func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
+	r.outputCalls++
+	if r.outputErr != nil {
+		return "", r.outputErr
+	}
+	if len(r.outputs) == 0 {
+		return "", nil
+	}
+	out := r.outputs[0]
+	if len(r.outputs) > 1 {
+		r.outputs = r.outputs[1:]
+	}
+	return out, nil
 }
 
 type fakeAgent struct{}
@@ -248,6 +265,15 @@ type afterStartAgent struct {
 
 func (a afterStartAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryAfterStart, nil
+}
+
+type readinessAgent struct {
+	afterStartAgent
+	hints ports.PromptReadinessHints
+}
+
+func (a readinessAgent) PromptReadinessHints(context.Context, ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	return a.hints, nil
 }
 
 type promptStrategyErrorAgent struct {
@@ -588,6 +614,88 @@ func TestSpawn_DeliversPromptAfterStartWhenAgentRequestsIt(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.Prompt != "fix the button" {
 		t.Fatalf("stored prompt = %q, want original prompt", st.sessions["mer-1"].Metadata.Prompt)
+	}
+}
+
+func TestSpawn_AfterStartPromptWaitsForReadinessHint(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{outputs: []string{"booting", "agent Ready..."}}
+	ws := &fakeWorkspace{}
+	msg := &fakeMessenger{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: rt,
+		Agents: singleAgent{agent: readinessAgent{
+			afterStartAgent: afterStartAgent{recordingAgent: agent},
+			hints: ports.PromptReadinessHints{
+				Patterns:     []string{"Ready..."},
+				PollInterval: time.Millisecond,
+				Timeout:      50 * time.Millisecond,
+			},
+		}},
+		Workspace: ws,
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
+		t.Fatal(err)
+	}
+	if rt.outputCalls != 2 {
+		t.Fatalf("GetOutput calls = %d, want 2", rt.outputCalls)
+	}
+	if len(msg.msgs) != 1 || msg.msgs[0] != "fix the button" {
+		t.Fatalf("delivered prompts = %#v, want one original prompt", msg.msgs)
+	}
+}
+
+func TestSpawn_AfterStartPromptFallsBackWhenReadinessTimesOut(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{outputs: []string{"still booting"}}
+	ws := &fakeWorkspace{}
+	msg := &fakeMessenger{}
+	agent := &recordingAgent{}
+	var logBuf bytes.Buffer
+	m := New(Deps{
+		Runtime: rt,
+		Agents: singleAgent{agent: readinessAgent{
+			afterStartAgent: afterStartAgent{recordingAgent: agent},
+			hints: ports.PromptReadinessHints{
+				Patterns:     []string{"Ready..."},
+				PollInterval: time.Millisecond,
+				Timeout:      time.Millisecond,
+			},
+		}},
+		Workspace: ws,
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+		Logger:    slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
+		t.Fatal(err)
+	}
+	if rt.outputCalls == 0 {
+		t.Fatal("GetOutput was not called")
+	}
+	if len(msg.msgs) != 1 || msg.msgs[0] != "fix the button" {
+		t.Fatalf("delivered prompts = %#v, want fallback prompt delivery", msg.msgs)
+	}
+	logText := logBuf.String()
+	if !strings.Contains(logText, "prompt readiness timed out") {
+		t.Fatalf("log = %q, want readiness timeout warning", logText)
+	}
+	if !strings.Contains(logText, "falling back to after-start prompt delivery") {
+		t.Fatalf("log = %q, want fallback delivery context", logText)
+	}
+	if !strings.Contains(logText, "sessionID=mer-1") {
+		t.Fatalf("log = %q, want session id", logText)
 	}
 }
 

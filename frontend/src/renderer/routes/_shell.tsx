@@ -10,7 +10,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
@@ -105,7 +105,8 @@ function ShellLayout() {
 				},
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error));
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
 				void captureRendererException(failure, {
 					source: "project-add",
 					operation: "project_add",
@@ -145,6 +146,17 @@ function ShellLayout() {
 		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
 	);
 
+	const initializeProjectRepository = useCallback(async (path: string) => {
+		const { error } = await apiClient.POST("/api/v1/projects/initialize", {
+			body: { path },
+		});
+		if (error) {
+			const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+			failure.code = apiErrorCode(error);
+			throw failure;
+		}
+	}, []);
+
 	const removeProject = useCallback(
 		async (projectId: string) => {
 			void addRendererExceptionStep("Project removal requested", {
@@ -157,7 +169,8 @@ function ShellLayout() {
 				params: { path: { id: projectId } },
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error));
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
 				void captureRendererException(failure, {
 					source: "project-remove",
 					operation: "project_remove",
@@ -230,7 +243,7 @@ function ShellLayout() {
 	}, [navigate, workspaces]);
 
 	return (
-		<ShellProvider value={{ daemonStatus, createProject }}>
+		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
@@ -244,7 +257,7 @@ function ShellLayout() {
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
 				<SidebarProvider
-					className="min-h-0 flex-1"
+					className="min-h-0 flex-1 overflow-x-hidden"
 					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
 					open={isSidebarOpen}
 					style={{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as CSSProperties}
@@ -253,12 +266,13 @@ function ShellLayout() {
 						daemonStatus={daemonStatus}
 						underTopbar={isLinux ? isSessionRoute : true}
 						onCreateProject={createProject}
+						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
-					<main className="flex min-w-0 flex-1 flex-col">
-						<div className="min-h-0 flex-1">
+					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+						<div className="min-h-0 flex-1 overflow-x-hidden">
 							<Outlet />
 						</div>
 					</main>

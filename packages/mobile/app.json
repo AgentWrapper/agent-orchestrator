@@ -16,7 +16,9 @@
 		"ios": {
 			"supportsTablet": true,
 			"bundleIdentifier": "aoagents.ao",
-			"config": { "usesNonExemptEncryption": false }
+			"config": {
+				"usesNonExemptEncryption": false
+			}
 		},
 		"android": {
 			"package": "aoagents.ao",
@@ -26,8 +28,32 @@
 			},
 			"predictiveBackGestureEnabled": false
 		},
-		"web": { "favicon": "./assets/favicon.png", "bundler": "metro" },
-		"plugins": ["expo-router", ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]],
-		"extra": { "router": {} }
+		"web": {
+			"favicon": "./assets/favicon.png",
+			"bundler": "metro"
+		},
+		"plugins": [
+			"expo-router",
+			[
+				"expo-build-properties",
+				{
+					"android": {
+						"usesCleartextTraffic": true
+					}
+				}
+			],
+			[
+				"expo-camera",
+				{
+					"cameraPermission": "Allow AO to scan the pairing QR code.",
+					"microphonePermission": false,
+					"recordAudioAndroid": false
+				}
+			],
+			"expo-secure-store"
+		],
+		"extra": {
+			"router": {}
+		}
 	}
 }

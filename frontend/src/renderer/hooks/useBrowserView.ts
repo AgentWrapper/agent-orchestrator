@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
+import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 
 export type { BrowserNavState };
 
@@ -37,6 +38,8 @@ export type BrowserViewModel = {
 	reload: () => Promise<void>;
 	stop: () => Promise<void>;
 	destroy: () => void;
+	annotationMode: boolean;
+	setAnnotationMode: (enabled: boolean) => Promise<void>;
 };
 
 const EMPTY_NAV_STATE: BrowserNavState = {
@@ -80,8 +83,10 @@ export function useBrowserView({
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
+	const [annotationMode, setAnnotationModeState] = useState(false);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
+	const annotationModeRef = useRef(false);
 	const activeRef = useRef(active);
 	const frameRef = useRef<number | null>(null);
 	const settleTimerRef = useRef<number | null>(null);
@@ -97,6 +102,10 @@ export function useBrowserView({
 	useEffect(() => {
 		hasUrlRef.current = Boolean(navState.url);
 	}, [navState.url]);
+
+	useEffect(() => {
+		annotationModeRef.current = annotationMode;
+	}, [annotationMode]);
 
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
@@ -203,6 +212,10 @@ export function useBrowserView({
 			disposed = true;
 			const id = viewIdRef.current;
 			if (id) {
+				if (annotationModeRef.current) {
+					void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+					setAnnotationModeState(false);
+				}
 				sendHiddenBounds(id);
 			}
 			viewIdRef.current = "";
@@ -243,6 +256,37 @@ export function useBrowserView({
 		const next = await fn(id);
 		if (next) setNavState(next);
 	}, []);
+
+	const setAnnotationMode = useCallback(
+		async (enabled: boolean) => {
+			const id = viewIdRef.current;
+			if (!id || !hasNativeBrowser) {
+				setAnnotationModeState(false);
+				return;
+			}
+			await window.ao!.browser.setAnnotationMode({ viewId: id, enabled });
+			setAnnotationModeState(enabled);
+		},
+		[hasNativeBrowser],
+	);
+
+	useEffect(() => {
+		const handleDone = (payload: BrowserAnnotationSubmitPayload | BrowserAnnotationCancelPayload) => {
+			if (payload.viewId !== viewIdRef.current) return;
+			setAnnotationModeState(false);
+		};
+		const offSubmit = window.ao?.browser.onAnnotationSubmit(handleDone);
+		const offCancel = window.ao?.browser.onAnnotationCancel(handleDone);
+		return () => {
+			offSubmit?.();
+			offCancel?.();
+		};
+	}, []);
+
+	useEffect(() => {
+		if (navState.url || !annotationModeRef.current) return;
+		void setAnnotationMode(false);
+	}, [navState.url, setAnnotationMode]);
 
 	const navigate = useCallback(
 		(url: string) => {
@@ -297,6 +341,10 @@ export function useBrowserView({
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
 		if (!id) return;
+		if (annotationModeRef.current) {
+			void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+			setAnnotationModeState(false);
+		}
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
@@ -312,5 +360,7 @@ export function useBrowserView({
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
 		destroy,
+		annotationMode,
+		setAnnotationMode,
 	};
 }

@@ -226,6 +226,14 @@ export const apiClient = createClient<paths>({
  * plain object, so `String(error)` renders "[object Object]". Falls back
  * through Error instances and strings.
  */
+export function apiErrorCode(error: unknown): string | undefined {
+	if (typeof error === "object" && error !== null) {
+		const body = error as { code?: unknown };
+		if (typeof body.code === "string" && body.code !== "") return body.code;
+	}
+	return undefined;
+}
+
 export function apiErrorMessage(error: unknown, fallback = "Request failed"): string {
 	if (error instanceof Error) return error.message;
 	if (typeof error === "string" && error !== "") return error;

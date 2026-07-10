@@ -6,9 +6,9 @@ export interface GitHubRepoStats {
 }
 
 const FALLBACK_STATS: GitHubRepoStats = {
-	stars: 6295,
-	forks: 853,
-	openIssues: 622,
+	stars: 8200,
+	forks: 1200,
+	openIssues: 320,
 	watchers: 21,
 };
 
