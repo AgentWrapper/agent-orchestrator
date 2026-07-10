@@ -2174,6 +2174,8 @@ components:
         totalTokens:
           format: int64
           type: integer
+        truncated:
+          type: boolean
         windowSeconds:
           format: int64
           type: integer
@@ -2184,6 +2186,7 @@ components:
       - totalTokens
       - costUsd
       - events
+      - truncated
       type: object
     MetricsHost:
       properties:

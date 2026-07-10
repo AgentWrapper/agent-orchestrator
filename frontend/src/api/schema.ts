@@ -810,6 +810,7 @@ export interface components {
             outputTokens: number;
             /** Format: int64 */
             totalTokens: number;
+            truncated: boolean;
             /** Format: int64 */
             windowSeconds: number;
         };

@@ -57,6 +57,31 @@ func TestReadMemInfoMissingTotal(t *testing.T) {
 	}
 }
 
+// TestReadMemInfoMissingAvailable guards the mem_low-fires-forever bug: a
+// meminfo without a MemAvailable line (pre-3.14 kernels, some container /proc
+// mounts) must be an error, not total>0/avail=0 which the evaluator's
+// MemTotalBytes>0 guard would let trip mem_low every tick.
+func TestReadMemInfoMissingAvailable(t *testing.T) {
+	p := writeTemp(t, "meminfo", "MemTotal:       16384 kB\nMemFree:  1000 kB\n")
+	if _, _, err := readMemInfo(p); err == nil {
+		t.Fatal("want error when MemAvailable missing (would otherwise fire mem_low forever)")
+	}
+}
+
+// TestLinuxHostCollectorAssignsPartialOnError verifies that a failing source
+// (bad data dir -> statfs error) does not discard the load/memory the collector
+// did read: Host is best-effort and the observer relies on partial fill.
+func TestLinuxHostCollectorAssignsPartialOnError(t *testing.T) {
+	c := NewHostCollector(filepath.Join(t.TempDir(), "does-not-exist"))
+	h, err := c.Host(context.Background())
+	if err == nil {
+		t.Fatal("want error from the failing disk source")
+	}
+	if h.NumCPU <= 0 {
+		t.Errorf("partial Host must still carry NumCPU, got %d", h.NumCPU)
+	}
+}
+
 func TestReadDiskFree(t *testing.T) {
 	total, free, err := readDiskFree(t.TempDir())
 	if err != nil {

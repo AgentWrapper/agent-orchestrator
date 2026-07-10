@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -388,6 +389,12 @@ func parseNonNegativeFloat(name, raw string) (float64, error) {
 	f, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	// Reject NaN/Inf: "NaN < 0" and "Inf > 100" are both false, so without this
+	// a threshold of NaN would silently disable the alert and Inf would slip past
+	// the percent upper bound.
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("invalid %s %q: must be a finite number", name, raw)
 	}
 	if f < 0 {
 		return 0, fmt.Errorf("invalid %s %q: must be >= 0", name, raw)

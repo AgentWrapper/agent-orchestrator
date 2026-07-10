@@ -32,6 +32,12 @@ type Snapshot struct {
 	Cost Cost `json:"cost"`
 	// Alerts holds the alert conditions currently firing at snapshot time.
 	Alerts []Alert `json:"alerts"`
+
+	// zombiesKnown reports whether the live session set was trustworthy when this
+	// snapshot was built. It is internal evaluator state (not serialized): when
+	// false, Zombies is not authoritative and the zombie alert holds its sustain
+	// counter rather than treating the tick as zero zombies.
+	zombiesKnown bool
 }
 
 // Host is machine-wide resource pressure. Zero values mean "not collected"
@@ -80,8 +86,8 @@ func (h Host) DiskFreePercent() float64 {
 	return 100 * float64(h.DiskFreeBytes) / float64(h.DiskTotalBytes)
 }
 
-// Project holds per-project session counts by derived activity plus the count
-// of that project's zombies (live scopes with no live session row).
+// Project holds per-project session counts by derived activity. Zombie
+// attribution is machine-wide (Snapshot.Zombies), not per-project.
 type Project struct {
 	// ProjectID is the project the counts belong to.
 	ProjectID string `json:"projectId"`
@@ -118,6 +124,10 @@ type Cost struct {
 	TotalTokens  int64 `json:"totalTokens"`
 	// CostUSD sums the cost_usd payload field across events in the window.
 	CostUSD float64 `json:"costUsd"`
-	// Events is the number of telemetry events scanned in the window.
+	// Events is the number of cost-bearing telemetry events aggregated in the
+	// window (events carrying at least one recognised token/cost field).
 	Events int64 `json:"events"`
+	// Truncated is true when the window held more telemetry rows than the scan
+	// limit, so the aggregate covers only the most recent costScanLimit events.
+	Truncated bool `json:"truncated"`
 }

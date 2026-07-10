@@ -153,6 +153,49 @@ func TestObserverDegradesOnNilAndFailingCollectors(t *testing.T) {
 	}
 }
 
+// TestObserverFailingSessionsDoesNotFabricateZombies is the key regression for
+// the "DB hiccup fires a fleet-wide leak" bug: with live scopes present but the
+// session list unavailable, the observer must NOT count every unmatched scope as
+// a zombie — the session set is simply unknown this tick.
+func TestObserverFailingSessionsDoesNotFabricateZombies(t *testing.T) {
+	o := New(Deps{
+		Sessions: fakeSessions{err: context.DeadlineExceeded},
+		Scopes:   fakeScopes{m: map[string]uint64{"s1": 100, "s2": 200, "s3": 300}},
+	}, Config{Clock: fixedClock(), Logger: quietLogger()})
+	snap := o.Tick(context.Background())
+	if snap.Zombies != 0 {
+		t.Fatalf("unknown session set must not fabricate zombies, got %d (scopes=%+v)", snap.Zombies, snap.Scopes)
+	}
+	// Scopes are still reported (for the memory readings) but flagged unmatched.
+	if len(snap.Scopes) != 3 {
+		t.Fatalf("scopes should still be reported, got %+v", snap.Scopes)
+	}
+	for _, sc := range snap.Scopes {
+		if sc.Matched {
+			t.Errorf("scope %s must not be reported matched when sessions are unknown", sc.Name)
+		}
+	}
+}
+
+// TestObserverAlertZombieSurvivesSessionOutage: once the zombie alert is firing,
+// a tick where the session list fails must hold the alert (no spurious clear).
+func TestObserverAlertZombieSurvivesSessionOutage(t *testing.T) {
+	live := fakeSessions{rows: nil} // no live sessions → the scope is a real zombie
+	deadScope := fakeScopes{m: map[string]uint64{"leaked": 42}}
+	o := New(Deps{Sessions: live, Scopes: deadScope}, Config{
+		Clock: fixedClock(), Logger: quietLogger(),
+		Thresholds: Thresholds{ZombieSustainTicks: 2},
+	})
+	o.Tick(context.Background()) // tick 1: zombie seen
+	o.Tick(context.Background()) // tick 2: sustained → firing
+	// tick 3: session query fails → must hold, not clear.
+	o.deps.Sessions = fakeSessions{err: context.DeadlineExceeded}
+	snap := o.Tick(context.Background())
+	if len(snap.Alerts) != 1 || snap.Alerts[0].Kind != AlertZombies {
+		t.Fatalf("zombie alert must survive a session-list outage, got alerts=%+v", snap.Alerts)
+	}
+}
+
 func TestObserverLatestEmptyBeforeFirstTick(t *testing.T) {
 	o := New(Deps{}, Config{Logger: quietLogger()})
 	if _, ok := o.Latest(); ok {

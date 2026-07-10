@@ -99,7 +99,9 @@ type Observer struct {
 	costWindow time.Duration
 	clock      func() time.Time
 	logger     *slog.Logger
-	eval       *evaluator
+
+	evalMu sync.Mutex // guards eval; Tick may be driven from tests concurrently
+	eval   *evaluator
 
 	mu      sync.RWMutex
 	history []Snapshot
@@ -157,11 +159,15 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 	snap := Snapshot{CollectedAt: now}
 
 	if o.deps.Host != nil {
-		if host, err := o.deps.Host.Host(ctx); err != nil {
-			o.logger.Warn("metrics observer: host collect failed", "err", err)
-		} else {
-			snap.Host = host
+		// The collector returns a partially-filled Host plus the first error; a
+		// single failing source (e.g. a transient statfs) must not discard the
+		// load/memory it did read. Zero fields already read as "unknown"
+		// everywhere downstream, so assign the Host regardless and just log.
+		host, err := o.deps.Host.Host(ctx)
+		if err != nil {
+			o.logger.Warn("metrics observer: host collect failed (best-effort)", "err", err)
 		}
+		snap.Host = host
 	}
 
 	var scopeMem map[string]uint64
@@ -174,15 +180,22 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 	}
 
 	var sessions []domain.SessionRecord
+	// sessionsKnown is false when we have no reliable view of the live session
+	// set this tick (no source wired, or the query failed). Without it, an empty
+	// sessions slice would mark every live scope as unmatched and fabricate a
+	// zombie per scope, firing a fleet-wide leak alert on a mere DB hiccup.
+	sessionsKnown := false
 	if o.deps.Sessions != nil {
 		if rows, err := o.deps.Sessions.ListAllSessions(ctx); err != nil {
 			o.logger.Warn("metrics observer: list sessions failed", "err", err)
 		} else {
 			sessions = rows
+			sessionsKnown = true
 		}
 	}
 
-	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem)
+	snap.zombiesKnown = sessionsKnown
+	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem, sessionsKnown)
 
 	if o.deps.Cost != nil {
 		if cost, err := o.deps.Cost.Aggregate(ctx, now.Add(-o.costWindow)); err != nil {
@@ -193,7 +206,9 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 		}
 	}
 
+	o.evalMu.Lock()
 	alerts, transitions := o.eval.evaluate(snap)
+	o.evalMu.Unlock()
 	snap.Alerts = alerts
 
 	o.retain(snap)
@@ -243,12 +258,32 @@ func (o *Observer) History() []Snapshot {
 	return out
 }
 
+// Snapshots returns the retained history (oldest-first) and the latest snapshot
+// under a single read lock, so a tick landing between two separate calls cannot
+// yield a latest that is newer than the last history element. hasLatest is false
+// before the first tick.
+func (o *Observer) Snapshots() (history []Snapshot, latest Snapshot, hasLatest bool) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	history = make([]Snapshot, len(o.history))
+	copy(history, o.history)
+	if len(o.history) == 0 {
+		return history, Snapshot{}, false
+	}
+	return history, o.history[len(o.history)-1], true
+}
+
 // aggregateSessions computes per-project counts, per-scope memory (matched to
 // live sessions), and the machine-wide zombie count. A scope with no matching
 // non-terminated session row is a zombie (leaked runtime / orphaned process).
-func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64) ([]Project, []Scope, int) {
+//
+// sessionsKnown reports whether the live session set is trustworthy this tick.
+// When it is false (no session source, or the query failed) the live-handle set
+// is unreliable, so scopes are reported as unmatched=unknown and NO zombies are
+// counted — a DB hiccup must not masquerade as a fleet-wide leak.
+func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64, sessionsKnown bool) ([]Project, []Scope, int) {
 	byProject := map[string]*Project{}
-	// handle id -> project, for scope matching and per-project zombie attribution.
+	// handle id -> project id, for matching cgroup scopes to live sessions.
 	liveHandles := map[string]string{}
 
 	for _, s := range sessions {
@@ -276,13 +311,16 @@ func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint
 	zombies := 0
 	for name, mem := range scopeMem {
 		_, matched := liveHandles[name]
+		// When the session set is unknown we cannot judge a scope as matched;
+		// report it unmatched but do not count it toward zombies.
+		reportMatched := sessionsKnown && matched
 		scopes = append(scopes, Scope{
 			SessionID: name, // scope handle id == tmux session name == ao session id
 			Name:      name,
 			MemBytes:  mem,
-			Matched:   matched,
+			Matched:   reportMatched,
 		})
-		if !matched {
+		if sessionsKnown && !matched {
 			zombies++
 		}
 	}

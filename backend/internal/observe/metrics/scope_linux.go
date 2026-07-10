@@ -4,16 +4,22 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // cgroupRoot is the cgroup v2 unified hierarchy mount. The PID→cgroup path from
 // /proc/<pid>/cgroup is relative to this root.
 const cgroupRoot = "/sys/fs/cgroup"
+
+// scopeListTimeout bounds a single tmux list-panes exec so a wedged tmux server
+// cannot stall the observer's poll goroutine (the loop is sequential).
+const scopeListTimeout = 5 * time.Second
 
 // NewScopeCollector returns the Linux per-session scope collector. It lists
 // panes via the tmux binary, resolves each pane PID's cgroup from /proc, and
@@ -33,13 +39,24 @@ func NewScopeCollector(tmuxBinary string) ScopeCollector {
 type tmuxPaneLister struct{ binary string }
 
 func (t tmuxPaneLister) panes(ctx context.Context) ([]pane, error) {
+	// Bound the exec: a hung tmux server must not block the tick forever.
+	ctx, cancel := context.WithTimeout(ctx, scopeListTimeout)
+	defer cancel()
 	// #{session_name} #{pane_pid}: one line per pane across all sessions.
 	cmd := exec.CommandContext(ctx, t.binary, "list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}")
 	out, err := cmd.Output()
 	if err != nil {
-		// No server / no sessions is not an error worth failing the tick over:
-		// treat it as "no panes" so the observer records zero scopes.
-		return nil, nil //nolint:nilerr // a missing tmux server means "no panes", not a tick failure
+		// Distinguish "no server / no sessions" (a nonzero tmux exit, which is
+		// normal and means "no panes") from a real failure to run tmux at all
+		// (binary missing on PATH, permission denied, or the context deadline).
+		// The former degrades to zero scopes; the latter is a genuine tick error
+		// so the observer does not silently report a healthy, zombie-free fleet
+		// when it simply cannot see tmux.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, nil //nolint:nilerr // nonzero tmux exit == no panes, not a tick failure
+		}
+		return nil, err
 	}
 	return parsePaneLines(string(out)), nil
 }
@@ -47,8 +64,9 @@ func (t tmuxPaneLister) panes(ctx context.Context) ([]pane, error) {
 // parsePaneLines parses tab-separated "session\tpid" lines into panes, skipping
 // malformed rows.
 func parsePaneLines(s string) []pane {
-	var panes []pane
-	for _, line := range strings.Split(s, "\n") {
+	lines := strings.Split(s, "\n")
+	panes := make([]pane, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -70,14 +88,50 @@ func parsePaneLines(s string) []pane {
 type procCgroupResolver struct{}
 
 func (procCgroupResolver) cgroupOf(pid int) (string, bool) {
+	cg, ok := readProcCgroup("/proc/" + strconv.Itoa(pid) + "/cgroup")
+	if !ok {
+		return "", false
+	}
+	// Only ao-managed panes live in a per-session tmux-spawn scope. Restricting
+	// to that shape excludes a human's own `tmux new` on the same server (which
+	// sits in the shared service/session cgroup, not its own scope) so it is
+	// neither charged memory nor counted as a zombie.
+	if !isManagedScope(cg) {
+		return "", false
+	}
+	return cg, true
+}
+
+// managedScopePrefix is the systemd scope-name prefix ao gives each spawned
+// tmux session; the pane's cgroup basename is "<prefix><uuid>.scope".
+const managedScopePrefix = "tmux-spawn-"
+
+// isManagedScope reports whether a cgroup v2 path is an ao per-session tmux
+// scope (…/tmux-spawn-<uuid>.scope).
+func isManagedScope(cgroup string) bool {
+	base := cgroup
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	return strings.HasPrefix(base, managedScopePrefix) && strings.HasSuffix(base, ".scope")
+}
+
+// selfCgroup reads the daemon's own cgroup so Scopes can skip panes that share
+// it (i.e. have no per-session scope of their own).
+func (procCgroupResolver) selfCgroup() (string, bool) {
+	return readProcCgroup("/proc/self/cgroup")
+}
+
+// readProcCgroup extracts the cgroup v2 unified path from a /proc/<pid>/cgroup
+// file. The v2 line is "0::/user.slice/.../tmux-spawn-<uuid>.scope".
+func readProcCgroup(path string) (string, bool) {
 	// Build the path with string concat rather than filepath.Join: gocritic's
 	// filepathJoin flags a Join arg that itself contains a separator ("/proc"),
 	// and /proc paths are always forward-slash on Linux anyway.
-	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
+	data, err := os.ReadFile(path) //nolint:gosec // fixed /proc path
 	if err != nil {
 		return "", false
 	}
-	// cgroup v2 lines look like "0::/user.slice/.../tmux-spawn-<uuid>.scope".
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "0::") {
 			return strings.TrimPrefix(line, "0::"), true

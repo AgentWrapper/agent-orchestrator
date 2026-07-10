@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,12 +110,25 @@ func TestLoadMetricsInvalid(t *testing.T) {
 		"AO_METRICS_MEM_AVAIL_PCT": "-1",
 		"AO_METRICS_LOAD_PER_CORE": "-2",
 		"AO_METRICS_ZOMBIE_TICKS":  "-1",
+		// Non-finite values must be rejected: NaN<0 and Inf>100 are both false,
+		// so without an explicit guard they would silently disable/overflow a
+		// threshold.
+		"AO_METRICS_LOAD_PER_CORE_NAN": "NaN",
+		"AO_METRICS_DISK_FREE_PCT_INF": "Inf",
 	}
 	for k, v := range cases {
 		t.Run(k, func(t *testing.T) {
-			t.Setenv(k, v)
+			// Allow two distinct cases for one env var via a "_SUFFIX" test key.
+			envKey := k
+			if i := strings.Index(k, "_NAN"); i >= 0 {
+				envKey = k[:i]
+			}
+			if i := strings.Index(k, "_INF"); i >= 0 {
+				envKey = k[:i]
+			}
+			t.Setenv(envKey, v)
 			if _, err := Load(); err == nil {
-				t.Fatalf("Load with %s=%q should fail", k, v)
+				t.Fatalf("Load with %s=%q should fail", envKey, v)
 			}
 		})
 	}

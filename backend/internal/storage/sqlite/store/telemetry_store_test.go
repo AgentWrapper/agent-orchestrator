@@ -34,8 +34,10 @@ func TestTelemetryStore_CreateListAndPrune(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	if rows[0].ID != "tev_old" || rows[1].ID != "tev_new" {
-		t.Fatalf("ids = %q, %q", rows[0].ID, rows[1].ID)
+	// Newest-first: the most recent event comes first so a truncating LIMIT keeps
+	// the newest rows.
+	if rows[0].ID != "tev_new" || rows[1].ID != "tev_old" {
+		t.Fatalf("ids = %q, %q (want newest-first)", rows[0].ID, rows[1].ID)
 	}
 
 	n, err := s.PruneTelemetryEventsBefore(ctx, newAt.Add(-24*time.Hour), 100)

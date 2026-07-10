@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
@@ -43,6 +44,11 @@ func (a *StoreCostAggregator) Aggregate(ctx context.Context, since time.Time) (C
 		return Cost{}, err
 	}
 	var c Cost
+	// The query returns rows newest-first capped at a.limit, so hitting the cap
+	// means the window held more events than we aggregated (oldest dropped).
+	if a.limit > 0 && int64(len(rows)) >= a.limit {
+		c.Truncated = true
+	}
 	for _, row := range rows {
 		in, out, total, cost, ok := parseCostPayload(row.PayloadJson)
 		if !ok {
@@ -87,7 +93,11 @@ func parseCostPayload(payload string) (in, out, total int64, cost float64, ok bo
 }
 
 // numField reads a numeric field from a decoded JSON object, accepting the
-// float64 that encoding/json produces for JSON numbers.
+// float64 that encoding/json produces for JSON numbers. Payloads originate from
+// agent harnesses, so non-finite (NaN/±Inf) and negative values are rejected
+// rather than propagated into the int64 conversions and the running totals,
+// where int64(NaN) is implementation-defined and a negative would corrupt the
+// aggregate.
 func numField(m map[string]any, key string) (float64, bool) {
 	v, ok := m[key]
 	if !ok {
@@ -95,6 +105,9 @@ func numField(m map[string]any, key string) (float64, bool) {
 	}
 	f, ok := v.(float64)
 	if !ok {
+		return 0, false
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
 		return 0, false
 	}
 	return f, true

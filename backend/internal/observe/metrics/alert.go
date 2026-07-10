@@ -122,16 +122,30 @@ func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 	}
 
 	// zombies: sustained above zero for ZombieSustainTicks consecutive ticks.
+	// When the zombie count is not authoritative this tick (session set unknown,
+	// e.g. a DB read failed), we neither advance nor reset the sustain counter
+	// and carry the prior firing state forward, so a transient outage does not
+	// fabricate — or spuriously clear — a fleet-wide leak alert.
 	if e.th.ZombieSustainTicks > 0 {
-		if s.Zombies > 0 {
-			e.zombieN++
+		if !s.zombiesKnown {
+			if prev, ok := e.firing[AlertZombies]; ok {
+				next[AlertZombies] = prev
+			}
 		} else {
-			e.zombieN = 0
-		}
-		if e.zombieN >= e.th.ZombieSustainTicks {
-			next[AlertZombies] = Alert{
-				Kind: AlertZombies, Severity: SeverityWarn, Value: float64(s.Zombies), Threshold: 0,
-				Message: fmt.Sprintf("%d zombie session(s) for %d consecutive ticks", s.Zombies, e.zombieN),
+			if s.Zombies > 0 {
+				e.zombieN++
+			} else {
+				e.zombieN = 0
+			}
+			if e.zombieN >= e.th.ZombieSustainTicks {
+				next[AlertZombies] = Alert{
+					Kind: AlertZombies, Severity: SeverityWarn,
+					// Value is the zombie count; Threshold carries the sustain-tick
+					// requirement so consumers rendering "value above threshold" do
+					// not print "N above 0".
+					Value: float64(s.Zombies), Threshold: float64(e.th.ZombieSustainTicks),
+					Message: fmt.Sprintf("%d zombie session(s) for %d consecutive ticks", s.Zombies, e.zombieN),
+				}
 			}
 		}
 	}

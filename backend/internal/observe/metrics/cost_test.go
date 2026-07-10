@@ -60,3 +60,53 @@ func TestParseCostPayloadTotalDerivation(t *testing.T) {
 		t.Errorf("got in=%d out=%d total=%d cost=%v", in, out, total, cost)
 	}
 }
+
+func TestParseCostPayloadRejectsNonFiniteAndNegative(t *testing.T) {
+	cases := []string{
+		`{"input_tokens":1e400}`, // +Inf after decode
+		`{"cost_usd":-1.5}`,      // negative cost
+		`{"input_tokens":-10}`,   // negative tokens
+	}
+	for _, p := range cases {
+		if _, _, _, _, ok := parseCostPayload(p); ok {
+			// A payload whose only recognised field is non-finite/negative must
+			// not be treated as a cost-bearing event.
+			t.Errorf("payload %q must be rejected (non-finite/negative)", p)
+		}
+	}
+	// NaN cannot be expressed in JSON literals, but a mixed payload with a valid
+	// field and a negative one must drop only the bad field.
+	in, out, _, cost, ok := parseCostPayload(`{"input_tokens":5,"cost_usd":-9}`)
+	if !ok {
+		t.Fatal("want ok for the valid input_tokens field")
+	}
+	if in != 5 || out != 0 || cost != 0 {
+		t.Errorf("negative cost must be dropped: in=%d out=%d cost=%v", in, out, cost)
+	}
+}
+
+func TestStoreCostAggregatorMarksTruncated(t *testing.T) {
+	// Fill exactly the scan limit → truncation signalled.
+	rows := make([]gen.TelemetryEvent, costScanLimit)
+	for i := range rows {
+		rows[i] = gen.TelemetryEvent{PayloadJson: `{"input_tokens":1}`}
+	}
+	agg := NewStoreCostAggregator(fakeTelemetry{rows: rows})
+	c, err := agg.Aggregate(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if !c.Truncated {
+		t.Error("hitting the scan limit must set Truncated")
+	}
+
+	// Below the limit → not truncated.
+	agg2 := NewStoreCostAggregator(fakeTelemetry{rows: rows[:3]})
+	c2, err := agg2.Aggregate(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if c2.Truncated {
+		t.Error("under the scan limit must not set Truncated")
+	}
+}

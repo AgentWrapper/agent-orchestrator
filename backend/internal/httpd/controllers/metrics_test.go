@@ -18,8 +18,9 @@ type fakeMetricsProvider struct {
 	history   []metrics.Snapshot
 }
 
-func (f fakeMetricsProvider) Latest() (metrics.Snapshot, bool) { return f.latest, f.hasLatest }
-func (f fakeMetricsProvider) History() []metrics.Snapshot      { return f.history }
+func (f fakeMetricsProvider) Snapshots() ([]metrics.Snapshot, metrics.Snapshot, bool) {
+	return f.history, f.latest, f.hasLatest
+}
 
 func mountMetrics(p MetricsProvider) http.Handler {
 	r := chi.NewRouter()

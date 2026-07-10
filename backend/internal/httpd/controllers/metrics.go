@@ -14,8 +14,10 @@ import (
 // metrics observer. It is a pure in-memory read of the observer's retained
 // snapshots, so it neither blocks nor samples on the request path.
 type MetricsProvider interface {
-	Latest() (metrics.Snapshot, bool)
-	History() []metrics.Snapshot
+	// Snapshots returns the retained history (oldest-first) plus the latest
+	// snapshot under one lock, so the response cannot mix a history and a newer
+	// latest observed across two separate reads.
+	Snapshots() (history []metrics.Snapshot, latest metrics.Snapshot, hasLatest bool)
 }
 
 // MetricsController owns the /metrics route.
@@ -43,8 +45,9 @@ func (c *MetricsController) get(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/metrics")
 		return
 	}
-	resp := MetricsResponse{History: c.Provider.History()}
-	if latest, ok := c.Provider.Latest(); ok {
+	history, latest, ok := c.Provider.Snapshots()
+	resp := MetricsResponse{History: history}
+	if ok {
 		resp.Latest = &latest
 	}
 	if resp.History == nil {

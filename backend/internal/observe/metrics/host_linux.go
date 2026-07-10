@@ -109,8 +109,12 @@ func readMemInfo(path string) (total, avail uint64, err error) {
 	if err := sc.Err(); err != nil {
 		return 0, 0, err
 	}
-	if !haveTotal {
-		return 0, 0, fmt.Errorf("meminfo: MemTotal not found")
+	// Require BOTH fields: a /proc/meminfo without a MemAvailable line (pre-3.14
+	// kernels, some container /proc mounts) would otherwise return total>0,
+	// avail=0, err=nil. The evaluator's unknown-facts guard only checks
+	// MemTotalBytes>0, so that combination fires mem_low on every tick forever.
+	if !haveTotal || !haveAvail {
+		return 0, 0, fmt.Errorf("meminfo: MemTotal/MemAvailable not found")
 	}
 	return total, avail, nil
 }

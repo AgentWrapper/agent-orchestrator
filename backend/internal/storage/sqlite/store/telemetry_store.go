@@ -46,8 +46,9 @@ func (s *Store) CreateTelemetryEvent(ctx context.Context, rec TelemetryEventReco
 	return nil
 }
 
-// ListTelemetryEventsSince returns telemetry rows oldest-first from a time
-// boundary, capped by limit.
+// ListTelemetryEventsSince returns telemetry rows newest-first from a time
+// boundary, capped by limit. Newest-first ensures a limit that truncates a busy
+// window keeps the most recent rows; callers needing chronological order re-sort.
 func (s *Store) ListTelemetryEventsSince(ctx context.Context, since time.Time, limit int64) ([]gen.TelemetryEvent, error) {
 	rows, err := s.qr.ListTelemetryEventsSince(ctx, gen.ListTelemetryEventsSinceParams{
 		OccurredAt: since.UTC(),
