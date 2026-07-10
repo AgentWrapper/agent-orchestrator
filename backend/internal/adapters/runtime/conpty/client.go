@@ -30,8 +30,9 @@ func dialHost(addr string, timeout time.Duration) (net.Conn, error) {
 	return net.DialTimeout("tcp", addr, timeout)
 }
 
-// clientSendMessage chunks message by 512 runes and sends each as a
-// MsgTerminalInput frame with 15ms gaps, then pauses 300ms and sends "\r".
+// clientSendMessage clears the current input line, chunks message by 512 runes
+// and sends each as a MsgTerminalInput frame with 15ms gaps, then pauses 300ms
+// and sends "\r".
 // Mirrors ptyHostSendMessage from pty-client.ts.
 func clientSendMessage(addr, message string) error {
 	conn, err := dialHost(addr, dialTimeout)
@@ -41,6 +42,15 @@ func clientSendMessage(addr, message string) error {
 	defer func() { _ = conn.Close() }()
 
 	runes := []rune(message)
+	if len(runes) > 0 {
+		frame, err := EncodeMessage(MsgTerminalInput, []byte("\x15"))
+		if err != nil {
+			return err
+		}
+		if _, err := conn.Write(frame); err != nil {
+			return err
+		}
+	}
 	for i := 0; i < len(runes); i += ptyInputChunkRunes {
 		end := i + ptyInputChunkRunes
 		if end > len(runes) {

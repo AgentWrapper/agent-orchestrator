@@ -176,7 +176,7 @@ type Manager struct {
 	store     Store
 	// guard is the shared pane-write primitive (see sessionguard) every write
 	// into a live session goes through: the initial user message in Send and
-	// the Enter-only nudges in confirmActive.
+	// the replay attempts in confirmActive.
 	guard   *sessionguard.Guard
 	lcm     lifecycleRecorder
 	dataDir string
@@ -212,12 +212,13 @@ type workerMixBucketDown struct {
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
-// Send. AO has no delivery ack: ao send returns 200 the moment tmux send-keys
-// exits 0, and for a large multiline paste the single Enter may not submit the
-// prompt — so UserPromptSubmit never fires and the orchestrator cannot tell the
-// worker started. confirmActive observes the durable Activity.State (written by
-// the user-prompt-submit hook) and re-sends Enter until the session is active or
-// the budget is exhausted. It never fails the send.
+// Send. AO has no delivery ack: ao send returns once the runtime write commands
+// exit 0, and for a large multiline paste the submit may still not be observed
+// by the harness — so UserPromptSubmit never fires and the orchestrator cannot
+// tell the worker started. confirmActive observes the durable Activity.State
+// (written by the user-prompt-submit hook) and replays the intended message
+// until the session is active or the budget is exhausted. It never fails the
+// send.
 type sendConfirmConfig struct {
 	// pollInterval is the gap between activity reads.
 	pollInterval time.Duration
@@ -237,8 +238,8 @@ type paneReadyConfig struct {
 	deadline time.Duration
 }
 
-// Production sendConfirm bounds: 3 Enters total (1 from Send + 2 re-sends),
-// each given 2s to flip the session active, polled every 300ms.
+// Production sendConfirm bounds: 3 submit attempts total (1 from Send + 2
+// replays), each given 2s to flip the session active, polled every 300ms.
 const (
 	sendConfirmPollInterval    = 300 * time.Millisecond
 	sendConfirmAttemptDeadline = 2 * time.Second
@@ -1829,9 +1830,9 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 // nil the moment the runtime paste + Enter commands exit 0, and for a large
 // multiline prompt a single Enter may not submit (claude-code leaves it as an
 // unsubmitted draft). confirmActive observes the durable Activity.State
-// (flipped to active by the user-prompt-submit hook) and re-sends Enter until
-// the session is active or the budget is exhausted. Confirmation never fails
-// the send: it only decides whether to nudge again.
+// (flipped to active by the user-prompt-submit hook) and replays the intended
+// message until the session is active or the budget is exhausted. Confirmation
+// never fails the send: it only decides whether to replay again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string) error {
 	outcome, err := m.guard.Deliver(ctx, id, message)
 	if err != nil {
@@ -1847,20 +1848,20 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 	}
 	// confirmActive only helps — and is only SAFE — when the harness reports
 	// both a prompt-submit signal (so the loop can observe active) and a
-	// blocked signal (so it can tell an unsubmitted draft from a pending
-	// permission dialog and never Enter into the latter). Harnesses that
+	// blocked signal (so it can tell a delayed submit from a pending permission
+	// dialog and never write into the latter). Harnesses that
 	// delegate hooks (grok/continueagent/devin → claude-code) satisfy both via
 	// their adapter; copilot is excluded (its -p mode never fires); goose,
 	// opencode, and agy submit but install no permission hook, so they opt out.
 	// Best-effort: the message is already delivered, so a failed/absent state
-	// read only means we skip the optional nudge — never that the send failed.
+	// read only means we skip the optional replay — never that the send failed.
 	// The read error is deliberately not propagated (a nil `ok` covers it too).
 	rec, ok, _ := m.store.GetSession(ctx, id)
 	if !ok {
 		return nil
 	}
 	if m.harnessNudgeSafe(rec.Harness) {
-		m.confirmActive(ctx, id)
+		m.confirmActive(ctx, id, message)
 	}
 	return nil
 }
@@ -1891,7 +1892,7 @@ func (m *Manager) WakeIdle(ctx context.Context, id domain.SessionID, message str
 	}
 	rec, ok, _ = m.store.GetSession(ctx, id)
 	if ok && m.harnessNudgeSafe(rec.Harness) {
-		m.confirmActive(ctx, id)
+		m.confirmActive(ctx, id, message)
 	}
 	return true, nil
 }
@@ -1941,10 +1942,10 @@ func (m *Manager) Rename(ctx context.Context, id domain.SessionID, displayName s
 	return nil
 }
 
-// harnessNudgeSafe reports whether the session's harness is safe to nudge with
-// an Enter-only re-send (see ports.ActivitySignaler): it must emit BOTH a
+// harnessNudgeSafe reports whether the session's harness is safe to confirm
+// with a replay (see ports.ActivitySignaler): it must emit BOTH a
 // prompt-submit signal (else the loop wastes its budget never observing active)
-// and a blocked signal (else an Enter meant to resubmit a draft could answer a
+// and a blocked signal (else a replayed submit could answer a
 // permission dialog the harness cannot report).
 func (m *Manager) harnessNudgeSafe(harness domain.AgentHarness) bool {
 	agent, ok := m.agents.Agent(harness)
@@ -1956,7 +1957,7 @@ func (m *Manager) harnessNudgeSafe(harness domain.AgentHarness) bool {
 }
 
 // waitOutcome is one poll round's verdict on whether confirmActive should
-// nudge again.
+// replay again.
 type waitOutcome int
 
 const (
@@ -1966,61 +1967,61 @@ const (
 	// waitActive: the session went active — the prompt was accepted, done.
 	waitActive
 	// waitBlocked: the session is paused on a user decision (a pending
-	// permission/approval dialog) — an automated Enter could answer the dialog
-	// on the user's behalf, so confirmation must stop and never nudge.
+	// permission/approval dialog) — an automated submit could answer the dialog
+	// on the user's behalf, so confirmation must stop and never replay.
 	waitBlocked
 )
 
-// confirmActive re-sends Enter until the session reports ActivityActive or the
-// attempt budget is exhausted. The initial Send already submitted one Enter;
-// each additional attempt sends Enter again (an empty message is an Enter-only
-// nudge, see ports.AgentMessenger) after waiting for Activity.State to flip. It
-// is best-effort: on context cancellation, store failure, or budget exhaustion
-// it returns silently (the message was already delivered; the agent may yet
-// pick it up). Harnesses without a user-prompt-submit hook never flip to
-// active, so the loop simply times out — Send remains successful for them.
+// confirmActive replays the intended message until the session reports
+// ActivityActive or the attempt budget is exhausted. The initial Send already
+// submitted once; each additional attempt clears the input line and sends the
+// same message again after waiting for Activity.State to flip. It is
+// best-effort: on context cancellation, store failure, or budget exhaustion it
+// returns silently (the message was already delivered; the agent may yet pick
+// it up). Harnesses without a user-prompt-submit hook never reach this loop.
 //
 // Decision safety: a session observed in ActivityBlocked stops confirmation
-// immediately with no nudge — an Enter into a pending permission dialog would
+// immediately with no replay — a submit into a pending permission dialog would
 // answer it for the user. Sticky ActivityWaitingInput does NOT stop the loop:
-// an idle-prompt session with an unsubmitted pasted draft is exactly the case
-// the nudge exists for.
-func (m *Manager) confirmActive(ctx context.Context, id domain.SessionID) {
+// an idle-prompt session with an unobserved submit is exactly the case the
+// replay exists for.
+func (m *Manager) confirmActive(ctx context.Context, id domain.SessionID, message string) {
 	for attempt := 1; ; attempt++ {
 		outcome, err := m.waitForActive(ctx, id)
 		if err != nil || outcome == waitActive {
 			return
 		}
 		if outcome == waitBlocked {
-			m.logger.Info("send: session awaiting a decision; skipping Enter nudge", "sessionID", id, "attempt", attempt)
+			m.logger.Info("send: session awaiting a decision; skipping send replay", "sessionID", id, "attempt", attempt)
 			return
 		}
 		if attempt >= m.sendConfirm.maxAttempts {
 			return
 		}
-		// Timed out with budget remaining: the previous Enter did not land.
-		// Nudge again with an Enter-only send. Deliver re-reads state
-		// immediately before pasting — a permission dialog can appear in the
-		// gap between waitForActive's final poll and this send, and an Enter
-		// into it would answer the decision. This closes the TOCTOU the
-		// per-poll check inside waitForActive cannot cover; a store failure
-		// inside the guard fails closed (no Enter on an unknown state).
-		nudge, nudgeErr := m.guard.Deliver(ctx, id, "")
-		if nudgeErr != nil {
-			m.logger.Warn("send: confirm re-send failed", "sessionID", id, "attempt", attempt, "error", nudgeErr)
+		// Timed out with budget remaining: the previous submit was not observed
+		// as accepted. Replay the intended message rather than pressing a bare
+		// Enter against unknown pane contents. Deliver re-reads state
+		// immediately before writing — a permission dialog can appear in the gap
+		// between waitForActive's final poll and this send, and an Enter into it
+		// would answer the decision. This closes the TOCTOU the per-poll check
+		// inside waitForActive cannot cover; a store failure inside the guard
+		// fails closed (no write on an unknown state).
+		replay, replayErr := m.guard.Deliver(ctx, id, message)
+		if replayErr != nil {
+			m.logger.Warn("send: confirm replay failed", "sessionID", id, "attempt", attempt, "error", replayErr)
 			return
 		}
-		if nudge != sessionguard.Sent {
+		if replay != sessionguard.Sent {
 			// Not necessarily blocked: the session may also have terminated or
 			// vanished since the poll — the outcome says which.
-			m.logger.Info("send: session unavailable before nudge; skipping Enter nudge", "sessionID", id, "attempt", attempt, "outcome", nudge.String())
+			m.logger.Info("send: session unavailable before replay; skipping send replay", "sessionID", id, "attempt", attempt, "outcome", replay.String())
 			return
 		}
 	}
 }
 
 // waitForActive polls Activity.State for up to attemptDeadline and reports
-// whether another nudge could help (see waitOutcome). Blocked is checked every
+// whether another replay could help (see waitOutcome). Blocked is checked every
 // poll so a permission dialog appearing mid-wait aborts immediately instead of
 // burning the deadline. A non-nil error means polling cannot continue (ctx
 // cancelled, store failure, session gone).

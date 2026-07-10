@@ -95,6 +95,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
 	}
+	if got, want := sendClearLineArgs("sess-1"), []string{"send-keys", "-t", "sess-1", "C-u"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("sendClearLineArgs = %#v, want %#v", got, want)
+	}
 	if got, want := sendEnterArgs("sess-1"), []string{"send-keys", "-t", "sess-1", "Enter"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendEnterArgs = %#v, want %#v", got, want)
 	}
@@ -460,23 +463,26 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 
 func TestSendMessageChunksAndSendsEnter(t *testing.T) {
 	r, fr := newTestRuntime(5) // chunkSize=5
-	// "hello世界": hello=5 bytes, 世=3 bytes, 界=3 bytes => 3 sends + 1 Enter
+	// "hello世界": hello=5 bytes, 世=3 bytes, 界=3 bytes => clear + 3 sends + Enter
 	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "hello世界"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if len(fr.calls) != 4 {
-		t.Fatalf("calls = %d, want 4 (3 chunks + Enter)", len(fr.calls))
+	if len(fr.calls) != 5 {
+		t.Fatalf("calls = %d, want 5 (clear + 3 chunks + Enter)", len(fr.calls))
 	}
-	if got, want := fr.calls[0].args, sendKeysLiteralArgs("sess-1", "hello"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[0].args, sendClearLineArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("clear args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "hello"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunk 1 args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "世"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[2].args, sendKeysLiteralArgs("sess-1", "世"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunk 2 args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[2].args, sendKeysLiteralArgs("sess-1", "界"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[3].args, sendKeysLiteralArgs("sess-1", "界"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunk 3 args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[3].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[4].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
 	}
 }
@@ -486,9 +492,9 @@ func TestSendMessageUsesLiteralFlag(t *testing.T) {
 	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "Enter"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	// First call must use -l so "Enter" is sent literally, not as a key binding.
-	if fr.calls[0].args[3] != "-l" {
-		t.Fatalf("send-keys args[3] = %q, want -l", fr.calls[0].args[3])
+	// The text call must use -l so "Enter" is sent literally, not as a key binding.
+	if fr.calls[1].args[3] != "-l" {
+		t.Fatalf("send-keys args[3] = %q, want -l", fr.calls[1].args[3])
 	}
 }
 
@@ -520,11 +526,14 @@ func TestSendMessageDelaysBeforeEnter(t *testing.T) {
 	if dt := time.Since(start); dt < r.enterDelay {
 		t.Fatalf("SendMessage took %s, want >= %s pre-Enter pause", dt, r.enterDelay)
 	}
-	// Non-empty message still ends with the literal chunks then Enter.
-	if len(fr.calls) != 2 {
-		t.Fatalf("calls = %d, want 2 (chunk + Enter)", len(fr.calls))
+	// Non-empty message still clears, sends the literal chunks, then Enter.
+	if len(fr.calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (clear + chunk + Enter)", len(fr.calls))
 	}
-	if got, want := fr.calls[1].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[0].args, sendClearLineArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("clear args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[2].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
 	}
 
@@ -565,10 +574,10 @@ func TestSendMessageEnterSurvivesCallerCancel(t *testing.T) {
 	if err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "hello"); err != nil {
 		t.Fatalf("SendMessage cancelled mid-pause: %v (Enter must run detached)", err)
 	}
-	if len(fr.calls) != 2 {
-		t.Fatalf("calls = %d, want 2 (chunk + Enter despite the caller cancel after the paste)", len(fr.calls))
+	if len(fr.calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (clear + chunk + Enter despite the caller cancel after the paste)", len(fr.calls))
 	}
-	if got, want := fr.calls[1].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[2].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
 	}
 }

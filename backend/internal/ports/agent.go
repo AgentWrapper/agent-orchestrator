@@ -136,11 +136,11 @@ type AgentResolver interface {
 //
 // EmitsBlockedActivity reports whether the harness emits a decision-pause
 // signal (a permission/approval prompt that flips Activity.State to blocked).
-// The Enter-only nudge is only SAFE when this is true: a harness that submits
-// but cannot report blocked leaves the confirm loop unable to tell an
-// unsubmitted draft from a pending permission dialog, so an Enter meant to
-// resubmit the draft could instead answer the dialog. confirmActive therefore
-// requires BOTH signals before it will nudge.
+// A replayed submit is only SAFE when this is true: a harness that submits but
+// cannot report blocked leaves the confirm loop unable to tell an unsubmitted
+// draft from a pending permission dialog, so a replay meant to resubmit the
+// draft could instead answer the dialog. confirmActive therefore requires BOTH
+// signals before it will replay.
 //
 // copilot maps the submit hook but its CLI does not fire prompt-style hooks in
 // -p mode, so it must NOT implement this at all (it would otherwise pay the

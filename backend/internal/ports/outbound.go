@@ -68,9 +68,10 @@ type ClaimOutcome struct {
 	OwnerTerminated bool
 }
 
-// AgentMessenger injects a message into a running agent. An empty message
-// sends only the submit keystroke (Enter) — callers use it to nudge a pasted
-// prompt that was not submitted; every runtime must honor this contract.
+// AgentMessenger injects a message into a running agent. Non-empty messages are
+// managed sends: runtimes clear any current input line, write the message, and
+// submit it. Empty messages are retained only as a low-level Enter-only
+// primitive; higher-level confirmation paths must not use them as blind retries.
 type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }

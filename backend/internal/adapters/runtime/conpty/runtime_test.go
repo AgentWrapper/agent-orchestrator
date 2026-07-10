@@ -250,7 +250,7 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 	// Collect all received bytes within 2s.
 	var received []byte
 	deadline := time.After(2 * time.Second)
-	// Expect at least msg + "\r".
+	// Expect clear-line, msg, then "\r".
 	for !bytes.Contains(received, []byte("\r")) {
 		select {
 		case chunk := <-inputC:
@@ -260,8 +260,8 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 		}
 	}
 
-	if !bytes.HasPrefix(received, []byte(msg)) {
-		t.Fatalf("PTY input = %q, want prefix %q then \\r", received, msg)
+	if !bytes.HasPrefix(received, []byte("\x15"+msg)) {
+		t.Fatalf("PTY input = %q, want prefix clear-line + %q then \\r", received, msg)
 	}
 	if !bytes.Contains(received, []byte("\r")) {
 		t.Fatalf("PTY input = %q, missing trailing \\r", received)
@@ -269,7 +269,7 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 }
 
 // TestSendMessage_LargeMessageChunked verifies a message > 512 runes is
-// delivered correctly (host receives full text + "\r").
+// delivered correctly (host receives clear-line + full text + "\r").
 func TestSendMessage_LargeMessageChunked(t *testing.T) {
 	isolateRegistry(t)
 	hosts := map[string]*inProcHost{}
@@ -319,8 +319,8 @@ func TestSendMessage_LargeMessageChunked(t *testing.T) {
 
 	select {
 	case got := <-inputDone:
-		// Strip trailing \r for comparison.
-		trimmed := strings.TrimSuffix(string(got), "\r")
+		// Strip clear-line and trailing \r for comparison.
+		trimmed := strings.TrimPrefix(strings.TrimSuffix(string(got), "\r"), "\x15")
 		if trimmed != msg {
 			t.Fatalf("PTY received %d chars, want %d\ngot:  %q\nwant: %q", len(trimmed), len(msg), trimmed[:min(50, len(trimmed))], msg[:min(50, len(msg))])
 		}

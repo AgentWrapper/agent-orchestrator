@@ -3612,7 +3612,7 @@ func (signalingAgent) EmitsBlockedActivity() bool { return true }
 
 // submitOnlyAgent advertises a prompt-submit signal but NOT a blocked one — a
 // harness like goose/opencode/agy that submits yet installs no permission hook.
-// confirmActive must refuse to nudge it (it could Enter into a decision the
+// confirmActive must refuse to replay into it (it could submit into a decision the
 // harness cannot report).
 type submitOnlyAgent struct{ fakeAgent }
 
@@ -3645,7 +3645,7 @@ func newSendTestManager(t *testing.T, agent ports.Agent, messenger ports.AgentMe
 
 func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	// A harness whose adapter does NOT implement ActivitySignaler (plain
-	// fakeAgent) must skip confirmActive entirely: one Send, no nudges, and the
+	// fakeAgent) must skip confirmActive entirely: one Send, no replays, and the
 	// call returns immediately without polling.
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code"}
@@ -3657,7 +3657,7 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
-		t.Fatalf("Send calls = %d, want 1 (no nudges for a hookless harness)", len(msg.msgs))
+		t.Fatalf("Send calls = %d, want 1 (no replays for a hookless harness)", len(msg.msgs))
 	}
 	// Hookless path returns within milliseconds (no 2s+ confirmation wait).
 	if dt := time.Since(start); dt > 250*time.Millisecond {
@@ -3665,29 +3665,28 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	}
 }
 
-func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
-	// A signaling harness starts idle. The first nudge (Enter-only Send) should
-	// flip the session active, after which confirmActive stops. Net: the
-	// initial message plus exactly one nudge.
+func TestSend_ConfirmsByReplayingMessageUntilActive(t *testing.T) {
+	// A signaling harness starts idle. If the first submit is not observed as
+	// active, confirmActive must replay the intended message instead of sending
+	// a bare Enter. A bare Enter can submit stale text left in the pane by
+	// another actor.
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
 		Activity: domain.Activity{State: domain.ActivityIdle}}
-	// A messenger that flips the session active on the first Enter-only nudge,
-	// mimicking the agent accepting the prompt.
-	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
+	msg := &flipOnReplayMessenger{sessionID: "s1", store: st, replay: "do the thing"}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
 	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
-		t.Fatalf("Send calls = %d, want 2 (initial + one nudge)", len(msg.msgs))
+		t.Fatalf("Send calls = %d, want 2 (initial + one replay)", len(msg.msgs))
 	}
 	if msg.msgs[0] != "do the thing" {
 		t.Fatalf("first msg = %q, want the prompt", msg.msgs[0])
 	}
-	if msg.msgs[1] != "" {
-		t.Fatalf("nudge msg = %q, want empty (Enter-only)", msg.msgs[1])
+	if msg.msgs[1] != "do the thing" {
+		t.Fatalf("retry msg = %q, want replay of the prompt", msg.msgs[1])
 	}
 	if got := st.sessions["s1"].Activity.State; got != domain.ActivityActive {
 		t.Fatalf("Activity.State = %q, want active", got)
@@ -3696,7 +3695,7 @@ func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
 
 func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	// A signaling harness that never goes active must still terminate: at most
-	// maxAttempts Sends (initial + maxAttempts-1 nudges), and Send never errors.
+	// maxAttempts Sends (initial + maxAttempts-1 replays), and Send never errors.
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
 		Activity: domain.Activity{State: domain.ActivityIdle}}
@@ -3718,7 +3717,7 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	// A session paused on a permission decision (blocked) must not receive the
 	// paste at all: the runtime appends Enter, which could answer the dialog.
 	// Send surfaces ErrAwaitingDecision (the API's 409) and the messenger is
-	// never called, so nothing — message or nudge — reaches the pane.
+	// never called, so nothing — initial message or replay — reaches the pane.
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
 		Activity: domain.Activity{State: domain.ActivityBlocked}}
@@ -3739,7 +3738,7 @@ func TestWakeIdle_AllowsWaitingInputAndConfirmsActive(t *testing.T) {
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
 		Kind:     domain.KindOrchestrator,
 		Activity: domain.Activity{State: domain.ActivityWaitingInput}}
-	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
+	msg := &flipOnReplayMessenger{sessionID: "s1", store: st, replay: "continue your supervision loop"}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
 	sent, err := m.WakeIdle(context.Background(), "s1", "continue your supervision loop")
@@ -3749,8 +3748,8 @@ func TestWakeIdle_AllowsWaitingInputAndConfirmsActive(t *testing.T) {
 	if !sent {
 		t.Fatal("WakeIdle sent = false, want true")
 	}
-	if len(msg.msgs) != 2 || msg.msgs[0] != "continue your supervision loop" || msg.msgs[1] != "" {
-		t.Fatalf("WakeIdle sends = %#v, want wake message plus Enter confirmation", msg.msgs)
+	if len(msg.msgs) != 2 || msg.msgs[0] != "continue your supervision loop" || msg.msgs[1] != "continue your supervision loop" {
+		t.Fatalf("WakeIdle sends = %#v, want wake message plus replay confirmation", msg.msgs)
 	}
 	if got := st.sessions["s1"].Activity.State; got != domain.ActivityActive {
 		t.Fatalf("Activity.State = %q, want active", got)
@@ -3818,28 +3817,28 @@ func TestSend_NoNudgeWhenBlockedAppearsMidWait(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
-		t.Fatalf("Send calls = %d, want 1 (blocked observed mid-confirm, no nudge)", len(msg.msgs))
+		t.Fatalf("Send calls = %d, want 1 (blocked observed mid-confirm, no replay)", len(msg.msgs))
 	}
 }
 
 func TestSend_StillNudgesWhenWaitingInput(t *testing.T) {
 	// waiting_input (an idle prompt awaiting the next instruction) is the
-	// PRIMARY nudge scenario: a long-idle worker with an unsubmitted pasted
-	// draft. The decision-safety guard must not disable it.
+	// PRIMARY replay scenario: a long-idle worker whose submit was not observed.
+	// The decision-safety guard must not disable it.
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
 		Activity: domain.Activity{State: domain.ActivityWaitingInput}}
-	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
+	msg := &flipOnReplayMessenger{sessionID: "s1", store: st, replay: "do the thing"}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
 	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
-		t.Fatalf("Send calls = %d, want 2 (initial + one nudge for waiting_input)", len(msg.msgs))
+		t.Fatalf("Send calls = %d, want 2 (initial + one replay for waiting_input)", len(msg.msgs))
 	}
-	if msg.msgs[1] != "" {
-		t.Fatalf("nudge msg = %q, want empty (Enter-only)", msg.msgs[1])
+	if msg.msgs[1] != "do the thing" {
+		t.Fatalf("retry msg = %q, want replay of the prompt", msg.msgs[1])
 	}
 }
 
@@ -3864,17 +3863,17 @@ func (m *blockOnSendMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	// The TOCTOU the per-poll check cannot cover: the session is not blocked on
 	// waitForActive's final poll, but a permission dialog lands in the gap
-	// before the Enter-only nudge. The just-in-time re-read in confirmActive
-	// must catch it — exactly one Send, no nudge.
+	// before the replay. The just-in-time re-read in confirmActive must catch
+	// it — exactly one Send, no replay.
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
 		Activity: domain.Activity{State: domain.ActivityIdle}}
 	// blockAfterFirstReadStore flips the session to blocked on read #4. The
 	// deterministic read sequence (attemptDeadline 0 makes waitForActive do
 	// exactly one poll): #1 Deliver's pre-paste read, #2 Send's harness lookup,
-	// #3 waitForActive's poll (idle → timeout), #4 the JIT pre-nudge re-read —
+	// #3 waitForActive's poll (idle → timeout), #4 the JIT pre-replay re-read —
 	// which is the first to see blocked, landing the flip in the exact
-	// post-final-poll / pre-nudge window this test exists to cover.
+	// post-final-poll / pre-replay window this test exists to cover.
 	bst := &blockAfterFirstReadStore{fakeStore: st, id: "s1"}
 	msg := &fakeMessenger{}
 	m := New(Deps{
@@ -3888,16 +3887,16 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
-		t.Fatalf("Send calls = %d, want 1 (blocked appeared before nudge, JIT re-read caught it)", len(msg.msgs))
+		t.Fatalf("Send calls = %d, want 1 (blocked appeared before replay, JIT re-read caught it)", len(msg.msgs))
 	}
 	if bst.reads < 4 {
-		t.Fatalf("GetSession reads = %d, want >= 4 (the JIT pre-nudge re-read must have run)", bst.reads)
+		t.Fatalf("GetSession reads = %d, want >= 4 (the JIT pre-replay re-read must have run)", bst.reads)
 	}
 }
 
 func TestSend_SkipsConfirmForSubmitOnlyHarness(t *testing.T) {
 	// A harness that submits but cannot report blocked (goose/opencode/agy) is
-	// NOT nudge-safe: confirmActive must be skipped entirely, so an Enter can
+	// NOT replay-safe: confirmActive must be skipped entirely, so a submit can
 	// never reach a permission dialog the harness could not have signalled.
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "goose",
@@ -3909,32 +3908,32 @@ func TestSend_SkipsConfirmForSubmitOnlyHarness(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
-		t.Fatalf("Send calls = %d, want 1 (submit-only harness must not be nudged)", len(msg.msgs))
+		t.Fatalf("Send calls = %d, want 1 (submit-only harness must not be replayed)", len(msg.msgs))
 	}
 }
 
 func TestHarnessNudgeSafe(t *testing.T) {
 	m := New(Deps{Agents: singleAgent{agent: fakeAgent{}}})
 	if m.harnessNudgeSafe("claude-code") {
-		t.Fatalf("hookless agent reported as nudge-safe")
+		t.Fatalf("hookless agent reported as replay-safe")
 	}
 	m2 := New(Deps{Agents: singleAgent{agent: signalingAgent{}}})
 	if !m2.harnessNudgeSafe("claude-code") {
-		t.Fatalf("submit+blocked agent not reported as nudge-safe")
+		t.Fatalf("submit+blocked agent not reported as replay-safe")
 	}
 	m3 := New(Deps{Agents: singleAgent{agent: submitOnlyAgent{}}})
 	if m3.harnessNudgeSafe("claude-code") {
-		t.Fatalf("submit-only agent (no blocked signal) reported as nudge-safe")
+		t.Fatalf("submit-only agent (no blocked signal) reported as replay-safe")
 	}
 	m4 := New(Deps{Agents: missingAgents{}})
 	if m4.harnessNudgeSafe("claude-code") {
-		t.Fatalf("unresolved harness reported as nudge-safe")
+		t.Fatalf("unresolved harness reported as replay-safe")
 	}
 }
 
 // blockAfterFirstReadStore wraps fakeStore and flips the session to
 // ActivityBlocked on the FOURTH GetSession call, so with attemptDeadline 0 the
-// first read to observe blocked is confirmActive's just-in-time pre-nudge
+// first read to observe blocked is confirmActive's just-in-time pre-replay
 // re-read (reads #1-#3 are Deliver's pre-paste read, Send's harness lookup,
 // and waitForActive's single poll — see TestSend_NoNudgeWhenBlockedAppearsBeforeNudge).
 type blockAfterFirstReadStore struct {
@@ -3954,19 +3953,20 @@ func (s *blockAfterFirstReadStore) GetSession(ctx context.Context, id domain.Ses
 	return s.fakeStore.GetSession(ctx, id)
 }
 
-// flipOnNudgeMessenger records sends like fakeMessenger and additionally flips a
-// session to ActivityActive the first time it receives an Enter-only nudge (an
-// empty message), simulating the agent accepting the prompt after the retry.
-type flipOnNudgeMessenger struct {
+// flipOnReplayMessenger records sends like fakeMessenger and additionally flips
+// a session to ActivityActive the first time it receives a replayed prompt,
+// simulating the agent accepting the prompt after the retry.
+type flipOnReplayMessenger struct {
 	msgs      []string
 	sessionID domain.SessionID
 	store     *fakeStore
+	replay    string
 	flipped   bool
 }
 
-func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+func (m *flipOnReplayMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
 	m.msgs = append(m.msgs, msg)
-	if msg == "" && !m.flipped {
+	if msg == m.replay && len(m.msgs) > 1 && !m.flipped {
 		rec, ok := m.store.sessions[m.sessionID]
 		if ok {
 			rec.Activity.State = domain.ActivityActive

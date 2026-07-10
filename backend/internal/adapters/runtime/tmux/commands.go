@@ -65,6 +65,12 @@ func sendKeysLiteralArgs(id, chunk string) []string {
 	return []string{"send-keys", "-t", id, "-l", chunk}
 }
 
+// sendClearLineArgs builds args for `tmux send-keys -t <id> C-u` to clear any
+// existing input before AO writes a managed message.
+func sendClearLineArgs(id string) []string {
+	return []string{"send-keys", "-t", id, "C-u"}
+}
+
 // sendEnterArgs builds args for `tmux send-keys -t <id> Enter` to submit the
 // queued input.
 func sendEnterArgs(id string) []string {

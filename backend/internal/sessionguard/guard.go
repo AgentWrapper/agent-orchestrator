@@ -1,10 +1,10 @@
 // Package sessionguard owns the one invariant every write into a live
 // session's pane must satisfy: re-read the session immediately before writing
 // and refuse when the paste could land somewhere only the user may act. The
-// runtime appends Enter after every paste, so a write into a session paused on
+// runtime submits every managed message, so a write into a session paused on
 // a permission/approval dialog would answer the decision on the user's behalf
 // — an unrecoverable action, unlike a skipped message which callers re-attempt
-// or surface. Every pane-writing path (user sends, post-send Enter nudges,
+// or surface. Every pane-writing path (user sends, post-send replays,
 // lifecycle reaction nudges) funnels through this guard so the stale-state
 // check lives in one tested place instead of being re-derived per call-site.
 package sessionguard
@@ -89,11 +89,10 @@ func New(store SessionReader, messenger ports.AgentMessenger, logger *slog.Logge
 	return &Guard{store: store, messenger: messenger, logger: logger}
 }
 
-// Deliver writes a user-initiated message (or its Enter-only re-submit: an
-// empty msg) into the session. It refuses only when the session is blocked on
-// a pending decision — waiting_input does NOT suppress, because an agent
-// sitting at an idle prompt is exactly where a user message (or the Enter that
-// submits its unsent draft) belongs.
+// Deliver writes a user-initiated message into the session. It refuses only
+// when the session is blocked on a pending decision — waiting_input does NOT
+// suppress, because an agent sitting at an idle prompt is exactly where a user
+// message belongs.
 func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
 	return g.send(ctx, id, msg, func(state domain.ActivityState) bool {
 		return state == domain.ActivityBlocked

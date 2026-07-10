@@ -210,8 +210,10 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
-// presses Enter to submit. An empty message presses Enter alone (the nudge
-// contract on ports.AgentMessenger).
+// presses Enter to submit. A non-empty managed send starts with C-u so stale
+// pane input cannot be concatenated with AO's message. An empty message presses
+// Enter alone for legacy callers, but session-manager confirmation no longer
+// uses that path for retries.
 //
 // ponytail: send-keys -l chunked is simpler than load-buffer/paste-buffer; the
 // ceiling is very large messages may be slower, but chunk size defaults to 16 KB
@@ -223,6 +225,9 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
+		if _, err := r.run(ctx, sendClearLineArgs(id)...); err != nil {
+			return fmt.Errorf("tmux runtime: clear input %s: %w", id, err)
+		}
 		for _, chunk := range chunks(message, r.chunkSize) {
 			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
