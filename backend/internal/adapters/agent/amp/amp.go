@@ -50,11 +50,12 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new interactive Amp session:
 //
-//	amp [--permission-mode <mode>] [--append-system-prompt <system prompt>] [-- <prompt>]
+//	amp [--permission-mode <mode>] [-- <prompt>]
 //
 // The prompt is passed after `--` so a prompt beginning with "-" is not
-// mistaken for a flag. System prompts are appended to Amp's defaults, mirroring
-// the Claude Code adapter's launch shape.
+// mistaken for a flag. Amp has no documented system-prompt flag, so
+// SystemPrompt and SystemPromptFile are intentionally ignored until Amp exposes
+// a supported instruction mechanism.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -66,11 +67,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendPermissionFlags(&cmd, cfg.Permissions)
-	if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "--append-system-prompt-file", cfg.SystemPromptFile)
-	} else if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
-	}
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}

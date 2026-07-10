@@ -45,6 +45,7 @@ type ListFilter struct {
 type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
+	SwitchHarness(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, model string) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
@@ -388,6 +389,36 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	return s.toSession(ctx, rec)
 }
 
+// SwitchHarness swaps a live session's agent in place and returns the updated
+// read model. model, when non-empty, overrides the agent model for the new launch.
+//
+// A merged session is locked: it must never switch. "merged" is a DERIVED
+// read-model status (from PR facts), so the internal manager — which sees only
+// durable session/workspace facts — cannot enforce it. Reject it here so direct
+// API/CLI callers are held to the same rule as the inspector UI.
+func (s *Service) SwitchHarness(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, model string) (domain.Session, error) {
+	if s.store != nil {
+		cur, ok, err := s.store.GetSession(ctx, id)
+		if err != nil {
+			return domain.Session{}, fmt.Errorf("switch %s: %w", id, err)
+		}
+		if ok {
+			sess, err := s.toSession(ctx, cur)
+			if err != nil {
+				return domain.Session{}, err
+			}
+			if sess.Status == domain.StatusMerged {
+				return domain.Session{}, apierr.Conflict("SESSION_MERGED", "A merged session cannot switch agents", nil)
+			}
+		}
+	}
+	rec, err := s.manager.SwitchHarness(ctx, id, harness, model)
+	if err != nil {
+		return domain.Session{}, toAPIError(err)
+	}
+	return s.toSession(ctx, rec)
+}
+
 // Kill delegates terminal intent and teardown to the internal manager.
 func (s *Service) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	freed, err := s.manager.Kill(ctx, id)
@@ -559,6 +590,8 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrNotResumable):
 		return apierr.Conflict("SESSION_NOT_RESUMABLE",
 			"This session has no saved agent session or prompt to resume from", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
+		return apierr.Conflict("SWITCH_IN_PROGRESS", "An agent switch is already in progress for this session", nil)
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo. Register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):

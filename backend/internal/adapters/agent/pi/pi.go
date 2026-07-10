@@ -1,11 +1,11 @@
-// Package pi implements the Pi agent adapter: launching new headless Pi
+// Package pi implements the Pi agent adapter: launching new interactive Pi
 // sessions and resuming sessions when a native Pi session id is known.
 //
 // Pi (badlogic / "@earendil-works/pi-coding-agent", binary "pi") is a minimal
-// terminal coding harness. AO drives it non-interactively with `-p` / `--print`
-// ("process prompt and exit"). The initial prompt is delivered in-command as a
-// trailing positional message; Pi's argument parser does not honor a `--`
-// options terminator, so AO relies on prompts not beginning with a literal "-".
+// terminal coding harness. AO runs Pi interactively in the session terminal
+// pane. The initial prompt is delivered in-command as a trailing positional
+// message; Pi's argument parser does not honor a `--` options terminator, so AO
+// relies on prompts not beginning with a literal "-".
 //
 // System prompts are appended to Pi's default coding-assistant prompt via
 // `--append-system-prompt <text>`. Pi's flag takes inline text only (no file
@@ -16,12 +16,12 @@
 // confirmation flows are built via TypeScript extensions), so AO emits no
 // permission flag and defers to Pi's own behavior.
 //
-// Restore: Pi persists sessions to ~/.pi/agent/sessions/ and resumes by id with
-// `--session <id>` (partial UUIDs accepted). The native session id is emitted on
-// the first line of `--mode json` output as {"type":"session","id":"<uuid>",...}
-// and is captured into session metadata out-of-band; GetRestoreCommand reads it
-// back from metadata. ok=false when no native id is known (manager falls back to
-// a fresh launch).
+// Restore: Pi persists sessions to ~/.pi/agent/sessions/ and resumes
+// interactively by id with `--session <id>` (partial UUIDs accepted). The native
+// session id is emitted on the first line of `--mode json` output as
+// {"type":"session","id":"<uuid>",...} and is captured into session metadata
+// out-of-band; GetRestoreCommand reads it back from metadata. ok=false when no
+// native id is known (manager falls back to a fresh launch).
 //
 // Hooks/activity: Pi exposes lifecycle hooks only through in-process TypeScript
 // extensions (pi.on("session_start", ...), etc.), not a config file AO can
@@ -74,9 +74,9 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds the argv to start a new headless Pi session:
+// GetLaunchCommand builds the argv to start a new interactive Pi session:
 //
-//	pi --print [--append-system-prompt <system prompt>] [<prompt>]
+//	pi [--append-system-prompt <system prompt>] [<prompt>]
 //
 // The prompt is delivered in-command as a trailing positional message. Pi does
 // not honor a `--` options terminator, so the prompt must not begin with "-".
@@ -87,7 +87,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	cmd = []string{binary, "--print"}
+	cmd = []string{binary}
 	if cfg.SystemPromptFile != "" {
 		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned launch config
 		if err != nil {
@@ -120,7 +120,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = []string{binary, "--print", "--session", agentSessionID}
+	cmd = []string{binary}
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+	}
+	cmd = append(cmd, "--session", agentSessionID)
 	return cmd, true, nil
 }
 

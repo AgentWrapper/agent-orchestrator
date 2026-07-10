@@ -54,6 +54,7 @@ function ShellLayout() {
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 
 	const updateWorkspaces = useCallback(
@@ -111,6 +112,7 @@ function ShellLayout() {
 			};
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
+			setOrchestratorStartupError(workspace.id, null);
 			try {
 				const sessionId = await spawnOrchestrator(workspace.id, "project_add");
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -121,10 +123,12 @@ function ShellLayout() {
 			} catch (spawnError) {
 				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
-				throw new Error(`Project added, but orchestrator did not start: ${message}`);
+				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
+				setOrchestratorStartupError(workspace.id, startupMessage);
+				throw new Error(startupMessage);
 			}
 		},
-		[navigate, queryClient, updateWorkspaces],
+		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
 	);
 
 	const removeProject = useCallback(
