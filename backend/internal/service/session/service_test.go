@@ -205,10 +205,12 @@ type fakeCommander struct {
 	retired         []domain.SessionID
 	sent            []domain.SessionID
 	cleanupProjects []domain.ProjectID
+	killFreed       map[domain.SessionID]bool
 	killErr         error
 	retireErr       error
 	sendErr         error
 	cleanupErr      error
+	cleanupResult   *sessionmanager.CleanupResult
 	spawnErr        error
 	spawnRecord     domain.SessionRecord
 	spawned         bool
@@ -236,6 +238,9 @@ func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, erro
 		return false, f.killErr
 	}
 	f.killed = append(f.killed, id)
+	if f.killFreed != nil {
+		return f.killFreed[id], nil
+	}
 	return true, nil
 }
 func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.SessionID) error {
@@ -256,6 +261,9 @@ func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (se
 	f.cleanupProjects = append(f.cleanupProjects, project)
 	if f.cleanupErr != nil {
 		return sessionmanager.CleanupResult{}, f.cleanupErr
+	}
+	if f.cleanupResult != nil {
+		return *f.cleanupResult, nil
 	}
 	return sessionmanager.CleanupResult{
 		Cleaned: []domain.SessionID{"mer-1"},
@@ -287,7 +295,7 @@ func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
 	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", IsTerminated: true}
 	st.sessions["other-1"] = domain.SessionRecord{ID: "other-1", ProjectID: "other"}
-	fc := &fakeCommander{}
+	fc := &fakeCommander{cleanupResult: &sessionmanager.CleanupResult{}}
 	svc := &Service{manager: fc, store: st}
 
 	if err := svc.TeardownProject(context.Background(), "mer"); err != nil {
@@ -301,19 +309,80 @@ func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
 	}
 }
 
-func TestTeardownProjectStopsOnKillError(t *testing.T) {
+func TestTeardownProjectBlocksOnKillError(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
-	boom := errors.New("boom")
-	fc := &fakeCommander{killErr: boom}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}}
+	boom := &sessionmanager.TeardownError{SessionID: "mer-1", Phase: sessionmanager.TeardownPhaseWorkspace, Err: errors.New("boom")}
+	fc := &fakeCommander{killErr: boom, cleanupResult: &sessionmanager.CleanupResult{}}
 	svc := &Service{manager: fc, store: st}
 
 	err := svc.TeardownProject(context.Background(), "mer")
-	if !errors.Is(err, boom) {
-		t.Fatalf("TeardownProject err = %v, want boom", err)
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "PROJECT_REMOVE_BLOCKED" {
+		t.Fatalf("TeardownProject err = %v, want PROJECT_REMOVE_BLOCKED", err)
 	}
-	if len(fc.cleanupProjects) != 0 {
-		t.Fatalf("cleanup projects = %#v, want none after kill failure", fc.cleanupProjects)
+	if len(fc.cleanupProjects) != 1 || fc.cleanupProjects[0] != "mer" {
+		t.Fatalf("cleanup projects = %#v, want cleanup after aggregating kill failure", fc.cleanupProjects)
+	}
+	blockers := apiErr.Details["blockers"].([]ProjectTeardownBlocker)
+	if len(blockers) != 1 || blockers[0].SessionID != "mer-1" || blockers[0].Phase != "workspace" || blockers[0].Reason != "workspace teardown failed" {
+		t.Fatalf("blockers = %#v, want workspace teardown blocker", blockers)
+	}
+}
+
+func TestTeardownProjectBlocksLiveDirtyWorktree(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}}
+	fc := &fakeCommander{
+		killFreed:     map[domain.SessionID]bool{"mer-1": false},
+		cleanupResult: &sessionmanager.CleanupResult{},
+	}
+	svc := &Service{manager: fc, store: st}
+
+	err := svc.TeardownProject(context.Background(), "mer")
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "PROJECT_REMOVE_BLOCKED" {
+		t.Fatalf("TeardownProject err = %v, want PROJECT_REMOVE_BLOCKED", err)
+	}
+	blockers := apiErr.Details["blockers"].([]ProjectTeardownBlocker)
+	if len(blockers) != 1 || blockers[0].SessionID != "mer-1" || blockers[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("blockers = %#v, want dirty workspace blocker", blockers)
+	}
+}
+
+func TestTeardownProjectCleansStalePrunableWorktree(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}}
+	fc := &fakeCommander{cleanupResult: &sessionmanager.CleanupResult{Cleaned: []domain.SessionID{"mer-1"}}}
+	svc := &Service{manager: fc, store: st}
+
+	if err := svc.TeardownProject(context.Background(), "mer"); err != nil {
+		t.Fatalf("TeardownProject: %v", err)
+	}
+	if len(fc.killed) != 0 {
+		t.Fatalf("killed = %#v, want no kill for terminal stale session", fc.killed)
+	}
+	if len(fc.cleanupProjects) != 1 || fc.cleanupProjects[0] != "mer" {
+		t.Fatalf("cleanup projects = %#v, want [mer]", fc.cleanupProjects)
+	}
+}
+
+func TestTeardownProjectBlocksCleanupFailure(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}}
+	fc := &fakeCommander{cleanupResult: &sessionmanager.CleanupResult{
+		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-1", Reason: "workspace teardown failed"}},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	err := svc.TeardownProject(context.Background(), "mer")
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "PROJECT_REMOVE_BLOCKED" {
+		t.Fatalf("TeardownProject err = %v, want PROJECT_REMOVE_BLOCKED", err)
+	}
+	blockers := apiErr.Details["blockers"].([]ProjectTeardownBlocker)
+	if len(blockers) != 1 || blockers[0].SessionID != "mer-1" || blockers[0].Phase != "workspace" || blockers[0].Reason != "workspace teardown failed" {
+		t.Fatalf("blockers = %#v, want cleanup workspace blocker", blockers)
 	}
 }
 

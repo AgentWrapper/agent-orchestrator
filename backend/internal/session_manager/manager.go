@@ -56,6 +56,38 @@ var (
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
 )
 
+// TeardownPhase identifies which part of explicit session teardown failed.
+// Project removal uses it to turn adapter failures into actionable conflict
+// details without leaking raw filesystem/runtime errors to the API response.
+type TeardownPhase string
+
+const (
+	TeardownPhaseRuntime   TeardownPhase = "runtime"
+	TeardownPhaseWorkspace TeardownPhase = "workspace"
+)
+
+// TeardownError wraps runtime/workspace adapter failures from Kill while
+// preserving errors.Is/As behavior for the underlying cause.
+type TeardownError struct {
+	SessionID domain.SessionID
+	Phase     TeardownPhase
+	Err       error
+}
+
+func (e *TeardownError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("kill %s: %s: %v", e.SessionID, e.Phase, e.Err)
+}
+
+func (e *TeardownError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // Env vars a spawned process reads to learn who it is.
 const (
 	EnvSessionID = "AO_SESSION_ID"
@@ -630,7 +662,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 
 	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
+			return false, &TeardownError{SessionID: id, Phase: TeardownPhaseRuntime, Err: err}
 		}
 	}
 	freed := false
@@ -640,7 +672,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				return false, nil
 			}
-			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
+			return false, &TeardownError{SessionID: id, Phase: TeardownPhaseWorkspace, Err: err}
 		}
 		freed = cleaned
 		if cleaned {
@@ -651,7 +683,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				return false, nil
 			}
-			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
+			return false, &TeardownError{SessionID: id, Phase: TeardownPhaseWorkspace, Err: err}
 		}
 		freed = true
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)

@@ -73,6 +73,22 @@ type CleanupSkipped struct {
 	Reason    string           `json:"reason"`
 }
 
+// ProjectTeardownBlocker is one session-level reason project removal cannot
+// safely unregister the project yet.
+type ProjectTeardownBlocker struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Phase     string           `json:"phase"`
+	Reason    string           `json:"reason"`
+}
+
+// ProjectTeardownDetails is embedded in PROJECT_REMOVE_BLOCKED error details.
+type ProjectTeardownDetails struct {
+	ProjectID domain.ProjectID         `json:"projectId"`
+	Killed    []domain.SessionID       `json:"killed"`
+	Cleaned   []domain.SessionID       `json:"cleaned"`
+	Blockers  []ProjectTeardownBlocker `json:"blockers"`
+}
+
 type scmProvider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
@@ -466,22 +482,92 @@ func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 
 // TeardownProject stops every live session in a project, then asks the session
 // manager to reclaim terminal workspaces. Dirty worktrees are preserved by Kill
-// and Cleanup; callers only see hard teardown failures.
+// and Cleanup; project removal receives a typed conflict with per-session
+// blockers instead of archiving a project that still has managed workspaces.
 func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID) error {
 	recs, err := s.listRecords(ctx, project)
 	if err != nil {
 		return err
 	}
+	details := ProjectTeardownDetails{
+		ProjectID: project,
+		Killed:    []domain.SessionID{},
+		Cleaned:   []domain.SessionID{},
+		Blockers:  []ProjectTeardownBlocker{},
+	}
 	for _, rec := range recs {
 		if rec.IsTerminated {
 			continue
 		}
-		if _, err := s.Kill(ctx, rec.ID); err != nil {
-			return err
+		freed, err := s.Kill(ctx, rec.ID)
+		if err != nil {
+			details.Blockers = append(details.Blockers, teardownBlockerFromError(rec.ID, err))
+			continue
+		}
+		if freed {
+			details.Killed = append(details.Killed, rec.ID)
+			continue
+		}
+		after, ok, err := s.store.GetSession(ctx, rec.ID)
+		if err != nil {
+			return fmt.Errorf("load session after teardown %s: %w", rec.ID, err)
+		}
+		if !ok || after.IsTerminated {
+			details.Killed = append(details.Killed, rec.ID)
+			continue
+		}
+		if rec.Metadata.WorkspacePath != "" {
+			details.Blockers = append(details.Blockers, ProjectTeardownBlocker{
+				SessionID: rec.ID,
+				Phase:     string(sessionmanager.TeardownPhaseWorkspace),
+				Reason:    "workspace has uncommitted changes",
+			})
 		}
 	}
-	_, err = s.Cleanup(ctx, project)
-	return err
+	cleanup, err := s.Cleanup(ctx, project)
+	if err != nil {
+		return err
+	}
+	details.Cleaned = append(details.Cleaned, cleanup.Cleaned...)
+	for _, skip := range cleanup.Skipped {
+		details.Blockers = append(details.Blockers, ProjectTeardownBlocker{
+			SessionID: skip.SessionID,
+			Phase:     string(sessionmanager.TeardownPhaseWorkspace),
+			Reason:    skip.Reason,
+		})
+	}
+	if len(details.Blockers) > 0 {
+		return projectRemoveBlocked(details)
+	}
+	return nil
+}
+
+func teardownBlockerFromError(sessionID domain.SessionID, err error) ProjectTeardownBlocker {
+	blocker := ProjectTeardownBlocker{
+		SessionID: sessionID,
+		Phase:     "session",
+		Reason:    "session teardown failed",
+	}
+	var teardownErr *sessionmanager.TeardownError
+	if errors.As(err, &teardownErr) {
+		blocker.Phase = string(teardownErr.Phase)
+		switch teardownErr.Phase {
+		case sessionmanager.TeardownPhaseRuntime:
+			blocker.Reason = "runtime teardown failed"
+		case sessionmanager.TeardownPhaseWorkspace:
+			blocker.Reason = "workspace teardown failed"
+		}
+	}
+	return blocker
+}
+
+func projectRemoveBlocked(details ProjectTeardownDetails) error {
+	return apierr.Conflict("PROJECT_REMOVE_BLOCKED", "Project removal is blocked by session workspaces that could not be removed. Resolve the listed sessions, then retry.", map[string]any{
+		"projectId": string(details.ProjectID),
+		"killed":    details.Killed,
+		"cleaned":   details.Cleaned,
+		"blockers":  details.Blockers,
+	})
 }
 
 // List returns sessions as enriched display models after applying API filters.

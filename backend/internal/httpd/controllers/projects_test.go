@@ -27,6 +27,8 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -46,6 +48,19 @@ func (emptyGetManager) Get(context.Context, domain.ProjectID) (projectsvc.GetRes
 
 	return projectsvc.GetResult{}, nil
 
+}
+
+type removeConflictManager struct{ projectsvc.Manager }
+
+func (removeConflictManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
+	return projectsvc.RemoveResult{}, apierr.Conflict("PROJECT_REMOVE_BLOCKED", "Project removal is blocked by session workspaces that could not be removed. Resolve the listed sessions, then retry.", map[string]any{
+		"projectId": "proj",
+		"blockers": []map[string]string{{
+			"sessionId": "proj-1",
+			"phase":     "workspace",
+			"reason":    "workspace has uncommitted changes",
+		}},
+	})
 }
 
 // TestProjectsAPI_GetEmptyResultIs500 locks the fix for the discriminated-union
@@ -342,6 +357,37 @@ func TestProjectsAPI_Delete(t *testing.T) {
 
 	}
 
+}
+
+func TestProjectsAPI_DeleteBlockedReturns409Details(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Projects: removeConflictManager{},
+	}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, headers := doRequest(t, srv, "DELETE", "/api/v1/projects/proj", "")
+
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_REMOVE_BLOCKED")
+
+	var got struct {
+		Details struct {
+			ProjectID string `json:"projectId"`
+			Blockers  []struct {
+				SessionID string `json:"sessionId"`
+				Phase     string `json:"phase"`
+				Reason    string `json:"reason"`
+			} `json:"blockers"`
+		} `json:"details"`
+	}
+	mustJSON(t, body, &got)
+	if got.Details.ProjectID != "proj" || len(got.Details.Blockers) != 1 {
+		t.Fatalf("details = %#v, want project blocker", got.Details)
+	}
+	if blocker := got.Details.Blockers[0]; blocker.SessionID != "proj-1" || blocker.Phase != "workspace" || blocker.Reason != "workspace has uncommitted changes" {
+		t.Fatalf("blocker = %#v, want dirty workspace blocker", blocker)
+	}
 }
 
 // TestProjectsAPI_RejectsUnknownConfigKeys locks the strict-decoder gate on the
