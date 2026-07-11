@@ -337,9 +337,9 @@ blocking, attached commands that run to completion in view.
   dodge a shell's time cap.
 - If codex hangs at MCP startup, the fallback is to disable MCP for that run
   (`-c 'mcp_servers={}'`), still in the foreground — not to background it.
-- This binds every codex invocation a worker or orchestrator drives: review
+- This binds every codex invocation a worker or an Orc drives: review
   passes (`/codex:review`, `/final-review`), diagnosis, and rescue runs. ao's
-  own daemon exec of codex — worker/orchestrator session launch into a tmux
+  own daemon exec of codex — worker/Orc session launch into a tmux
   TTY and the `#143` model probe — is already blocking/attached and stays
   that way.
 
@@ -390,10 +390,10 @@ in-harness app title — at launch, for every harness. A session dispatched with
 - **Never rename the tmux session itself** — its name IS the ao session id and
   ao addresses the pane by it.
 
-## Orchestrator role policy
+## Orc role policy
 
-Project-orchestrator standing policy is intentionally not inlined in the shared
-repo instruction context. Only an ao-created orchestrator session whose injected
-system prompt identifies it as the project orchestrator should read
+Project Orc standing policy is intentionally not inlined in the shared repo
+instruction context. Only an ao-created Orc session whose injected system prompt
+identifies it as the project Orc should read
 `.claude/orchestrator-policy.md`. Workers and interactive/ad-hoc sessions ignore
 that file.

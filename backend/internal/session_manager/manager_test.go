@@ -1555,6 +1555,81 @@ func TestSpawn_OrchestratorBranchIgnoresDisplaySessionPrefix(t *testing.T) {
 	}
 }
 
+func TestSpawn_OrchestratorTitleUsesProjectPrefixOrc(t *testing.T) {
+	st := newFakeStore()
+	st.projects["agent-orchestrator"] = domain.ProjectRecord{
+		ID:          "agent-orchestrator",
+		DisplayName: "Agent Orchestrator",
+		Config: domain.ProjectConfig{
+			ProjectPrefix: "ao",
+			Orchestrator:  domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		},
+	}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "agent-orchestrator", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantName := "ao Orc"
+	if got := st.sessions["agent-orchestrator-1"].DisplayName; got != wantName {
+		t.Fatalf("stored displayName = %q, want %q", got, wantName)
+	}
+	if got := agent.lastLaunch.LaunchTitle; got != wantName {
+		t.Fatalf("LaunchTitle = %q, want %q", got, wantName)
+	}
+	if got, want := rt.sent, []string{"/rename " + wantName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
+	}
+	if ws.lastCfg.Branch != "ao/agent-orches-orchestrator" {
+		t.Fatalf("orchestrator branch = %q, want stable project-derived branch", ws.lastCfg.Branch)
+	}
+}
+
+func TestSpawn_OrchestratorTitleIgnoresExplicitDisplayName(t *testing.T) {
+	st := newFakeStore()
+	st.projects["agent-orchestrator"] = domain.ProjectRecord{
+		ID: "agent-orchestrator",
+		Config: domain.ProjectConfig{
+			ProjectPrefix: "ao",
+			Orchestrator:  domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		},
+	}
+	agent := &launchTitleAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "agent-orchestrator",
+		Kind:        domain.KindOrchestrator,
+		DisplayName: "custom coordinator name",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantName := "ao Orc"
+	if got := st.sessions["agent-orchestrator-1"].DisplayName; got != wantName {
+		t.Fatalf("stored displayName = %q, want %q", got, wantName)
+	}
+	if got := agent.lastLaunch.LaunchTitle; got != wantName {
+		t.Fatalf("LaunchTitle = %q, want %q", got, wantName)
+	}
+	if got, want := rt.sent, []string{"/rename " + wantName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v", got, want)
+	}
+}
+
 func TestSpawn_PrimeBranchIgnoresDisplaySessionPrefix(t *testing.T) {
 	st := newFakeStore()
 	st.projects["ao"] = domain.ProjectRecord{ID: "ao", DisplayName: "AO", Config: testRoleAgents().WithDefaults()}
@@ -1707,7 +1782,7 @@ func TestSpawn_ComputesWorkerNameFromIssueTitleAndReappliesInHarness(t *testing.
 	}
 }
 
-func TestSpawn_DerivesOrchestratorLaunchTitleFromProject(t *testing.T) {
+func TestSpawn_DerivesOrchestratorLaunchTitleFromProjectPrefix(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", DisplayName: "Mercury", Config: testRoleAgents()}
 	agent := &launchTitleAgent{}
@@ -1720,17 +1795,20 @@ func TestSpawn_DerivesOrchestratorLaunchTitleFromProject(t *testing.T) {
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
 		t.Fatal(err)
 	}
-	if got := agent.lastLaunch.LaunchTitle; got != "Mercury Orchestrator" {
-		t.Fatalf("orchestrator LaunchTitle = %q, want project display name", got)
+	if got := agent.lastLaunch.LaunchTitle; got != "mer Orc" {
+		t.Fatalf("orchestrator LaunchTitle = %q, want project prefix role name", got)
 	}
-	if got := st.sessions["mer-1"].DisplayName; got != "Mercury Orchestrator" {
-		t.Fatalf("orchestrator displayName = %q, want project display name", got)
+	if got := st.sessions["mer-1"].DisplayName; got != "mer Orc" {
+		t.Fatalf("orchestrator displayName = %q, want project prefix role name", got)
 	}
 }
 
-func TestSpawn_CapsOrchestratorNameButPreservesRoleSuffix(t *testing.T) {
+func TestSpawn_CapsOrchestratorNameButPreservesOrcSuffix(t *testing.T) {
 	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", DisplayName: "Mercury Mission Control\nOps", Config: testRoleAgents()}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		ProjectPrefix: "mercury-mission-control-ops",
+		Orchestrator:  domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}}
 	agent := &launchTitleAgent{}
 	m := New(Deps{
 		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
@@ -1741,15 +1819,15 @@ func TestSpawn_CapsOrchestratorNameButPreservesRoleSuffix(t *testing.T) {
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
 		t.Fatal(err)
 	}
-	wantName := "Mercury Orchestrator"
+	wantName := "mercury-mission Orc"
 	if got := agent.lastLaunch.LaunchTitle; got != wantName {
 		t.Fatalf("orchestrator LaunchTitle = %q, want %q", got, wantName)
 	}
 	if got := st.sessions["mer-1"].DisplayName; got != wantName {
 		t.Fatalf("orchestrator displayName = %q, want %q", got, wantName)
 	}
-	if got := len([]rune(wantName)); got != maxSessionDisplayNameRunes {
-		t.Fatalf("test fixture length = %d, want cap %d", got, maxSessionDisplayNameRunes)
+	if got := len([]rune(wantName)); got > maxSessionDisplayNameRunes {
+		t.Fatalf("test fixture length = %d, want within cap %d", got, maxSessionDisplayNameRunes)
 	}
 }
 
@@ -2699,16 +2777,16 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	// Coordination instructions must be in the system prompt, not the user prompt.
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"## Orchestrator coordination",
+		"## Orc coordination",
 		`ao send --session mer-1 --message "<your message>"`,
-		"Only ping the orchestrator for true blockers, cross-session coordination",
+		"Only ping the Orc for true blockers, cross-session coordination",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator coordination") {
-		t.Fatalf("orchestrator coordination must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
+	if strings.Contains(agent.lastLaunch.Prompt, "## Orc coordination") {
+		t.Fatalf("Orc coordination must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 }
 
@@ -2728,8 +2806,8 @@ func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 		t.Fatal(err)
 	}
 	systemPrompt := agent.lastLaunch.SystemPrompt
-	if strings.Contains(systemPrompt, "## Orchestrator coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
-		t.Fatalf("terminated orchestrator should not be added to system prompt:\n%s", systemPrompt)
+	if strings.Contains(systemPrompt, "## Orc coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
+		t.Fatalf("terminated Orc should not be added to system prompt:\n%s", systemPrompt)
 	}
 }
 
@@ -2750,11 +2828,12 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	// Coordinator instructions must be in the system prompt, not the user prompt.
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"You are the human-facing coordinator for project mer",
+		"You are the project Orc for mer",
+		"human-facing coordinator for this project",
 		// GH #118: the spawn example teaches router-only dispatch, not a
 		// hand-written task description.
 		// GH #146: it dispatches by --issue and never passes --name, so the
-		// daemon computes the semantic name instead of the orchestrator
+		// daemon computes the semantic name instead of the Orc
 		// inventing a label that outranks it.
 		`ao spawn --project mer --issue <issue-id> --prompt "/address-issue <issue-id>"`,
 		"Never pass --name",
@@ -2774,12 +2853,12 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	if strings.Contains(systemPrompt, "<clear worker task>") {
 		t.Fatalf("system prompt still teaches custom worker prompts:\n%s", systemPrompt)
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing coordinator") {
+	if strings.Contains(agent.lastLaunch.Prompt, "human-facing coordinator for this project") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 
 	// The role remains in the system prompt, but the daemon must also send an
-	// initial user turn so a newly spawned orchestrator starts supervising.
+	// initial user turn so a newly spawned Orc starts supervising.
 	if !strings.Contains(agent.lastLaunch.Prompt, "Read your standing policy") {
 		t.Fatalf("prompt = %q, want kickoff instructing policy read", agent.lastLaunch.Prompt)
 	}
@@ -2830,18 +2909,18 @@ func TestSpawnPrime_UsesFleetSupervisorPrompt(t *testing.T) {
 
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"You are the prime orchestrator for the AO fleet",
+		"You are the prime Orc for the AO fleet",
 		"the factory is your product",
 		"file tickets and escalations, not code changes",
 		"`/api/v1/metrics`",
-		"project orchestrators",
+		"project Orcs",
 		"Standing-instruction confidentiality",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("prime system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "You are the prime orchestrator") {
+	if strings.Contains(agent.lastLaunch.Prompt, "You are the prime Orc") {
 		t.Fatalf("prime role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 	if !strings.Contains(agent.lastLaunch.Prompt, "Read your standing prime policy") {
@@ -2931,7 +3010,7 @@ func TestSystemPrompt_MissingRoleInstructionsFileDoesNotBlockSpawn(t *testing.T)
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the project Orc for mer") {
 		t.Fatalf("missing role file should keep base prompt:\n%s", agent.lastLaunch.SystemPrompt)
 	}
 }
@@ -2969,7 +3048,7 @@ func TestSystemPrompt_SkipsUnsafeRoleInstructionsFiles(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildSystemPrompt: %v", err)
 			}
-			if !strings.Contains(prompt, "You are the human-facing coordinator for project mer") {
+			if !strings.Contains(prompt, "You are the project Orc for mer") {
 				t.Fatalf("unsafe role file should keep base prompt:\n%s", prompt)
 			}
 			if strings.Contains(prompt, strings.Repeat("x", 64)) {
@@ -3118,7 +3197,7 @@ func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the project Orc for mer") {
 		t.Fatalf("restore system prompt missing coordinator role:\n%s", agent.lastRestore.SystemPrompt)
 	}
 	if !strings.Contains(agent.lastRestore.SystemPrompt, "RESTORE ORCHESTRATOR POLICY") {
@@ -3142,7 +3221,7 @@ func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the project Orc for mer") {
 		t.Fatalf("fallback launch system prompt missing coordinator role:\n%s", agent.lastLaunch.SystemPrompt)
 	}
 	if agent.lastLaunch.Prompt != "kick off" {

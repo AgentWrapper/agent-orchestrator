@@ -102,9 +102,9 @@ blocking, attached commands that run to completion in view.
   dodge a shell's time cap.
 - If codex hangs at MCP startup, the fallback is to disable MCP for that run
   (`-c 'mcp_servers={}'`), still in the foreground — not to background it.
-- This binds every codex invocation a worker or orchestrator drives: review
+- This binds every codex invocation a worker or an Orc drives: review
   passes (`/codex:review`, `/final-review`), diagnosis, and rescue runs. ao's
-  own daemon exec of codex — worker/orchestrator session launch into a tmux
+  own daemon exec of codex — worker/Orc session launch into a tmux
   TTY and the `#143` model probe — is already blocking/attached and stays
   that way.
 

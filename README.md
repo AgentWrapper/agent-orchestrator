@@ -47,6 +47,8 @@ At a high level, Agent Orchestrator follows a simple loop:
 5. The local daemon watches session state, terminal activity, pull requests, CI, and review feedback.
 6. The desktop app and CLI show the current state and let you send follow-up instructions to the right session.
 
+Projects can also run a short-named coordinator session called the project Orc. AO names that session from the project's `projectPrefix`, such as `ao Orc`, `lb Orc`, or `cc Orc`, so dashboard labels and in-harness app titles stay compact and consistent.
+
 The result is a local control layer for agentic coding: agents still do the coding, while Agent Orchestrator keeps their workspaces, status, terminals, and feedback loops organized.
 
 ## Features

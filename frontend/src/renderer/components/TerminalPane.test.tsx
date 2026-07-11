@@ -100,7 +100,7 @@ describe("TerminalPane message composer", () => {
 		terminalState.attach.mockClear();
 		delete window.ao;
 		try {
-			renderPane({ ...baseSession, kind: "orchestrator", title: "my-app Orchestrator" });
+			renderPane({ ...baseSession, kind: "orchestrator", title: "my Orc" });
 
 			// The mocked XtermTerminal renders the marker "terminal"; the retired
 			// transcript never did. `attach` (the useTerminalSession hook is mocked)

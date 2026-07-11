@@ -30,12 +30,12 @@ describe("CenterPane toolbar session label", () => {
 	it("shows the descriptive session display name for an orchestrator session", () => {
 		render(
 			<CenterPane
-				session={{ ...worker, id: "sess-orch", kind: "orchestrator", title: "agent-orchestrator Orchestrator" }}
+				session={{ ...worker, id: "sess-orch", kind: "orchestrator", title: "ao Orc" }}
 				theme="dark"
 				daemonReady
 			/>,
 		);
-		expect(screen.getByText("agent-orchestrator Orchestrator")).toBeInTheDocument();
+		expect(screen.getByText("ao Orc")).toBeInTheDocument();
 	});
 
 	it("shows 'No session' when there is no session", () => {
