@@ -75,6 +75,87 @@ describe("handleSlackRequest — inbound reply → ao send (acceptance #2)", () 
 		assert.deepEqual(out.sent, { sessionId: "agent-9", message: "use option 2" });
 	});
 
+	it("routes a numeric threaded reply via ao session decide", async () => {
+		const threadMap = new ThreadSessionMap();
+		threadMap.remember("t1", { projectId: "ao", sessionId: "agent-9" });
+		const { rawBody, headers } = signed({
+			type: "event_callback",
+			event: { type: "message", text: "2", thread_ts: "t1", user: "UNICK", ts: "9.9" },
+		});
+		const sent = [];
+		const out = await handleSlackRequest({
+			rawBody,
+			headers,
+			signingSecret: SECRET,
+			threadMap,
+			aoSend: async (a) => sent.push(a),
+			allowedUserId: "UNICK",
+			now: NOW,
+			logger: quiet,
+		});
+		assert.equal(out.status, 200);
+		assert.deepEqual(sent[0], ["session", "decide", "agent-9", "--option", "2"]);
+		assert.deepEqual(out.sent, { sessionId: "agent-9", option: 2 });
+	});
+
+	it("falls back to ao send when a numeric reply is not an answerable decision", async () => {
+		const threadMap = new ThreadSessionMap();
+		threadMap.remember("t1", { projectId: "ao", sessionId: "agent-9" });
+		const { rawBody, headers } = signed({
+			type: "event_callback",
+			event: { type: "message", text: "3", thread_ts: "t1", user: "UNICK", ts: "9.9" },
+		});
+		const sent = [];
+		const out = await handleSlackRequest({
+			rawBody,
+			headers,
+			signingSecret: SECRET,
+			threadMap,
+			aoSend: async (a) => {
+				sent.push(a);
+				if (a[0] === "session") throw new Error("SESSION_DECISION_NOT_FOUND");
+			},
+			allowedUserId: "UNICK",
+			now: NOW,
+			logger: quiet,
+		});
+		assert.equal(out.status, 200);
+		assert.deepEqual(sent, [
+			["session", "decide", "agent-9", "--option", "3"],
+			["send", "--session", "agent-9", "--message", "3"],
+		]);
+		assert.deepEqual(out.sent, { sessionId: "agent-9", message: "3" });
+	});
+
+	it("falls back when a numeric reply is invalid for an option-less text question", async () => {
+		const threadMap = new ThreadSessionMap();
+		threadMap.remember("t1", { projectId: "ao", sessionId: "agent-9" });
+		const { rawBody, headers } = signed({
+			type: "event_callback",
+			event: { type: "message", text: "4", thread_ts: "t1", user: "UNICK", ts: "9.9" },
+		});
+		const sent = [];
+		const out = await handleSlackRequest({
+			rawBody,
+			headers,
+			signingSecret: SECRET,
+			threadMap,
+			aoSend: async (a) => {
+				sent.push(a);
+				if (a[0] === "session") throw new Error("INVALID_DECISION_ANSWER");
+			},
+			allowedUserId: "UNICK",
+			now: NOW,
+			logger: quiet,
+		});
+		assert.equal(out.status, 200);
+		assert.deepEqual(sent, [
+			["session", "decide", "agent-9", "--option", "4"],
+			["send", "--session", "agent-9", "--message", "4"],
+		]);
+		assert.deepEqual(out.sent, { sessionId: "agent-9", message: "4" });
+	});
+
 	it("does not route an unauthorized user's reply", async () => {
 		const threadMap = new ThreadSessionMap();
 		threadMap.remember("t1", { sessionId: "agent-9" });

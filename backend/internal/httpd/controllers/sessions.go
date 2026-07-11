@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -44,6 +45,8 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	Decision(ctx context.Context, id domain.SessionID) (domain.PendingDecision, bool, error)
+	AnswerDecision(ctx context.Context, id domain.SessionID, answer domain.DecisionAnswer) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 }
@@ -82,6 +85,8 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
+	r.Get("/sessions/{sessionId}/decision", c.decision)
+	r.Post("/sessions/{sessionId}/decision", c.answerDecision)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
@@ -450,6 +455,54 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
 }
 
+func (c *SessionsController) decision(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/decision")
+		return
+	}
+	decision, ok, err := c.Svc.Decision(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_DECISION_NOT_FOUND", "No pending decision is known for this session", nil)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionDecisionResponse{SessionID: sessionID(r), Kind: decision.Kind, Question: decision.Question, Options: decision.Options})
+}
+
+func (c *SessionsController) answerDecision(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/decision")
+		return
+	}
+	var in AnswerSessionDecisionRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	text := strings.TrimSpace(in.Text)
+	if in.Option <= 0 && text == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DECISION_ANSWER_REQUIRED", "option or text is required", nil)
+		return
+	}
+	if in.Option > 0 && text != "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DECISION_ANSWER_AMBIGUOUS", "Provide option or text, not both", nil)
+		return
+	}
+	if len(in.Text) > maxMessageLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DECISION_TEXT_TOO_LONG", "Decision answer text is too long", nil)
+		return
+	}
+	answer := domain.DecisionAnswer{Option: in.Option, Text: domain.SanitizeControlChars(in.Text)}
+	if err := c.Svc.AnswerDecision(r.Context(), sessionID(r), answer); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, AnswerSessionDecisionResponse{OK: true, SessionID: sessionID(r)})
+}
+
 // activity records an agent activity-state signal reported by an agent hook
 // (via `ao hooks <agent> <event>`). It funnels through the single
 // lifecycle.Manager so the reaper and hooks never race on the session's
@@ -476,19 +529,25 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_AGENT", "Unknown agent harness", nil)
 		return
 	}
+	decision, ok := activityDecision(in.Decision)
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_DECISION", "Invalid pending decision metadata", nil)
+		return
+	}
 	// The correlation fields ride the same lenient decode: absent on old CLIs.
 	// They are externally-supplied strings headed for logs and in-memory maps,
 	// so sanitize control chars and cap their length (a truncated id could
 	// never match its pre/post counterpart, so overlong values are dropped by
 	// the CLI; the cap here is defense against non-AO callers).
 	sig := ports.ActivitySignal{
-		Valid:        true,
-		State:        state,
-		Harness:      harness,
-		RuntimeToken: strings.TrimSpace(in.RuntimeToken),
-		Event:        capActivityMeta(domain.SanitizeControlChars(in.Event)),
-		ToolName:     capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
-		ToolUseID:    capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		Valid:           true,
+		State:           state,
+		Harness:         harness,
+		RuntimeToken:    strings.TrimSpace(in.RuntimeToken),
+		Event:           capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:        capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:       capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		PendingDecision: decision,
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {
@@ -507,6 +566,57 @@ func capActivityMeta(v string) string {
 	const maxLen = 256
 	if len(v) > maxLen {
 		return ""
+	}
+	return v
+}
+
+func activityDecision(in *SessionDecisionPayload) (*domain.PendingDecision, bool) {
+	if in == nil {
+		return nil, true
+	}
+	switch in.Kind {
+	case domain.DecisionKindQuestion, domain.DecisionKindPermission:
+	default:
+		return nil, false
+	}
+	out := &domain.PendingDecision{
+		Kind:     in.Kind,
+		Question: capActivityMeta(domain.SanitizeControlChars(in.Question)),
+	}
+	if len(in.Options) > 0 {
+		out.Options = make([]string, 0, len(in.Options))
+		for i, opt := range in.Options {
+			out.Options = append(out.Options, capDecisionOption(domain.SanitizeControlChars(opt), i))
+		}
+	}
+	if out.Kind == domain.DecisionKindPermission {
+		out.Options = nil
+	}
+	return out, true
+}
+
+func capDecisionOption(v string, index int) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return fmt.Sprintf("Option %d", index+1)
+	}
+	const maxLen = 256
+	if len(v) > maxLen {
+		return truncateRunes(v, maxLen)
+	}
+	return v
+}
+
+func truncateRunes(v string, maxBytes int) string {
+	lastSafe := 0
+	for i := range v {
+		if i > maxBytes {
+			return strings.TrimSpace(v[:lastSafe])
+		}
+		lastSafe = i
+	}
+	if len(v) > maxBytes {
+		return strings.TrimSpace(v[:lastSafe])
 	}
 	return v
 }

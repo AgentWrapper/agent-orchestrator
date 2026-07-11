@@ -74,7 +74,12 @@ type GetReviewRunBySessionPRSHAAndSourceParams struct {
 }
 
 func (q *Queries) GetReviewRunBySessionPRSHAAndSource(ctx context.Context, arg GetReviewRunBySessionPRSHAAndSourceParams) (ReviewRun, error) {
-	row := q.db.QueryRowContext(ctx, getReviewRunBySessionPRSHAAndSource, arg.SessionID, arg.PRURL, arg.TargetSha, arg.Source)
+	row := q.db.QueryRowContext(ctx, getReviewRunBySessionPRSHAAndSource,
+		arg.SessionID,
+		arg.PRURL,
+		arg.TargetSha,
+		arg.Source,
+	)
 	var i ReviewRun
 	err := row.Scan(
 		&i.ID,

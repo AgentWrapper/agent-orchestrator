@@ -122,12 +122,24 @@ export function routeReply(message, { threadMap, selfBotId, allowedUserId } = {}
 	if (message.threadTs && threadMap) {
 		const target = threadMap.lookup(message.threadTs);
 		if (target) {
+			const body = stripLeadingMention(text);
+			const option = decisionOption(body);
+			if (option !== null) {
+				return {
+					ok: true,
+					via: "thread",
+					sessionId: target.sessionId,
+					projectId: target.projectId,
+					message: body,
+					option,
+				};
+			}
 			return {
 				ok: true,
 				via: "thread",
 				sessionId: target.sessionId,
 				projectId: target.projectId,
-				message: stripLeadingMention(text),
+				message: body,
 			};
 		}
 		// A threaded reply to an unknown thread is a miss, not an explicit cmd.
@@ -148,10 +160,20 @@ function stripLeadingMention(text) {
 	return text.replace(/^<@[UW][A-Z0-9]+>\s*/, "").trim();
 }
 
-// buildAoSendArgs renders the argv for `ao send` from a successful route.
-// Kept here so the exec surface is trivially auditable and testable.
+function decisionOption(text) {
+	if (!/^[1-9][0-9]*$/.test(text)) return null;
+	const n = Number(text);
+	return Number.isSafeInteger(n) ? n : null;
+}
+
+// buildAoSendArgs renders the argv for AO CLI delivery from a successful route.
+// Kept here so the ao CLI exec surface is trivially auditable and testable.
 export function buildAoSendArgs(route) {
-	if (!route || !route.ok || !route.sessionId || !route.message) return null;
+	if (!route || !route.ok || !route.sessionId) return null;
+	if (route.option !== undefined) {
+		return ["session", "decide", route.sessionId, "--option", String(route.option)];
+	}
+	if (!route.message) return null;
 	return ["send", "--session", route.sessionId, "--message", route.message];
 }
 

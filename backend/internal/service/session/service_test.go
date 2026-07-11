@@ -287,6 +287,12 @@ func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, _ string) e
 	f.sent = append(f.sent, id)
 	return nil
 }
+func (f *fakeCommander) Decision(context.Context, domain.SessionID) (domain.PendingDecision, bool, error) {
+	return domain.PendingDecision{}, false, nil
+}
+func (f *fakeCommander) AnswerDecision(context.Context, domain.SessionID, domain.DecisionAnswer) error {
+	return nil
+}
 func (f *fakeCommander) WakeIdle(_ context.Context, id domain.SessionID, _ string) (bool, error) {
 	f.sent = append(f.sent, id)
 	return true, nil

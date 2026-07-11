@@ -58,6 +58,16 @@ func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 	f.sessions[rec.ID] = rec
 	return nil
 }
+func (f *fakeStore) ClearSessionPendingDecision(_ context.Context, id domain.SessionID, updatedAt time.Time) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	rec.Metadata.PendingDecision = nil
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return true, nil
+}
 func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error) {
 	f.renameSessionCalls++
 	rec, ok := f.sessions[id]
@@ -3730,6 +3740,137 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("Send calls = %d, want 0 (no paste into a pending decision)", len(msg.msgs))
+	}
+}
+
+func TestDecision_ReturnsPendingQuestion(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{PendingDecision: &domain.PendingDecision{
+			Kind:     domain.DecisionKindQuestion,
+			Question: "Pick a direction",
+			Options:  []string{"Use API", "Use terminal"},
+		}},
+	}
+	m := newSendTestManager(t, signalingAgent{}, &fakeMessenger{}, st)
+
+	decision, ok, err := m.Decision(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("Decision: %v", err)
+	}
+	if !ok {
+		t.Fatal("Decision ok = false, want true")
+	}
+	if decision.Kind != domain.DecisionKindQuestion || decision.Question != "Pick a direction" {
+		t.Fatalf("Decision = %#v, want pending question", decision)
+	}
+	if !reflect.DeepEqual(decision.Options, []string{"Use API", "Use terminal"}) {
+		t.Fatalf("Options = %#v", decision.Options)
+	}
+}
+
+func TestAnswerDecision_QuestionOptionBypassesSendGuard(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			PendingDecision: &domain.PendingDecision{
+				Kind:     domain.DecisionKindQuestion,
+				Question: "Pick a direction",
+				Options:  []string{"Use API", "Use terminal"},
+			},
+		},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	if err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 2}); err != nil {
+		t.Fatalf("AnswerDecision: %v", err)
+	}
+	if !reflect.DeepEqual(msg.msgs, []string{"2"}) {
+		t.Fatalf("sent = %#v, want option number", msg.msgs)
+	}
+	if got := st.sessions["s1"].Metadata.PendingDecision; got != nil {
+		t.Fatalf("PendingDecision = %#v, want cleared after answer", got)
+	}
+}
+
+func TestAnswerDecision_RefusesStaleDecisionWhenSessionNotBlocked(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityActive},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			PendingDecision: &domain.PendingDecision{
+				Kind:     domain.DecisionKindQuestion,
+				Question: "Pick a direction",
+				Options:  []string{"Use API", "Use terminal"},
+			},
+		},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 2})
+	if !errors.Is(err, ErrNoPendingDecision) {
+		t.Fatalf("AnswerDecision error = %v, want ErrNoPendingDecision", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("sent = %#v, want no stale decision answer", msg.msgs)
+	}
+}
+
+func TestAnswerDecision_RefusesOptionForTextQuestion(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "What should I call this?"},
+		},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 1})
+	if !errors.Is(err, ErrInvalidDecisionAnswer) {
+		t.Fatalf("AnswerDecision error = %v, want ErrInvalidDecisionAnswer", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("sent = %#v, want no option answer for text question", msg.msgs)
+	}
+}
+
+func TestAnswerDecision_RefusesPermissionDecision(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindPermission, Question: "Allow Bash?"},
+		},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 1})
+	if !errors.Is(err, ErrDecisionNotAnswerable) {
+		t.Fatalf("AnswerDecision error = %v, want ErrDecisionNotAnswerable", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("sent = %#v, want no permission answer", msg.msgs)
 	}
 }
 

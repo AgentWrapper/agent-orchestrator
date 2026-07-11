@@ -102,6 +102,14 @@ func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) err
 	return nil
 }
 
+func (f *fakeSessionService) Decision(context.Context, domain.SessionID) (domain.PendingDecision, bool, error) {
+	return domain.PendingDecision{}, false, nil
+}
+
+func (f *fakeSessionService) AnswerDecision(context.Context, domain.SessionID, domain.DecisionAnswer) error {
+	return nil
+}
+
 func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) ([]sessionsvc.PRSummary, error) {
 	return nil, nil
 }

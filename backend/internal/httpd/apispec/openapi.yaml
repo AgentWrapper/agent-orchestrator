@@ -1031,6 +1031,107 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/decision:
+    get:
+      operationId: getSessionDecision
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDecisionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the pending dialog for a session, when queryable
+      tags:
+      - sessions
+    post:
+      operationId: answerSessionDecision
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerSessionDecisionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerSessionDecisionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Answer a pending session question dialog
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -1791,6 +1892,27 @@ components:
       required:
       - id
       - label
+      type: object
+    AnswerSessionDecisionRequest:
+      properties:
+        option:
+          description: One-based option number to select.
+          minimum: 1
+          type: integer
+        text:
+          description: Free-text answer for question dialogs that accept text.
+          maxLength: 4096
+          type: string
+      type: object
+    AnswerSessionDecisionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     ClaimPRRequest:
       properties:
@@ -2833,6 +2955,41 @@ components:
       - sessionId
       - message
       type: object
+    SessionDecisionPayload:
+      properties:
+        kind:
+          enum:
+          - question
+          - permission
+          type: string
+        options:
+          items:
+            type: string
+          type: array
+        question:
+          type: string
+      required:
+      - kind
+      type: object
+    SessionDecisionResponse:
+      properties:
+        kind:
+          enum:
+          - question
+          - permission
+          type: string
+        options:
+          items:
+            type: string
+          type: array
+        question:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - kind
+      type: object
     SessionPRCISummary:
       properties:
         failingChecks:
@@ -3125,6 +3282,10 @@ components:
           - pi
           - autohand
           type: string
+        decision:
+          $ref: '#/components/schemas/SessionDecisionPayload'
+          description: Structured pending dialog metadata, when the harness reports
+            it.
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string

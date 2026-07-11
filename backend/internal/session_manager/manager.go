@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,16 @@ var (
 	// would answer it on the user's behalf. The API maps it to a 409; the
 	// caller retries once the user has answered in the terminal.
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
+	// ErrNoPendingDecision means no queryable dialog is currently known for the
+	// session.
+	ErrNoPendingDecision = errors.New("session: no pending decision")
+	// ErrDecisionNotAnswerable means the pending dialog is not a question that
+	// AO may answer programmatically. Permission dialogs intentionally take this
+	// path.
+	ErrDecisionNotAnswerable = errors.New("session: pending decision is not answerable")
+	// ErrInvalidDecisionAnswer means the caller supplied neither a valid
+	// one-based option nor non-empty free text.
+	ErrInvalidDecisionAnswer = errors.New("session: invalid decision answer")
 	// ErrModelHarnessMismatch means an explicit per-spawn model belongs to a
 	// different provider than the resolved harness (e.g. a Claude model on a
 	// Codex spawn). Passing it would hang the agent, so spawn fails loudly
@@ -142,6 +153,7 @@ type Store interface {
 	// config into the launch command. ok=false means the project is unknown.
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
+	ClearSessionPendingDecision(ctx context.Context, id domain.SessionID, updatedAt time.Time) (bool, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
@@ -177,11 +189,12 @@ type Manager struct {
 	// guard is the shared pane-write primitive (see sessionguard) every write
 	// into a live session goes through: the initial user message in Send and
 	// the replay attempts in confirmActive.
-	guard   *sessionguard.Guard
-	lcm     lifecycleRecorder
-	dataDir string
-	runFile string
-	clock   func() time.Time
+	guard     *sessionguard.Guard
+	messenger ports.AgentMessenger
+	lcm       lifecycleRecorder
+	dataDir   string
+	runFile   string
+	clock     func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -301,6 +314,7 @@ func New(d Deps) *Manager {
 		agents:     d.Agents,
 		workspace:  d.Workspace,
 		store:      d.Store,
+		messenger:  d.Messenger,
 		lcm:        d.Lifecycle,
 		dataDir:    d.DataDir,
 		runFile:    d.RunFile,
@@ -1864,6 +1878,88 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 		m.confirmActive(ctx, id, message)
 	}
 	return nil
+}
+
+// Decision returns the currently queryable pending dialog for a session. A
+// blocked session without structured metadata is reported as a permission
+// decision: visible to operators, but still not programmatically answerable.
+func (m *Manager) Decision(ctx context.Context, id domain.SessionID) (domain.PendingDecision, bool, error) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.PendingDecision{}, false, fmt.Errorf("decision %s: %w", id, err)
+	}
+	if !ok {
+		return domain.PendingDecision{}, false, fmt.Errorf("decision %s: %w", id, ErrNotFound)
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityExited {
+		return domain.PendingDecision{}, false, fmt.Errorf("decision %s: %w", id, ErrTerminated)
+	}
+	if rec.Metadata.PendingDecision != nil {
+		return *rec.Metadata.PendingDecision, true, nil
+	}
+	if rec.Activity.State == domain.ActivityBlocked {
+		return domain.PendingDecision{Kind: domain.DecisionKindPermission}, true, nil
+	}
+	return domain.PendingDecision{}, false, nil
+}
+
+// AnswerDecision answers only harness question dialogs. It intentionally does
+// not route through sessionguard.Deliver because the session is expected to be
+// blocked; this method performs the stricter decision-kind check immediately
+// before writing.
+func (m *Manager) AnswerDecision(ctx context.Context, id domain.SessionID, answer domain.DecisionAnswer) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("answer decision %s: %w", id, err)
+	}
+	if !ok {
+		return fmt.Errorf("answer decision %s: %w", id, ErrNotFound)
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityExited {
+		return fmt.Errorf("answer decision %s: %w", id, ErrTerminated)
+	}
+	if rec.Activity.State != domain.ActivityBlocked {
+		return fmt.Errorf("answer decision %s: %w", id, ErrNoPendingDecision)
+	}
+	if rec.Metadata.PendingDecision == nil {
+		return fmt.Errorf("answer decision %s: %w", id, ErrNoPendingDecision)
+	}
+	decision := *rec.Metadata.PendingDecision
+	if decision.Kind != domain.DecisionKindQuestion {
+		return fmt.Errorf("answer decision %s: %w", id, ErrDecisionNotAnswerable)
+	}
+	msg, err := renderDecisionAnswer(decision, answer)
+	if err != nil {
+		return fmt.Errorf("answer decision %s: %w", id, err)
+	}
+	if m.messenger == nil {
+		return fmt.Errorf("answer decision %s: messenger unavailable", id)
+	}
+	if err := m.messenger.Send(ctx, id, msg); err != nil {
+		return fmt.Errorf("answer decision %s: send: %w", id, err)
+	}
+	ok, err = m.store.ClearSessionPendingDecision(ctx, id, m.clock())
+	if err != nil {
+		return fmt.Errorf("answer decision %s: clear decision: %w", id, err)
+	}
+	if !ok {
+		return fmt.Errorf("answer decision %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+func renderDecisionAnswer(decision domain.PendingDecision, answer domain.DecisionAnswer) (string, error) {
+	if answer.Option > 0 {
+		if len(decision.Options) == 0 || answer.Option > len(decision.Options) {
+			return "", ErrInvalidDecisionAnswer
+		}
+		return strconv.Itoa(answer.Option), nil
+	}
+	text := strings.TrimSpace(answer.Text)
+	if text == "" {
+		return "", ErrInvalidDecisionAnswer
+	}
+	return text, nil
 }
 
 // WakeIdle sends an AO-owned idle wake message only when the just-in-time guard

@@ -188,6 +188,7 @@ type Session struct {
 	LaunchedHarnesses string
 	RuntimeToken      string
 	WorkspaceMode     string
+	PendingDecision   string
 }
 
 type SessionWorktree struct {

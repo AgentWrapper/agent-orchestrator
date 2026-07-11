@@ -13,6 +13,32 @@ type (
 	IssueID string
 )
 
+// DecisionKind describes the pending dialog type AO can observe for a session.
+type DecisionKind string
+
+const (
+	// DecisionKindQuestion is an answerable harness question, such as a
+	// design-choice dialog. AO may answer it through the decisions API.
+	DecisionKindQuestion DecisionKind = "question"
+	// DecisionKindPermission is a permission or approval dialog. AO exposes it
+	// for visibility but refuses programmatic answers.
+	DecisionKindPermission DecisionKind = "permission"
+)
+
+// PendingDecision is the durable metadata AO knows about a session dialog.
+type PendingDecision struct {
+	Kind     DecisionKind `json:"kind"`
+	Question string       `json:"question,omitempty"`
+	Options  []string     `json:"options,omitempty"`
+}
+
+// DecisionAnswer is the API/CLI input for answering an answerable decision.
+// Option is one-based, matching the operator-facing choices rendered by AO.
+type DecisionAnswer struct {
+	Option int    `json:"option,omitempty"`
+	Text   string `json:"text,omitempty"`
+}
+
 // SessionKind distinguishes a worker session from an orchestrator session.
 type SessionKind string
 
@@ -62,6 +88,9 @@ type SessionMetadata struct {
 	// scalar AgentSessionID is the current harness's id; switch uses this map to
 	// restore a previously-used token-based harness after another agent ran.
 	AgentSessionIDs map[AgentHarness]string `json:"agentSessionIds,omitempty"`
+	// PendingDecision carries structured dialog metadata reported by harness
+	// hooks. A nil value means no queryable dialog is known.
+	PendingDecision *PendingDecision `json:"pendingDecision,omitempty"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable

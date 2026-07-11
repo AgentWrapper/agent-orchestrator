@@ -105,6 +105,20 @@ describe("routeReply (acceptance #2 — reply routes to originating session)", (
 		assert.equal(r.message, "go ahead");
 	});
 
+	it("routes a numeric threaded reply as a decision option", () => {
+		const threadMap = new ThreadSessionMap();
+		threadMap.remember("t1", { projectId: "ao", sessionId: "agent-9" });
+		const r = routeReply({ text: "<@UBOT> 2", threadTs: "t1", user: "UNICK" }, { threadMap, allowedUserId: "UNICK" });
+		assert.deepEqual(r, {
+			ok: true,
+			via: "thread",
+			sessionId: "agent-9",
+			projectId: "ao",
+			message: "2",
+			option: 2,
+		});
+	});
+
 	it("routes explicit 'send <session> <message>' at top level", () => {
 		const r = routeReply({ text: "send agent-42 rebase onto main", user: "UNICK" }, { allowedUserId: "UNICK" });
 		assert.deepEqual(r, {
@@ -163,6 +177,10 @@ describe("buildAoSendArgs", () => {
 	it("builds argv for a valid route", () => {
 		const args = buildAoSendArgs({ ok: true, sessionId: "agent-9", message: "go" });
 		assert.deepEqual(args, ["send", "--session", "agent-9", "--message", "go"]);
+	});
+	it("builds argv for a decision option route", () => {
+		const args = buildAoSendArgs({ ok: true, sessionId: "agent-9", option: 2 });
+		assert.deepEqual(args, ["session", "decide", "agent-9", "--option", "2"]);
 	});
 	it("returns null for a failed route", () => {
 		assert.equal(buildAoSendArgs({ ok: false }), null);

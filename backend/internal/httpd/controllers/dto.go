@@ -262,6 +262,26 @@ type SendSessionMessageResponse struct {
 	Message   string           `json:"message"`
 }
 
+// SessionDecisionResponse is the body of GET /api/v1/sessions/{sessionId}/decision.
+type SessionDecisionResponse struct {
+	SessionID domain.SessionID    `json:"sessionId"`
+	Kind      domain.DecisionKind `json:"kind" enum:"question,permission"`
+	Question  string              `json:"question,omitempty"`
+	Options   []string            `json:"options,omitempty"`
+}
+
+// AnswerSessionDecisionRequest is the body of POST /api/v1/sessions/{sessionId}/decision.
+type AnswerSessionDecisionRequest struct {
+	Option int    `json:"option,omitempty" minimum:"1" description:"One-based option number to select."`
+	Text   string `json:"text,omitempty" maxLength:"4096" description:"Free-text answer for question dialogs that accept text."`
+}
+
+// AnswerSessionDecisionResponse is the body of POST /api/v1/sessions/{sessionId}/decision.
+type AnswerSessionDecisionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+}
+
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
 type SessionPRFacts struct {
 	URL            string                `json:"url"`
@@ -459,12 +479,20 @@ type ClaimPRResponse struct {
 // payloads carry no tool identity — the signal then keeps its plain
 // state-only semantics.
 type SetActivityRequest struct {
-	State        string `json:"state" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook."`
-	Agent        string `json:"agent,omitempty" enum:"claude-code,codex,codex-fugu,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand" description:"Agent harness that emitted the hook, when known."`
-	RuntimeToken string `json:"runtimeToken,omitempty" description:"Opaque runtime generation token emitted by AO-managed hooks."`
-	Event        string `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
-	ToolName     string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
-	ToolUseID    string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	State        string                  `json:"state" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook."`
+	Agent        string                  `json:"agent,omitempty" enum:"claude-code,codex,codex-fugu,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand" description:"Agent harness that emitted the hook, when known."`
+	RuntimeToken string                  `json:"runtimeToken,omitempty" description:"Opaque runtime generation token emitted by AO-managed hooks."`
+	Event        string                  `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
+	ToolName     string                  `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
+	ToolUseID    string                  `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	Decision     *SessionDecisionPayload `json:"decision,omitempty" description:"Structured pending dialog metadata, when the harness reports it."`
+}
+
+// SessionDecisionPayload is the activity-hook wire form of a pending decision.
+type SessionDecisionPayload struct {
+	Kind     domain.DecisionKind `json:"kind" enum:"question,permission"`
+	Question string              `json:"question,omitempty"`
+	Options  []string            `json:"options,omitempty"`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.

@@ -135,6 +135,73 @@ func TestRuntimeObservation_SwitchingSuppressesTermination(t *testing.T) {
 	}
 }
 
+func TestActivitySignal_StoresPendingQuestionDecision(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityBlocked,
+		PendingDecision: &domain.PendingDecision{
+			Kind:     domain.DecisionKindQuestion,
+			Question: "Choose lane",
+			Options:  []string{"API", "Terminal"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"].Metadata.PendingDecision
+	if got == nil || got.Kind != domain.DecisionKindQuestion || got.Question != "Choose lane" {
+		t.Fatalf("PendingDecision = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Options, []string{"API", "Terminal"}) {
+		t.Fatalf("options = %#v", got.Options)
+	}
+}
+
+func TestActivitySignal_ClearsPendingDecisionWhenUnblocked(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity = domain.Activity{State: domain.ActivityBlocked, LastActivityAt: time.Now().Add(-time.Second)}
+	rec.Metadata.PendingDecision = &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "Choose lane"}
+	st.sessions["mer-1"] = rec
+
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Metadata.PendingDecision; got != nil {
+		t.Fatalf("PendingDecision = %#v, want nil", got)
+	}
+}
+
+func TestActivitySignal_UpdatesPendingDecisionOnRepeatedBlockedState(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity = domain.Activity{State: domain.ActivityBlocked, LastActivityAt: time.Now().Add(-time.Second)}
+	rec.FirstSignalAt = time.Now().Add(-time.Second)
+	rec.Metadata.PendingDecision = &domain.PendingDecision{Kind: domain.DecisionKindPermission}
+	st.sessions["mer-1"] = rec
+
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityBlocked,
+		PendingDecision: &domain.PendingDecision{
+			Kind:     domain.DecisionKindQuestion,
+			Question: "Choose lane",
+			Options:  []string{"API", "Terminal"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"].Metadata.PendingDecision
+	if got == nil || got.Kind != domain.DecisionKindQuestion || got.Question != "Choose lane" {
+		t.Fatalf("PendingDecision = %#v, want question", got)
+	}
+}
+
 func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{

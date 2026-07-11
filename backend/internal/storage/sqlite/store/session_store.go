@@ -43,6 +43,21 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// ClearSessionPendingDecision clears only the pending decision metadata for an
+// existing session. It avoids rewriting lifecycle fields from a stale snapshot.
+func (s *Store) ClearSessionPendingDecision(ctx context.Context, id domain.SessionID, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ClearSessionPendingDecision(ctx, gen.ClearSessionPendingDecisionParams{
+		ID:        id,
+		UpdatedAt: updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("clear pending decision for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // RenameSession updates only the user-facing display name for an existing
 // session. It returns ok=false when the session id does not exist.
 func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error) {
@@ -211,6 +226,7 @@ type sessionRow struct {
 	PreviewURL        string
 	PreviewRevision   int64
 	LaunchedHarnesses string
+	PendingDecision   string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
@@ -238,6 +254,7 @@ func getSessionRow(row gen.GetSessionRow) sessionRow {
 		PreviewURL:        row.PreviewURL,
 		PreviewRevision:   row.PreviewRevision,
 		LaunchedHarnesses: row.LaunchedHarnesses,
+		PendingDecision:   row.PendingDecision,
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 	}
@@ -266,6 +283,7 @@ func listSessionsByProjectRow(row gen.ListSessionsByProjectRow) sessionRow {
 		PreviewURL:        row.PreviewURL,
 		PreviewRevision:   row.PreviewRevision,
 		LaunchedHarnesses: row.LaunchedHarnesses,
+		PendingDecision:   row.PendingDecision,
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 	}
@@ -294,6 +312,7 @@ func listAllSessionsRow(row gen.ListAllSessionsRow) sessionRow {
 		PreviewURL:        row.PreviewURL,
 		PreviewRevision:   row.PreviewRevision,
 		LaunchedHarnesses: row.LaunchedHarnesses,
+		PendingDecision:   row.PendingDecision,
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 	}
@@ -327,6 +346,7 @@ func rowToRecord(row sessionRow) domain.SessionRecord {
 			PreviewRevision:   row.PreviewRevision,
 			LaunchedHarnesses: launchedHarnesses(row.LaunchedHarnesses),
 			AgentSessionIDs:   launchedHarnessSessionIDs(row.LaunchedHarnesses, row.Harness, row.AgentSessionID),
+			PendingDecision:   pendingDecision(row.PendingDecision),
 		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -358,6 +378,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewURL:        rec.Metadata.PreviewURL,
 		PreviewRevision:   rec.Metadata.PreviewRevision,
 		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),
+		PendingDecision:   pendingDecisionPayload(rec.Metadata.PendingDecision),
 		CreatedAt:         rec.CreatedAt,
 		UpdatedAt:         rec.UpdatedAt,
 	}
@@ -386,8 +407,35 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewURL:        rec.Metadata.PreviewURL,
 		PreviewRevision:   rec.Metadata.PreviewRevision,
 		LaunchedHarnesses: launchedHarnessPayload(rec.Metadata),
+		PendingDecision:   pendingDecisionPayload(rec.Metadata.PendingDecision),
 		UpdatedAt:         rec.UpdatedAt,
 	}
+}
+
+func pendingDecisionPayload(decision *domain.PendingDecision) string {
+	if decision == nil {
+		return ""
+	}
+	data, err := json.Marshal(decision)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func pendingDecision(s string) *domain.PendingDecision {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var decision domain.PendingDecision
+	if err := json.Unmarshal([]byte(s), &decision); err != nil {
+		return nil
+	}
+	if decision.Options != nil {
+		decision.Options = append([]string(nil), decision.Options...)
+	}
+	return &decision
 }
 
 type launchedHarnessesPayload struct {

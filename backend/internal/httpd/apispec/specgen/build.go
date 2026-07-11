@@ -163,6 +163,10 @@ var schemaNames = map[string]string{
 	"ControllersRollbackSessionResponse":          "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":        "SendSessionMessageRequest",
 	"ControllersSendSessionMessageResponse":       "SendSessionMessageResponse",
+	"ControllersSessionDecisionResponse":          "SessionDecisionResponse",
+	"ControllersAnswerSessionDecisionRequest":     "AnswerSessionDecisionRequest",
+	"ControllersAnswerSessionDecisionResponse":    "AnswerSessionDecisionResponse",
+	"ControllersSessionDecisionPayload":           "SessionDecisionPayload",
 	"ControllersClaimPRResponse":                  "ClaimPRResponse",
 	"ControllersClaimPRRequest":                   "ClaimPRRequest",
 	"ControllersSessionPRFacts":                   "SessionPRFacts",
@@ -772,11 +776,37 @@ func sessionOperations() []operation {
 				{http.StatusOK, controllers.SendSessionMessageResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
-				// Conflict: the session is terminated, or paused on a permission
+				// Conflict: the session is terminated, or paused on a pending
 				// decision (SESSION_AWAITING_DECISION) — the guarded send refuses
 				// to paste into a pending dialog.
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/decision", id: "getSessionDecision", tag: "sessions",
+			summary:    "Return the pending dialog for a session, when queryable",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionDecisionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/decision", id: "answerSessionDecision", tag: "sessions",
+			summary:    "Answer a pending session question dialog",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.AnswerSessionDecisionRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AnswerSessionDecisionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{

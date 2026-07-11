@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -191,16 +192,18 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	prevAt := rec.Activity.LastActivityAt
 	next := rec
 	act := domain.Activity{State: s.State, LastActivityAt: timeOr(s.Timestamp, now)}
+	pendingDecision := nextPendingDecision(s)
 	// A same-state repeat is still a write when it is the FIRST signal for
 	// this spawn: the receipt itself is a durable fact (it clears the
 	// no_signal display status). Hook deliveries are best-effort, so the
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
-	if sameActivity(rec.Activity, act) && !rec.FirstSignalAt.IsZero() {
+	if sameActivity(rec.Activity, act) && pendingDecisionEqual(rec.Metadata.PendingDecision, pendingDecision) && !rec.FirstSignalAt.IsZero() {
 		m.mu.Unlock()
 		return nil
 	}
 	next.Activity = act
+	next.Metadata.PendingDecision = pendingDecision
 	if next.FirstSignalAt.IsZero() {
 		next.FirstSignalAt = timeOr(s.Timestamp, now)
 	}
@@ -231,6 +234,27 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	m.emitNotification(ctx, intent)
 	return nil
+}
+
+func pendingDecisionEqual(a, b *domain.PendingDecision) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Kind == b.Kind && a.Question == b.Question && slices.Equal(a.Options, b.Options)
+}
+
+func nextPendingDecision(s ports.ActivitySignal) *domain.PendingDecision {
+	if s.State != domain.ActivityBlocked {
+		return nil
+	}
+	if s.PendingDecision != nil {
+		decision := *s.PendingDecision
+		if decision.Options != nil {
+			decision.Options = append([]string(nil), decision.Options...)
+		}
+		return &decision
+	}
+	return &domain.PendingDecision{Kind: domain.DecisionKindPermission}
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending

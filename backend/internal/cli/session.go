@@ -30,6 +30,11 @@ type sessionCleanupOptions struct {
 	yes     bool
 }
 
+type sessionDecideOptions struct {
+	option int
+	text   string
+}
+
 type sessionClaimPROptions struct {
 	project    string
 	json       bool
@@ -102,6 +107,16 @@ type claimPRRequest struct {
 	AllowTakeover bool   `json:"allowTakeover"`
 }
 
+type answerDecisionRequest struct {
+	Option int    `json:"option,omitempty"`
+	Text   string `json:"text,omitempty"`
+}
+
+type answerDecisionResponse struct {
+	OK        bool   `json:"ok"`
+	SessionID string `json:"sessionId"`
+}
+
 type sessionPRDTO struct {
 	URL            string    `json:"url"`
 	Number         int       `json:"number"`
@@ -155,6 +170,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionRenameCommand(ctx))
 	cmd.AddCommand(newSessionCleanupCommand(ctx))
 	cmd.AddCommand(newSessionClaimPRCommand(ctx))
+	cmd.AddCommand(newSessionDecideCommand(ctx))
 	return cmd
 }
 
@@ -318,6 +334,25 @@ func newSessionClaimPRCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+func newSessionDecideCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionDecideOptions
+	cmd := &cobra.Command{
+		Use:   "decide <id>",
+		Short: "Answer a pending session question dialog",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.answerSessionDecision(cmd.Context(), id, opts)
+		},
+	}
+	cmd.Flags().IntVar(&opts.option, "option", 0, "One-based option number to select")
+	cmd.Flags().StringVar(&opts.text, "text", "", "Free-text answer")
+	return cmd
+}
+
 func addSessionProjectFlag(flags interface {
 	StringVarP(*string, string, string, string, string)
 }, target *string, usage string) {
@@ -369,6 +404,19 @@ func (c *commandContext) claimSessionPR(ctx context.Context, cmd *cobra.Command,
 		return writeJSON(cmd.OutOrStdout(), res)
 	}
 	return writeClaimPRResult(cmd, res)
+}
+
+func (c *commandContext) answerSessionDecision(ctx context.Context, id string, opts sessionDecideOptions) error {
+	text := strings.TrimSpace(opts.text)
+	if opts.option <= 0 && text == "" {
+		return usageError{errors.New("--option or --text is required")}
+	}
+	if opts.option > 0 && text != "" {
+		return usageError{errors.New("use either --option or --text, not both")}
+	}
+	var res answerDecisionResponse
+	req := answerDecisionRequest{Option: opts.option, Text: opts.text}
+	return c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/decision", req, &res)
 }
 
 func (c *commandContext) fetchProjectDetails(ctx context.Context, id string) (projectDetails, error) {

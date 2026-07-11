@@ -13,10 +13,27 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const clearSessionPendingDecision = `-- name: ClearSessionPendingDecision :execrows
+UPDATE sessions SET pending_decision = '', updated_at = ? WHERE id = ?
+`
+
+type ClearSessionPendingDecisionParams struct {
+	UpdatedAt time.Time
+	ID        domain.SessionID
+}
+
+func (q *Queries) ClearSessionPendingDecision(ctx context.Context, arg ClearSessionPendingDecisionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearSessionPendingDecision, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, runtime_token, agent_session_id, prompt, model, workspace_mode, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, workspace_mode, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses, pending_decision
 FROM sessions WHERE id = ?
 `
 
@@ -45,6 +62,7 @@ type GetSessionRow struct {
 	PreviewURL        string
 	PreviewRevision   int64
 	LaunchedHarnesses string
+	PendingDecision   string
 }
 
 func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessionRow, error) {
@@ -75,6 +93,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.PreviewURL,
 		&i.PreviewRevision,
 		&i.LaunchedHarnesses,
+		&i.PendingDecision,
 	)
 	return i, err
 }
@@ -84,8 +103,8 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, runtime_token, agent_session_id, prompt, model, workspace_mode,
-    preview_url, preview_revision, launched_harnesses, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    preview_url, preview_revision, launched_harnesses, pending_decision, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -111,6 +130,7 @@ type InsertSessionParams struct {
 	PreviewURL        string
 	PreviewRevision   int64
 	LaunchedHarnesses string
+	PendingDecision   string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
@@ -139,6 +159,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.LaunchedHarnesses,
+		arg.PendingDecision,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -148,7 +169,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, runtime_token, agent_session_id, prompt, model, workspace_mode, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, workspace_mode, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses, pending_decision
 FROM sessions ORDER BY project_id, num
 `
 
@@ -177,6 +198,7 @@ type ListAllSessionsRow struct {
 	PreviewURL        string
 	PreviewRevision   int64
 	LaunchedHarnesses string
+	PendingDecision   string
 }
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, error) {
@@ -213,6 +235,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.PreviewURL,
 			&i.PreviewRevision,
 			&i.LaunchedHarnesses,
+			&i.PendingDecision,
 		); err != nil {
 			return nil, err
 		}
@@ -230,7 +253,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, runtime_token, agent_session_id, prompt, model, workspace_mode, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses
+    runtime_handle_id, runtime_token, agent_session_id, prompt, model, workspace_mode, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, launched_harnesses, pending_decision
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -259,6 +282,7 @@ type ListSessionsByProjectRow struct {
 	PreviewURL        string
 	PreviewRevision   int64
 	LaunchedHarnesses string
+	PendingDecision   string
 }
 
 func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]ListSessionsByProjectRow, error) {
@@ -295,6 +319,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.PreviewURL,
 			&i.PreviewRevision,
 			&i.LaunchedHarnesses,
+			&i.PendingDecision,
 		); err != nil {
 			return nil, err
 		}
@@ -388,7 +413,7 @@ UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, runtime_token = ?, agent_session_id = ?, prompt = ?, model = ?, workspace_mode = ?,
-    preview_url = ?, preview_revision = ?, launched_harnesses = ?, updated_at = ?
+    preview_url = ?, preview_revision = ?, launched_harnesses = ?, pending_decision = ?, updated_at = ?
 WHERE id = ?
 `
 
@@ -412,6 +437,7 @@ type UpdateSessionParams struct {
 	PreviewURL        string
 	PreviewRevision   int64
 	LaunchedHarnesses string
+	PendingDecision   string
 	UpdatedAt         time.Time
 	ID                domain.SessionID
 }
@@ -437,6 +463,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.LaunchedHarnesses,
+		arg.PendingDecision,
 		arg.UpdatedAt,
 		arg.ID,
 	)

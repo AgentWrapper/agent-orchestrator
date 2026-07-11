@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +26,11 @@ import (
 type fakeSessionService struct {
 	sessions        map[domain.SessionID]domain.Session
 	sent            string
+	decision        domain.PendingDecision
+	decisionOK      bool
+	answer          domain.DecisionAnswer
+	answerSession   domain.SessionID
+	answerErr       error
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
 	cleanupSkipped  []sessionsvc.CleanupSkipped
@@ -157,6 +163,25 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
+	return nil
+}
+
+func (f *fakeSessionService) Decision(_ context.Context, id domain.SessionID) (domain.PendingDecision, bool, error) {
+	if _, ok := f.sessions[id]; !ok {
+		return domain.PendingDecision{}, false, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return f.decision, f.decisionOK, nil
+}
+
+func (f *fakeSessionService) AnswerDecision(_ context.Context, id domain.SessionID, answer domain.DecisionAnswer) error {
+	if f.answerErr != nil {
+		return f.answerErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	f.answerSession = id
+	f.answer = answer
 	return nil
 }
 
@@ -778,6 +803,48 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", `{"message":""}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
+}
+
+func TestSessionsAPI_GetDecision(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.decisionOK = true
+	svc.decision = domain.PendingDecision{
+		Kind:     domain.DecisionKindQuestion,
+		Question: "Pick a direction",
+		Options:  []string{"Use API", "Use terminal"},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/decision", "")
+	if status != http.StatusOK {
+		t.Fatalf("decision = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		SessionID string   `json:"sessionId"`
+		Kind      string   `json:"kind"`
+		Question  string   `json:"question"`
+		Options   []string `json:"options"`
+	}
+	mustJSON(t, body, &got)
+	if got.SessionID != "ao-1" || got.Kind != "question" || got.Question != "Pick a direction" {
+		t.Fatalf("decision response = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Options, []string{"Use API", "Use terminal"}) {
+		t.Fatalf("options = %#v", got.Options)
+	}
+}
+
+func TestSessionsAPI_AnswerDecision(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/decision", `{"option":2}`)
+	if status != http.StatusOK {
+		t.Fatalf("answer decision = %d, want 200; body=%s", status, body)
+	}
+	if svc.answerSession != "ao-1" || svc.answer.Option != 2 {
+		t.Fatalf("answer = session %q %#v", svc.answerSession, svc.answer)
+	}
 }
 
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {

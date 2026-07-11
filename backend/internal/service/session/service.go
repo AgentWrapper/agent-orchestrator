@@ -54,6 +54,8 @@ type commander interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	Decision(ctx context.Context, id domain.SessionID) (domain.PendingDecision, bool, error)
+	AnswerDecision(ctx context.Context, id domain.SessionID, answer domain.DecisionAnswer) error
 	WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
@@ -528,6 +530,18 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string)
 	return toAPIError(s.manager.Send(ctx, id, message))
 }
 
+// Decision returns a queryable pending harness dialog for a session.
+func (s *Service) Decision(ctx context.Context, id domain.SessionID) (domain.PendingDecision, bool, error) {
+	decision, ok, err := s.manager.Decision(ctx, id)
+	return decision, ok, toAPIError(err)
+}
+
+// AnswerDecision delegates answer delivery to the session manager's narrow
+// question-only answer path.
+func (s *Service) AnswerDecision(ctx context.Context, id domain.SessionID, answer domain.DecisionAnswer) error {
+	return toAPIError(s.manager.AnswerDecision(ctx, id, answer))
+}
+
 // WakeIdle delegates daemon-owned idle wake delivery to the internal manager.
 func (s *Service) WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error) {
 	sent, err := s.manager.WakeIdle(ctx, id, message)
@@ -685,7 +699,13 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
-			"Session is paused on a permission decision; answer it in the session terminal first", nil)
+			"Session is paused on a pending decision; query GET /api/v1/sessions/{id}/decision, answer question dialogs with `ao session decide`, or answer permission dialogs in the session terminal", nil)
+	case errors.Is(err, sessionmanager.ErrNoPendingDecision):
+		return apierr.NotFound("SESSION_DECISION_NOT_FOUND", "No pending decision is known for this session")
+	case errors.Is(err, sessionmanager.ErrDecisionNotAnswerable):
+		return apierr.Conflict("SESSION_DECISION_NOT_ANSWERABLE", "Pending permission decisions cannot be answered programmatically", nil)
+	case errors.Is(err, sessionmanager.ErrInvalidDecisionAnswer):
+		return apierr.Invalid("INVALID_DECISION_ANSWER", "Provide a valid one-based option or non-empty text answer", nil)
 	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
 	case errors.Is(err, sessionmanager.ErrNotResumable):

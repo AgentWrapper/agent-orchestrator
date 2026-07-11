@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -77,6 +78,25 @@ func capturedRuntimeToken(t *testing.T, capture *activityCapture) string {
 	return req.RuntimeToken
 }
 
+func capturedDecision(t *testing.T, capture *activityCapture) struct {
+	Kind     string   `json:"kind"`
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+} {
+	t.Helper()
+	var req struct {
+		Decision struct {
+			Kind     string   `json:"kind"`
+			Question string   `json:"question"`
+			Options  []string `json:"options"`
+		} `json:"decision"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	return req.Decision
+}
+
 func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
@@ -102,6 +122,142 @@ func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	}
 	if got := capturedRuntimeToken(t, capture); got != "runtime-7" {
 		t.Errorf("runtimeToken = %q, want runtime-7", got)
+	}
+}
+
+func TestHooks_NotificationReportsQuestionDecision(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"notification_type":"agent_needs_input","question":"Choose lane","options":["API","Terminal"]}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "notification")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "blocked" {
+		t.Fatalf("state = %q, want blocked", got)
+	}
+	decision := capturedDecision(t, capture)
+	if decision.Kind != "question" || decision.Question != "Choose lane" {
+		t.Fatalf("decision = %#v", decision)
+	}
+	if !reflect.DeepEqual(decision.Options, []string{"API", "Terminal"}) {
+		t.Fatalf("options = %#v", decision.Options)
+	}
+}
+
+func TestHooks_NotificationReportsTextQuestionDecision(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"notification_type":"agent_needs_input","question":"What should I call this?"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "notification")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decision := capturedDecision(t, capture)
+	if decision.Kind != "question" || decision.Question != "What should I call this?" {
+		t.Fatalf("decision = %#v, want text question", decision)
+	}
+	if len(decision.Options) != 0 {
+		t.Fatalf("options = %#v, want none for text question", decision.Options)
+	}
+}
+
+func TestHooks_QuestionOptionsPreserveIndexes(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+	longOption := strings.Repeat("x", maxActivityMetaLen+20)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"notification_type":"agent_needs_input","question":"Choose lane","options":["Ship now","` + longOption + `","  "]}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "notification")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decision := capturedDecision(t, capture)
+	if len(decision.Options) != 3 {
+		t.Fatalf("options = %#v, want three labels preserving indexes", decision.Options)
+	}
+	if decision.Options[0] != "Ship now" || len(decision.Options[1]) > maxActivityMetaLen || decision.Options[2] != "Option 3" {
+		t.Fatalf("options = %#v, want original/truncated/placeholder labels", decision.Options)
+	}
+}
+
+func TestHooks_PermissionRequestReportsPermissionDecision(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"tool_name":"Bash","message":"Allow Bash?"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "permission-request")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "blocked" {
+		t.Fatalf("state = %q, want blocked", got)
+	}
+	decision := capturedDecision(t, capture)
+	if decision.Kind != "permission" || !strings.Contains(decision.Question, "Bash") {
+		t.Fatalf("decision = %#v, want permission mentioning Bash", decision)
+	}
+}
+
+func TestHooks_PermissionRequestWithOptionsStaysPermission(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"tool_name":"Bash","message":"Allow Bash?","options":["Allow","Deny"]}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "permission-request")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decision := capturedDecision(t, capture)
+	if decision.Kind != "permission" {
+		t.Fatalf("decision = %#v, want permission despite options", decision)
+	}
+	if len(decision.Options) != 0 {
+		t.Fatalf("options = %#v, want none for permission decisions", decision.Options)
+	}
+}
+
+func TestHooks_PermissionPromptNotificationWithOptionsStaysPermission(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"notification_type":"permission_prompt","message":"Allow Bash?","options":["Allow","Deny"]}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "notification")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decision := capturedDecision(t, capture)
+	if decision.Kind != "permission" {
+		t.Fatalf("decision = %#v, want permission despite notification options", decision)
+	}
+	if len(decision.Options) != 0 {
+		t.Fatalf("options = %#v, want none for permission prompt notifications", decision.Options)
 	}
 }
 

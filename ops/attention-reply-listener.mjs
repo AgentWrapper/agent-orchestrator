@@ -80,11 +80,32 @@ export async function handleSlackRequest({
 	try {
 		await aoSend(args);
 		logger.info?.(`reply-listener: routed to ${route.sessionId} via ${route.via}`);
-		return { status: 200, body: "", sent: { sessionId: route.sessionId, message: route.message } };
+		const sent = { sessionId: route.sessionId };
+		if (route.option !== undefined) sent.option = route.option;
+		else sent.message = route.message;
+		return { status: 200, body: "", sent };
 	} catch (e) {
-		logger.error?.("reply-listener: ao send failed:", e.message);
+		if (route.option !== undefined && shouldFallbackToSend(e)) {
+			const fallbackArgs = buildAoSendArgs({ ok: true, sessionId: route.sessionId, message: route.message });
+			if (fallbackArgs) {
+				try {
+					await aoSend(fallbackArgs);
+					logger.info?.(`reply-listener: fell back to ao send for ${route.sessionId}`);
+					return { status: 200, body: "", sent: { sessionId: route.sessionId, message: route.message } };
+				} catch (fallbackErr) {
+					logger.error?.("reply-listener: ao send fallback failed:", fallbackErr.message);
+					return { status: 200, body: "" };
+				}
+			}
+		}
+		logger.error?.("reply-listener: ao command failed:", e.message);
 		return { status: 200, body: "" }; // still 200 so Slack does not retry-storm
 	}
+}
+
+function shouldFallbackToSend(err) {
+	const message = err?.message ?? "";
+	return /SESSION_DECISION_NOT_FOUND|SESSION_DECISION_NOT_ANSWERABLE|INVALID_DECISION_ANSWER/.test(message);
 }
 
 // default aoSend: exec the public `ao` CLI.

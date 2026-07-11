@@ -40,12 +40,19 @@ const (
 // native payload when present. All three are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State        string `json:"state"`
-	Agent        string `json:"agent,omitempty"`
-	RuntimeToken string `json:"runtimeToken,omitempty"`
-	Event        string `json:"event,omitempty"`
-	ToolName     string `json:"toolName,omitempty"`
-	ToolUseID    string `json:"toolUseId,omitempty"`
+	State        string              `json:"state"`
+	Agent        string              `json:"agent,omitempty"`
+	RuntimeToken string              `json:"runtimeToken,omitempty"`
+	Event        string              `json:"event,omitempty"`
+	ToolName     string              `json:"toolName,omitempty"`
+	ToolUseID    string              `json:"toolUseId,omitempty"`
+	Decision     *decisionAPIRequest `json:"decision,omitempty"`
+}
+
+type decisionAPIRequest struct {
+	Kind     string   `json:"kind"`
+	Question string   `json:"question,omitempty"`
+	Options  []string `json:"options,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -72,6 +79,155 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 		p.ToolUseID = ""
 	}
 	return p.ToolName, p.ToolUseID
+}
+
+func decisionMeta(agent, event string, payload []byte, state, toolName string) *decisionAPIRequest {
+	if state != "blocked" {
+		return nil
+	}
+	if agent != "claude-code" {
+		return nil
+	}
+	question, options := parseQuestionDecision(payload)
+	if event == "permission-request" || (event == "notification" && notificationType(payload) == "permission_prompt") {
+		if question == "" && toolName != "" {
+			question = "Permission request: " + toolName
+		}
+		return &decisionAPIRequest{Kind: "permission", Question: question}
+	}
+	if event == "notification" && notificationType(payload) == "agent_needs_input" && question != "" {
+		return &decisionAPIRequest{Kind: "question", Question: question, Options: options}
+	}
+	if len(options) > 0 {
+		return &decisionAPIRequest{Kind: "question", Question: question, Options: options}
+	}
+	return &decisionAPIRequest{Kind: "permission", Question: question}
+}
+
+func notificationType(payload []byte) string {
+	var p struct {
+		NotificationType string `json:"notification_type"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	return p.NotificationType
+}
+
+func parseQuestionDecision(payload []byte) (string, []string) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return "", nil
+	}
+	question := firstString(raw, "question", "message", "prompt", "text", "title")
+	options := firstOptions(raw, "options", "choices", "answers")
+	if len(options) == 0 {
+		for _, key := range []string{"dialog", "decision", "elicitation"} {
+			var nested map[string]json.RawMessage
+			if v, ok := raw[key]; ok && json.Unmarshal(v, &nested) == nil {
+				if question == "" {
+					question = firstString(nested, "question", "message", "prompt", "text", "title")
+				}
+				options = firstOptions(nested, "options", "choices", "answers")
+				if len(options) > 0 {
+					break
+				}
+			}
+		}
+	}
+	return trimMeta(question), options
+}
+
+func firstString(raw map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		var s string
+		if v, ok := raw[key]; ok && json.Unmarshal(v, &s) == nil && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func firstOptions(raw map[string]json.RawMessage, keys ...string) []string {
+	for _, key := range keys {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		if opts := stringOptions(v); len(opts) > 0 {
+			return opts
+		}
+		if opts := objectOptions(v); len(opts) > 0 {
+			return opts
+		}
+	}
+	return nil
+}
+
+func stringOptions(raw json.RawMessage) []string {
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	}
+	return cleanOptions(values)
+}
+
+func objectOptions(raw json.RawMessage) []string {
+	var values []map[string]string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	}
+	opts := make([]string, 0, len(values))
+	for i, value := range values {
+		label := ""
+		for _, key := range []string{"label", "text", "value", "title"} {
+			if opt := strings.TrimSpace(value[key]); opt != "" {
+				label = opt
+				break
+			}
+		}
+		opts = append(opts, optionLabel(label, i))
+	}
+	return opts
+}
+
+func cleanOptions(values []string) []string {
+	opts := make([]string, 0, len(values))
+	for i, value := range values {
+		opts = append(opts, optionLabel(value, i))
+	}
+	return opts
+}
+
+func optionLabel(v string, index int) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return fmt.Sprintf("Option %d", index+1)
+	}
+	if len(v) > maxActivityMetaLen {
+		return truncateRunes(v, maxActivityMetaLen)
+	}
+	return v
+}
+
+func trimMeta(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) > maxActivityMetaLen {
+		return ""
+	}
+	return v
+}
+
+func truncateRunes(v string, maxBytes int) string {
+	lastSafe := 0
+	for i := range v {
+		if i > maxBytes {
+			return strings.TrimSpace(v[:lastSafe])
+		}
+		lastSafe = i
+	}
+	if len(v) > maxBytes {
+		return strings.TrimSpace(v[:lastSafe])
+	}
+	return v
 }
 
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
@@ -117,9 +273,11 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	toolName, toolUseID := activityMeta(payload)
+	stateText := string(state)
+	decision := decisionMeta(agent, event, payload, stateText, toolName)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	runtimeToken := strings.TrimSpace(os.Getenv("AO_RUNTIME_TOKEN"))
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Agent: agent, RuntimeToken: runtimeToken, Event: event, ToolName: toolName, ToolUseID: toolUseID}, nil); err != nil {
+	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: stateText, Agent: agent, RuntimeToken: runtimeToken, Event: event, ToolName: toolName, ToolUseID: toolUseID, Decision: decision}, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)

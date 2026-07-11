@@ -380,6 +380,58 @@ func TestSessionWorkspaceModeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSessionPendingDecisionRoundTrips(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	rec := sampleRecord("mer")
+	rec.Metadata.PendingDecision = &domain.PendingDecision{
+		Kind:     domain.DecisionKindQuestion,
+		Question: "Choose lane",
+		Options:  []string{"API", "Terminal"},
+	}
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get after create: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.PendingDecision == nil || got.Metadata.PendingDecision.Kind != domain.DecisionKindQuestion || got.Metadata.PendingDecision.Question != "Choose lane" {
+		t.Fatalf("PendingDecision after create = %#v", got.Metadata.PendingDecision)
+	}
+	if !reflect.DeepEqual(got.Metadata.PendingDecision.Options, []string{"API", "Terminal"}) {
+		t.Fatalf("options after create = %#v", got.Metadata.PendingDecision.Options)
+	}
+
+	got.Activity.State = domain.ActivityActive
+	got.Metadata.RuntimeHandleID = "runtime-after-question"
+	got.UpdatedAt = got.UpdatedAt.Add(time.Second)
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update unrelated fields: %v", err)
+	}
+	clearAt := got.UpdatedAt.Add(time.Second)
+	ok, err = s.ClearSessionPendingDecision(ctx, created.ID, clearAt)
+	if err != nil || !ok {
+		t.Fatalf("clear pending decision: ok=%v err=%v", ok, err)
+	}
+	cleared, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get after clear: ok=%v err=%v", ok, err)
+	}
+	if cleared.Metadata.PendingDecision != nil {
+		t.Fatalf("PendingDecision after clear = %#v, want nil", cleared.Metadata.PendingDecision)
+	}
+	if cleared.Activity.State != domain.ActivityActive || cleared.Metadata.RuntimeHandleID != "runtime-after-question" {
+		t.Fatalf("clear rewrote unrelated fields: activity=%s runtime=%q", cleared.Activity.State, cleared.Metadata.RuntimeHandleID)
+	}
+	if !cleared.UpdatedAt.Equal(clearAt) {
+		t.Fatalf("UpdatedAt after clear = %s, want %s", cleared.UpdatedAt, clearAt)
+	}
+}
+
 func TestPRCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -36,27 +36,28 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Product commands
 
-| Command                             | Daemon route                                   |
-| ----------------------------------- | ---------------------------------------------- |
-| `ao project add`                    | `POST /api/v1/projects`                        |
-| `ao project ls`                     | `GET /api/v1/projects`                         |
-| `ao project get <id>`               | `GET /api/v1/projects/{id}`                    |
-| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`             |
-| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                 |
-| `ao agent ls`                       | `GET /api/v1/agents`                           |
-| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                  |
-| `ao spawn`                          | `POST /api/v1/sessions`                        |
-| `ao session ls`                     | `GET /api/v1/sessions`                         |
-| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |
-| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`              |
-| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`           |
-| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                  |
-| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                |
-| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`          |
-| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
-| `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
-| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
-| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
+| Command                                       | Daemon route                                   |
+| --------------------------------------------- | ---------------------------------------------- |
+| `ao project add`                              | `POST /api/v1/projects`                        |
+| `ao project ls`                               | `GET /api/v1/projects`                         |
+| `ao project get <id>`                         | `GET /api/v1/projects/{id}`                    |
+| `ao project set-config <id>`                  | `PUT /api/v1/projects/{id}/config`             |
+| `ao project rm <id>`                          | `DELETE /api/v1/projects/{id}`                 |
+| `ao agent ls`                                 | `GET /api/v1/agents`                           |
+| `ao agent ls --refresh`                       | `POST /api/v1/agents/refresh`                  |
+| `ao spawn`                                    | `POST /api/v1/sessions`                        |
+| `ao session ls`                               | `GET /api/v1/sessions`                         |
+| `ao session get <id>`                         | `GET /api/v1/sessions/{id}`                    |
+| `ao session kill <id>`                        | `POST /api/v1/sessions/{id}/kill`              |
+| `ao session restore <id>`                     | `POST /api/v1/sessions/{id}/restore`           |
+| `ao session rename <id> <name>`               | `PATCH /api/v1/sessions/{id}`                  |
+| `ao session cleanup`                          | `POST /api/v1/sessions/cleanup`                |
+| `ao session claim-pr <id> <pr-ref>`           | `POST /api/v1/sessions/{id}/pr/claim`          |
+| `ao session decide <id> --option N\|--text X` | `POST /api/v1/sessions/{id}/decision`          |
+| `ao orchestrator ls`                          | `GET /api/v1/orchestrators`                    |
+| `ao send`                                     | `POST /api/v1/sessions/{id}/send`              |
+| `ao preview [url]`                            | `POST /api/v1/sessions/{id}/preview`           |
+| `ao hooks <agent> <event>`                    | `POST /api/v1/sessions/{id}/activity` (hidden) |
 
 `ao project set-config` field flags merge into the stored project config; for
 example, `--workspace in-place` changes only the workspace mode. Use
