@@ -91,14 +91,14 @@ const pwAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567
 func GeneratePassword() (string, error) {
 	const length = 8
 	buf := make([]byte, length)
-	max := byte(256 - (256 % len(pwAlphabet)))
+	unbiasedLimit := byte(256 - (256 % len(pwAlphabet)))
 	var one [1]byte
 	for i := range buf {
 		for {
 			if _, err := rand.Read(one[:]); err != nil {
 				return "", err
 			}
-			if one[0] < max {
+			if one[0] < unbiasedLimit {
 				buf[i] = pwAlphabet[int(one[0])%len(pwAlphabet)]
 				break
 			}

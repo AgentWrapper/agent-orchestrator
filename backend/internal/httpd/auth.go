@@ -173,6 +173,7 @@ func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Han
 			}
 			if mobilebridge.PasswordMatches(snapshot.hash, bearer) {
 				if snapshot.cookieToken != "" {
+					//nolint:gosec // G124: Connect Mobile serves plaintext HTTP on trusted LANs by design; Secure cookies would be dropped for http:// LAN preview URLs. HttpOnly and SameSite=Strict are set.
 					http.SetCookie(w, &http.Cookie{
 						Name:     mobileAuthCookie,
 						Value:    snapshot.cookieToken,

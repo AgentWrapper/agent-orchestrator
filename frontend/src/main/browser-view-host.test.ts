@@ -9,10 +9,7 @@ import {
 } from "./browser-view-host";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
-type EventHandler = (
-	event: { sender: { id: number; getZoomFactor?: () => number } },
-	...args: unknown[]
-) => unknown;
+type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
 
 function setupHost() {
 	let currentURL = "";
