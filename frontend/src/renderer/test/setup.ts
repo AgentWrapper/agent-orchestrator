@@ -65,6 +65,7 @@ if (typeof window !== "undefined") {
 		},
 		menu: {
 			action: async () => undefined,
+			notifyShellFocus: () => undefined,
 		},
 		clipboard: {
 			writeText: async () => undefined,

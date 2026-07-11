@@ -13,6 +13,7 @@ export const aoBridge: AoBridge =
 		},
 		menu: {
 			action: async () => undefined,
+			notifyShellFocus: () => undefined,
 		},
 		clipboard: {
 			writeText: async (text: string) => {

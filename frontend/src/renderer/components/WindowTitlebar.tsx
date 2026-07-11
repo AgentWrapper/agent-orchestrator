@@ -80,6 +80,18 @@ export function WindowTitlebar() {
 		void window.ao?.window?.setOverlay(overlay);
 	}, [theme]);
 
+	// Tell main to forget the last-focused panel whenever real shell UI (not this menu) gets focus, so its fallback target doesn't go stale.
+	useEffect(() => {
+		if (!isWindows) return;
+		const onFocusIn = (event: FocusEvent) => {
+			const target = event.target as HTMLElement | null;
+			if (target?.closest('[class*="window-titlebar"]')) return;
+			void window.ao?.menu?.notifyShellFocus();
+		};
+		document.addEventListener("focusin", onFocusIn);
+		return () => document.removeEventListener("focusin", onFocusIn);
+	}, []);
+
 	if (!isWindows) return null;
 
 	return (

@@ -299,7 +299,8 @@ describe("getLastFocusedPanelContents", () => {
 			annotatePreloadPath: "/preload.js",
 			rendererOrigin: "http://localhost:5173",
 		});
-		const call = (channel: string, ...args: unknown[]) => handlers.get(channel)!({ sender: { id: 1 } }, ...args);
+		const call = (channel: string, ...args: unknown[]) =>
+			handlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
 		return { host, call, webContents, focus: () => focusListener?.() };
 	}
 

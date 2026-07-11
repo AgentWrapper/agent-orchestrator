@@ -88,6 +88,8 @@ export type BrowserViewHost = {
 	destroyAll: () => void;
 	// webContents of the most recently focused browser panel (or null); the titlebar menu targets it for Edit/Reload/Zoom/DevTools.
 	getLastFocusedPanelContents: () => WebContents | null;
+	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
+	forgetLastFocusedPanel: () => void;
 };
 
 type BrowserEntry = {
@@ -361,6 +363,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// Stored narrowed as BrowserWebContents but is a full WebContents at runtime.
 			const contents = entry.view.webContents as unknown as WebContents;
 			return contents.isDestroyed() ? null : contents;
+		},
+		forgetLastFocusedPanel: () => {
+			lastFocusedViewId = null;
 		},
 	};
 }

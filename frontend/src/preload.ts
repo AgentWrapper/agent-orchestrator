@@ -52,6 +52,7 @@ const api = {
 	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,
+		notifyShellFocus: () => ipcRenderer.send("shell:focus"),
 	},
 	clipboard: {
 		writeText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,

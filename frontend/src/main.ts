@@ -970,6 +970,9 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 	}
 });
 
+// Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
+ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
+
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.
 ipcMain.handle("menu:action", (_event, action: string) => {
