@@ -64,14 +64,26 @@ var reviewerDisallowedTools = []string{
 	"Bash(git commit:*)",
 }
 
+func combineSystemPrompt(systemPrompt, prompt string) string {
+	switch {
+	case systemPrompt == "":
+		return prompt
+	case prompt == "":
+		return systemPrompt
+	default:
+		return systemPrompt + "\n\n" + prompt
+	}
+}
+
+
 // ReviewCommand builds a claude-code invocation that reviews the worker's
 // checkout for the PR, with the review prompt baked in.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
-		Prompt:        inv.Prompt,
-		SystemPrompt:  inv.SystemPrompt,
+		Prompt:        "", // Hide the initial prompt from terminal by moving it to SystemPrompt
+		SystemPrompt:  combineSystemPrompt(inv.SystemPrompt, inv.Prompt),
 		// Launch off bypassPermissions so the allow/deny lists are enforced.
 		// Set an explicit non-bypass mode instead of deferring to the user's
 		// Claude defaultMode, which may itself be bypassPermissions.

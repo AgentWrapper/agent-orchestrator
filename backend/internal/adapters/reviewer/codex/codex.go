@@ -29,6 +29,17 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 
+func combineSystemPrompt(systemPrompt, prompt string) string {
+	switch {
+	case systemPrompt == "":
+		return prompt
+	case prompt == "":
+		return systemPrompt
+	default:
+		return systemPrompt + "\n\n" + prompt
+	}
+}
+
 // ReviewCommand launches the reviewer with an enforced read-only filesystem
 // sandbox. Auto approval lets the headless session request the narrowly needed
 // network access for posting the review and reporting its result.
@@ -36,8 +47,8 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
-		Prompt:        inv.Prompt,
-		SystemPrompt:  inv.SystemPrompt,
+		Prompt:        "", // Hide the initial prompt from terminal by moving it to SystemPrompt
+		SystemPrompt:  combineSystemPrompt(inv.SystemPrompt, inv.Prompt),
 		Permissions:   ports.PermissionModeAuto,
 	})
 	if err != nil {
