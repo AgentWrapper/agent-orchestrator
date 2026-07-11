@@ -96,6 +96,68 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_AutonomousMergeFlagMergesExistingConfig(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []projectCapture
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
+			requests = append(requests, projectCapture{method: r.Method, path: r.URL.Path, body: body})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"sessionPrefix":"fleet","env":{"FOO":"bar"},"worker":{"agent":"codex"},"orchestrator":{"agent":"claude-code"}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
+			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--autonomous-merge")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %#v, want GET then PUT", requests)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(requests[1].body, &got); err != nil {
+		t.Fatalf("decode request: %v\nbody=%s", err, requests[1].body)
+	}
+	if !got.Config.AutonomousMerge {
+		t.Fatalf("autonomousMerge = false, want true")
+	}
+	if got.Config.SessionPrefix != "fleet" || got.Config.Env["FOO"] != "bar" || got.Config.Worker.Agent != "codex" || got.Config.Orchestrator.Agent != "claude-code" {
+		t.Fatalf("flag update did not preserve existing config: %#v", got.Config)
+	}
+}
+
+func TestProjectSetConfig_AutonomousMergeFalseCanStandAlone(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--autonomous-merge=false")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.AutonomousMerge {
+		t.Fatalf("autonomousMerge = true, want false in request body %s", capture.body)
+	}
+}
+
 func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
@@ -367,6 +429,26 @@ func TestBuildProjectConfigWorkspaceConfigJSON(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "workspace") || !strings.Contains(err.Error(), "bogus") {
 		t.Fatalf("error = %q, want it to name the workspace field and the bad value", err)
+	}
+}
+
+func TestBuildProjectConfigAutonomousMergeConfigJSON(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{
+		configJSON: `{"autonomousMerge":true}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AutonomousMerge {
+		t.Fatal("autonomousMerge JSON was dropped by the CLI mirror")
+	}
+
+	domainCfg := marshalToDomainConfig(t, got)
+	if !domainCfg.AutonomousMerge {
+		t.Fatal("domain decode dropped autonomousMerge")
+	}
+	if err := domainCfg.Validate(); err != nil {
+		t.Fatalf("autonomousMerge config rejected by validator: %v", err)
 	}
 }
 

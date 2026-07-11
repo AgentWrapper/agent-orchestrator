@@ -44,6 +44,41 @@ func TestSpawnEnvOmitsEmptyRunFile(t *testing.T) {
 	}
 }
 
+func TestProjectRuntimeEnvAutonomousMergeOnlyForWorkers(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		AutonomousMerge: true,
+		Env:             map[string]string{"FOO": "bar"},
+	}
+	worker := projectRuntimeEnv(domain.KindWorker, cfg)
+	if worker["FOO"] != "bar" {
+		t.Fatalf("FOO = %q, want bar", worker["FOO"])
+	}
+	if worker["POLYPOWERS_AUTOMERGE"] != "1" {
+		t.Fatalf("worker POLYPOWERS_AUTOMERGE = %q, want 1", worker["POLYPOWERS_AUTOMERGE"])
+	}
+
+	orchestrator := projectRuntimeEnv(domain.KindOrchestrator, cfg)
+	if _, ok := orchestrator["POLYPOWERS_AUTOMERGE"]; ok {
+		t.Fatalf("orchestrator inherited POLYPOWERS_AUTOMERGE = %q, want unset", orchestrator["POLYPOWERS_AUTOMERGE"])
+	}
+}
+
+func TestProjectRuntimeEnvIgnoresLegacyAutomergeEnv(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		Env: map[string]string{
+			"FOO":                  "bar",
+			"POLYPOWERS_AUTOMERGE": "1",
+		},
+	}
+	env := projectRuntimeEnv(domain.KindWorker, cfg)
+	if env["FOO"] != "bar" {
+		t.Fatalf("FOO = %q, want bar", env["FOO"])
+	}
+	if got, ok := env["POLYPOWERS_AUTOMERGE"]; ok {
+		t.Fatalf("legacy POLYPOWERS_AUTOMERGE = %q, want unset when autonomousMerge is false", got)
+	}
+}
+
 func TestHookPATH(t *testing.T) {
 	sep := string(os.PathListSeparator)
 	daemonExe := filepath.Join("/opt", "aod", "ao")

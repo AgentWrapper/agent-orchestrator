@@ -133,6 +133,9 @@ type trackerIntakeConfig struct {
 type projectConfig struct {
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 	SessionPrefix string `json:"sessionPrefix,omitempty"`
+	// AutonomousMerge mirrors domain.ProjectConfig.AutonomousMerge. It controls
+	// whether spawned workers receive per-project autonomous merge permission.
+	AutonomousMerge bool `json:"autonomousMerge,omitempty"`
 	// Workspace mirrors domain.ProjectConfig.Workspace (the project-wide default
 	// workspace mode). Empty resolves to worktree on the daemon; a --config-json
 	// payload round-trips it instead of silently dropping it.
@@ -169,6 +172,7 @@ func (r setConfigRequest) MarshalJSON() ([]byte, error) {
 type projectSetConfigOptions struct {
 	defaultBranch                string
 	sessionPrefix                string
+	autonomousMerge              bool
 	workspace                    string
 	model                        string
 	permission                   string
@@ -186,6 +190,7 @@ type projectSetConfigOptions struct {
 	trackerExcludeLabels         []string
 	trackerMaxConcurrent         int
 	trackerIntakeSet             bool
+	autonomousMergeSet           bool
 	configJSON                   string
 	clear                        bool
 	json                         bool
@@ -329,7 +334,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
-		Long: "Update a project's per-project config (branch, session prefix, env, " +
+		Long: "Update a project's per-project config (branch, session prefix, autonomous merge, env, " +
 			"symlinks, post-create, agent model/permissions, role overrides, tracker intake). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags to merge them into the stored config, pass the whole object with " +
@@ -347,6 +352,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(args[0])
 			opts.trackerIntakeSet = cmd.Flags().Changed("tracker-intake")
+			opts.autonomousMergeSet = cmd.Flags().Changed("autonomous-merge")
 			if opts.configJSON != "" && trackerConfigFlagChanged(cmd) {
 				return usageError{errors.New("usage: tracker intake flags cannot be combined with --config-json; include trackerIntake in the JSON object instead")}
 			}
@@ -389,6 +395,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
 	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
+	f.BoolVar(&opts.autonomousMerge, "autonomous-merge", false, "Allow this project's workers to autonomously merge after gates pass")
 	f.StringVar(&opts.workspace, "workspace", "", "Session workspace mode: worktree (default) or in-place")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
@@ -432,6 +439,9 @@ func applyProjectConfigFlagPatch(base *projectConfig, patch projectConfig, cmd *
 	}
 	if flags.Changed("session-prefix") {
 		base.SessionPrefix = patch.SessionPrefix
+	}
+	if flags.Changed("autonomous-merge") {
+		base.AutonomousMerge = patch.AutonomousMerge
 	}
 	if flags.Changed("workspace") {
 		base.Workspace = patch.Workspace
@@ -510,15 +520,16 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		return projectConfig{}, err
 	}
 	cfg := projectConfig{
-		DefaultBranch: opts.defaultBranch,
-		SessionPrefix: opts.sessionPrefix,
-		Workspace:     opts.workspace,
-		Env:           env,
-		Symlinks:      opts.symlink,
-		PostCreate:    opts.postCreate,
-		AgentConfig:   agentConfig{Model: opts.model, Permissions: opts.permission},
-		Worker:        roleOverride{Agent: opts.workerAgent, InstructionsFile: opts.workerInstructionsFile},
-		Orchestrator:  roleOverride{Agent: opts.orchestratorAgent, InstructionsFile: opts.orchestratorInstructionsFile},
+		DefaultBranch:   opts.defaultBranch,
+		SessionPrefix:   opts.sessionPrefix,
+		AutonomousMerge: opts.autonomousMerge,
+		Workspace:       opts.workspace,
+		Env:             env,
+		Symlinks:        opts.symlink,
+		PostCreate:      opts.postCreate,
+		AgentConfig:     agentConfig{Model: opts.model, Permissions: opts.permission},
+		Worker:          roleOverride{Agent: opts.workerAgent, InstructionsFile: opts.workerInstructionsFile},
+		Orchestrator:    roleOverride{Agent: opts.orchestratorAgent, InstructionsFile: opts.orchestratorInstructionsFile},
 		TrackerIntake: trackerIntakeConfig{
 			Enabled:       opts.trackerIntake,
 			Provider:      trackerProviderForFlags(opts),
@@ -529,7 +540,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 			MaxConcurrent: opts.trackerMaxConcurrent,
 		},
 	}
-	if reflect.DeepEqual(cfg, projectConfig{}) {
+	if reflect.DeepEqual(cfg, projectConfig{}) && !opts.autonomousMergeSet {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}
 	}
 	return cfg, nil

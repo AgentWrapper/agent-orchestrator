@@ -53,6 +53,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake exclude label with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", ExcludeLabels: []string{"agent:noauto "}}}, true},
 		{"tracker intake good max concurrent", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 4}}, false},
 		{"tracker intake negative max concurrent", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: -1}}, true},
+		{"autonomous merge enabled", ProjectConfig{AutonomousMerge: true}, false},
 		{"good top-level workspace worktree", ProjectConfig{Workspace: WorkspaceModeWorktree}, false},
 		{"good top-level workspace in-place", ProjectConfig{Workspace: WorkspaceModeInPlace}, false},
 		{"unknown top-level workspace", ProjectConfig{Workspace: "cloud"}, true},
@@ -176,6 +177,9 @@ func TestProjectConfigIsZero(t *testing.T) {
 	if (ProjectConfig{Workspace: WorkspaceModeInPlace}).IsZero() {
 		t.Fatal("config with an explicit workspace mode should not be zero")
 	}
+	if (ProjectConfig{AutonomousMerge: true}).IsZero() {
+		t.Fatal("config with autonomous merge enabled should not be zero")
+	}
 }
 
 func TestWorkspaceModeIsKnown(t *testing.T) {
@@ -271,5 +275,22 @@ func TestProjectConfigWorkspaceJSONRoundTrip(t *testing.T) {
 	}
 	if out.Worker.Workspace != WorkspaceModeWorktree {
 		t.Fatalf("round-trip worker override = %q, want worktree", out.Worker.Workspace)
+	}
+}
+
+func TestProjectConfigAutonomousMergeJSONRoundTrip(t *testing.T) {
+	blob, err := json.Marshal(ProjectConfig{AutonomousMerge: true})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got := string(blob); !strings.Contains(got, `"autonomousMerge":true`) {
+		t.Fatalf("marshaled config = %s, want autonomousMerge true", got)
+	}
+	var out ProjectConfig
+	if err := json.Unmarshal(blob, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !out.AutonomousMerge {
+		t.Fatal("autonomousMerge did not round-trip")
 	}
 }

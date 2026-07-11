@@ -147,6 +147,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		workerMix: (config.workerMix ?? []).map((r) => ({ agent: r.agent, model: r.model ?? "", weight: r.weight })),
+		autonomousMerge: config.autonomousMerge ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -223,6 +224,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					explicitDisable: intakeDisableRequested,
 				}),
 			};
+			if (form.autonomousMerge) {
+				next.autonomousMerge = true;
+			} else {
+				delete next.autonomousMerge;
+			}
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
 				body: { config: next },
@@ -398,6 +404,23 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
 						/>
 					</Field>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-[13px]">Merge policy</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<label className="flex items-center gap-2.5 text-[13px] text-foreground">
+						<input
+							type="checkbox"
+							className="h-4 w-4 accent-accent"
+							checked={form.autonomousMerge}
+							onChange={(e) => setForm((f) => ({ ...f, autonomousMerge: e.target.checked }))}
+						/>
+						Autonomous merge
+					</label>
 				</CardContent>
 			</Card>
 

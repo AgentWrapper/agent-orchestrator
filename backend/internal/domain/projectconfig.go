@@ -88,6 +88,11 @@ type ProjectConfig struct {
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// AutonomousMerge allows workers for this project to complete the configured
+	// merge/deploy loop after their review and CI gates pass. Empty/false keeps
+	// the project parked for a human merge decision.
+	AutonomousMerge bool `json:"autonomousMerge,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from

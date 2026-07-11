@@ -107,8 +107,8 @@ config="$(ao project get agent-orchestrator --json \
       | .worker = ((.worker // {}) | .agent = "claude-code")
       | .orchestrator = ((.orchestrator // {}) | .agent = "claude-code")
       | .agentConfig = ((.agentConfig // {}) | .permissions = "bypass-permissions")
+      | .autonomousMerge = true
       | .env = ((.env // {})
-          | .POLYPOWERS_AUTOMERGE = "1"
           | .POLYPOWERS_REPO = "polymath-ventures/agent-orchestrator")')"
 ao project set-config agent-orchestrator --config-json "$config"
 ```
@@ -118,8 +118,9 @@ the whole current object every time; a call that "just updates one env var"
 drops the rest of the config. Before editing, GET the current config, apply the
 intended change, then send the full replacement with `--config-json`. The
 command above edits the current live config in place so keys such as
-`trackerIntake`, `workerMix`, and `reviewers` survive. The `POLYPOWERS_*` env
-grants workers the autonomous merge+deploy loop (decisions D-c/D-e);
+`trackerIntake`, `workerMix`, and `reviewers` survive. `autonomousMerge`
+grants workers the autonomous merge+deploy loop (decisions D-c/D-e), while
+`POLYPOWERS_REPO` pins the GitHub repo for skills that need it.
 `bypass-permissions` keeps unattended workers from stalling on prompts.
 
 Disabling issue intake is protected: if `trackerIntake` is enabled, a

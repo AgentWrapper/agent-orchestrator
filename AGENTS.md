@@ -103,8 +103,9 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    belongs to a different model family (see the identity contract below) —
    never to the implementer. Merging requires **explicit authorization**, which
    comes in exactly two forms: the user says so in the session, or the session
-   runs in **autonomous mode** (`POLYPOWERS_AUTOMERGE=1` set by the
-   orchestrator, or a queue invoked with `--merge`). In autonomous mode the
+   runs in **autonomous mode** (the project's `autonomousMerge` config is on,
+   which AO reflects into worker runtime env for compatibility, or a queue
+   invoked with `--merge`). In autonomous mode the
    agent merges **only after the full gate**: a `final-review` commit status
    with `state=success` on the current PR head SHA and description
    `verdict=clean reviewer_family=<family> head=<full-head-sha>`, CI green,
@@ -242,7 +243,10 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —
   a bad change here takes down the whole fleet; a human reviews those merges.
-- **Env:** sessions run with `POLYPOWERS_AUTOMERGE=1` and
+- **Autonomous merge config:** project config sets `autonomousMerge=true` for
+  this repo when workers may merge after the full gate. AO reflects that into
+  `POLYPOWERS_AUTOMERGE=1` inside worker sessions for compatibility with the
+  skills layer; it is not a global daemon env assumption. Sessions also run with
   `POLYPOWERS_REPO=polymath-ventures/agent-orchestrator` (project config).
 - **SDLC audit markers:** workers must leave durable, externally auditable
   markers for every lifecycle stage. The durable surfaces are GitHub issue/PR

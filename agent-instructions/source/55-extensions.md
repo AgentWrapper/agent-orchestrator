@@ -8,7 +8,10 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —
   a bad change here takes down the whole fleet; a human reviews those merges.
-- **Env:** sessions run with `POLYPOWERS_AUTOMERGE=1` and
+- **Autonomous merge config:** project config sets `autonomousMerge=true` for
+  this repo when workers may merge after the full gate. AO reflects that into
+  `POLYPOWERS_AUTOMERGE=1` inside worker sessions for compatibility with the
+  skills layer; it is not a global daemon env assumption. Sessions also run with
   `POLYPOWERS_REPO=polymath-ventures/agent-orchestrator` (project config).
 - **SDLC audit markers:** workers must leave durable, externally auditable
   markers for every lifecycle stage. The durable surfaces are GitHub issue/PR

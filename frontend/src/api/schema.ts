@@ -989,6 +989,7 @@ export interface components {
         };
         ProjectConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
+            autonomousMerge?: boolean;
             defaultBranch?: string;
             env?: {
                 [key: string]: string;

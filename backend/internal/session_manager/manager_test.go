@@ -961,9 +961,10 @@ func TestSwitchHarness_CreateFailureTerminates(t *testing.T) {
 func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
-		DefaultBranch: "develop",
-		Env:           map[string]string{"FOO": "bar"},
-		AgentConfig:   domain.AgentConfig{Model: "base-model"},
+		DefaultBranch:   "develop",
+		Env:             map[string]string{"FOO": "bar"},
+		AutonomousMerge: true,
+		AgentConfig:     domain.AgentConfig{Model: "base-model"},
 		// A worker role override wins over the base agent config for workers.
 		Worker: domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker-model"}},
 	}}
@@ -989,6 +990,9 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	if rt.lastCfg.Env["FOO"] != "bar" {
 		t.Fatalf("runtime env FOO = %q, want bar", rt.lastCfg.Env["FOO"])
 	}
+	if rt.lastCfg.Env["POLYPOWERS_AUTOMERGE"] != "1" {
+		t.Fatalf("runtime env POLYPOWERS_AUTOMERGE = %q, want 1", rt.lastCfg.Env["POLYPOWERS_AUTOMERGE"])
+	}
 	if rt.lastCfg.Env[EnvSessionID] == "" {
 		t.Fatal("runtime env missing AO_SESSION_ID")
 	}
@@ -1011,11 +1015,15 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	// when the spawn explicitly names its agent.
 	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
 	agent.lastConfig = ports.AgentConfig{Model: "stale"}
+	rt.lastCfg = ports.RuntimeConfig{}
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
 		t.Fatal(err)
 	}
 	if !agent.lastConfig.IsZero() {
 		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
+	}
+	if got, ok := rt.lastCfg.Env["POLYPOWERS_AUTOMERGE"]; ok {
+		t.Fatalf("runtime env POLYPOWERS_AUTOMERGE = %q, want unset for project without autonomous merge", got)
 	}
 }
 

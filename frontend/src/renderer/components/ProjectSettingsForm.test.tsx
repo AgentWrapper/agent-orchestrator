@@ -231,6 +231,34 @@ describe("ProjectSettingsForm", () => {
 		expect(body.config.trackerIntake).toBeUndefined();
 	}, 20_000);
 
+	it("saves autonomous merge without dropping hidden config", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				env: { FOO: "bar" },
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByLabelText("Autonomous merge"));
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.autonomousMerge).toBe(true);
+		expect(body.config.env).toEqual({ FOO: "bar" });
+		expect(body.config.defaultBranch).toBe("develop");
+	});
+
 	it("preserves hidden intake fields when saving a disabled intake config", async () => {
 		mockProject({
 			id: "proj-1",

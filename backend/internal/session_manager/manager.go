@@ -562,7 +562,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, project.Config.Env),
+		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, cfg.Kind, project.Config),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -1165,7 +1165,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
@@ -1356,7 +1356,7 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 		SessionID:     id,
 		WorkspacePath: meta.WorkspacePath,
 		Argv:          launch.argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
 	})
 	if err != nil {
 		// No live runtime now. Mark terminated so the session stops cleanly with
@@ -1442,7 +1442,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          launch.argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
@@ -2819,7 +2819,8 @@ func titleCommand(agent ports.Agent, title string) (string, bool) {
 // command, which fails every callback and silently kills activity tracking).
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
-func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, runtimeToken string, projectEnv map[string]string) map[string]string {
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, runtimeToken string, kind domain.SessionKind, cfg domain.ProjectConfig) map[string]string {
+	projectEnv := projectRuntimeEnv(kind, cfg)
 	env := spawnEnv(id, project, issue, m.dataDir, m.runFile, runtimeToken, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
@@ -2828,6 +2829,20 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 		return env
 	}
 	env["PATH"] = path
+	return env
+}
+
+func projectRuntimeEnv(kind domain.SessionKind, cfg domain.ProjectConfig) map[string]string {
+	env := make(map[string]string, len(cfg.Env)+1)
+	for k, v := range cfg.Env {
+		if k == "POLYPOWERS_AUTOMERGE" {
+			continue
+		}
+		env[k] = v
+	}
+	if kind == domain.KindWorker && cfg.AutonomousMerge {
+		env["POLYPOWERS_AUTOMERGE"] = "1"
+	}
 	return env
 }
 

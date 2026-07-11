@@ -87,8 +87,9 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    belongs to a different model family (see the identity contract below) —
    never to the implementer. Merging requires **explicit authorization**, which
    comes in exactly two forms: the user says so in the session, or the session
-   runs in **autonomous mode** (`POLYPOWERS_AUTOMERGE=1` set by the
-   orchestrator, or a queue invoked with `--merge`). In autonomous mode the
+   runs in **autonomous mode** (the project's `autonomousMerge` config is on,
+   which AO reflects into worker runtime env for compatibility, or a queue
+   invoked with `--merge`). In autonomous mode the
    agent merges **only after the full gate**: a `final-review` commit status
    with `state=success` on the current PR head SHA and description
    `verdict=clean reviewer_family=<family> head=<full-head-sha>`, CI green,

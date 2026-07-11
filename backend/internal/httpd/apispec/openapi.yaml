@@ -2703,6 +2703,8 @@ components:
       properties:
         agentConfig:
           $ref: '#/components/schemas/AgentConfig'
+        autonomousMerge:
+          type: boolean
         defaultBranch:
           type: string
         env:
