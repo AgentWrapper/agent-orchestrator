@@ -12,6 +12,7 @@ Natural-language-to-command mappings for common AO tasks.
 | Register a repo as a project | `ao project add --path <abs-path> --name <name>` |
 | List projects | `ao project ls` |
 | Rename a session | `ao session rename <id> "<name>"` |
+| Rebind a queue worker to a new issue | `ao session set-issue <id> <issue-id>` |
 | Restore a killed session | `ao session restore <id>` |
 | Clean up terminated sessions | `ao session cleanup` |
 | See a session's details | `ao session get <id>` |

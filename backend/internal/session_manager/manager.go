@@ -155,6 +155,7 @@ type Store interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	ClearSessionPendingDecision(ctx context.Context, id domain.SessionID, updatedAt time.Time) (bool, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
+	SetSessionIssue(ctx context.Context, id domain.SessionID, issueID domain.IssueID, displayName string, updatedAt time.Time) (bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
@@ -2013,23 +2014,8 @@ func (m *Manager) Rename(ctx context.Context, id domain.SessionID, displayName s
 	if !ok {
 		return fmt.Errorf("rename %s: %w", id, ErrNotFound)
 	}
-	if !rec.IsTerminated && rec.Metadata.RuntimeHandleID != "" {
-		if agent, ok := m.agents.Agent(rec.Harness); ok {
-			if command, ok := titleCommand(agent, displayName); ok {
-				outcome, err := m.guard.Deliver(ctx, id, command)
-				if err != nil {
-					return fmt.Errorf("rename %s: title command: %w", id, err)
-				}
-				switch outcome {
-				case sessionguard.SuppressedNotFound:
-					return fmt.Errorf("rename %s: %w", id, ErrNotFound)
-				case sessionguard.SuppressedTerminated:
-					return fmt.Errorf("rename %s: %w", id, ErrTerminated)
-				case sessionguard.SuppressedAwaitingUser:
-					return fmt.Errorf("rename %s: %w", id, ErrAwaitingDecision)
-				}
-			}
-		}
+	if err := m.deliverTitle(ctx, id, rec, displayName, "rename"); err != nil {
+		return err
 	}
 	renamed, err := m.store.RenameSession(ctx, id, displayName, m.clock())
 	if err != nil {
@@ -2037,6 +2023,71 @@ func (m *Manager) Rename(ctx context.Context, id domain.SessionID, displayName s
 	}
 	if !renamed {
 		return fmt.Errorf("rename %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// SetIssue updates a worker session's bound work item and recomputes the
+// daemon-owned semantic display name from that issue. Live sessions receive the
+// same guarded in-harness title update used by Rename.
+func (m *Manager) SetIssue(ctx context.Context, id domain.SessionID, issueID domain.IssueID, issueTitle string) (domain.SessionRecord, error) {
+	if strings.TrimSpace(string(issueID)) == "" {
+		return domain.SessionRecord{}, fmt.Errorf("set issue %s: issue id required", id)
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("set issue %s: %w", id, err)
+	}
+	if !ok {
+		return domain.SessionRecord{}, fmt.Errorf("set issue %s: %w", id, ErrNotFound)
+	}
+	if rec.Kind != domain.KindWorker {
+		return domain.SessionRecord{}, fmt.Errorf("set issue %s: only worker sessions can be rebound", id)
+	}
+	project, ok, err := m.store.GetProject(ctx, string(rec.ProjectID))
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("set issue %s: get project %s: %w", id, rec.ProjectID, err)
+	}
+	if !ok {
+		project = domain.ProjectRecord{ID: string(rec.ProjectID)}
+	}
+	displayName := workerDisplayName(project, issueID, issueTitle)
+	if err := m.deliverTitle(ctx, id, rec, displayName, "set issue"); err != nil {
+		return domain.SessionRecord{}, err
+	}
+	updatedAt := m.clock()
+	updated, err := m.store.SetSessionIssue(ctx, id, issueID, displayName, updatedAt)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("set issue %s: %w", id, err)
+	}
+	if !updated {
+		return domain.SessionRecord{}, fmt.Errorf("set issue %s: %w", id, ErrNotFound)
+	}
+	rec.IssueID = issueID
+	rec.DisplayName = displayName
+	rec.UpdatedAt = updatedAt
+	return rec, nil
+}
+
+func (m *Manager) deliverTitle(ctx context.Context, id domain.SessionID, rec domain.SessionRecord, displayName, op string) error {
+	if rec.IsTerminated || rec.Metadata.RuntimeHandleID == "" {
+		return nil
+	}
+	if agent, ok := m.agents.Agent(rec.Harness); ok {
+		if command, ok := titleCommand(agent, displayName); ok {
+			outcome, err := m.guard.Deliver(ctx, id, command)
+			if err != nil {
+				return fmt.Errorf("%s %s: title command: %w", op, id, err)
+			}
+			switch outcome {
+			case sessionguard.SuppressedNotFound:
+				return fmt.Errorf("%s %s: %w", op, id, ErrNotFound)
+			case sessionguard.SuppressedTerminated:
+				return fmt.Errorf("%s %s: %w", op, id, ErrTerminated)
+			case sessionguard.SuppressedAwaitingUser:
+				return fmt.Errorf("%s %s: %w", op, id, ErrAwaitingDecision)
+			}
+		}
 	}
 	return nil
 }

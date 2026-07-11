@@ -2828,13 +2828,21 @@ components:
         displayName:
           maxLength: 20
           minLength: 1
-          type: string
-      required:
-      - displayName
+          type:
+          - "null"
+          - string
+        issueId:
+          description: Tracker issue to bind this worker session to. When set, the
+            daemon recomputes displayName from the issue title.
+          type:
+          - "null"
+          - string
       type: object
     RenameSessionResponse:
       properties:
         displayName:
+          type: string
+        issueId:
           type: string
         ok:
           type: boolean

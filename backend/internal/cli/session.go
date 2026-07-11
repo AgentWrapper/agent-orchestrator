@@ -41,8 +41,9 @@ type sessionClaimPROptions struct {
 	noTakeover bool
 }
 
-type sessionRenameRequest struct {
-	DisplayName string `json:"displayName"`
+type sessionPatchRequest struct {
+	DisplayName string `json:"displayName,omitempty"`
+	IssueID     string `json:"issueId,omitempty"`
 }
 
 type sessionDTO struct {
@@ -89,6 +90,7 @@ type switchSessionResponse struct {
 
 type renameSessionResponse struct {
 	SessionID   string `json:"sessionId"`
+	IssueID     string `json:"issueId,omitempty"`
 	DisplayName string `json:"displayName"`
 }
 
@@ -168,6 +170,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
 	cmd.AddCommand(newSessionSwitchCommand(ctx))
 	cmd.AddCommand(newSessionRenameCommand(ctx))
+	cmd.AddCommand(newSessionSetIssueCommand(ctx))
 	cmd.AddCommand(newSessionCleanupCommand(ctx))
 	cmd.AddCommand(newSessionClaimPRCommand(ctx))
 	cmd.AddCommand(newSessionDecideCommand(ctx))
@@ -290,6 +293,24 @@ func newSessionRenameCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+func newSessionSetIssueCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "set-issue <id> <issue-id>",
+		Short: "Bind a session to an issue and recompute its display name",
+		Args:  sessionSetIssueArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.setSessionIssue(cmd.Context(), cmd, id, args[1], opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	return cmd
+}
+
 func newSessionCleanupCommand(ctx *commandContext) *cobra.Command {
 	var opts sessionCleanupOptions
 	cmd := &cobra.Command{
@@ -378,6 +399,19 @@ func sessionRenameArgs(cmd *cobra.Command, args []string) error {
 	}
 	if strings.TrimSpace(args[1]) == "" {
 		return usageError{errors.New("session name is required")}
+	}
+	return nil
+}
+
+func sessionSetIssueArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+		return usageError{err}
+	}
+	if _, err := normalizeSessionID(args[0]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(args[1]) == "" {
+		return usageError{errors.New("issue id is required")}
 	}
 	return nil
 }
@@ -585,7 +619,7 @@ func (c *commandContext) renameSession(ctx context.Context, cmd *cobra.Command, 
 		return usageError{fmt.Errorf("display name must be %d characters or fewer", maxDisplayNameLen)}
 	}
 	var res renameSessionResponse
-	if err := c.patchJSON(ctx, "sessions/"+url.PathEscape(id), sessionRenameRequest{DisplayName: name}, &res); err != nil {
+	if err := c.patchJSON(ctx, "sessions/"+url.PathEscape(id), sessionPatchRequest{DisplayName: name}, &res); err != nil {
 		return err
 	}
 	sessionID := res.SessionID
@@ -596,6 +630,28 @@ func (c *commandContext) renameSession(ctx context.Context, cmd *cobra.Command, 
 		name = res.DisplayName
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s renamed to %q\n", sessionID, name)
+	return err
+}
+
+func (c *commandContext) setSessionIssue(ctx context.Context, cmd *cobra.Command, id, issueID string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	issueID = strings.TrimSpace(issueID)
+	var res renameSessionResponse
+	if err := c.patchJSON(ctx, "sessions/"+url.PathEscape(id), sessionPatchRequest{IssueID: issueID}, &res); err != nil {
+		return err
+	}
+	sessionID := res.SessionID
+	if sessionID == "" {
+		sessionID = id
+	}
+	if res.IssueID != "" {
+		issueID = res.IssueID
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s rebound to issue %q as %q\n", sessionID, issueID, res.DisplayName)
 	return err
 }
 

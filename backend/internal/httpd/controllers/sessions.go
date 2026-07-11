@@ -43,6 +43,7 @@ type SessionService interface {
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
+	SetIssue(ctx context.Context, id domain.SessionID, issueID domain.IssueID) (domain.Session, error)
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Decision(ctx context.Context, id domain.SessionID) (domain.PendingDecision, bool, error)
@@ -328,7 +329,24 @@ func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	displayName := strings.TrimSpace(in.DisplayName)
+	if in.IssueID != nil {
+		issueID := domain.IssueID(strings.TrimSpace(string(*in.IssueID)))
+		if issueID == "" {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ISSUE_ID_REQUIRED", "issueId is required", nil)
+			return
+		}
+		sess, err := c.Svc.SetIssue(r.Context(), sessionID(r), issueID)
+		if err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
+		envelope.WriteJSON(w, http.StatusOK, RenameSessionResponse{OK: true, SessionID: sessionID(r), IssueID: sess.IssueID, DisplayName: sess.DisplayName})
+		return
+	}
+	displayName := ""
+	if in.DisplayName != nil {
+		displayName = strings.TrimSpace(*in.DisplayName)
+	}
 	if displayName == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_REQUIRED", "displayName is required", nil)
 		return

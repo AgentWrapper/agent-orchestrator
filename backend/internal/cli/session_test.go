@@ -89,9 +89,13 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/restore":
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/sessions/demo-1":
-			var req sessionRenameRequest
+			var req sessionPatchRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.IssueID != "" {
+				_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","issueId":`+jsonQuote(req.IssueID)+`,"displayName":"demo #170 spawn-linkage"}`)
 				return
 			}
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","displayName":`+jsonQuote(req.DisplayName)+`}`)
@@ -395,6 +399,38 @@ func TestSessionRename_SuccessWithProjectScope(t *testing.T) {
 	want := []string{"GET /api/v1/sessions/demo-1", "PATCH /api/v1/sessions/demo-1"}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionSetIssue_SuccessWithProjectScope(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "set-issue", "demo-1", "170", "-p", "demo")
+	if err != nil {
+		t.Fatalf("session set-issue failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, `session demo-1 rebound to issue "170" as "demo #170 spawn-linkage"`) {
+		t.Fatalf("unexpected set-issue output:\n%s", out)
+	}
+	want := []string{"GET /api/v1/sessions/demo-1", "PATCH /api/v1/sessions/demo-1"}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionSetIssue_MissingIssueIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+
+	_, _, err := executeCLI(t, Deps{}, "session", "set-issue", "demo-1")
+	if err == nil {
+		t.Fatal("expected missing issue to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (err=%v)", got, err)
 	}
 }
 

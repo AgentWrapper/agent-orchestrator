@@ -1047,10 +1047,13 @@ export interface components {
             removedStorageDir: boolean;
         };
         RenameSessionRequest: {
-            displayName: string;
+            displayName?: null | string;
+            /** @description Tracker issue to bind this worker session to. When set, the daemon recomputes displayName from the issue title. */
+            issueId?: null | string;
         };
         RenameSessionResponse: {
             displayName: string;
+            issueId?: string;
             ok: boolean;
             sessionId: string;
         };

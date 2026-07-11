@@ -28,6 +28,7 @@ type fakeStore struct {
 	deleteErr          error
 	updateSessionCalls int
 	renameSessionCalls int
+	setIssueCalls      int
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
@@ -74,6 +75,18 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 	if !ok {
 		return false, nil
 	}
+	rec.DisplayName = displayName
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return true, nil
+}
+func (f *fakeStore) SetSessionIssue(_ context.Context, id domain.SessionID, issueID domain.IssueID, displayName string, updatedAt time.Time) (bool, error) {
+	f.setIssueCalls++
+	rec, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	rec.IssueID = issueID
 	rec.DisplayName = displayName
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
@@ -1607,6 +1620,45 @@ func TestRename_NormalizesDisplayNameBeforeStoreAndHarnessTitle(t *testing.T) {
 	}
 	if got, want := messenger.msgs, []string{"/rename " + wantName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("guarded sends = %#v, want %#v", got, want)
+	}
+}
+
+func TestSetIssue_ComputesNamePersistsIssueAndUpdatesHarnessTitle(t *testing.T) {
+	st := newFakeStore()
+	cfg := testRoleAgents()
+	cfg.SessionPrefix = "ao"
+	st.projects["agent-orchestrator"] = domain.ProjectRecord{ID: "agent-orchestrator", Config: cfg}
+	messenger := &fakeMessenger{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: messenger, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	st.sessions["agent-orchestrator-116"] = domain.SessionRecord{
+		ID: "agent-orchestrator-116", ProjectID: "agent-orchestrator", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		IssueID: "github:polymath-ventures/agent-orchestrator#146", DisplayName: "ao #146 naming",
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+
+	rec, err := m.SetIssue(ctx, "agent-orchestrator-116", "github:polymath-ventures/agent-orchestrator#164", "Daemon-side rename when a session's work item changes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.IssueID != "github:polymath-ventures/agent-orchestrator#164" {
+		t.Fatalf("IssueID = %q, want rebind issue", rec.IssueID)
+	}
+	if got := st.sessions["agent-orchestrator-116"].DisplayName; got != "ao #164 daemon-side" {
+		t.Fatalf("displayName = %q, want computed issue title", got)
+	}
+	if got, want := messenger.msgs, []string{"/rename ao #164 daemon-side"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("guarded sends = %#v, want %#v", got, want)
+	}
+	if st.setIssueCalls != 1 {
+		t.Fatalf("SetSessionIssue calls = %d, want 1", st.setIssueCalls)
+	}
+	if st.renameSessionCalls != 0 {
+		t.Fatalf("RenameSession calls = %d, want 0", st.renameSessionCalls)
 	}
 }
 

@@ -222,7 +222,9 @@ type fakeCommander struct {
 	killsAtSpawn    int
 	// gotCfg is the config the service handed down, where the semantic-name
 	// inputs (IssueID, IssueTitle, DisplayName) have to arrive.
-	gotCfg ports.SpawnConfig
+	gotCfg           ports.SpawnConfig
+	gotSetIssueID    domain.IssueID
+	gotSetIssueTitle string
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
@@ -243,6 +245,11 @@ func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.Sessi
 func (f *fakeCommander) SwitchHarness(context.Context, domain.SessionID, domain.AgentHarness, string) (domain.SessionRecord, error) {
 	f.switched++
 	return domain.SessionRecord{}, nil
+}
+func (f *fakeCommander) SetIssue(_ context.Context, id domain.SessionID, issueID domain.IssueID, issueTitle string) (domain.SessionRecord, error) {
+	f.gotSetIssueID = issueID
+	f.gotSetIssueTitle = issueTitle
+	return domain.SessionRecord{ID: id, ProjectID: "demo", Kind: domain.KindWorker, IssueID: issueID, DisplayName: "demo #170 spawn-linkage"}, nil
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
@@ -1365,5 +1372,63 @@ func TestSpawnWithoutTitleResolverStillSpawns(t *testing.T) {
 	}
 	if mgr.gotCfg.IssueTitle != "" {
 		t.Fatalf("IssueTitle = %q, want empty with no resolver wired", mgr.gotCfg.IssueTitle)
+	}
+}
+
+func TestSetIssueCanonicalizesAndResolvesTitle(t *testing.T) {
+	titles := &fakeIssueTitles{title: "Spawn linkage regression"}
+	store := newFakeStore()
+	store.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "git@github.com:acme/demo.git"}
+	store.sessions["demo-1"] = domain.SessionRecord{ID: "demo-1", ProjectID: "demo", Kind: domain.KindWorker}
+	mgr := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: mgr, Store: store, IssueTitles: titles})
+
+	sess, err := svc.SetIssue(context.Background(), "demo-1", "170")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if titles.calls != 1 || titles.gotIss != "github:acme/demo#170" {
+		t.Fatalf("resolver calls=%d issue=%q, want one lookup for canonical 170", titles.calls, titles.gotIss)
+	}
+	if mgr.gotSetIssueID != "github:acme/demo#170" {
+		t.Fatalf("manager issue = %q, want canonical issue", mgr.gotSetIssueID)
+	}
+	if mgr.gotSetIssueTitle != "Spawn linkage regression" {
+		t.Fatalf("manager title = %q, want resolved title", mgr.gotSetIssueTitle)
+	}
+	if sess.IssueID != "github:acme/demo#170" || sess.DisplayName != "demo #170 spawn-linkage" {
+		t.Fatalf("returned session = %+v, want rebound session", sess.SessionRecord)
+	}
+}
+
+func TestSetIssueTitleLookupFailureStillRebinds(t *testing.T) {
+	titles := &fakeIssueTitles{err: errors.New("github: 503")}
+	store := newFakeStore()
+	store.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "git@github.com:acme/demo.git"}
+	store.sessions["demo-1"] = domain.SessionRecord{ID: "demo-1", ProjectID: "demo", Kind: domain.KindWorker}
+	mgr := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: mgr, Store: store, IssueTitles: titles})
+
+	if _, err := svc.SetIssue(context.Background(), "demo-1", "170"); err != nil {
+		t.Fatal(err)
+	}
+	if mgr.gotSetIssueID != "github:acme/demo#170" {
+		t.Fatalf("manager issue = %q, want canonical issue", mgr.gotSetIssueID)
+	}
+	if mgr.gotSetIssueTitle != "" {
+		t.Fatalf("manager title = %q, want empty after lookup failure", mgr.gotSetIssueTitle)
+	}
+}
+
+func TestSetIssueRejectsOrchestrator(t *testing.T) {
+	store := newFakeStore()
+	store.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "git@github.com:acme/demo.git"}
+	store.sessions["demo-1"] = domain.SessionRecord{ID: "demo-1", ProjectID: "demo", Kind: domain.KindOrchestrator}
+	svc := NewWithDeps(Deps{Manager: &fakeCommander{}, Store: store, IssueTitles: &fakeIssueTitles{title: "unused"}})
+
+	_, err := svc.SetIssue(context.Background(), "demo-1", "170")
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindInvalid || apiErr.Code != "SESSION_NOT_WORKER" {
+		t.Fatalf("err = %v, want invalid SESSION_NOT_WORKER", err)
 	}
 }

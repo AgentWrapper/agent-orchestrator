@@ -179,7 +179,8 @@ type SessionPreviewResponse struct {
 
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
-	DisplayName string `json:"displayName" minLength:"1" maxLength:"20"`
+	DisplayName *string         `json:"displayName,omitempty" minLength:"1" maxLength:"20"`
+	IssueID     *domain.IssueID `json:"issueId,omitempty" description:"Tracker issue to bind this worker session to. When set, the daemon recomputes displayName from the issue title."`
 }
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
@@ -193,6 +194,7 @@ type SetSessionPreviewRequest struct {
 type RenameSessionResponse struct {
 	OK          bool             `json:"ok"`
 	SessionID   domain.SessionID `json:"sessionId"`
+	IssueID     domain.IssueID   `json:"issueId,omitempty"`
 	DisplayName string           `json:"displayName"`
 }
 

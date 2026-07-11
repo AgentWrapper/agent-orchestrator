@@ -1016,6 +1016,47 @@ func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	}
 }
 
+func TestSessionIdentityChangesFireCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	now := time.Now().UTC()
+	if ok, err := s.RenameSession(ctx, r.ID, "mer #146 naming", now); err != nil || !ok {
+		t.Fatalf("rename session: ok=%v err=%v", ok, err)
+	}
+	if ok, err := s.SetSessionIssue(ctx, r.ID, "github:acme/mer#170", "mer #170 spawn-linkage", now.Add(time.Second)); err != nil || !ok {
+		t.Fatalf("set session issue: ok=%v err=%v", ok, err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updates []map[string]any
+	for _, e := range evs {
+		if string(e.Type) != "session_updated" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			t.Fatalf("session_updated payload JSON: %v", err)
+		}
+		updates = append(updates, payload)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("session_updated events = %d, want 2 (rename + issue rebind)", len(updates))
+	}
+	if updates[0]["displayName"] != "mer #146 naming" || updates[0]["issueId"] != "" {
+		t.Fatalf("rename payload = %#v, want displayName with existing empty issueId", updates[0])
+	}
+	if updates[1]["displayName"] != "mer #170 spawn-linkage" || updates[1]["issueId"] != "github:acme/mer#170" {
+		t.Fatalf("set issue payload = %#v, want displayName and issueId", updates[1])
+	}
+}
+
 func TestSessionLaunchedHarnessMetadataRoundTripsResumeIDs(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -51,6 +51,7 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao session kill <id>`                        | `POST /api/v1/sessions/{id}/kill`              |
 | `ao session restore <id>`                     | `POST /api/v1/sessions/{id}/restore`           |
 | `ao session rename <id> <name>`               | `PATCH /api/v1/sessions/{id}`                  |
+| `ao session set-issue <id> <issue>`           | `PATCH /api/v1/sessions/{id}`                  |
 | `ao session cleanup`                          | `POST /api/v1/sessions/cleanup`                |
 | `ao session claim-pr <id> <pr-ref>`           | `POST /api/v1/sessions/{id}/pr/claim`          |
 | `ao session decide <id> --option N\|--text X` | `POST /api/v1/sessions/{id}/decision`          |

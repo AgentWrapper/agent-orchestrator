@@ -51,6 +51,7 @@ type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
 	SwitchHarness(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, model string) (domain.SessionRecord, error)
+	SetIssue(ctx context.Context, id domain.SessionID, issueID domain.IssueID, issueTitle string) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
@@ -568,6 +569,37 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return nil
+}
+
+// SetIssue changes the worker session's bound tracker issue and lets the
+// manager recompute and deliver the daemon-owned display name.
+func (s *Service) SetIssue(ctx context.Context, id domain.SessionID, issueID domain.IssueID) (domain.Session, error) {
+	if strings.TrimSpace(string(issueID)) == "" {
+		return domain.Session{}, apierr.Invalid("ISSUE_ID_REQUIRED", "issueId is required", nil)
+	}
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("get %s: %w", id, err)
+	}
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if rec.Kind != domain.KindWorker {
+		return domain.Session{}, apierr.Invalid("SESSION_NOT_WORKER", "Only worker sessions can be rebound to an issue", nil)
+	}
+	project, err := s.requireProject(ctx, rec.ProjectID)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if canonical, ok := trackerintake.CanonicalIssueIDFromRef(project, issueID); ok {
+		issueID = canonical
+	}
+	issueTitle := s.resolveIssueTitle(ctx, project, ports.SpawnConfig{IssueID: issueID})
+	updated, err := s.manager.SetIssue(ctx, id, issueID, issueTitle)
+	if err != nil {
+		return domain.Session{}, toAPIError(err)
+	}
+	return s.toSession(ctx, updated)
 }
 
 // SetPreview persists the browser preview URL for a session and returns the

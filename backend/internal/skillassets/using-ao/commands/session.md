@@ -122,6 +122,30 @@ ao session rename mer-3 "fix-auth-bug"
 
 ---
 
+### ao session set-issue
+
+Bind a worker session to a new issue and let the daemon recompute its display name.
+
+**Syntax:**
+```
+ao session set-issue <id> <issue-id> [flags]
+```
+
+**Flags:**
+
+| Flag | Meaning | Default / Required |
+|---|---|---|
+| `-p, --project string` | Project id to scope the lookup | - |
+
+**Examples:**
+
+```bash
+# Rebind a queue worker to issue 170 and update both session title surfaces
+ao session set-issue mer-3 170
+```
+
+---
+
 ### ao session restore
 
 Relaunch a terminated session.

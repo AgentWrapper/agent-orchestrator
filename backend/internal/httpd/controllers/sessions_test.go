@@ -161,6 +161,17 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 	return nil
 }
 
+func (f *fakeSessionService) SetIssue(_ context.Context, id domain.SessionID, issueID domain.IssueID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IssueID = issueID
+	s.DisplayName = "ao #164 daemon-side"
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
 	return nil
@@ -361,6 +372,24 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if svc.sessions["ao-2"].DisplayName != "Renamed" {
 		t.Fatalf("session displayName not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2", `{"issueId":"164"}`)
+	if status != http.StatusOK {
+		t.Fatalf("set issue = %d, want 200; body=%s", status, body)
+	}
+	var rebound struct {
+		OK          bool   `json:"ok"`
+		SessionID   string `json:"sessionId"`
+		IssueID     string `json:"issueId"`
+		DisplayName string `json:"displayName"`
+	}
+	mustJSON(t, body, &rebound)
+	if !rebound.OK || rebound.SessionID != "ao-2" || rebound.IssueID != "164" || rebound.DisplayName != "ao #164 daemon-side" {
+		t.Fatalf("set issue response = %#v", rebound)
+	}
+	if svc.sessions["ao-2"].IssueID != "164" || svc.sessions["ao-2"].DisplayName != "ao #164 daemon-side" {
+		t.Fatalf("session issue not updated: %+v", svc.sessions["ao-2"])
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
@@ -740,6 +769,9 @@ func TestSessionsAPI_RenameValidation(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1", `{"displayName":"  "}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_REQUIRED")
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1", `{"issueId":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "ISSUE_ID_REQUIRED")
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1", `{"displayName":"`+strings.Repeat("x", 21)+`"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")

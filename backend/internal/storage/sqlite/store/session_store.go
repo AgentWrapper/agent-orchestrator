@@ -74,6 +74,24 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	return rows > 0, nil
 }
 
+// SetSessionIssue updates the bound issue and its daemon-computed display name
+// for an existing session. It returns ok=false when the session id does not
+// exist.
+func (s *Store) SetSessionIssue(ctx context.Context, id domain.SessionID, issueID domain.IssueID, displayName string, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionIssue(ctx, gen.SetSessionIssueParams{
+		ID:          id,
+		IssueID:     issueID,
+		DisplayName: displayName,
+		UpdatedAt:   updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set issue for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // SetSessionPreviewURL updates only the browser preview URL for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the

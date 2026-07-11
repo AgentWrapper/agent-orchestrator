@@ -42,6 +42,9 @@ UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
 -- name: ClearSessionPendingDecision :execrows
 UPDATE sessions SET pending_decision = '', updated_at = ? WHERE id = ?;
 
+-- name: SetSessionIssue :execrows
+UPDATE sessions SET issue_id = ?, display_name = ?, updated_at = ? WHERE id = ?;
+
 -- name: SetSessionPreviewURL :execrows
 -- preview_revision is bumped on every call (even when preview_url is unchanged)
 -- so a repeated `ao preview <same-url>` still trips the sessions_cdc_update

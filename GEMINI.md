@@ -352,11 +352,12 @@ in-harness app title — at launch, for every harness. A session dispatched with
 - **Never pass `ao spawn --name`** for a session that has an issue; an explicit
   name overrides ao's computed one.
 - If your session's bound work item genuinely changes (a queue advancing
-  between issues), use `ao session rename "$SID" "<name>"` — it updates the
-  display name **and** re-issues the in-harness title through the daemon, so
-  there is still exactly one code path. Your ao session id is
+  between issues), use `ao session set-issue "$SID" "<issue-id>"` — the daemon
+  resolves the issue title, recomputes the display name, stores the new issue
+  id, and re-issues the in-harness title through the same title delivery path.
+  Your ao session id is
   `SID="${AO_SESSION_ID:-$(tmux display-message -p '#S')}"`. The name is capped
-  at 20 characters on every path, so a longer one will not stick.
+  at 20 characters on every path after daemon computation.
 - **Never rename the tmux session itself** — its name IS the ao session id and
   ao addresses the pane by it.
 

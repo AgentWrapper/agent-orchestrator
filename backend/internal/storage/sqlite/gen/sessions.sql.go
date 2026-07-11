@@ -387,6 +387,30 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	return is_seed, err
 }
 
+const setSessionIssue = `-- name: SetSessionIssue :execrows
+UPDATE sessions SET issue_id = ?, display_name = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionIssueParams struct {
+	IssueID     domain.IssueID
+	DisplayName string
+	UpdatedAt   time.Time
+	ID          domain.SessionID
+}
+
+func (q *Queries) SetSessionIssue(ctx context.Context, arg SetSessionIssueParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionIssue,
+		arg.IssueID,
+		arg.DisplayName,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setSessionPreviewURL = `-- name: SetSessionPreviewURL :execrows
 UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ? WHERE id = ?
 `
