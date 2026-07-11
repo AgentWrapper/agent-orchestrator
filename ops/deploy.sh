@@ -142,26 +142,55 @@ daemon_reported_revision() {
   curl --silent --fail --max-time 5 "${url}" 2>/dev/null | node -e "${node_read}" 2>/dev/null || true
 }
 
-# warn_if_dirty loudly flags a binary built from a dirty working tree. A dirty
-# build means the running revision does not fully describe the code on disk —
-# exactly the "undetectable from any ao surface" trap this issue exists to close.
-warn_if_dirty() {
-  local path="$1" modified
-  modified="$(binary_build_setting "${path}" vcs.modified)"
-  if [[ "${modified}" == "true" ]]; then
-    log ""
-    log "WARNING: ao binary was built from a DIRTY working tree (vcs.modified=true)."
-    log "WARNING: the running revision does not fully describe the code on disk."
-    log "WARNING: commit or stash local changes before deploying to production."
-    log ""
+# verify_built_revision_stamped enforces the deploy provenance contract on the
+# freshly built binary BEFORE the service is restarted onto it. The binary MUST
+# carry Go VCS metadata (vcs.revision), MUST NOT be built from a dirty tree
+# (vcs.modified=true), and its stamped revision MUST match the git ref this
+# deploy is shipping. A build with no VCS stamping — e.g. -buildvcs=false or a
+# checkout the toolchain could not read — makes the running daemon report
+# "dev"/"unknown", which is undetectable from any ao surface (the exact trap
+# #262 exists to close), so every one of these is a HARD FAILURE, not a
+# warning. Failing here (before restart_unit) leaves the old daemon running and
+# the backed-up ao.prev intact so `--rollback` restores a known-good binary.
+verify_built_revision_stamped() {
+  local revision="$1" modified="$2" expected_ref="$3"
+  if [[ "${dry_run}" == "1" ]]; then
+    log "DRY-RUN: would verify built binary is VCS-stamped, clean, and matches ${expected_ref:-<unknown>}"
+    return 0
   fi
+  if ! command_exists go; then
+    printf 'Refusing to deploy: go is required to read the built binary revision (go version -m).\n' >&2
+    return 1
+  fi
+  if [[ -z "${revision}" ]]; then
+    printf 'Refusing to deploy: built ao binary has no VCS revision stamp (go version -m reported no vcs.revision). A binary built with -buildvcs=false or outside a git checkout leaves the daemon reporting an unknown revision.\n' >&2
+    return 1
+  fi
+  # The contract is to PROVE the binary is clean, so accept only an explicit
+  # vcs.modified=false. A "true" stamp is a dirty build; anything else (empty,
+  # absent, or malformed) means the clean flag could not be read and must not
+  # be treated as clean.
+  if [[ "${modified}" != "false" ]]; then
+    if [[ "${modified}" == "true" ]]; then
+      printf 'Refusing to deploy: built ao binary is stamped dirty (vcs.modified=true); the running revision %s would not fully describe the code on disk. Commit or stash local changes and rebuild.\n' "${revision}" >&2
+    else
+      printf 'Refusing to deploy: could not confirm built ao binary is clean (vcs.modified=%s, expected false); refusing to ship a binary whose dirty flag is unreadable.\n' "${modified:-<empty>}" >&2
+    fi
+    return 1
+  fi
+  if [[ -n "${expected_ref}" && "${revision}" != "${expected_ref}" ]]; then
+    printf 'Refusing to deploy: built ao binary revision %s does not match the deploy source ref %s.\n' "${revision}" "${expected_ref}" >&2
+    return 1
+  fi
+  log "Built ao binary is VCS-stamped and clean: ${revision}"
 }
 
 # verify_daemon_revision confirms the just-restarted daemon reports the same
 # revision the deploy just built. A mismatch means the restart did not pick up
-# the new binary (stale service, wrong path) and is a hard failure. An
-# unreadable built revision or an unavailable /version endpoint degrades to a
-# loud warning so the check never blocks a deploy on missing provenance data.
+# the new binary (stale service, wrong path). An unreadable built revision or an
+# unavailable/empty /version endpoint means the deploy cannot prove the running
+# daemon is the code just built — undetectable provenance is exactly what #262
+# closes — so all of these are hard failures rather than skipped warnings.
 verify_daemon_revision() {
   local expected="$1"
   if [[ "${dry_run}" == "1" ]]; then
@@ -169,14 +198,14 @@ verify_daemon_revision() {
     return 0
   fi
   if [[ -z "${expected}" ]]; then
-    log "WARNING: could not read built binary revision (go version -m); skipping revision-match verification."
-    return 0
+    printf 'Refusing to finish deploy: no built binary revision available to verify the running daemon against.\n' >&2
+    return 1
   fi
   local reported
   reported="$(daemon_reported_revision)"
   if [[ -z "${reported}" ]]; then
-    log "WARNING: running daemon did not report a revision (/api/v1/version unavailable); cannot verify it matches built ${expected}."
-    return 0
+    printf 'Revision verification failed: running daemon did not report a revision (/api/v1/version unavailable or empty); cannot confirm it matches built %s.\n' "${expected}" >&2
+    return 1
   fi
   if [[ "${reported}" != "${expected}" ]]; then
     printf 'Revision mismatch: built %s but running daemon reports %s\n' "${expected}" "${reported}" >&2
@@ -638,16 +667,18 @@ deploy() {
   run cp "${ao_bin}" "${ao_prev}"
   run_in "${repo_root}/backend" go build -o "${ao_bin}" ./cmd/ao
 
-  # Record + flag the built revision before restarting: the log line lands in
-  # the durable deploy log, and a dirty tree gets a loud warning so a
-  # vcs.modified=true binary is never shipped silently.
+  # Record + gate the built revision before restarting: the log line lands in
+  # the durable deploy log, and a binary that is unstamped, dirty, or built
+  # from a different ref than we are shipping is refused HERE — before the
+  # service restarts onto it — so the old daemon and backed-up ao.prev remain
+  # intact for `--rollback` (#262).
   local built_revision built_modified
   if [[ "${dry_run}" != "1" ]]; then
     built_revision="$(binary_build_setting "${ao_bin}" vcs.revision)"
     built_modified="$(binary_build_setting "${ao_bin}" vcs.modified)"
     log "Built ao revision: ${built_revision:-<unknown>} (dirty=${built_modified:-unknown})"
-    warn_if_dirty "${ao_bin}"
   fi
+  verify_built_revision_stamped "${built_revision:-}" "${built_modified:-}" "${head}"
 
   restart_unit "${ao_unit}"
   verify_after_restart "${pre_sessions}"

@@ -293,10 +293,14 @@ go vet ./... && go test ./...`; frontend is npm-lockfile-managed Vite under
   `frontend/` and aborts before the web restart on install failure. If
   `frontend/` changed in the deployed range it restarts `ao-web.service`
   (whose `ExecStartPre` rebuilds the web bundle); if `ops/` changed it restarts
-  `ao-slack-notifier.service`. After the restart it verifies the running
-  daemon reports the just-built VCS revision (via `/api/v1/version`), warns
-  loudly when the binary was built from a dirty tree, and appends every deploy
-  (timestamp, source ref, revision) to `~/.ao/deploy/agent-orchestrator.deploy.log`.
+  `ao-slack-notifier.service`. Before restarting, it refuses to deploy a binary
+  whose Go VCS metadata is missing (unstamped / `-buildvcs=false`), dirty
+  (`vcs.modified=true`), or stamped with a revision other than the deploy
+  source ref — a build that could not prove its provenance never reaches the
+  running daemon. After the restart it fails unless the running daemon reports
+  that same just-built VCS revision (via `/api/v1/version`), and it appends
+  every deploy (timestamp, source ref, revision) to
+  `~/.ao/deploy/agent-orchestrator.deploy.log`.
 
 ### Codex-family reviewers run in the foreground only
 
@@ -333,7 +337,9 @@ blocking, attached commands that run to completion in view.
   and `curl http://127.0.0.1:3001/api/v1/version` report the embedded VCS
   revision, build time, and dirty flag — matches the deployed commit and is
   not a dirty (`vcs.modified=true`) build; `deploy.sh` verifies this
-  automatically and fails on a mismatch.
+  automatically and fails the deploy on missing VCS stamping, a dirty build, a
+  revision that differs from the deployed ref, or a running daemon that does
+  not report the just-built revision.
 - **Logs:** `journalctl --user -u ao`; for web and notifier follow-ups use
   `journalctl --user -u ao-web` and
   `journalctl --user -u ao-slack-notifier`.

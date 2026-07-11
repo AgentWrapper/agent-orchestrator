@@ -339,6 +339,175 @@ describe("ao self-deploy script", () => {
 		await assert.doesNotReject(access(fixture.stateFile));
 	});
 
+	// #262: a deploy that produces a binary with no VCS provenance, a dirty
+	// stamp, or a revision that does not match what is running must fail loudly
+	// rather than complete with an "unknown" revision.
+	it("fails the deploy when the built binary carries no VCS revision stamp", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			// An unstamped binary (built with -buildvcs=false or outside a
+			// checkout): the go stub prints no vcs.revision line.
+			AO_TEST_VCS_REVISION: "",
+		});
+
+		assert.notEqual(result.code, 0, "an unstamped binary must fail the deploy");
+		assert.match(result.stderr, /no VCS revision stamp/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.doesNotMatch(
+			systemctlLog,
+			/^--user restart ao\.service$/m,
+			"the ao.service restart must be gated behind the built-revision provenance check",
+		);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+	});
+
+	it("fails the deploy when the built binary is stamped dirty", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_TEST_VCS_MODIFIED: "true",
+		});
+
+		assert.notEqual(result.code, 0, "a dirty binary must fail the deploy");
+		assert.match(result.stderr, /stamped dirty \(vcs\.modified=true\)/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.doesNotMatch(
+			systemctlLog,
+			/^--user restart ao\.service$/m,
+			"a dirty build must be refused before the ao.service restart",
+		);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+		// A pre-restart rejection must leave the backed-up ao.prev holding the
+		// known-good previous binary so --rollback can restore it.
+		assert.equal(
+			await readFile(path.join(fixture.home, ".local", "bin", "ao.prev"), "utf8"),
+			"current ao\n",
+			"a pre-restart rejection must preserve the backed-up ao.prev for rollback",
+		);
+	});
+
+	it("fails the deploy when the built binary's clean flag is unreadable (vcs.modified absent)", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb();
+		// vcs.revision is present but vcs.modified is omitted: the deploy cannot
+		// prove the binary is clean, so it must refuse rather than assume clean.
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_TEST_VCS_MODIFIED_OMIT: "1",
+		});
+
+		assert.notEqual(result.code, 0, "an unreadable clean flag must fail the deploy");
+		assert.match(result.stderr, /could not confirm built ao binary is clean/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.doesNotMatch(systemctlLog, /^--user restart ao\.service$/m);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+	});
+
+	it("fails the deploy when go cannot read the built binary's provenance", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb();
+		// `go version -m` exits non-zero: no revision can be read, so the gate
+		// must treat it as unstamped and refuse.
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_TEST_GO_VERSION_FAIL: "1",
+		});
+
+		assert.notEqual(result.code, 0, "an unreadable binary must fail the deploy");
+		assert.match(result.stderr, /no VCS revision stamp/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.doesNotMatch(systemctlLog, /^--user restart ao\.service$/m);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+	});
+
+	it("fails the deploy when the built binary revision does not match the deploy source ref", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_TEST_VCS_REVISION: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		});
+
+		assert.notEqual(result.code, 0, "a revision that differs from the shipped ref must fail the deploy");
+		assert.match(result.stderr, /does not match the deploy source ref/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.doesNotMatch(systemctlLog, /^--user restart ao\.service$/m);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+	});
+
+	it("fails the deploy when the running daemon reports no revision after restart", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb();
+		// The binary is stamped correctly, but the restarted daemon reports an
+		// empty revision (e.g. it did not pick up the new binary): unverifiable
+		// provenance must fail, not be skipped with a warning.
+		const result = await runDeployLive(fixture, web, { AO_DEPLOY_BASE: base.stdout.trim() }, { daemonRevision: "" });
+
+		assert.notEqual(result.code, 0, "an empty daemon revision must fail the deploy");
+		assert.match(result.stderr, /running daemon did not report a revision/);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+	});
+
+	it("fails the deploy when the running daemon revision does not match the built binary", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(
+			fixture,
+			web,
+			{ AO_DEPLOY_BASE: base.stdout.trim() },
+			{ daemonRevision: "0000000000000000000000000000000000000000" },
+		);
+
+		assert.notEqual(result.code, 0, "a stale running daemon must fail the deploy");
+		assert.match(result.stderr, /Revision mismatch: built .* but running daemon reports/);
+		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
+	});
+
 	it("refuses to deploy a commit whose main CI failed", async () => {
 		const fixture = await makeGitFixture();
 		await commitFixture(fixture.dir, "initial");
@@ -742,6 +911,28 @@ printf '%s\\n' "$*" >> "\${SYSTEMCTL_LOG}"
 exit 0
 `,
 		go: `#!/usr/bin/env bash
+if [[ "$1" = "version" && "$2" = "-m" ]]; then
+  # AO_TEST_GO_VERSION_FAIL simulates \`go version -m\` failing to read the
+  # binary (unreadable provenance): exit non-zero with no output.
+  if [[ -n "\${AO_TEST_GO_VERSION_FAIL:-}" ]]; then
+    exit 1
+  fi
+  # Emulate the toolchain-embedded VCS provenance the deploy gate reads via
+  # \`go version -m\`. The test controls what gets stamped through env vars so a
+  # single stub can exercise stamped, unstamped, and dirty builds. An unset
+  # AO_TEST_VCS_REVISION prints no vcs.revision line at all — exactly the
+  # -buildvcs=false / unstamped binary #262 must refuse.
+  printf '%s: go1.26.4\\n' "\$3"
+  if [[ -n "\${AO_TEST_VCS_REVISION:-}" ]]; then
+    printf '\\tbuild\\tvcs.revision=%s\\n' "\${AO_TEST_VCS_REVISION}"
+  fi
+  # AO_TEST_VCS_MODIFIED_OMIT drops the vcs.modified line entirely, mirroring a
+  # binary whose clean/dirty flag cannot be read.
+  if [[ -z "\${AO_TEST_VCS_MODIFIED_OMIT:-}" ]]; then
+    printf '\\tbuild\\tvcs.modified=%s\\n' "\${AO_TEST_VCS_MODIFIED:-false}"
+  fi
+  exit 0
+fi
 out=""
 while (( $# > 0 )); do
   case "$1" in
@@ -793,10 +984,17 @@ async function startFakeWeb({
 	redirectFirst = false,
 	fixedStatus = 0,
 	stall = false,
+	versionRevision = "",
 } = {}) {
 	let webHits = 0;
+	let currentVersionRevision = versionRevision;
 
 	const apiServer = http.createServer((req, res) => {
+		if (req.url.startsWith("/api/v1/version")) {
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ version: "dev", revision: currentVersionRevision, modified: false }));
+			return;
+		}
 		res.writeHead(req.url.startsWith("/api/v1/projects") ? 200 : 404, { "content-type": "application/json" });
 		res.end("[]");
 	});
@@ -840,7 +1038,14 @@ async function startFakeWeb({
 		await closeServer(webServer);
 	}
 
-	return { apiPort, webUrl: `http://127.0.0.1:${webPort}/`, webHits: () => webHits };
+	return {
+		apiPort,
+		webUrl: `http://127.0.0.1:${webPort}/`,
+		webHits: () => webHits,
+		setVersionRevision: (rev) => {
+			currentVersionRevision = rev;
+		},
+	};
 }
 
 function listen(server) {
@@ -904,11 +1109,21 @@ function assertFrontendDependencyInstallBeforeWebRestart(stdout) {
 
 // Runs deploy.sh for real (no AO_DEPLOY_DRY_RUN), with the host-mutating
 // commands stubbed on PATH but curl and the HTTP probes genuinely exercised.
-async function runDeployLive(fixture, web, env = {}) {
+async function runDeployLive(fixture, web, env = {}, opts = {}) {
+	// By default a live deploy must clear the #262 provenance gate: the built
+	// binary is stamped with the fixture's HEAD sha and the running daemon
+	// reports that same sha. Tests exercising the gate's failure paths override
+	// AO_TEST_VCS_REVISION / AO_TEST_VCS_MODIFIED (what the built binary is
+	// stamped with) and/or opts.daemonRevision (what /api/v1/version reports).
+	const head = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+	const stampedRevision = env.AO_TEST_VCS_REVISION ?? head;
+	web.setVersionRevision?.(opts.daemonRevision ?? stampedRevision);
 	return run("bash", [deployScript], {
 		cwd: repoRoot,
 		env: {
 			...process.env,
+			AO_TEST_VCS_REVISION: head,
+			AO_TEST_VCS_MODIFIED: "false",
 			PATH: `${fixture.stubBin}${path.delimiter}${process.env.PATH}`,
 			HOME: fixture.home,
 			SYSTEMCTL_LOG: fixture.systemctlLog,
