@@ -2310,8 +2310,8 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	if stashIdx == -1 || deleteIdx == -1 || forceIdx == -1 {
 		t.Fatalf("missing expected calls in shared log: %v", sharedLog)
 	}
-	if stashIdx >= deleteIdx || deleteIdx >= forceIdx {
-		t.Fatalf("replacement retire must capture, clear restore marker, then force release; log=%v", sharedLog)
+	if stashIdx >= forceIdx || forceIdx >= deleteIdx {
+		t.Fatalf("replacement retire must capture, force release, then clear restore marker; log=%v", sharedLog)
 	}
 }
 
@@ -2321,7 +2321,6 @@ func TestRetireForReplacementStaleWorkspaceSkipsPreserveAndTerminates(t *testing
 	st.sharedLog = &sharedLog
 	ws.sharedLog = &sharedLog
 	ws.stashErr = ports.ErrWorkspaceStale
-	ws.forceDestroyErr = errors.New("stale cleanup failed")
 	st.sessions["mer-orch"] = domain.SessionRecord{
 		ID:        "mer-orch",
 		ProjectID: "mer",
@@ -2352,8 +2351,8 @@ func TestRetireForReplacementStaleWorkspaceSkipsPreserveAndTerminates(t *testing
 	}
 	wantOrder := []string{
 		"StashUncommitted:mer-orch",
-		"DeleteSessionWorktrees:mer-orch",
 		"ForceDestroy:mer-orch",
+		"DeleteSessionWorktrees:mer-orch",
 	}
 	next := 0
 	for _, call := range sharedLog {
@@ -2363,6 +2362,40 @@ func TestRetireForReplacementStaleWorkspaceSkipsPreserveAndTerminates(t *testing
 	}
 	if next != len(wantOrder) {
 		t.Fatalf("stale replacement order missing %v in log %v", wantOrder, sharedLog)
+	}
+}
+
+func TestRetireForReplacementStaleWorkspaceCleanupFailureLeavesSessionActive(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	ws.stashErr = ports.ErrWorkspaceStale
+	ws.forceDestroyErr = errors.New("stale cleanup failed")
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "force destroy") {
+		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active when stale cleanup fails")
+	}
+	if rows := st.worktrees["mer-orch"]; len(rows) != 1 {
+		t.Fatalf("restore markers after stale cleanup failure = %v, want retained", rows)
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want orch-handle", rt.destroyed, rt.destroyedIDs)
 	}
 }
 
@@ -2544,6 +2577,40 @@ func TestRetireForReplacementWorkspaceProjectForceDestroyFailureKeepsRepoInvento
 	}
 	if rows := st.worktrees["mer-orch"]; len(rows) != 2 {
 		t.Fatalf("workspace repo inventory after force destroy failure = %v, want root and child retained", rows)
+	}
+}
+
+func TestRetireForReplacementWorkspaceProjectStaleCleanupFailureKeepsRepoInventory(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	ws.stashErr = ports.ErrWorkspaceStale
+	ws.forceDestroyErr = errors.New("stale cleanup failed")
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "force destroy") {
+		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active when stale repo cleanup fails")
+	}
+	if rows := st.worktrees["mer-orch"]; len(rows) != 2 {
+		t.Fatalf("workspace repo inventory after stale cleanup failure = %v, want root and child retained", rows)
 	}
 }
 
