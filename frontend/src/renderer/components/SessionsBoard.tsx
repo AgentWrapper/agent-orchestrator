@@ -49,7 +49,7 @@ const COLUMNS: Column[] = [
 	},
 	{
 		level: "action",
-		label: "Needs you",
+		label: "Action",
 		glow: "color-mix(in srgb, var(--amber) 6%, transparent)",
 		dot: "var(--amber)",
 		dotGlow: true,

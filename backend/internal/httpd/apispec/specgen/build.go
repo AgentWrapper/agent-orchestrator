@@ -62,6 +62,8 @@ func Build() ([]byte, error) {
 			"Project registry, configuration, and lifecycle administration"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
 			"Agent session lifecycle and messaging"),
+		*(&openapi31.Tag{Name: "attention"}).WithDescription(
+			"Operator-only attention queues derived from live daemon state"),
 		*(&openapi31.Tag{Name: "prs"}).WithDescription(
 			"Pull-request actions (SCM lane)"),
 		*(&openapi31.Tag{Name: "reviews"}).WithDescription(
@@ -151,6 +153,8 @@ var schemaNames = map[string]string{
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
+	"ControllersListOperatorAttentionResponse":    "ListOperatorAttentionResponse",
+	"ControllersOperatorAttentionItem":            "OperatorAttentionItem",
 	"ControllersSpawnSessionRequest":              "SpawnSessionRequest",
 	"ControllersSessionResponse":                  "SessionResponse",
 	"ControllersSessionPreviewResponse":           "SessionPreviewResponse",
@@ -321,6 +325,7 @@ func operations() []operation {
 	ops = append(ops, agentOperations()...)
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
+	ops = append(ops, attentionOperations()...)
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
@@ -432,6 +437,20 @@ func importOperations() []operation {
 			summary: "Run the legacy AO project import through the daemon store",
 			resps: []respUnit{
 				{http.StatusOK, controllers.ImportRunResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+func attentionOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/attention/operator", id: "listOperatorAttention", tag: "attention",
+			summary: "List items only the operator can clear",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListOperatorAttentionResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/attention/operator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List items only the operator can clear */
+        get: operations["listOperatorAttention"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -845,6 +862,9 @@ export interface components {
         ListNotificationsResponse: {
             notifications: components["schemas"]["NotificationResponse"][];
         };
+        ListOperatorAttentionResponse: {
+            items: components["schemas"]["OperatorAttentionItem"][];
+        };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
         };
@@ -1009,6 +1029,25 @@ export interface components {
             kind: "session" | "pr" | "none";
             prUrl?: string;
             sessionId: string;
+        };
+        OperatorAttentionItem: {
+            action: string;
+            /** @enum {string} */
+            decisionKind?: "question" | "permission";
+            deepLink: string;
+            id: string;
+            /** @enum {string} */
+            kind: "decision" | "pr";
+            prNumber?: number;
+            prTitle?: string;
+            prUrl?: string;
+            projectId: string;
+            question?: string;
+            reason: string;
+            sessionId?: string;
+            sessionTitle?: string;
+            /** Format: date-time */
+            updatedAt: string;
         };
         OrchestratorResponse: {
             id: string;
@@ -1622,6 +1661,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listOperatorAttention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListOperatorAttentionResponse"];
                 };
             };
             /** @description Internal Server Error */

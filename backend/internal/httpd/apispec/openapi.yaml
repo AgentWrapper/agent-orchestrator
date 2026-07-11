@@ -156,6 +156,31 @@ paths:
       summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
+  /api/v1/attention/operator:
+    get:
+      operationId: listOperatorAttention
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListOperatorAttentionResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List items only the operator can clear
+      tags:
+      - attention
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -2303,6 +2328,15 @@ components:
       required:
       - notifications
       type: object
+    ListOperatorAttentionResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/OperatorAttentionItem'
+          type: array
+      required:
+      - items
+      type: object
     ListProjectsResponse:
       properties:
         projects:
@@ -2726,6 +2760,52 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OperatorAttentionItem:
+      properties:
+        action:
+          type: string
+        decisionKind:
+          enum:
+          - question
+          - permission
+          type: string
+        deepLink:
+          type: string
+        id:
+          type: string
+        kind:
+          enum:
+          - decision
+          - pr
+          type: string
+        prNumber:
+          type: integer
+        prTitle:
+          type: string
+        prUrl:
+          type: string
+        projectId:
+          type: string
+        question:
+          type: string
+        reason:
+          type: string
+        sessionId:
+          type: string
+        sessionTitle:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - kind
+      - projectId
+      - reason
+      - action
+      - deepLink
+      - updatedAt
       type: object
     OrchestratorResponse:
       properties:
@@ -3828,6 +3908,8 @@ tags:
   name: projects
 - description: Agent session lifecycle and messaging
   name: sessions
+- description: Operator-only attention queues derived from live daemon state
+  name: attention
 - description: Pull-request actions (SCM lane)
   name: prs
 - description: Code-review runs and findings

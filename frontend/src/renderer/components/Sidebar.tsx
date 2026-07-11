@@ -3,6 +3,7 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
 	ChevronRight,
+	BellRing,
 	Gauge,
 	GitPullRequest,
 	LayoutDashboard,
@@ -27,6 +28,7 @@ import {
 } from "../types/workspace";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useOperatorAttentionQuery } from "../hooks/useOperatorAttentionQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
@@ -102,9 +104,11 @@ function useSelection() {
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	return {
 		isHome: pathname === "/",
+		isWaiting: pathname === "/waiting",
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
+		goWaiting: () => void navigate({ to: "/waiting" }),
 		goPrs: () => void navigate({ to: "/prs" }),
 		goGlobalSettings: () => void navigate({ to: "/settings" }),
 		goCapacity: (projectId: string) => void navigate({ to: "/projects/$projectId/capacity", params: { projectId } }),
@@ -148,6 +152,8 @@ export function Sidebar({
 }: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
+	const attentionQuery = useOperatorAttentionQuery();
+	const waitingCount = attentionQuery.data?.length ?? 0;
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const theme = useUiStore((s) => s.theme);
@@ -243,6 +249,34 @@ export function Sidebar({
 			</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				<SidebarGroup className="p-0 pb-3">
+					<SidebarGroupContent>
+						<SidebarMenu className="gap-1">
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									aria-current={selection.isWaiting ? "page" : undefined}
+									isActive={selection.isWaiting}
+									onClick={selection.goWaiting}
+									tooltip="Waiting on you"
+									className={cn(
+										"relative h-9 gap-[9px] rounded-[5px] px-2 py-0 text-[13px] font-medium text-muted-foreground transition-colors",
+										"hover:bg-interactive-hover hover:text-foreground",
+										"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
+										"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
+									)}
+								>
+									<BellRing className="size-4 shrink-0" aria-hidden="true" />
+									<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">Waiting on you</span>
+									{waitingCount > 0 ? (
+										<span className="grid h-4 min-w-4 shrink-0 place-items-center rounded bg-warning/15 px-1 font-mono text-[10px] leading-none text-warning group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:-right-0.5 group-data-[collapsible=icon]:-top-0.5">
+											{waitingCount > 99 ? "99+" : waitingCount}
+										</span>
+									) : null}
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">

@@ -150,6 +150,29 @@ type ListSessionsResponse struct {
 	Sessions []SessionView `json:"sessions"`
 }
 
+// ListOperatorAttentionResponse is the body of GET /api/v1/attention/operator.
+type ListOperatorAttentionResponse struct {
+	Items []OperatorAttentionItem `json:"items"`
+}
+
+// OperatorAttentionItem is one live-derived item that only the operator can clear.
+type OperatorAttentionItem struct {
+	ID           string              `json:"id"`
+	Kind         string              `json:"kind" enum:"decision,pr"`
+	ProjectID    domain.ProjectID    `json:"projectId"`
+	SessionID    domain.SessionID    `json:"sessionId,omitempty"`
+	SessionTitle string              `json:"sessionTitle,omitempty"`
+	Reason       string              `json:"reason"`
+	Action       string              `json:"action"`
+	DeepLink     string              `json:"deepLink"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
+	DecisionKind domain.DecisionKind `json:"decisionKind,omitempty" enum:"question,permission"`
+	Question     string              `json:"question,omitempty"`
+	PRNumber     int                 `json:"prNumber,omitempty"`
+	PRURL        string              `json:"prUrl,omitempty"`
+	PRTitle      string              `json:"prTitle,omitempty"`
+}
+
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`

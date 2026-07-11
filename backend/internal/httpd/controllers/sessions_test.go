@@ -25,6 +25,11 @@ import (
 
 type fakeSessionService struct {
 	sessions        map[domain.SessionID]domain.Session
+	decisions       map[domain.SessionID]domain.PendingDecision
+	decisionErrs    map[domain.SessionID]error
+	prSummaries     map[domain.SessionID][]sessionsvc.PRSummary
+	prSummaryErrs   map[domain.SessionID]error
+	prSummaryCalls  map[domain.SessionID]int
 	sent            string
 	decision        domain.PendingDecision
 	decisionOK      bool
@@ -178,8 +183,14 @@ func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message
 }
 
 func (f *fakeSessionService) Decision(_ context.Context, id domain.SessionID) (domain.PendingDecision, bool, error) {
+	if err, ok := f.decisionErrs[id]; ok {
+		return domain.PendingDecision{}, false, err
+	}
 	if _, ok := f.sessions[id]; !ok {
 		return domain.PendingDecision{}, false, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if decision, ok := f.decisions[id]; ok {
+		return decision, true, nil
 	}
 	return f.decision, f.decisionOK, nil
 }
@@ -207,11 +218,21 @@ func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]
 }
 
 func (f *fakeSessionService) ListPRSummaries(_ context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error) {
+	if f.prSummaryCalls == nil {
+		f.prSummaryCalls = map[domain.SessionID]int{}
+	}
+	f.prSummaryCalls[id]++
+	if err, ok := f.prSummaryErrs[id]; ok {
+		return nil, err
+	}
 	if f.listPRErr != nil {
 		return nil, f.listPRErr
 	}
 	if _, ok := f.sessions[id]; !ok {
 		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if prs, ok := f.prSummaries[id]; ok {
+		return prs, nil
 	}
 	return []sessionsvc.PRSummary{{
 		URL:          "https://github.com/aoagents/agent-orchestrator/pull/142",

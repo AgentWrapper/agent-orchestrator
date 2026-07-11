@@ -36,6 +36,7 @@ vi.mock("../lib/api-client", () => ({
 		}
 		return "Request failed";
 	},
+	hasTrustedApiBaseUrl: () => true,
 }));
 
 const workspace: WorkspaceSummary = {
@@ -191,6 +192,46 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
 	});
 
+	it("shows the operator waiting badge and navigates to the waiting view", async () => {
+		getMock.mockImplementation((path: string) => {
+			if (path === "/api/v1/attention/operator") {
+				return Promise.resolve({
+					data: {
+						items: [
+							{ id: "session:one:decision", kind: "decision", projectId: "proj-1", reason: "r", action: "a" },
+							{ id: "pr:42:merge", kind: "pr", projectId: "proj-1", reason: "r", action: "a" },
+						],
+					},
+					error: undefined,
+				});
+			}
+			return Promise.resolve({
+				data: {
+					supported: [
+						{ id: "claude-code", label: "Claude Code" },
+						{ id: "codex", label: "Codex" },
+					],
+					installed: [
+						{ id: "claude-code", label: "Claude Code" },
+						{ id: "codex", label: "Codex" },
+					],
+					authorized: [
+						{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+						{ id: "codex", label: "Codex", authStatus: "authorized" },
+					],
+				},
+				error: undefined,
+			});
+		});
+		const user = userEvent.setup();
+		renderSidebar();
+
+		expect(await screen.findByText("2")).toBeInTheDocument();
+		await user.click(screen.getByText("Waiting on you"));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/waiting" });
+	});
+
 	it("navigates to project capacity when the capacity button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
@@ -265,20 +306,25 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
-		getMock.mockResolvedValueOnce({
-			data: {
-				supported: [
-					{ id: "claude-code", label: "Claude Code" },
-					{ id: "cursor", label: "Cursor" },
-					{ id: "aider", label: "Aider" },
-				],
-				installed: [
-					{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-					{ id: "cursor", label: "Cursor", authStatus: "unauthorized" },
-				],
-				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
-			},
-			error: undefined,
+		getMock.mockImplementation((path: string) => {
+			if (path === "/api/v1/attention/operator") {
+				return Promise.resolve({ data: { items: [] }, error: undefined });
+			}
+			return Promise.resolve({
+				data: {
+					supported: [
+						{ id: "claude-code", label: "Claude Code" },
+						{ id: "cursor", label: "Cursor" },
+						{ id: "aider", label: "Aider" },
+					],
+					installed: [
+						{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+						{ id: "cursor", label: "Cursor", authStatus: "unauthorized" },
+					],
+					authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
+				},
+				error: undefined,
+			});
 		});
 		renderSidebar({ onCreateProject, seedAgents: false });
 
