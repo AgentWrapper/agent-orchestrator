@@ -66,6 +66,7 @@ func configuredHarnesses(ctx context.Context, projects projectConfigLister, defa
 			cfg := res.Project.Config
 			add(string(cfg.Worker.Harness))
 			add(string(cfg.Orchestrator.Harness))
+			add(string(cfg.Prime.Harness))
 			for _, bucket := range cfg.WorkerMix {
 				add(string(bucket.Harness))
 			}

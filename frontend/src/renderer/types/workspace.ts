@@ -91,7 +91,7 @@ export type ChangedFile = {
 	staged?: boolean;
 };
 
-export type SessionKind = "worker" | "orchestrator";
+export type SessionKind = "worker" | "orchestrator" | "prime";
 
 /** Lifecycle state of a single pull request, mirrors the daemon's enum. */
 export type PRState = "open" | "draft" | "merged" | "closed";

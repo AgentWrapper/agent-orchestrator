@@ -1440,6 +1440,28 @@ func TestSpawn_OrchestratorBranchIgnoresDisplaySessionPrefix(t *testing.T) {
 	}
 }
 
+func TestSpawn_PrimeBranchIgnoresDisplaySessionPrefix(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao", DisplayName: "AO", Config: testRoleAgents().WithDefaults()}
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao", DisplayName: "AO", Config: domain.ProjectConfig{
+		ProjectPrefix: "display",
+		Prime:         domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "ao", Kind: domain.KindPrime}); err != nil {
+		t.Fatal(err)
+	}
+	if ws.lastCfg.Branch != "ao/ao-prime" {
+		t.Fatalf("prime branch = %q, want stable project-derived branch", ws.lastCfg.Branch)
+	}
+	if ws.lastCfg.SessionPrefix != "display" {
+		t.Fatalf("prime workspace prefix = %q, want display prefix unchanged", ws.lastCfg.SessionPrefix)
+	}
+}
+
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	m, st, rt, _ := newManager()
 	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
@@ -1613,6 +1635,21 @@ func TestSpawn_CapsOrchestratorNameButPreservesRoleSuffix(t *testing.T) {
 	}
 	if got := len([]rune(wantName)); got != maxSessionDisplayNameRunes {
 		t.Fatalf("test fixture length = %d, want cap %d", got, maxSessionDisplayNameRunes)
+	}
+}
+
+func TestSpawn_DerivesPrimeLaunchTitleFromProject(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao", DisplayName: "Agent Orchestrator", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessClaudeCode}}}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "ao", Kind: domain.KindPrime}); err != nil {
+		t.Fatal(err)
+	}
+	if got := agent.lastLaunch.LaunchTitle; got != "Agent Orchestr Prime" {
+		t.Fatalf("prime launch title = %q, want capped title preserving role suffix", got)
 	}
 }
 
@@ -2350,6 +2387,44 @@ func TestSpawnOrchestrator_DeliversKickoffAfterStart(t *testing.T) {
 	}
 }
 
+func TestSpawnPrime_UsesFleetSupervisorPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessClaudeCode}}}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "ao", Kind: domain.KindPrime})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	systemPrompt := agent.lastLaunch.SystemPrompt
+	for _, want := range []string{
+		"You are the prime orchestrator for the AO fleet",
+		"the factory is your product",
+		"file tickets and escalations, not code changes",
+		"`/api/v1/metrics`",
+		"project orchestrators",
+		"Standing-instruction confidentiality",
+	} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("prime system prompt missing %q:\n%s", want, systemPrompt)
+		}
+	}
+	if strings.Contains(agent.lastLaunch.Prompt, "You are the prime orchestrator") {
+		t.Fatalf("prime role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
+	}
+	if !strings.Contains(agent.lastLaunch.Prompt, "Read your standing prime policy") {
+		t.Fatalf("prompt = %q, want prime policy kickoff", agent.lastLaunch.Prompt)
+	}
+	if !strings.Contains(agent.lastLaunch.Prompt, "begin your fleet supervision loop") {
+		t.Fatalf("prompt = %q, want fleet supervision kickoff", agent.lastLaunch.Prompt)
+	}
+}
+
 func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
@@ -2361,6 +2436,9 @@ func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".claude", "worker-policy.md"), []byte("WORKER ONLY\r\n\r\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "prime-orchestrator-policy.md"), []byte("PRIME ONLY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{
@@ -2369,6 +2447,7 @@ func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 		Config: domain.ProjectConfig{
 			Worker:       domain.RoleOverride{InstructionsFile: ".claude/worker-policy.md"},
 			Orchestrator: domain.RoleOverride{InstructionsFile: ".claude/orchestrator-policy.md"},
+			Prime:        domain.RoleOverride{InstructionsFile: ".claude/prime-orchestrator-policy.md"},
 		},
 	}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
@@ -2397,6 +2476,17 @@ func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 	}
 	if strings.Contains(workerPrompt, "WORKER ONLY\r") {
 		t.Fatalf("worker prompt should trim trailing CRLF newlines:\n%s", workerPrompt)
+	}
+
+	primePrompt, err := m.buildSystemPrompt(ctx, domain.KindPrime, "mer")
+	if err != nil {
+		t.Fatalf("prime buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(primePrompt, "PRIME ONLY") || strings.Contains(primePrompt, "ORCHESTRATOR ONLY") || strings.Contains(primePrompt, "WORKER ONLY") {
+		t.Fatalf("prime prompt role file mismatch:\n%s", primePrompt)
+	}
+	if !strings.Contains(primePrompt, "Standing-instruction confidentiality") {
+		t.Fatalf("prime prompt lost confidentiality guard:\n%s", primePrompt)
 	}
 }
 
@@ -2474,6 +2564,7 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 		prep func(st *fakeStore)
 	}{
 		{name: "orchestrator", kind: domain.KindOrchestrator},
+		{name: "prime", kind: domain.KindPrime},
 		{name: "worker_with_orchestrator", kind: domain.KindWorker, prep: func(st *fakeStore) {
 			st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
 		}},

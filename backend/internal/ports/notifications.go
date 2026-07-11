@@ -19,6 +19,7 @@ type NotificationIntent struct {
 
 	// Enrichment hints. These avoid storage reads on the hot path.
 	SessionDisplayName string
+	SessionKind        domain.SessionKind
 	PRNumber           int
 	PRTitle            string
 	PRSourceBranch     string

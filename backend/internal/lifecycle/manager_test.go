@@ -1363,6 +1363,30 @@ func TestActivity_OrchestratorWaitingInputTransitionDoesNotEmitNotification(t *t
 	}
 }
 
+func TestActivity_PrimeWaitingInputTransitionDoesNotEmitNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime, DisplayName: "ao Prime", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "ao-prime", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := m.ApplyActivitySignal(ctx, "ao-prime", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := m.ApplyActivitySignal(ctx, "ao-prime", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("routine prime waiting_input emitted %+v", sink.intents)
+	}
+}
+
 func TestActivity_WaitingInputSameStateDoesNotEmitNotification(t *testing.T) {
 	st := newFakeStore()
 	sink := &fakeNotificationSink{}
@@ -1412,6 +1436,25 @@ func TestActivity_OrchestratorWaitingInputToBlockedEmitsNotification(t *testing.
 		t.Fatalf("intents = %d, want 1", len(sink.intents))
 	}
 	if sink.intents[0].Type != domain.NotificationNeedsInput || sink.intents[0].SessionID != "mer-orch" {
+		t.Fatalf("intent = %+v", sink.intents[0])
+	}
+}
+
+func TestActivity_PrimeWaitingInputToBlockedEmitsNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime, DisplayName: "ao Prime", Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "ao-prime", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(sink.intents))
+	}
+	if sink.intents[0].Type != domain.NotificationNeedsInput || sink.intents[0].SessionID != "ao-prime" {
 		t.Fatalf("intent = %+v", sink.intents[0])
 	}
 }

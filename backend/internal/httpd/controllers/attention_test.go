@@ -43,6 +43,29 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 		"dup-1":    sessionForAttention("dup-1", "ao", domain.StatusMergeable, now),
 		"fix-1":    sessionForAttention("fix-1", "ao", domain.StatusChangesRequested, now),
 		"other-1":  sessionForAttention("other-1", "other", domain.StatusMergeable, now),
+		"orch-dead": {
+			SessionRecord: domain.SessionRecord{
+				ID:        "orch-dead",
+				ProjectID: "ao",
+				Kind:      domain.KindOrchestrator,
+				Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			Status: domain.StatusNoSignal,
+		},
+		"prime-dead": {
+			SessionRecord: domain.SessionRecord{
+				ID:        "prime-dead",
+				ProjectID: "ao",
+				Kind:      domain.KindPrime,
+				Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			Status: domain.StatusNoSignal,
+		},
+		"worker-no-signal": sessionForAttention("worker-no-signal", "ao", domain.StatusNoSignal, now),
 	}
 	done := svc.sessions["done-1"]
 	done.IsTerminated = true
@@ -172,7 +195,7 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	pr224 := "pr:https://github.com/aoagents/agent-orchestrator/pull/224:merge"
 	pr226 := "pr:https://github.com/aoagents/agent-orchestrator/pull/226:merge"
 	otherPR224 := "pr:https://github.com/acme/other/pull/224:merge"
-	for _, want := range []string{"session:perm-1:decision", "session:ask-1:decision", pr224, pr226, otherPR224} {
+	for _, want := range []string{"session:perm-1:decision", "session:ask-1:decision", "session:orch-dead:no_signal", "session:prime-dead:no_signal", pr224, pr226, otherPR224} {
 		if got[want] == 0 {
 			t.Fatalf("missing %s in %#v; body=%s", want, got, body)
 		}
@@ -186,7 +209,10 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	if byID[pr224].Action != "Review final-review status and merge the pull request when the gate is clean." {
 		t.Fatalf("PR action = %q", byID[pr224].Action)
 	}
-	for _, excluded := range []string{"session:ci-1", "session:review-1", "session:draft-1", "pr:https://github.com/aoagents/agent-orchestrator/pull/225:merge", "pr:https://github.com/aoagents/agent-orchestrator/pull/227:merge"} {
+	if byID["session:prime-dead:no_signal"].Action != "Inspect the prime supervisor and restart or replace it if needed." {
+		t.Fatalf("prime no-signal action = %q", byID["session:prime-dead:no_signal"].Action)
+	}
+	for _, excluded := range []string{"session:ci-1", "session:review-1", "session:draft-1", "session:worker-no-signal:no_signal", "pr:https://github.com/aoagents/agent-orchestrator/pull/225:merge", "pr:https://github.com/aoagents/agent-orchestrator/pull/227:merge"} {
 		if got[excluded] > 0 {
 			t.Fatalf("excluded %s present in %#v; body=%s", excluded, got, body)
 		}

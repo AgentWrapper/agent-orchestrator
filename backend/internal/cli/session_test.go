@@ -64,6 +64,7 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 			default:
 				_, _ = io.WriteString(w, `{"sessions":[`+
 					sessionJSON("demo-2", "demo", "orchestrator", "idle", false)+`,`+
+					sessionJSON("demo-prime", "demo", "prime", "idle", false)+`,`+
 					sessionJSON("demo-1", "demo", "worker", "working", false)+`]}`)
 			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
@@ -142,8 +143,8 @@ func TestSessionList_ProjectFilterAndDefaultFiltering(t *testing.T) {
 	if !strings.Contains(out, "demo:") || !strings.Contains(out, "demo-1") || !strings.Contains(out, "Current Name") {
 		t.Fatalf("output missing worker session:\n%s", out)
 	}
-	if strings.Contains(out, "demo-2") {
-		t.Fatalf("orchestrator session should be hidden without --all:\n%s", out)
+	if strings.Contains(out, "demo-2") || strings.Contains(out, "demo-prime") {
+		t.Fatalf("daemon-role sessions should be hidden without --all:\n%s", out)
 	}
 	if !strings.Contains(out, "1 terminated session hidden") {
 		t.Fatalf("hidden terminated hint missing:\n%s", out)
@@ -180,6 +181,30 @@ func TestSessionList_JSONOutputDecodes(t *testing.T) {
 	}
 	if got.Data[0].ID != "demo-1" || got.Data[0].ProjectID != "demo" || got.Data[0].Role != "worker" || got.Data[0].Name != "Current Name" {
 		t.Fatalf("unexpected JSON entry: %#v", got.Data[0])
+	}
+}
+
+func TestSessionList_AllIncludesPrimeRole(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "ls", "--project", "demo", "--all", "--json")
+	if err != nil {
+		t.Fatalf("session ls --all --json failed: %v\nstderr=%s", err, errOut)
+	}
+	var got sessionListOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("session ls --all --json output is not decodable: %v\noutput=%s", err, out)
+	}
+	roles := map[string]string{}
+	for _, sess := range got.Data {
+		roles[sess.ID] = sess.Role
+	}
+	if roles["demo-prime"] != "prime" || roles["demo-2"] != "orchestrator" || roles["demo-1"] != "worker" {
+		t.Fatalf("roles = %#v, want prime/orchestrator/worker preserved", roles)
 	}
 }
 

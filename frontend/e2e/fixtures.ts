@@ -20,7 +20,7 @@ type Session = {
 	terminalHandleId?: string;
 	displayName: string;
 	harness: string;
-	kind: "worker" | "orchestrator";
+	kind: "worker" | "orchestrator" | "prime";
 	branch: string;
 	status:
 		| "working"

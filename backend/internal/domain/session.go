@@ -46,6 +46,7 @@ type SessionKind string
 const (
 	KindWorker       SessionKind = "worker"
 	KindOrchestrator SessionKind = "orchestrator"
+	KindPrime        SessionKind = "prime"
 )
 
 // SessionMetadata is the typed, off-status metadata for a session: operational

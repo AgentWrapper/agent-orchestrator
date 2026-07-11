@@ -95,6 +95,46 @@ func TestManagerNotifyAcceptsOrchestratorReplacementWithoutPR(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyPrimeReplacementUsesPrimeBody(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationOrchestratorReplaced,
+		SessionID:          "ao-prime",
+		ProjectID:          "ao",
+		SessionKind:        domain.KindPrime,
+		SessionDisplayName: "ao Prime",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if got := st.rows[0]; got.Body != "AO replaced an unresponsive prime orchestrator." {
+		t.Fatalf("body = %q, want prime replacement copy", got.Body)
+	}
+}
+
+func TestManagerNotifyPrimeReplacementCappedUsesPrimeBody(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationOrchestratorReplacementCapped,
+		SessionID:          "ao-prime",
+		ProjectID:          "ao",
+		SessionKind:        domain.KindPrime,
+		SessionDisplayName: "ao Prime",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if got := st.rows[0]; got.Body != "AO stopped replacing the prime orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline." {
+		t.Fatalf("body = %q, want prime replacement cap copy", got.Body)
+	}
+}
+
 func TestManagerNotifyWorkerDiedUnfinished(t *testing.T) {
 	st := &fakeStore{}
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)

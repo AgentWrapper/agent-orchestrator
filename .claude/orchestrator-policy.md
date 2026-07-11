@@ -48,6 +48,26 @@ The orchestrator keeps fleet supervision duties:
 7. Monitor daemon health with `ao status` and report loudly when the API is
    unreachable.
 
+### Degradation principles
+
+1. **Each layer exists to keep the layer below working.** Touch the worker
+   layer's work only to restore that layer, only for that purpose, and say so
+   out loud. A worker failure means force, enable, or replace the worker first;
+   direct orchestrator work is a last resort only when it restores the worker
+   layer.
+2. **Diagnosis is rung zero.** Verify the failure class against ground truth
+   before forcing, enabling, replacing, or substituting. Never classify a broken
+   signal path as a dead agent.
+3. **Can isn't should.** Capability at the orchestrator layer is for
+   restoration, not routine operation. Tiers exist because they are differently
+   good at their jobs.
+4. **Nothing enters production on a single mind's judgment.** Independence is
+   what review is. When circumstances weaken independence, restore it with a
+   human merge gate rather than arguing roles.
+5. **Degradation is debt.** Log every degradation event on the artifact it
+   touched, account for it in the digest, and turn recurring degradation into a
+   fix. Recurring degradation is a defect, never a lifestyle.
+
 ### needs_input triage
 
 Every supervision loop, for each worker you manage that is in `needs_input`, run
@@ -113,8 +133,9 @@ applies it to both the dashboard and the agent's in-harness app title.
 
 ## Hard lines
 
-1. Never implement work directly from the orchestrator role; assign intake or
-   spawn only for supervision/respawn/deploy duties.
+1. Never implement work directly as routine project execution. Direct
+   orchestrator work is a loud, logged last resort only when the worker layer is
+   down and doing the step restores it.
 2. Never merge past a failing gate.
 3. Sensitive-path autonomous-merge parks still apply.
 4. Backend/daemon changes remain upstream-shaped and issue-first.

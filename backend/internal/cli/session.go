@@ -190,7 +190,7 @@ func newSessionListCommand(ctx *commandContext) *cobra.Command {
 	}
 	f := cmd.Flags()
 	addSessionProjectFlag(f, &opts.project, "Filter by project ID")
-	f.BoolVarP(&opts.all, "all", "a", false, "Include orchestrator sessions")
+	f.BoolVarP(&opts.all, "all", "a", false, "Include daemon-role sessions")
 	f.BoolVar(&opts.includeTerminated, "include-terminated", false, "Include terminated sessions")
 	f.BoolVar(&opts.json, "json", false, "Output as JSON")
 	return cmd
@@ -748,10 +748,10 @@ func (c *commandContext) fetchScopedSession(ctx context.Context, id, project str
 	return res.Session, nil
 }
 
-func filterAndSortSessions(sessions []sessionDTO, includeOrchestrators bool) []sessionDTO {
+func filterAndSortSessions(sessions []sessionDTO, includeDaemonRoles bool) []sessionDTO {
 	out := make([]sessionDTO, 0, len(sessions))
 	for _, sess := range sessions {
-		if !includeOrchestrators && sess.Kind == "orchestrator" {
+		if !includeDaemonRoles && isDaemonRoleSession(sess.Kind) {
 			continue
 		}
 		out = append(out, sess)
@@ -909,10 +909,20 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 }
 
 func sessionRole(sess sessionDTO) string {
-	if sess.Kind == "orchestrator" {
+	switch sess.Kind {
+	case "orchestrator":
 		return "orchestrator"
+	case "prime":
+		return "prime"
+	case "worker", "":
+		return "worker"
+	default:
+		return sess.Kind
 	}
-	return "worker"
+}
+
+func isDaemonRoleSession(kind string) bool {
+	return kind == "orchestrator" || kind == "prime"
 }
 
 func formatSessionAge(d time.Duration) string {

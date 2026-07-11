@@ -209,6 +209,7 @@ func Run() error {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
 	orchestratorSupervisorDone := startOrchestratorSupervisor(ctx, projectSvc, sessionSvc, notificationWriter, orchestratorSupervisorInterval, log)
+	primeSupervisorDone := startPrimeSupervisor(ctx, cfg, projectSvc, sessionSvc, notificationWriter, orchestratorSupervisorInterval, log)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second
@@ -241,6 +242,7 @@ func Run() error {
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-orchestratorSupervisorDone
+	<-primeSupervisorDone
 	<-previewDone
 	<-agentHealthDone
 	<-modelHealthDone

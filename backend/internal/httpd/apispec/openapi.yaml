@@ -2919,6 +2919,8 @@ components:
           items:
             type: string
           type: array
+        prime:
+          $ref: '#/components/schemas/RoleOverride'
         projectPrefix:
           type: string
         reviewers:
@@ -3613,6 +3615,7 @@ components:
           enum:
           - worker
           - orchestrator
+          - prime
           type: string
         model:
           description: Model override for this session only.

@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -25,6 +27,7 @@ type orchestratorProjectLister interface {
 
 type orchestratorEnsurer interface {
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
+	SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error)
 }
 
@@ -72,6 +75,37 @@ func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProje
 				return
 			case <-ticker.C:
 				ensureOrchestrators(ctx, projects, sessions, notifier, wakes, time.Now().UTC(), log)
+			}
+		}
+	}()
+	return done
+}
+
+func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, interval time.Duration, log *slog.Logger) <-chan struct{} {
+	done := make(chan struct{})
+	if log == nil {
+		log = slog.Default()
+	}
+	primeProjectID := domain.ProjectID(strings.TrimSpace(cfg.PrimeProjectID))
+	if primeProjectID == "" {
+		close(done)
+		return done
+	}
+	if interval <= 0 {
+		interval = orchestratorSupervisorInterval
+	}
+	wakes := newOrchestratorWakeTracker()
+	go func() {
+		defer close(done)
+		ensurePrime(ctx, primeProjectID, projects, sessions, notifier, wakes, time.Now().UTC(), log)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ensurePrime(ctx, primeProjectID, projects, sessions, notifier, wakes, time.Now().UTC(), log)
 			}
 		}
 	}()
@@ -163,6 +197,87 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 	}
 }
 
+func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger) {
+	if primeProjectID == "" {
+		return
+	}
+	wakeInterval := primeWakeInterval(ctx, primeProjectID, projects, log)
+	prime, err := sessions.SpawnPrime(ctx, primeProjectID, false)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		log.Warn("prime-supervisor: ensure prime failed", "project", primeProjectID, "err", err)
+		return
+	}
+	if replace, reason := shouldReplaceUnhealthyPrime(prime, now); replace {
+		allowed, cappedNow, count := wakes.reserveReplacement(primeProjectID, now)
+		if !allowed {
+			if cappedNow {
+				emitOrchestratorSupervisorNotification(ctx, notifier, domain.NotificationOrchestratorReplacementCapped, primeProjectID, prime, now, log)
+				log.Warn("prime-supervisor: replacement limit reached; leaving unhealthy prime for human intervention", "project", primeProjectID, "session", prime.ID, "reason", reason, "replacement_attempts", count)
+			}
+			return
+		}
+		replacement, err := sessions.SpawnPrime(ctx, primeProjectID, true)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Warn("prime-supervisor: replace unhealthy prime failed", "project", primeProjectID, "session", prime.ID, "reason", reason, "err", err)
+			return
+		}
+		delete(wakes.projects, primeProjectID)
+		emitOrchestratorSupervisorNotification(ctx, notifier, domain.NotificationOrchestratorReplaced, primeProjectID, replacement, now, log)
+		log.Warn("prime-supervisor: replaced unhealthy prime", "project", primeProjectID, "old_session", prime.ID, "new_session", replacement.ID, "reason", reason)
+		return
+	}
+	if shouldWakePrime(primeProjectID, prime, wakeInterval, wakes, now) {
+		sent, err := sessions.WakeIdle(ctx, prime.ID, primeWakeMessage())
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			wakes.recordWakeAttempt(primeProjectID, prime, now)
+			log.Warn("prime-supervisor: wake prime failed", "project", primeProjectID, "session", prime.ID, "err", err)
+			return
+		}
+		if sent {
+			state := wakes.recordWake(primeProjectID, prime, now)
+			if state.unanswered >= orchestratorMaxUnansweredWakeSends && !state.warned {
+				state.warned = true
+				wakes.projects[primeProjectID] = state
+				log.Warn("prime-supervisor: wake retry limit reached; waiting for activity before sending more wakes", "project", primeProjectID, "session", prime.ID, "unanswered_wakes", state.unanswered)
+			}
+		}
+	}
+}
+
+func primeWakeInterval(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, log *slog.Logger) time.Duration {
+	if projects == nil {
+		return domain.DefaultOrchestratorWakeInterval
+	}
+	summaries, err := projects.List(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Warn("prime-supervisor: list projects for wake interval failed; using default", "project", primeProjectID, "err", err)
+		}
+		return domain.DefaultOrchestratorWakeInterval
+	}
+	for _, project := range summaries {
+		if project.ID != primeProjectID {
+			continue
+		}
+		interval, err := project.Config.WithDefaults().Prime.WakeIntervalDuration()
+		if err != nil {
+			log.Warn("prime-supervisor: invalid wake interval; using default", "project", primeProjectID, "err", err)
+			return domain.DefaultOrchestratorWakeInterval
+		}
+		return interval
+	}
+	return domain.DefaultOrchestratorWakeInterval
+}
+
 func (w *orchestratorWakeTracker) recordWakeAttempt(projectID domain.ProjectID, session domain.Session, now time.Time) orchestratorWakeState {
 	state := w.projects[projectID]
 	if state.lastActivityAt.IsZero() || session.Activity.LastActivityAt.After(state.lastActivityAt) {
@@ -183,7 +298,15 @@ func (w *orchestratorWakeTracker) recordWake(projectID domain.ProjectID, session
 }
 
 func shouldWakeOrchestrator(projectID domain.ProjectID, session domain.Session, interval time.Duration, wakes *orchestratorWakeTracker, now time.Time) bool {
-	if session.ID == "" || session.IsTerminated || session.Kind != domain.KindOrchestrator {
+	return shouldWakeDaemonRole(projectID, session, domain.KindOrchestrator, interval, wakes, now)
+}
+
+func shouldWakePrime(projectID domain.ProjectID, session domain.Session, interval time.Duration, wakes *orchestratorWakeTracker, now time.Time) bool {
+	return shouldWakeDaemonRole(projectID, session, domain.KindPrime, interval, wakes, now)
+}
+
+func shouldWakeDaemonRole(projectID domain.ProjectID, session domain.Session, kind domain.SessionKind, interval time.Duration, wakes *orchestratorWakeTracker, now time.Time) bool {
+	if session.ID == "" || session.IsTerminated || session.Kind != kind {
 		return false
 	}
 	if !activitydispatch.SupportsHarness(session.Harness) {
@@ -217,7 +340,15 @@ func shouldWakeOrchestrator(projectID domain.ProjectID, session domain.Session, 
 }
 
 func shouldReplaceUnhealthyOrchestrator(session domain.Session, now time.Time) (bool, string) {
-	if session.ID == "" || session.IsTerminated || session.Kind != domain.KindOrchestrator {
+	return shouldReplaceUnhealthyDaemonRole(session, domain.KindOrchestrator, now)
+}
+
+func shouldReplaceUnhealthyPrime(session domain.Session, now time.Time) (bool, string) {
+	return shouldReplaceUnhealthyDaemonRole(session, domain.KindPrime, now)
+}
+
+func shouldReplaceUnhealthyDaemonRole(session domain.Session, kind domain.SessionKind, now time.Time) (bool, string) {
+	if session.ID == "" || session.IsTerminated || session.Kind != kind {
 		return false, ""
 	}
 	if session.Activity.State == domain.ActivityBlocked {
@@ -290,6 +421,7 @@ func emitOrchestratorSupervisorNotification(ctx context.Context, notifier notifi
 		ProjectID:          projectID,
 		CreatedAt:          now,
 		SessionDisplayName: session.DisplayName,
+		SessionKind:        session.Kind,
 	}); err != nil {
 		if ctx.Err() != nil {
 			return
@@ -300,4 +432,8 @@ func emitOrchestratorSupervisorNotification(ctx context.Context, notifier notifi
 
 func orchestratorWakeMessage(projectID domain.ProjectID) string {
 	return "Continue your supervision loop for project " + string(projectID) + ". Check worker sessions, waiting input, open issues, pull requests, merge/deploy gates, and post any needed digest or escalation."
+}
+
+func primeWakeMessage() string {
+	return "Continue your fleet supervision loop. Check all projects, project orchestrators, worker sessions, waiting input, open issues, pull requests, merge/deploy gates, metrics, resource alerts, zombies, cost and usage, and post any needed ticket, recommendation, digest, or escalation."
 }

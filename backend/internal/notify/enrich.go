@@ -95,8 +95,14 @@ func bodyForIntent(intent Intent) string {
 		}
 		return "The pull request was closed without merging."
 	case domain.NotificationOrchestratorReplaced:
+		if intent.SessionKind == domain.KindPrime {
+			return "AO replaced an unresponsive prime orchestrator."
+		}
 		return "AO replaced an unresponsive project orchestrator."
 	case domain.NotificationOrchestratorReplacementCapped:
+		if intent.SessionKind == domain.KindPrime {
+			return "AO stopped replacing the prime orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline."
+		}
 		return "AO stopped replacing this project orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline."
 	case domain.NotificationDuplicatePR:
 		return duplicatePRBody(intent)
