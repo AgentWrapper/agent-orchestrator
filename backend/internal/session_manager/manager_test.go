@@ -3749,6 +3749,30 @@ func TestEffectiveAgentConfig_MergesProfileFields(t *testing.T) {
 	}
 }
 
+// TestEffectiveAgentConfig_DoesNotMutateProjectEnv: merging a role's Env must
+// not mutate the project's base AgentConfig.Env. The earlier inline merge wrote
+// into merged.Env, which aliased the project map (Go copies the map header by
+// value on struct copy), so a worker's role-specific env leaked into every
+// later session of the project for the daemon's lifetime. Regression guard.
+func TestEffectiveAgentConfig_DoesNotMutateProjectEnv(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Env: map[string]string{"BASE": "b"}},
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{
+			Env: map[string]string{"ROLE_ONLY": "secret"},
+		}},
+	}
+
+	_ = effectiveAgentConfig(domain.KindWorker, cfg)
+	_ = effectiveAgentConfig(domain.KindWorker, cfg) // a second call surfaces cross-call leakage
+
+	if _, leaked := cfg.AgentConfig.Env["ROLE_ONLY"]; leaked {
+		t.Fatalf("role-only env leaked into project config after merge: %#v", cfg.AgentConfig.Env)
+	}
+	if cfg.AgentConfig.Env["BASE"] != "b" {
+		t.Fatalf("project base env mutated: %#v", cfg.AgentConfig.Env)
+	}
+}
+
 // TestEffectiveAgentConfig_OrchestratorRoleUsesOrchestratorOverride: the role
 // selector picks Worker vs Orchestrator, not just Worker for every call.
 func TestEffectiveAgentConfig_OrchestratorRoleUsesOrchestratorOverride(t *testing.T) {
