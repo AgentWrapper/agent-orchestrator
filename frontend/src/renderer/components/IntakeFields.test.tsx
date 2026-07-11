@@ -20,6 +20,7 @@ const enabled = (optOutLabels: string[]): IntakeForm => ({
 	enabled: true,
 	repo: "",
 	assignee: "",
+	maxConcurrent: "",
 	optOutLabels,
 });
 
@@ -73,14 +74,18 @@ describe("buildIntake", () => {
 		expect(out).toEqual({
 			enabled: true,
 			provider: "github",
-			maxConcurrent: 5,
 			labels: ["ready"],
 			excludeLabels: ["no-ao"],
 		});
 	});
 
+	it("serializes an edited max concurrency", () => {
+		const out = buildIntake({ ...enabled(["no-ao"]), maxConcurrent: "7" });
+		expect(out?.maxConcurrent).toBe(7);
+	});
+
 	it("omits excludeLabels when intake is disabled", () => {
-		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: ["no-ao"] });
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", maxConcurrent: "", optOutLabels: ["no-ao"] });
 		expect(out).toBeUndefined();
 	});
 
@@ -88,13 +93,13 @@ describe("buildIntake", () => {
 		// Disabling intake must not persist a base's maxConcurrent/labels behind a
 		// disabled flag — the config is dropped entirely.
 		const base = { enabled: true, provider: "github" as const, maxConcurrent: 4, labels: ["ready"] };
-		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, base);
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", maxConcurrent: "", optOutLabels: [] }, base);
 		expect(out).toBeUndefined();
 	});
 
 	it("can serialize an explicit disable sentinel while preserving hidden base fields", () => {
 		const base = { enabled: true, provider: "github" as const, maxConcurrent: 4, labels: ["ready"] };
-		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, base, {
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", maxConcurrent: "", optOutLabels: [] }, base, {
 			explicitDisable: true,
 		});
 		expect(out).toEqual({ enabled: false, provider: "github", maxConcurrent: 4, labels: ["ready"] });
@@ -102,12 +107,12 @@ describe("buildIntake", () => {
 
 	it("serializes a disabled populated base even when the daemon omitted enabled false", () => {
 		const base = { provider: "github" as const, maxConcurrent: 4, labels: ["ready"] };
-		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, base);
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", maxConcurrent: "", optOutLabels: [] }, base);
 		expect(out).toEqual({ enabled: false, provider: "github", maxConcurrent: 4, labels: ["ready"] });
 	});
 
 	it("does not fabricate a disable sentinel for a never-configured base", () => {
-		const out = buildIntake({ enabled: false, repo: "", assignee: "", optOutLabels: [] }, {});
+		const out = buildIntake({ enabled: false, repo: "", assignee: "", maxConcurrent: "", optOutLabels: [] }, {});
 		expect(out).toBeUndefined();
 	});
 });

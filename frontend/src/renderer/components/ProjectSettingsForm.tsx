@@ -84,6 +84,7 @@ const MIX_OPTIONS = [
 
 type MixRow = { agent: string; model: string; weight: number };
 type MixOption = { value: string; label: string; agent: string; model: string };
+type EnvRow = { key: string; value: string };
 
 const mixOptionValue = (row: { agent: string; model: string }) => `${row.agent}::${row.model}`;
 
@@ -150,8 +151,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		projectPrefix,
+		workspaceMode: config.workspace ?? "",
+		envRows: envRowsFromConfig(config.env),
 		workerAgent: config.worker?.agent ?? "",
+		workerModel: config.worker?.agentConfig?.model ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
+		orchestratorModel: config.orchestrator?.agentConfig?.model ?? "",
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
@@ -160,6 +165,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
+		intakeMaxConcurrent: intake.maxConcurrent ? String(intake.maxConcurrent) : "",
 		// Unconfigured projects show the default opt-out taxonomy the daemon would
 		// apply anyway, so the list is visible and editable rather than implicit.
 		intakeOptOutLabels: intake.excludeLabels ?? [...DEFAULT_OPT_OUT_LABELS],
@@ -168,6 +174,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
+	const initialOrchestratorModel = config.orchestrator?.agentConfig?.model ?? "";
 	const [intakeDisableRequested, setIntakeDisableRequested] = useState(false);
 	// A non-empty worker mix resolves the worker harness on its own, so the single
 	// default worker agent is only required when no mix is configured. The
@@ -195,6 +202,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		enabled: form.intakeEnabled,
 		repo: form.intakeRepo,
 		assignee: form.intakeAssignee,
+		maxConcurrent: form.intakeMaxConcurrent,
 		optOutLabels: form.intakeOptOutLabels,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) => {
@@ -206,6 +214,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
 			intakeRepo: patch.repo ?? f.intakeRepo,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+			intakeMaxConcurrent: patch.maxConcurrent ?? f.intakeMaxConcurrent,
 			intakeOptOutLabels: patch.optOutLabels ?? f.intakeOptOutLabels,
 		}));
 	};
@@ -221,8 +230,24 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				defaultBranch: form.defaultBranch || undefined,
 				projectPrefix: form.projectPrefix || undefined,
 				sessionPrefix: undefined,
-				worker: { ...config.worker, agent: form.workerAgent },
-				orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+				workspace: workspaceModeToConfig(form.workspaceMode),
+				env: envRowsToConfig(form.envRows),
+				worker: {
+					...config.worker,
+					agent: form.workerAgent,
+					agentConfig: blankToUndefined({
+						...config.worker?.agentConfig,
+						model: form.workerModel || undefined,
+					}),
+				},
+				orchestrator: {
+					...config.orchestrator,
+					agent: form.orchestratorAgent,
+					agentConfig: blankToUndefined({
+						...config.orchestrator?.agentConfig,
+						model: form.orchestratorModel || undefined,
+					}),
+				},
 				agentConfig: blankToUndefined({
 					...config.agentConfig,
 					model: form.model || undefined,
@@ -251,6 +276,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			if (error) throw new Error(apiErrorMessage(error));
 			if (
 				form.orchestratorAgent !== initialOrchestratorAgent ||
+				form.orchestratorModel !== initialOrchestratorModel ||
 				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
 			) {
 				try {
@@ -285,6 +311,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setReplacementError(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				const envError = validateEnvRows(form.envRows);
+				if (envError) {
+					setValidationError(envError);
 					return;
 				}
 				if (!mixIsValid(form.workerMix)) {
@@ -338,6 +369,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-control">Worktrees</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
+					<Field label="Workspace mode" htmlFor="workspaceMode">
+						<WorkspaceModeSelect
+							id="workspaceMode"
+							value={form.workspaceMode}
+							onChange={(v) => setForm((f) => ({ ...f, workspaceMode: v }))}
+						/>
+					</Field>
 					<Field label="Default branch" htmlFor="defaultBranch">
 						<input
 							id="defaultBranch"
@@ -356,6 +394,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							placeholder="ao"
 						/>
 					</Field>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-control">Project environment</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<EnvEditor rows={form.envRows} onChange={(envRows) => setForm((f) => ({ ...f, envRows }))} />
 				</CardContent>
 			</Card>
 
@@ -414,6 +461,24 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						label="Model override"
 						value={form.model}
 						onChange={(model) => setForm((f) => ({ ...f, model }))}
+						availability={modelAvailabilityQuery.data}
+						isRefreshing={refreshModelsMutation.isPending || modelAvailabilityQuery.isFetching}
+						onRefresh={() => refreshModelsMutation.mutate()}
+					/>
+					<ModelAvailabilityField
+						id="workerModel"
+						label="Worker model override"
+						value={form.workerModel}
+						onChange={(model) => setForm((f) => ({ ...f, workerModel: model }))}
+						availability={modelAvailabilityQuery.data}
+						isRefreshing={refreshModelsMutation.isPending || modelAvailabilityQuery.isFetching}
+						onRefresh={() => refreshModelsMutation.mutate()}
+					/>
+					<ModelAvailabilityField
+						id="orchestratorModel"
+						label="Orchestrator model override"
+						value={form.orchestratorModel}
+						onChange={(model) => setForm((f) => ({ ...f, orchestratorModel: model }))}
 						availability={modelAvailabilityQuery.data}
 						isRefreshing={refreshModelsMutation.isPending || modelAvailabilityQuery.isFetching}
 						onRefresh={() => refreshModelsMutation.mutate()}
@@ -681,6 +746,73 @@ function mixOptions(availability?: AgentModelAvailabilityResponse): MixOption[] 
 	return Array.from(out.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function WorkspaceModeSelect({
+	id,
+	value,
+	onChange,
+}: {
+	id: string;
+	value: string;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
+			<SelectTrigger id={id} className="h-control-form w-full text-control">
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent>
+				<SelectItem value="__default__">Default (worktree)</SelectItem>
+				<SelectItem value="worktree">Worktree</SelectItem>
+				<SelectItem value="in-place">In place</SelectItem>
+			</SelectContent>
+		</Select>
+	);
+}
+
+function EnvEditor({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: EnvRow[]) => void }) {
+	const addRow = () => onChange([...rows, { key: "", value: "" }]);
+	const removeRow = (index: number) => onChange(rows.filter((_, i) => i !== index));
+	const patchRow = (index: number, patch: Partial<EnvRow>) =>
+		onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+
+	return (
+		<div className="flex flex-col gap-3">
+			<p className="text-[12px] leading-5 text-muted-foreground">
+				Extra environment variables forwarded into new sessions for this project.
+			</p>
+			{rows.map((row, index) => (
+				<div key={index} className="grid grid-cols-[minmax(0,0.42fr)_minmax(0,1fr)_auto] items-center gap-2">
+					<input
+						aria-label={`Environment key ${index + 1}`}
+						className="h-8 rounded-md border border-input bg-transparent px-2.5 font-mono text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+						value={row.key}
+						onChange={(e) => patchRow(index, { key: e.target.value })}
+						placeholder="KEY"
+					/>
+					<input
+						aria-label={`Environment value ${index + 1}`}
+						className="h-8 rounded-md border border-input bg-transparent px-2.5 font-mono text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+						value={row.value}
+						onChange={(e) => patchRow(index, { value: e.target.value })}
+						placeholder="value"
+					/>
+					<button
+						type="button"
+						aria-label={`Remove environment variable ${row.key || index + 1}`}
+						className="shrink-0 rounded px-2 text-[12px] text-muted-foreground underline-offset-2 hover:text-error hover:underline"
+						onClick={() => removeRow(index)}
+					>
+						Remove
+					</button>
+				</div>
+			))}
+			<Button type="button" variant="secondary" onClick={addRow}>
+				Add environment variable
+			</Button>
+		</div>
+	);
+}
+
 function PermissionModeSelect({
 	id,
 	value,
@@ -749,6 +881,36 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="grid h-full place-items-center bg-background p-6 text-center text-xs text-passive">{children}</div>
 	);
+}
+
+function envRowsFromConfig(env?: Record<string, string>): EnvRow[] {
+	return Object.entries(env ?? {}).map(([key, value]) => ({ key, value }));
+}
+
+function envRowsToConfig(rows: EnvRow[]): Record<string, string> | undefined {
+	const entries = rows.map((row) => [row.key.trim(), row.value] as const).filter(([key]) => key !== "");
+	if (entries.length === 0) return undefined;
+	return Object.fromEntries(entries);
+}
+
+function validateEnvRows(rows: EnvRow[]): string | null {
+	const seen = new Set<string>();
+	for (const row of rows) {
+		const key = row.key.trim();
+		if (key === "") continue;
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+			return "Environment variable names must start with a letter or underscore and contain only letters, numbers, and underscores.";
+		}
+		if (seen.has(key)) {
+			return "Environment variable names must be unique.";
+		}
+		seen.add(key);
+	}
+	return null;
+}
+
+function workspaceModeToConfig(value: string): ProjectConfig["workspace"] | undefined {
+	return value === "worktree" || value === "in-place" ? value : undefined;
 }
 
 // Drop an object whose every value is undefined so we send `undefined` (omit)

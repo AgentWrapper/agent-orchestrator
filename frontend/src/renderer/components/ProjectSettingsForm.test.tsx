@@ -207,6 +207,123 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	}, 20_000);
 
+	it("exposes workspace, env, role model, and intake concurrency project config", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				workspace: "in-place",
+				env: { FOO: "bar", REMOVE_ME: "yes" },
+				worker: {
+					agent: "codex",
+					agentConfig: { model: "worker-model" },
+				},
+				orchestrator: {
+					agent: "claude-code",
+					agentConfig: { model: "orchestrator-model" },
+				},
+				agentConfig: {
+					model: "project-model",
+					permissions: "auto",
+				},
+				trackerIntake: {
+					enabled: true,
+					provider: "github",
+					maxConcurrent: 3,
+					excludeLabels: ["no-ao"],
+				},
+			},
+		});
+
+		renderSettings();
+
+		const workspaceMode = await screen.findByRole("combobox", { name: "Workspace mode" });
+		expect(workspaceMode).toHaveTextContent("In place");
+		expect(screen.getByLabelText("Environment key 1")).toHaveValue("FOO");
+		expect(screen.getByLabelText("Environment value 1")).toHaveValue("bar");
+		expect(screen.getByLabelText("Environment key 2")).toHaveValue("REMOVE_ME");
+		expect(screen.getByLabelText("Worker model override")).toHaveValue("worker-model");
+		expect(screen.getByLabelText("Orchestrator model override")).toHaveValue("orchestrator-model");
+		expect(screen.getByLabelText("Max concurrent sessions")).toHaveValue(3);
+
+		await chooseOption(workspaceMode, "Worktree");
+		await userEvent.clear(screen.getByLabelText("Environment value 1"));
+		await userEvent.type(screen.getByLabelText("Environment value 1"), "baz");
+		await userEvent.click(screen.getByRole("button", { name: "Remove environment variable REMOVE_ME" }));
+		await userEvent.click(screen.getByRole("button", { name: "Add environment variable" }));
+		await userEvent.type(screen.getByLabelText("Environment key 2"), "NEW_VAR");
+		await userEvent.type(screen.getByLabelText("Environment value 2"), "from-ui");
+		await userEvent.clear(screen.getByLabelText("Worker model override"));
+		await userEvent.type(screen.getByLabelText("Worker model override"), "gpt-5-codex");
+		await userEvent.clear(screen.getByLabelText("Orchestrator model override"));
+		await userEvent.type(screen.getByLabelText("Orchestrator model override"), "claude-opus-4-5");
+		await userEvent.clear(screen.getByLabelText("Max concurrent sessions"));
+		await userEvent.type(screen.getByLabelText("Max concurrent sessions"), "5");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.workspace).toBe("worktree");
+		expect(body.config.env).toEqual({ FOO: "baz", NEW_VAR: "from-ui" });
+		expect(body.config.worker).toEqual({
+			agent: "codex",
+			agentConfig: { model: "gpt-5-codex" },
+		});
+		expect(body.config.orchestrator).toEqual({
+			agent: "claude-code",
+			agentConfig: { model: "claude-opus-4-5" },
+		});
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			maxConcurrent: 5,
+			excludeLabels: ["no-ao"],
+		});
+	}, 20_000);
+
+	it("blocks invalid or duplicate project environment keys", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				env: { FOO: "bar" },
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add environment variable" }));
+		await userEvent.type(screen.getByLabelText("Environment key 2"), "FOO");
+		await userEvent.type(screen.getByLabelText("Environment value 2"), "duplicate");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Environment variable names must be unique.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+
+		await userEvent.clear(screen.getByLabelText("Environment key 2"));
+		await userEvent.type(screen.getByLabelText("Environment key 2"), "1 BAD");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(
+			await screen.findByText(
+				"Environment variable names must start with a letter or underscore and contain only letters, numbers, and underscores.",
+			),
+		).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	}, 20_000);
+
 	it("loads legacy sessionPrefix but saves projectPrefix", async () => {
 		mockProject({
 			id: "proj-1",

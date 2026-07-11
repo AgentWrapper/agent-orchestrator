@@ -16,14 +16,14 @@ export const DEFAULT_OPT_OUT_LABELS = ["no-ao", "deferred", "charter", "charter-
 
 // IntakeForm is the flat, string-backed shape both the create sheet and the
 // project settings form edit. repo has no input today (it's derived from the
-// git origin server-side) but is plumbed so a value set via the CLI
-// (--tracker-repo) survives a UI save instead of being wiped. optOutLabels is
-// the editable opt-out work gate: intake works every open issue that carries
-// none of these labels.
+// git origin server-side) but is plumbed so a value set via the CLI can be
+// cleared intentionally. optOutLabels is the editable opt-out work gate: intake
+// works every open issue that carries none of these labels.
 export type IntakeForm = {
 	enabled: boolean;
 	repo: string;
 	assignee: string;
+	maxConcurrent: string;
 	optOutLabels: string[];
 };
 
@@ -37,9 +37,9 @@ export type IntakeForm = {
 // `{ enabled: false }` sentinel so the daemon can distinguish an intentional
 // disable from a stale writer that dropped trackerIntake. When enabled it
 // spreads `base` (the config that loaded) first so fields the form does NOT own
-// — labels, maxConcurrent — survive the save instead of being silently dropped;
-// the form-owned fields then override. An empty optOutLabels list is omitted so
-// the daemon falls back to the default taxonomy.
+// survive the save instead of being silently dropped; the form-owned fields then
+// override. An empty optOutLabels list is omitted so the daemon falls back to
+// the default taxonomy.
 export function buildIntake(
 	form: IntakeForm,
 	base?: TrackerIntakeConfig,
@@ -50,14 +50,22 @@ export function buildIntake(
 		return options.explicitDisable || hasDisabledBase ? { ...base, enabled: false } : undefined;
 	}
 	const excludeLabels = form.optOutLabels.map((l) => l.trim()).filter((l) => l !== "");
+	const maxConcurrent = Number.parseInt(form.maxConcurrent.trim(), 10);
 	const next: TrackerIntakeConfig = {
 		...base,
 		enabled: true,
 		provider: "github",
-		repo: form.repo.trim() || undefined,
-		assignee: form.assignee.trim() || undefined,
-		excludeLabels: excludeLabels.length > 0 ? excludeLabels : undefined,
 	};
+	const repo = form.repo.trim();
+	const assignee = form.assignee.trim();
+	if (repo) next.repo = repo;
+	else delete next.repo;
+	if (assignee) next.assignee = assignee;
+	else delete next.assignee;
+	if (Number.isFinite(maxConcurrent) && maxConcurrent > 0) next.maxConcurrent = maxConcurrent;
+	else delete next.maxConcurrent;
+	if (excludeLabels.length > 0) next.excludeLabels = excludeLabels;
+	else delete next.excludeLabels;
 	return next;
 }
 
@@ -174,6 +182,17 @@ export function IntakeFields({
 							value={form.assignee}
 							onChange={(e) => onChange({ assignee: e.target.value })}
 							placeholder="optional — blank works any assignee, * requires one"
+						/>
+					</IntakeField>
+					<IntakeField label="Max concurrent sessions" htmlFor="intakeMaxConcurrent">
+						<input
+							id="intakeMaxConcurrent"
+							type="number"
+							min={1}
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							value={form.maxConcurrent}
+							onChange={(e) => onChange({ maxConcurrent: e.target.value })}
+							placeholder="project default"
 						/>
 					</IntakeField>
 					{!compact && (

@@ -74,7 +74,7 @@ const PERMISSION_MODE_OPTIONS = [
 // The create sheet is compact and does not render the opt-out label editor, so
 // optOutLabels stays empty here — a new project's ExcludeLabels is left unset and
 // the daemon materializes the default opt-out taxonomy (domain.WithDefaults).
-const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "", optOutLabels: [] };
+const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "", maxConcurrent: "", optOutLabels: [] };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
