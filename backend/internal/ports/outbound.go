@@ -80,6 +80,7 @@ type AgentMessenger interface {
 type Runtime interface {
 	Create(ctx context.Context, cfg RuntimeConfig) (RuntimeHandle, error)
 	Destroy(ctx context.Context, handle RuntimeHandle) error
+	GetOutput(ctx context.Context, handle RuntimeHandle, lines int) (string, error)
 	IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
 }
 

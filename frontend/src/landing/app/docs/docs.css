@@ -701,6 +701,48 @@ pre.shiki code {
 	margin-bottom: 0;
 }
 
+/* Fumadocs accordions — match ao-legacy-cli-details sizing and visual weight */
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border {
+	border-color: var(--color-border-subtle);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--color-fd-card) 88%, var(--color-bg-elevated));
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border h3 {
+	margin: 0;
+	font-size: inherit;
+	font-weight: inherit;
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border h3 button {
+	gap: 0.45rem;
+	padding: 0.72rem 1rem;
+	color: var(--color-text-primary);
+	font-size: 0.94rem;
+	font-weight: 620;
+	line-height: 1.35;
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border h3 button svg {
+	width: 0.85rem;
+	height: 0.85rem;
+	flex-shrink: 0;
+	color: var(--color-text-tertiary);
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border [role="region"] > div {
+	padding: 0 1rem 0.9rem;
+	color: var(--color-text-secondary);
+	font-size: 0.86rem;
+	line-height: 1.55;
+}
+
+#nd-docs-layout .prose [data-orientation="vertical"].divide-y.rounded-lg.border [role="region"] > div :is(p, li) {
+	color: inherit;
+	font-size: inherit;
+	line-height: inherit;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	#nd-docs-layout figure[data-rehype-pretty-code-figure] button,
 	#nd-docs-layout [data-rehype-pretty-code-figure] button[aria-label],

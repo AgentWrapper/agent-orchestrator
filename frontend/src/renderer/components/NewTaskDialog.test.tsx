@@ -77,6 +77,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskDialog", () => {
+	it("aligns the Agent and Branch fields with matching labels and compact controls", async () => {
+		renderDialog();
+		await waitForAgentCatalog();
+
+		const agentLabel = screen.getByText("Agent", { selector: "label" });
+		const branchLabel = screen.getByText("Branch", { selector: "label" });
+		expect(agentLabel).toHaveAttribute("data-slot", "label");
+		expect(branchLabel).toHaveAttribute("data-slot", "label");
+		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute("data-size", "sm");
+		expect(screen.getByLabelText("Branch")).toHaveClass("h-8");
+	});
+
 	it("preselects the project's default agent and omits harness so the daemon applies it", async () => {
 		const { onCreated, onOpenChange } = renderDialog();
 		const user = userEvent.setup();

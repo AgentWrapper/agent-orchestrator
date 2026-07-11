@@ -348,6 +348,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				});
 		};
 		term.attachCustomKeyEventHandler((event) => {
+			// xterm invokes this same handler on keydown, keyup, AND keypress (see
+			// Terminal.ts _keyDown/_keyUp/_keyPress). Only keydown should trigger our
+			// shortcut actions (copy/paste/word-nav) — otherwise releasing the key
+			// re-matches the same combo and fires the action a second time (double
+			// paste, double word-delete, etc). keyup/keypress fall through to
+			// xterm's own default handling for that event type.
+			if (event.type === "keyup" || event.type === "keypress") return true;
 			if (isTerminalCopyShortcut(event)) {
 				if (copySelection()) {
 					consumeTerminalShortcut(event);

@@ -717,6 +717,43 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/initialize:
+    post:
+      operationId: initializeProjectRepository
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitializeRepositoryInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InitializeRepositoryResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Initialize a selected folder as a Git repository with an initial commit
+      tags:
+      - projects
   /api/v1/prs/{id}/merge:
     post:
       operationId: mergePR
@@ -1883,6 +1920,20 @@ components:
       required:
       - available
       - legacyRoot
+      type: object
+    InitializeRepositoryInput:
+      properties:
+        path:
+          type: string
+      required:
+      - path
+      type: object
+    InitializeRepositoryResult:
+      properties:
+        path:
+          type: string
+      required:
+      - path
       type: object
     KillSessionResponse:
       properties:

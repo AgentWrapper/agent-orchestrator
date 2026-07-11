@@ -370,11 +370,11 @@ select {
 @keyframes modal-in {
 	from {
 		opacity: 0;
-		transform: translate(-50%, -50%) scale(0.95);
+		scale: 0.95;
 	}
 	to {
 		opacity: 1;
-		transform: translate(-50%, -50%) scale(1);
+		scale: 1;
 	}
 }
 
@@ -1553,6 +1553,27 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	position: relative;
 	min-width: 0;
 	flex: 1;
+}
+
+.browser-panel__annotate-btn[aria-pressed="true"] {
+	background: var(--accent-weak);
+	color: var(--fg);
+}
+
+.browser-panel__annotation-status {
+	max-width: 96px;
+	overflow: hidden;
+	color: var(--fg-muted);
+	font-size: 11px;
+	font-weight: 650;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.browser-panel__annotation-status--error {
+	max-width: 160px;
+	color: var(--red);
 }
 
 .browser-panel__url-icon {

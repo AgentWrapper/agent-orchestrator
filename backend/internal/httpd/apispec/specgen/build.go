@@ -208,13 +208,15 @@ var schemaNames = map[string]string{
 	// legacyimport report
 	"LegacyimportReport": "ImportReport",
 	// service/project entities + DTOs
-	"ProjectProject":        "Project",
-	"ProjectSummary":        "ProjectSummary",
-	"ProjectDegraded":       "DegradedProject",
-	"ProjectAddInput":       "AddProjectInput",
-	"ProjectRemoveResult":   "RemoveProjectResult",
-	"ProjectSetConfigInput": "SetProjectConfigInput",
-	"ProjectWorkspaceRepo":  "WorkspaceRepo",
+	"ProjectProject":                    "Project",
+	"ProjectSummary":                    "ProjectSummary",
+	"ProjectDegraded":                   "DegradedProject",
+	"ProjectAddInput":                   "AddProjectInput",
+	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
+	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
+	"ProjectRemoveResult":               "RemoveProjectResult",
+	"ProjectSetConfigInput":             "SetProjectConfigInput",
+	"ProjectWorkspaceRepo":              "WorkspaceRepo",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -542,6 +544,16 @@ func projectOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/projects/initialize", id: "initializeProjectRepository", tag: "projects",
+			summary: "Initialize a selected folder as a Git repository with an initial commit",
+			reqBody: projectsvc.InitializeRepositoryInput{},
+			resps: []respUnit{
+				{http.StatusOK, projectsvc.InitializeRepositoryResult{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		}, {
 			method: http.MethodGet, path: "/api/v1/projects/{id}", id: "getProject", tag: "projects",
 			summary:    "Fetch one project; discriminates ok vs degraded",
 			pathParams: []any{controllers.ProjectIDParam{}},

@@ -6,7 +6,7 @@ import { CreateProjectFlow } from "./CreateProjectFlow";
 import { OrchestratorIcon } from "./icons";
 
 export function BoardWelcome() {
-	const { createProject } = useShell();
+	const { createProject, initializeProjectRepository } = useShell();
 	return (
 		<div className="flex h-full min-h-0 items-center justify-center overflow-y-auto">
 			<div className="flex w-full max-w-[460px] flex-col items-center pb-[6vh] text-center">
@@ -18,7 +18,11 @@ export function BoardWelcome() {
 					Add a repository and describe the work. AO runs agents on isolated branches, from start to merge.
 				</p>
 
-				<CreateProjectFlow idleLabel="Add your first project" onCreateProject={createProject}>
+				<CreateProjectFlow
+					idleLabel="Add your first project"
+					onCreateProject={createProject}
+					onInitializeProject={initializeProjectRepository}
+				>
 					{({ choosePath, disabled, error, label }) => (
 						<>
 							<button

@@ -132,7 +132,10 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			destroy: () => undefined,
+			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onAnnotationSubmit: () => () => undefined,
+			onAnnotationCancel: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,
