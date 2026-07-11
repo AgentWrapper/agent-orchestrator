@@ -420,6 +420,267 @@ describe("ao self-deploy script", () => {
 		assert.notEqual(result.code, 0, "truncated check-runs must fail closed");
 		assert.match(result.stderr, /main CI is not green \(unknown: check runs truncated at 100\/101\)/);
 	});
+
+	it("ignores a scheduled release-guard failure that pollutes main's combined status", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
+		await commitFixture(fixture.dir, "ops-only change");
+
+		// Real merge CI (push/merge_group) is green; only the hourly
+		// release-latest-guard (event=schedule) failed, and its latest-release
+		// job attached a failure check-run to this commit via check_suite 999.
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [
+					{ name: "build-test", status: "completed", conclusion: "success", check_suite: { id: 111 } },
+					{ name: "test", status: "completed", conclusion: "success", check_suite: { id: 111 } },
+					{ name: "latest-release", status: "completed", conclusion: "failure", check_suite: { id: 999 } },
+				],
+			}),
+		);
+		await writeFile(
+			fixture.ghRunsFile,
+			JSON.stringify({
+				total_count: 2,
+				workflow_runs: [
+					{ name: "CI", event: "push", conclusion: "success", check_suite_id: 111 },
+					{ name: "Release latest guard", event: "schedule", conclusion: "failure", check_suite_id: 999 },
+				],
+			}),
+		);
+
+		const web = await startFakeWeb({ webFailuresBeforeReady: 1 });
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.equal(
+			result.code,
+			0,
+			`a scheduled release-guard failure must not block the deploy\n${result.stdout}\n${result.stderr}`,
+		);
+		assert.doesNotMatch(
+			result.stderr,
+			/main CI is/,
+			"the scheduled guard failure must not surface as a CI-red refusal",
+		);
+		await assert.doesNotReject(access(fixture.stateFile), "the deploy should complete and record the deployed ref");
+	});
+
+	it("still refuses when a non-scheduled merge check fails alongside a scheduled guard failure", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		// The release guard (schedule) is excluded, but a genuine push-event CI
+		// failure must still block: exclusion must not mask real red.
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [
+					{ name: "build-test", status: "completed", conclusion: "failure", check_suite: { id: 111 } },
+					{ name: "latest-release", status: "completed", conclusion: "failure", check_suite: { id: 999 } },
+				],
+			}),
+		);
+		await writeFile(
+			fixture.ghRunsFile,
+			JSON.stringify({
+				total_count: 2,
+				workflow_runs: [
+					{ name: "CI", event: "push", conclusion: "failure", check_suite_id: 111 },
+					{ name: "Release latest guard", event: "schedule", conclusion: "failure", check_suite_id: 999 },
+				],
+			}),
+		);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "a real push-event CI failure must still block the deploy");
+		assert.match(result.stderr, /main CI is failure: build-test/);
+		assert.doesNotMatch(
+			result.stderr,
+			/latest-release/,
+			"the excluded scheduled guard must not appear in the failure list",
+		);
+	});
+
+	it("fails closed when excluding scheduled guards leaves zero check runs to judge", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		// Every check run belongs to an excluded scheduled/release suite: after
+		// exclusion there is no real CI evidence, so the gate must NOT green — a
+		// genuinely unproven main must fail closed, not slip through as success.
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [{ name: "latest-release", status: "completed", conclusion: "failure", check_suite: { id: 999 } }],
+			}),
+		);
+		await writeFile(
+			fixture.ghRunsFile,
+			JSON.stringify({
+				total_count: 1,
+				workflow_runs: [
+					{ name: "Release latest guard", event: "schedule", conclusion: "failure", check_suite_id: 999 },
+				],
+			}),
+		);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "no real CI after exclusion must fail closed, not green");
+		assert.match(result.stderr, /main CI is not green \(unknown: no check runs\)/);
+	});
+
+	it("does not exclude a scheduled guard when the workflow-runs listing is truncated", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		// total_count exceeds the returned page, so the exclusion set can't be
+		// trusted — the guard we need to drop might be on an unfetched page. Fall
+		// back to counting every check run (fail closed), keeping the guard's red.
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [
+					{ name: "build-test", status: "completed", conclusion: "success", check_suite: { id: 111 } },
+					{ name: "latest-release", status: "completed", conclusion: "failure", check_suite: { id: 999 } },
+				],
+			}),
+		);
+		await writeFile(
+			fixture.ghRunsFile,
+			JSON.stringify({
+				total_count: 200,
+				workflow_runs: [
+					{ name: "Release latest guard", event: "schedule", conclusion: "failure", check_suite_id: 999 },
+				],
+			}),
+		);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "a truncated workflow-runs listing must not enable exclusion");
+		assert.match(result.stderr, /main CI is failure: latest-release/);
+	});
+
+	it("keeps a check suite that also has a non-scheduled event, even if a scheduled run shares its suite id", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		// Suite 111 is referenced by both a push run and a scheduled run. A real
+		// push-event failure lives in that suite, so it must NOT be excluded just
+		// because a scheduled run happens to report the same check_suite_id.
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [{ name: "build-test", status: "completed", conclusion: "failure", check_suite: { id: 111 } }],
+			}),
+		);
+		await writeFile(
+			fixture.ghRunsFile,
+			JSON.stringify({
+				total_count: 2,
+				workflow_runs: [
+					{ name: "CI", event: "push", conclusion: "failure", check_suite_id: 111 },
+					{ name: "Release latest guard", event: "schedule", conclusion: "failure", check_suite_id: 111 },
+				],
+			}),
+		);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "a suite shared with a non-scheduled event must not be excluded");
+		assert.match(result.stderr, /main CI is failure: build-test/);
+	});
+
+	it("does not exclude scheduled guards when the workflow-runs metadata is empty", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		// Empty metadata (the `{}` fallback shape): no runs to classify suites, so
+		// nothing can be proven scheduled/release and the guard's red still blocks.
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [{ name: "latest-release", status: "completed", conclusion: "failure", check_suite: { id: 999 } }],
+			}),
+		);
+		await writeFile(fixture.ghRunsFile, "{}");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "empty workflow-runs metadata must not enable exclusion");
+		assert.match(result.stderr, /main CI is failure: latest-release/);
+	});
+
+	it("does not exclude scheduled guards when the workflow-runs metadata is malformed JSON", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		// Malformed JSON: node's JSON.parse throws, the catch leaves the exclusion
+		// set empty, and every check run is counted (fail closed).
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [{ name: "latest-release", status: "completed", conclusion: "failure", check_suite: { id: 999 } }],
+			}),
+		);
+		await writeFile(fixture.ghRunsFile, "{ this is not json ");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "malformed workflow-runs metadata must not enable exclusion");
+		assert.match(result.stderr, /main CI is failure: latest-release/);
+	});
+
+	it("warns and fails closed when the workflow-runs fetch itself fails", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		// gh api for /actions/runs exits non-zero (auth/rate-limit/network). The
+		// gate must warn WHY exclusion was skipped and still block on the guard.
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [{ name: "latest-release", status: "completed", conclusion: "failure", check_suite: { id: 999 } }],
+			}),
+		);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+			GH_RUNS_FAIL: "1",
+		});
+
+		assert.notEqual(result.code, 0, "a failed workflow-runs fetch must not enable exclusion");
+		assert.match(result.stderr, /could not fetch workflow runs for .*; scheduled\/release guards will NOT be excluded/);
+		assert.match(result.stderr, /main CI is failure: latest-release/);
+	});
 });
 
 async function makeGitFixture() {
@@ -450,12 +711,16 @@ async function makeGitFixture() {
 	const stubBin = path.join(home, "stub-bin");
 	const systemctlLog = path.join(home, "systemctl.log");
 	const ghStatusFile = path.join(home, "gh-status.json");
+	const ghRunsFile = path.join(home, "gh-runs.json");
 	const stateDir = path.join(home, "deploy-state");
 	const stateFile = path.join(stateDir, "agent-orchestrator.last-deployed");
 	await writeFile(ghStatusFile, JSON.stringify({ state: "success", failedJobs: [] }));
+	// Default: no scheduled/release workflow runs to exclude. Tests that exercise
+	// the schedule/release-guard exclusion overwrite this with a workflow_runs list.
+	await writeFile(ghRunsFile, JSON.stringify({ total_count: 0, workflow_runs: [] }));
 	await makeStubBin(stubBin);
 
-	return { dir, home, stubBin, systemctlLog, ghStatusFile, stateDir, stateFile };
+	return { dir, home, stubBin, systemctlLog, ghStatusFile, ghRunsFile, stateDir, stateFile };
 }
 
 // Stubs for the host-mutating commands deploy.sh shells out to. `curl` is
@@ -488,7 +753,19 @@ if [[ -n "\${out}" ]]; then printf 'rebuilt ao\\n' > "\${out}"; chmod +x "\${out
 `,
 		gh: `#!/usr/bin/env bash
 if [[ "$1" = "api" ]]; then
-  cat "\${GH_STATUS_FILE}"
+  # deploy.sh queries two endpoints: the commit's check-runs (pass/fail state)
+  # and the sha's workflow runs (to classify scheduled/release-guard suites).
+  if [[ "$2" == *"actions/runs"* ]]; then
+    # GH_RUNS_FAIL simulates an auth/rate-limit/network failure of the
+    # workflow-runs fetch: emit to stderr and exit non-zero, as gh does.
+    if [[ "\${GH_RUNS_FAIL:-0}" = "1" ]]; then
+      printf 'gh: HTTP 403 rate limit exceeded\\n' >&2
+      exit 1
+    fi
+    cat "\${GH_RUNS_FILE:-/dev/null}" 2>/dev/null || printf '{}'
+  else
+    cat "\${GH_STATUS_FILE}"
+  fi
   exit 0
 fi
 exit 1
@@ -636,6 +913,7 @@ async function runDeployLive(fixture, web, env = {}) {
 			HOME: fixture.home,
 			SYSTEMCTL_LOG: fixture.systemctlLog,
 			GH_STATUS_FILE: fixture.ghStatusFile,
+			GH_RUNS_FILE: fixture.ghRunsFile,
 			AO_PORT: String(web.apiPort),
 			AO_DEPLOY_DRY_RUN: "0",
 			AO_DEPLOY_REPO_ROOT: fixture.dir,

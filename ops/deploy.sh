@@ -206,7 +206,24 @@ github_repo() {
 
 main_ci_report() {
   local repo="$1" sha="$2"
-  gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" | node -e '
+  # Workflow runs for this sha classify each check suite by triggering event, so
+  # scheduled/release-only guards can be excluded from the deploy gate below.
+  # Project down to just {total_count, event, check_suite_id} up front: the raw
+  # run objects are large and are passed to node via an environment variable,
+  # which is bounded by MAX_ARG_STRLEN (~128 KiB) — a busy sha could otherwise
+  # overflow it and abort the deploy.
+  # On a failed fetch the gate fails closed (no exclusions → scheduled/release
+  # guards still count). gh's own error is left on stderr (not captured into the
+  # JSON var — capturing it would corrupt valid JSON on a success that also
+  # printed a benign stderr notice) so the operator can see *why* a deploy is
+  # being blocked, and we add an explicit warning naming the consequence.
+  local workflow_runs
+  if ! workflow_runs="$(gh api "repos/${repo}/actions/runs?head_sha=${sha}&per_page=100" \
+    --jq '{total_count: .total_count, workflow_runs: [.workflow_runs[] | {event, check_suite_id}]}')"; then
+    printf 'WARNING: could not fetch workflow runs for %s; scheduled/release guards will NOT be excluded from the main CI gate\n' "${sha}" >&2
+    workflow_runs='{}'
+  fi
+  gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" | GH_WORKFLOW_RUNS="${workflow_runs}" node -e '
 let body = "";
 process.stdin.on("data", (chunk) => (body += chunk));
 process.stdin.on("end", () => {
@@ -216,10 +233,44 @@ process.stdin.on("end", () => {
     console.log(`${parsed.state}\t${jobs.join(", ")}`);
     return;
   }
-  const runs = Array.isArray(parsed.check_runs) ? parsed.check_runs : [];
+  let runs = Array.isArray(parsed.check_runs) ? parsed.check_runs : [];
   if (Number(parsed.total_count || 0) > runs.length) {
     console.log(`unknown\tcheck runs truncated at ${runs.length}/${parsed.total_count}`);
     return;
+  }
+  // Exclude check runs produced by scheduled/release-only workflows (e.g.
+  // release-latest-guard, which runs on cron/release against main). Those are
+  // not part of the PR/merge required-check set, and on a fork with no GitHub
+  // releases they fail — counting them would wrongly block every deploy. The
+  // check-runs listing carries no triggering event, so map each suite to its
+  // event via the workflow-runs listing fetched above.
+  const IGNORED_EVENTS = new Set(["schedule", "release"]);
+  const ignoredSuites = new Set();
+  const keptSuites = new Set();
+  try {
+    const wr = JSON.parse(process.env.GH_WORKFLOW_RUNS || "{}");
+    const wruns = Array.isArray(wr.workflow_runs) ? wr.workflow_runs : [];
+    // Only trust the exclusion set when the workflow-runs listing is complete;
+    // a truncated listing could omit the very schedule/release run we need to
+    // drop, so fall back to counting every check run (fail-closed).
+    if (Number(wr.total_count || 0) <= wruns.length) {
+      for (const r of wruns) {
+        if (r.check_suite_id == null) continue;
+        const id = String(r.check_suite_id);
+        if (IGNORED_EVENTS.has(String(r.event || "").toLowerCase())) {
+          ignoredSuites.add(id);
+        } else {
+          keptSuites.add(id);
+        }
+      }
+    }
+  } catch {}
+  // A suite referenced by ANY non-scheduled/non-release run is real merge CI —
+  // never drop it, even if the same suite id also appears under a scheduled or
+  // release run. Excluding it could mask a genuine push/merge_group failure.
+  for (const id of keptSuites) ignoredSuites.delete(id);
+  if (ignoredSuites.size) {
+    runs = runs.filter((r) => !ignoredSuites.has(String(r.check_suite?.id ?? "")));
   }
   // Deploy verification is stricter than Slack paging: hard-red conclusions
   // are failures, while action_required/pending/empty results still block as
