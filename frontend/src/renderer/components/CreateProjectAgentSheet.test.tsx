@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
-import { CreateProjectAgentSheet } from "./CreateProjectAgentSheet";
+import { CreateProjectAgentSheet, RequiredAgentField } from "./CreateProjectAgentSheet";
 
 function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -42,6 +42,20 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 }
 
 describe("CreateProjectAgentSheet", () => {
+	it("uses the compact trigger size for agent fields", () => {
+		render(
+			<RequiredAgentField
+				id="agent"
+				label="Agent"
+				onChange={() => undefined}
+				placeholder="Project default"
+				value="claude-code"
+			/>,
+		);
+
+		expect(screen.getByLabelText("Agent")).toHaveAttribute("data-size", "sm");
+	});
+
 	it("creates without intake when the toggle is left off", async () => {
 		const onSubmit = renderSheet();
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");

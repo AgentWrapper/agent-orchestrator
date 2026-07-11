@@ -16,7 +16,7 @@ func TestDeriveActivityState(t *testing.T) {
 	}{
 		{"user prompt -> active", "user-prompt-submit", `{}`, domain.ActivityActive, true},
 		{"stop -> idle", "stop", `{}`, domain.ActivityIdle, true},
-		{"notification idle_prompt -> waiting_input", "notification", `{"notification_type":"idle_prompt"}`, domain.ActivityWaitingInput, true},
+		{"notification idle_prompt -> idle", "notification", `{"notification_type":"idle_prompt"}`, domain.ActivityIdle, true},
 		{"notification permission_prompt -> waiting_input", "notification", `{"notification_type":"permission_prompt"}`, domain.ActivityWaitingInput, true},
 		{"notification auth_success -> no signal", "notification", `{"notification_type":"auth_success"}`, "", false},
 		{"notification empty type -> no signal", "notification", `{}`, "", false},

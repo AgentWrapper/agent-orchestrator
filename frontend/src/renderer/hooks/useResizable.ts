@@ -14,6 +14,14 @@ interface UseResizableOptions {
 	 * handle) grows with leftward drag.
 	 */
 	edge: "left" | "right";
+	/** Optional raw drag width below which the owner should collapse. */
+	collapseBelow?: number;
+	/** Called once when a drag crosses collapseBelow. */
+	onCollapse?: () => void;
+	/** Called once when a collapsed rail drag should reopen the owner. */
+	onExpand?: () => void;
+	/** Pointer movement needed before a collapsed rail drag expands. */
+	expandDragThreshold?: number;
 }
 
 /**
@@ -22,8 +30,21 @@ interface UseResizableOptions {
  * on :root (so the consuming layout reads it with `width: var(--cssVar, default)`),
  * avoiding any inline `style=`.
  */
-export function useResizable({ cssVar, storageKey, defaultWidth, min, max, edge }: UseResizableOptions) {
+export function useResizable({
+	cssVar,
+	storageKey,
+	defaultWidth,
+	min,
+	max,
+	edge,
+	collapseBelow,
+	onCollapse,
+	onExpand,
+	expandDragThreshold = 8,
+}: UseResizableOptions) {
 	const widthRef = useRef(defaultWidth);
+	const frameRef = useRef<number | null>(null);
+	const pendingWidthRef = useRef<number | null>(null);
 
 	const apply = useCallback(
 		(next: number) => {
@@ -34,11 +55,44 @@ export function useResizable({ cssVar, storageKey, defaultWidth, min, max, edge 
 		[cssVar, max, min],
 	);
 
+	const applyOnFrame = useCallback(
+		(next: number) => {
+			pendingWidthRef.current = next;
+			if (frameRef.current !== null) return;
+			frameRef.current = window.requestAnimationFrame(() => {
+				frameRef.current = null;
+				const pending = pendingWidthRef.current;
+				pendingWidthRef.current = null;
+				if (pending !== null) apply(pending);
+			});
+		},
+		[apply],
+	);
+
+	const flushPending = useCallback(() => {
+		if (frameRef.current !== null) {
+			window.cancelAnimationFrame(frameRef.current);
+			frameRef.current = null;
+		}
+		const pending = pendingWidthRef.current;
+		pendingWidthRef.current = null;
+		if (pending !== null) apply(pending);
+	}, [apply]);
+
+	const discardPending = useCallback(() => {
+		if (frameRef.current !== null) {
+			window.cancelAnimationFrame(frameRef.current);
+			frameRef.current = null;
+		}
+		pendingWidthRef.current = null;
+	}, []);
+
 	// Restore persisted width on mount.
 	useEffect(() => {
 		const saved = Number(window.localStorage.getItem(storageKey));
 		apply(Number.isFinite(saved) && saved > 0 ? saved : defaultWidth);
 		return () => {
+			if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
 			document.documentElement.style.removeProperty(cssVar);
 		};
 	}, [apply, cssVar, defaultWidth, storageKey]);
@@ -49,21 +103,63 @@ export function useResizable({ cssVar, storageKey, defaultWidth, min, max, edge 
 			const startX = event.clientX;
 			const startWidth = widthRef.current;
 			const sign = edge === "right" ? 1 : -1;
+			let collapsed = false;
 			document.body.classList.add("is-resizing-x");
 
-			const onMove = (e: PointerEvent) => {
-				apply(startWidth + sign * (e.clientX - startX));
-			};
 			const onUp = () => {
 				window.removeEventListener("pointermove", onMove);
 				window.removeEventListener("pointerup", onUp);
+				flushPending();
 				document.body.classList.remove("is-resizing-x");
-				window.localStorage.setItem(storageKey, String(widthRef.current));
+				if (!collapsed) window.localStorage.setItem(storageKey, String(widthRef.current));
+			};
+			const onMove = (e: PointerEvent) => {
+				const nextWidth = startWidth + sign * (e.clientX - startX);
+				if (collapseBelow !== undefined && onCollapse && nextWidth <= collapseBelow) {
+					collapsed = true;
+					const preservedWidth = Math.min(max, Math.max(min, startWidth));
+					discardPending();
+					apply(preservedWidth);
+					window.localStorage.setItem(storageKey, String(preservedWidth));
+					onUp();
+					onCollapse();
+					return;
+				}
+				applyOnFrame(nextWidth);
 			};
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
 		},
-		[apply, edge, storageKey],
+		[apply, applyOnFrame, collapseBelow, discardPending, edge, flushPending, max, min, onCollapse, storageKey],
+	);
+
+	const onCollapsedPointerDown = useCallback(
+		(event: React.PointerEvent<HTMLElement>) => {
+			const startX = event.clientX;
+			const sign = edge === "right" ? 1 : -1;
+			let expanded = false;
+			document.body.classList.add("is-resizing-x");
+
+			const onUp = () => {
+				window.removeEventListener("pointermove", onMove);
+				window.removeEventListener("pointerup", onUp);
+				flushPending();
+				document.body.classList.remove("is-resizing-x");
+				if (expanded) window.localStorage.setItem(storageKey, String(widthRef.current));
+			};
+			const onMove = (e: PointerEvent) => {
+				const delta = sign * (e.clientX - startX);
+				if (delta < expandDragThreshold) return;
+				if (!expanded) {
+					expanded = true;
+					onExpand?.();
+				}
+				applyOnFrame(min + delta);
+			};
+			window.addEventListener("pointermove", onMove);
+			window.addEventListener("pointerup", onUp);
+		},
+		[applyOnFrame, edge, expandDragThreshold, flushPending, min, onExpand, storageKey],
 	);
 
 	/** Double-click the handle to reset to the default width. */
@@ -72,5 +168,5 @@ export function useResizable({ cssVar, storageKey, defaultWidth, min, max, edge 
 		window.localStorage.setItem(storageKey, String(defaultWidth));
 	}, [apply, defaultWidth, storageKey]);
 
-	return { onPointerDown, onDoubleClick };
+	return { onPointerDown, onCollapsedPointerDown, onDoubleClick };
 }

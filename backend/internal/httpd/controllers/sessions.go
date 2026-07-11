@@ -189,7 +189,30 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
+	if previewutil.IsMarkdownPath(file) {
+		c.servePreviewMarkdown(w, r, file)
+		return
+	}
 	http.ServeFile(w, r, file)
+}
+
+// servePreviewMarkdown renders a workspace Markdown file to a self-contained
+// HTML document so the browser panel displays formatted content instead of raw
+// source.
+func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http.Request, file string) {
+	source, err := os.ReadFile(file)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	rendered, err := previewutil.RenderMarkdown(source, filepath.Base(file))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a

@@ -5,9 +5,9 @@ description: Learn what Agent Orchestrator does, when to use it, and where to st
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Agent Orchestrator (**AO**) runs AI coding agents in isolated git worktrees and keeps track of the work until it becomes a pull request.
+Agent Orchestrator (**AO**) runs AI coding agents in isolated git worktrees and tracks each one until it becomes a pull request.
 
-Use it when you have several well-scoped issues and want agents to work on them at the same time without sharing a checkout, terminal, or branch. AO starts each session, watches the agent, tracks the PR, and shows the state of every session in one dashboard.
+Use it when you have several well-scoped issues and want agents working on them in parallel — each in its own checkout, terminal, and branch, all visible from one dashboard.
 
 <Callout type="info" title="Fastest path">
 	If you are new to AO, install it first, then run the quickstart against one small issue. Start with
@@ -65,12 +65,11 @@ Most users start with the defaults and only edit `agent-orchestrator.yaml` when 
 <PlatformSupport
 	macos="full"
 	linux="full"
-	windows="partial"
+	windows="full"
 	note={
 		<>
-			Windows support is actively improving. Use the process runtime instead of tmux by setting{" "}
-			<code>defaults.runtime: process</code> in <code>agent-orchestrator.yaml</code>. See{" "}
-			<a href="/docs/platforms">Platforms</a> for details.
+			Windows uses the process runtime; tmux and iTerm2 integrations are macOS/Linux-only. See{" "}
+			<a href="/docs/platforms">Platforms</a> for the recommended setup.
 		</>
 	}
 />

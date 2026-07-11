@@ -59,10 +59,15 @@ type ReviewerConfig struct {
 const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins; otherwise claude-code is used.
-func (c ProjectConfig) ResolveReviewerHarness(_ AgentHarness) ReviewerHarness {
+// reviewer wins. Otherwise the worker's own harness is reused when it is itself
+// a supported reviewer (e.g. a codex worker is reviewed by codex); a worker
+// whose harness is not a reviewer (e.g. crush) falls back to claude-code.
+func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
+	}
+	if rh := ReviewerHarness(worker); rh.IsKnown() {
+		return rh
 	}
 	return FallbackReviewerHarness
 }

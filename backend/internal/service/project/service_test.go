@@ -38,6 +38,7 @@ func gitRepo(t *testing.T) string {
 	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
+	commitEmpty(t, dir)
 	return dir
 }
 
@@ -49,6 +50,7 @@ func gitRepoOnBranch(t *testing.T, branch string) string {
 	if out, err := exec.Command("git", "init", "-b", branch, dir).CombinedOutput(); err != nil {
 		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
+	commitEmpty(t, dir)
 	return dir
 }
 
@@ -78,6 +80,12 @@ func gitRepoWithOriginHead(t *testing.T, defaultBranch, featureBranch string) st
 	return dir
 }
 
+func commitEmpty(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=ao@example.com", "-c", "user.name=AO Test", "commit", "--allow-empty", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+}
 func ptr(s string) *string { return &s }
 
 // wantCode asserts err is an *apierr.Error carrying the given machine code.
@@ -486,6 +494,177 @@ func TestManager_ReaddAfterRemove(t *testing.T) {
 	}
 }
 
+func TestManager_InitializeRepositoryRecovery(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	t.Run("plain folder", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("keep me\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		result, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		if err != nil {
+			t.Fatalf("InitializeRepository: %v", err)
+		}
+		if result.Path != dir {
+			t.Fatalf("Path = %q, want %q", result.Path, dir)
+		}
+		if _, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+			t.Fatalf("expected initial commit: %v", err)
+		}
+		out, err := exec.Command("git", "-C", dir, "show", "HEAD:notes.txt").CombinedOutput()
+		if err != nil {
+			t.Fatalf("expected existing file in initial commit: %v (%s)", err, out)
+		}
+		if got := string(out); got != "keep me\n" {
+			t.Fatalf("HEAD:notes.txt = %q, want %q", got, "keep me\n")
+		}
+		if _, err := m.Add(ctx, project.AddInput{Path: dir, ProjectID: ptr("plain")}); err != nil {
+			t.Fatalf("Add after init: %v", err)
+		}
+	})
+
+	t.Run("unborn git repo", func(t *testing.T) {
+		dir := t.TempDir()
+		if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v (%s)", err, out)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("unborn file\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir}); err != nil {
+			t.Fatalf("InitializeRepository unborn: %v", err)
+		}
+		if _, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+			t.Fatalf("expected initial commit: %v", err)
+		}
+		out, err := exec.Command("git", "-C", dir, "show", "HEAD:notes.txt").CombinedOutput()
+		if err != nil {
+			t.Fatalf("expected unborn repo file in initial commit: %v (%s)", err, out)
+		}
+		if got := string(out); got != "unborn file\n" {
+			t.Fatalf("HEAD:notes.txt = %q, want %q", got, "unborn file\n")
+		}
+	})
+
+	t.Run("already committed repo", func(t *testing.T) {
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: gitRepo(t)})
+		wantCode(t, err, "PROJECT_ALREADY_INITIALIZED")
+	})
+
+	t.Run("repo subdirectory is rejected", func(t *testing.T) {
+		repo := gitRepo(t)
+		subdir := filepath.Join(repo, "nested")
+		if err := os.Mkdir(subdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: subdir})
+		wantCode(t, err, "PROJECT_PATH_NOT_REPO_ROOT")
+		if _, statErr := os.Stat(filepath.Join(subdir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("unexpected nested .git after rejected init: %v", statErr)
+		}
+	})
+
+	t.Run("bare repo is rejected", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "bare.git")
+		if out, err := exec.Command("git", "init", "--bare", dir).CombinedOutput(); err != nil {
+			t.Fatalf("git init --bare: %v (%s)", err, out)
+		}
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_BARE_REPOSITORY")
+	})
+
+	t.Run("unsupported git metadata is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: missing\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "UNSUPPORTED_GIT_REPO")
+	})
+
+	t.Run("broad setup paths are rejected before init", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		paths := []string{
+			home,
+			filepath.Join(home, "Desktop"),
+			filepath.Join(home, "Documents"),
+			filepath.Join(home, "Downloads"),
+			filepath.Join(home, ".ao"),
+			filepath.Join(home, ".ao", "data"),
+		}
+		for _, path := range paths {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", path, err)
+			}
+			_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: path})
+			wantCode(t, err, "PROJECT_SETUP_PATH_UNSAFE")
+			if _, statErr := os.Lstat(filepath.Join(path, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("unexpected .git after rejected broad path %s: %v", path, statErr)
+			}
+		}
+	})
+
+	t.Run("plain folder rolls back git init when staging fails", func(t *testing.T) {
+		dir := t.TempDir()
+		gitignore := []byte("node_modules/\n")
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), gitignore, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GIT_INDEX_FILE", filepath.Join(t.TempDir(), "missing", "index"))
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "GIT_ADD_FAILED")
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf(".git still exists after rollback: %v", statErr)
+		}
+		got, readErr := os.ReadFile(filepath.Join(dir, ".gitignore"))
+		if readErr != nil {
+			t.Fatalf("read .gitignore after rollback: %v", readErr)
+		}
+		if string(got) != string(gitignore) {
+			t.Fatalf(".gitignore after rollback = %q, want %q", got, gitignore)
+		}
+	})
+
+	t.Run("plain folder with nested repo is rejected before init", func(t *testing.T) {
+		dir := t.TempDir()
+		nested := filepath.Join(dir, "packages", "foo")
+		if out, err := exec.Command("git", "init", "-b", "main", nested).CombinedOutput(); err != nil {
+			t.Fatalf("git init nested: %v (%s)", err, out)
+		}
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_NESTED_GIT_REPOSITORY")
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("unexpected .git after rejected nested repo setup: %v", statErr)
+		}
+	})
+
+	t.Run("unborn repo with nested repo is rejected before staging", func(t *testing.T) {
+		dir := t.TempDir()
+		if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+			t.Fatalf("git init root: %v (%s)", err, out)
+		}
+		nested := filepath.Join(dir, "vendor", "child")
+		if out, err := exec.Command("git", "init", "-b", "main", nested).CombinedOutput(); err != nil {
+			t.Fatalf("git init nested: %v (%s)", err, out)
+		}
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_NESTED_GIT_REPOSITORY")
+		out, lsErr := exec.Command("git", "-C", dir, "ls-files", "-s").CombinedOutput()
+		if lsErr != nil {
+			t.Fatalf("git ls-files: %v (%s)", lsErr, out)
+		}
+		if strings.Contains(string(out), "160000") {
+			t.Fatalf("nested repo was staged as a gitlink:\n%s", out)
+		}
+	})
+}
 func TestManager_AddValidationAndConflicts(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -496,6 +675,12 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	_, err = m.Add(ctx, project.AddInput{Path: t.TempDir()}) // exists but not a git repo
 	wantCode(t, err, "NOT_A_GIT_REPO")
 
+	unborn := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", "main", unborn).CombinedOutput(); err != nil {
+		t.Fatalf("git init unborn: %v (%s)", err, out)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: unborn})
+	wantCode(t, err, "PROJECT_UNBORN")
 	// An embedded ".." passes the id pattern but would yield an invalid git
 	// branch (ao/a..b-1) at spawn time; reject it up front as a clear 400.
 	_, err = m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("a..b")})

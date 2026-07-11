@@ -5,13 +5,19 @@ import {
 	createBrowserViewHost,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
+	scaleBoundsForZoom,
 } from "./browser-view-host";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
+type EventHandler = (
+	event: { sender: { id: number; getZoomFactor?: () => number } },
+	...args: unknown[]
+) => unknown;
 
 function setupHost() {
 	let currentURL = "";
 	const webContents = {
+		id: 99,
 		canGoBack: () => false,
 		canGoForward: () => false,
 		clearHistory: () => undefined,
@@ -25,27 +31,28 @@ function setupHost() {
 		}),
 		on: () => undefined,
 		reload: () => undefined,
-		send: () => undefined,
+		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
 		close: () => undefined,
 	};
 	const view = {
 		webContents,
-		setBounds: () => undefined,
-		setVisible: () => undefined,
+		setBounds: vi.fn(),
+		setVisible: vi.fn(),
 	};
 	const handlers = new Map<string, InvokeHandler>();
-	const sent: BrowserNavState[] = [];
+	const eventHandlers = new Map<string, EventHandler>();
+	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const host = createBrowserViewHost({
 		mainWindow: {
 			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-			webContents: { id: 1, send: (_channel: string, state: BrowserNavState) => sent.push(state) },
+			webContents: { id: 1, send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
 		} as never,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
-			on: () => undefined,
+			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
@@ -58,7 +65,11 @@ function setupHost() {
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<BrowserNavState>;
-	return { host, invoke, webContents };
+	const emit = (channel: string, zoomFactor: number, ...args: unknown[]) =>
+		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
+	const send = (channel: string, senderId: number, ...args: unknown[]) =>
+		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
+	return { emit, host, invoke, send, sent, view, webContents };
 }
 
 describe("normalizeBrowserURL", () => {
@@ -111,6 +122,78 @@ describe("browser:clear", () => {
 
 		expect(webContents.loadURL).toHaveBeenLastCalledWith("about:blank");
 		expect(state.url).toBe("");
+	});
+});
+
+describe("browser:setBounds", () => {
+	it("converts page-zoomed renderer slot bounds before positioning the native view", async () => {
+		const { emit, invoke, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1.25, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 25, width: 400, height: 300 });
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+	});
+});
+
+describe("browser annotation IPC", () => {
+	it("routes renderer mode changes to the matching preview webContents", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+	});
+
+	it("ignores annotation mode changes for views owned by a different renderer", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:annotation:setMode", { viewId: "2:sess-1", enabled: true });
+
+		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+	});
+
+	it("forwards preview annotation submissions to the renderer-owned view", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			context: {
+				url: "http://localhost:5173/",
+				tag: "button",
+				classes: [],
+				selector: "button",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				computedStyle: {},
+			},
+		});
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({
+				viewId: "1:sess-1",
+				instruction: "Make this button blue.",
+				context: expect.objectContaining({ selector: "button" }),
+			}),
+		});
+	});
+
+	it("ignores preview annotation events after the view is destroyed", async () => {
+		const { host, invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		host.destroy("1:sess-1");
+		send("browser:annotation:cancel", 99, { reason: "escape" });
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:canceled")).toBe(false);
 	});
 });
 
@@ -189,5 +272,24 @@ describe("clampBoundsToWindow", () => {
 			width: 0,
 			height: 100,
 		});
+	});
+});
+
+describe("scaleBoundsForZoom", () => {
+	it("converts renderer CSS-pixel bounds into Electron view bounds", () => {
+		expect(scaleBoundsForZoom({ x: 100, y: 20, width: 320, height: 240 }, 1.25)).toEqual({
+			x: 125,
+			y: 25,
+			width: 400,
+			height: 300,
+		});
+	});
+
+	it("ignores invalid zoom factors", () => {
+		const rect = { x: 100, y: 20, width: 320, height: 240 };
+
+		expect(scaleBoundsForZoom(rect, 1)).toBe(rect);
+		expect(scaleBoundsForZoom(rect, 0)).toBe(rect);
+		expect(scaleBoundsForZoom(rect, Number.NaN)).toBe(rect);
 	});
 });
