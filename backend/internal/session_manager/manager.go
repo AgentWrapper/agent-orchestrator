@@ -495,12 +495,11 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 		merged.SystemPrompt = override.SystemPrompt
 	}
 	if len(override.Env) > 0 {
-		if merged.Env == nil {
-			merged.Env = make(map[string]string, len(override.Env))
-		}
-		for k, v := range override.Env {
-			merged.Env[k] = v
-		}
+		// mergeEnv returns a fresh map (deep copy) so the role override cannot
+		// mutate the project's base Env — an earlier inline write aliased it
+		// (Go copies the map header by value on struct copy), leaking role env
+		// into every later session of the project.
+		merged.Env = mergeEnv(cfg.AgentConfig.Env, override.Env)
 	}
 	if override.MCP != nil {
 		merged.MCP = override.MCP
