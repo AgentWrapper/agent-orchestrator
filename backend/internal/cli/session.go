@@ -58,6 +58,7 @@ type sessionDTO struct {
 	CreatedAt    time.Time       `json:"createdAt"`
 	UpdatedAt    time.Time       `json:"updatedAt"`
 	Status       string          `json:"status"`
+	PRs          []sessionPRDTO  `json:"prs,omitempty"`
 }
 
 type sessionActivity struct {

@@ -4,7 +4,8 @@
 // notifications to Slack. Reads ao; never modifies it. No workflow logic lives here.
 //
 // Config (env or /home/orchestrator/agent-orchestrator/.env):
-//   SLACK_BOT_TOKEN + SLACK_CHANNEL   -> chat.postMessage   (preferred)
+//   SLACK_BOT_TOKEN + SLACK_CHANNEL_NOTIFY / SLACK_CHANNEL_NEEDS_RESPONSE -> chat.postMessage (preferred)
+//   SLACK_BOT_TOKEN + SLACK_CHANNEL   -> single-channel legacy fallback
 //   SLACK_WEBHOOK_URL                 -> incoming webhook   (fallback)
 //   SLACK_MEMBER_ID                   -> user id to @mention for attention
 //   AO_PORT (default 3001)
@@ -64,7 +65,9 @@ try {
 
 const PORT = process.env.AO_PORT || "3001";
 const TOKEN = process.env.SLACK_BOT_TOKEN;
-const CHANNEL = process.env.SLACK_CHANNEL;
+const LEGACY_CHANNEL = process.env.SLACK_CHANNEL;
+const NOTIFY_CHANNEL = process.env.SLACK_CHANNEL_NOTIFY || LEGACY_CHANNEL || process.env.SLACK_CHANNEL_NEEDS_RESPONSE;
+const NEEDS_RESPONSE_CHANNEL = process.env.SLACK_CHANNEL_NEEDS_RESPONSE || LEGACY_CHANNEL || NOTIFY_CHANNEL;
 const WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 // Acceptance #4 (issue #82): read SLACK_MEMBER_ID natively; the legacy
 // SLACK_MENTION_USER_ID name is only a fallback for un-migrated hosts.
@@ -83,9 +86,10 @@ const DEDUPE_COOLDOWN_MS = Number(process.env.AO_SLACK_NOTIFIER_DEDUPE_COOLDOWN_
 const BOOTSTRAP_MODE = process.env.AO_SLACK_NOTIFIER_BOOTSTRAP_MODE || "attention_only";
 const SESSION_ATTENTION_POLL_MS = parsePollMs(process.env.AO_SESSION_ATTENTION_POLL_MS, 10_000);
 
-if (isMain() && !(TOKEN && CHANNEL) && !WEBHOOK) {
+if (isMain() && !(TOKEN && (NOTIFY_CHANNEL || NEEDS_RESPONSE_CHANNEL)) && !WEBHOOK) {
 	console.error(
-		"ao-slack-notifier: no Slack sink configured. Add SLACK_BOT_TOKEN + SLACK_CHANNEL " +
+		"ao-slack-notifier: no Slack sink configured. Add SLACK_BOT_TOKEN + SLACK_CHANNEL_NOTIFY/SLACK_CHANNEL_NEEDS_RESPONSE " +
+			"(or legacy SLACK_CHANNEL) " +
 			"(or SLACK_WEBHOOK_URL) to " +
 			ENV_FILE +
 			" — the app creds alone cannot post.",
@@ -93,12 +97,12 @@ if (isMain() && !(TOKEN && CHANNEL) && !WEBHOOK) {
 	process.exit(1);
 }
 
-async function post(text) {
-	if (TOKEN && CHANNEL) {
+async function post(text, { channel = NOTIFY_CHANNEL } = {}) {
+	if (TOKEN && channel) {
 		const r = await fetch("https://slack.com/api/chat.postMessage", {
 			method: "POST",
 			headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
-			body: JSON.stringify({ channel: CHANNEL, text, unfurl_links: false }),
+			body: JSON.stringify({ channel, text, unfurl_links: false }),
 		});
 		const j = await r.json();
 		if (!j.ok) throw new Error(`slack error: ${j.error}`);
@@ -112,12 +116,12 @@ async function post(text) {
 	if (r && r.ok === false) throw new Error(`slack webhook: HTTP ${r.status}`);
 }
 
-async function updatePost(ts, text) {
-	if (!(TOKEN && CHANNEL && ts)) return false;
+async function updatePost(ts, text, { channel = NEEDS_RESPONSE_CHANNEL } = {}) {
+	if (!(TOKEN && channel && ts)) return false;
 	const r = await fetch("https://slack.com/api/chat.update", {
 		method: "POST",
 		headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
-		body: JSON.stringify({ channel: CHANNEL, ts, text, unfurl_links: false }),
+		body: JSON.stringify({ channel, ts, text, unfurl_links: false }),
 	});
 	const j = await r.json();
 	if (!j.ok) throw new Error(`slack update error: ${j.error}`);
@@ -224,6 +228,46 @@ function isMentionableNotification(n) {
 	);
 }
 
+function isNeedsResponseNotification(n) {
+	return (
+		n.type === "needs_input" ||
+		n.type === "orchestrator_replacement_capped" ||
+		(n.type === "ready_to_merge" && n.sensitive)
+	);
+}
+
+function isTerminalPRNotification(n) {
+	return n?.type === "pr_merged" || n?.type === "pr_closed_unmerged";
+}
+
+function needsResponseRecordFromNotification(raw) {
+	const n = normalizeNotification(raw);
+	if (!n || !isNeedsResponseNotification(n)) return null;
+	return {
+		kind: notificationLabel(n),
+		sessionId: String(n.sessionId ?? ""),
+		projectId: String(n.projectId ?? ""),
+		title: String(n.title || n.body || ""),
+		url: String(n.prUrl ?? ""),
+		headSha: String(n.headSha ?? ""),
+		attention: true,
+	};
+}
+
+function needsResponseSignature(rec) {
+	if (!rec) return "";
+	const url = rec.url ? `|${rec.url}` : "";
+	const head = rec.headSha ? `|${rec.headSha}` : "";
+	return `${signature(rec)}${url}${head}`;
+}
+
+function renderResolvedNeedsResponse(rec, { reason, resolvedAt = new Date(), clearedBy = "" } = {}) {
+	const stamp = (resolvedAt instanceof Date ? resolvedAt : new Date(resolvedAt)).toISOString().replace(/\.\d+Z$/, "Z");
+	const base = renderAlert(rec, "");
+	const detail = clearedBy ? `${reason}: ${clearedBy}` : reason;
+	return `✅ *resolved* ~${base}~\n_resolved at ${stamp}${detail ? ` · ${detail}` : ""}_`;
+}
+
 export function notificationKey(raw) {
 	const n = normalizeNotification(raw);
 	if (!n) return null;
@@ -296,6 +340,7 @@ export function loadState(file = STATE_FILE) {
 			lastDigestKey: raw.lastDigestKey ?? null,
 			digestTs: raw.digestTs ?? null,
 			postedSignatures: normalizePostedSignatures(raw.postedSignatures),
+			needsResponseMessages: normalizeNeedsResponseMessages(raw.needsResponseMessages),
 		};
 	} catch {
 		return {
@@ -307,6 +352,7 @@ export function loadState(file = STATE_FILE) {
 			lastDigestKey: null,
 			digestTs: null,
 			postedSignatures: {},
+			needsResponseMessages: {},
 		};
 	}
 }
@@ -320,6 +366,22 @@ function normalizePostedSignatures(raw) {
 	for (const [sig, ts] of Object.entries(raw)) {
 		const n = Number(ts);
 		if (Number.isFinite(n)) out[sig] = n;
+	}
+	return out;
+}
+
+function normalizeNeedsResponseMessages(raw) {
+	const out = {};
+	if (!raw || typeof raw !== "object") return out;
+	for (const [sig, msg] of Object.entries(raw)) {
+		if (!msg || typeof msg !== "object") continue;
+		out[sig] = {
+			ts: String(msg.ts ?? ""),
+			channel: String(msg.channel ?? ""),
+			text: String(msg.text ?? ""),
+			record: msg.record && typeof msg.record === "object" ? msg.record : null,
+			openedAt: String(msg.openedAt ?? ""),
+		};
 	}
 	return out;
 }
@@ -339,6 +401,7 @@ export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
 				lastDigestKey: state.lastDigestKey ?? null,
 				digestTs: state.digestTs ?? null,
 				postedSignatures: state.postedSignatures ?? {},
+				needsResponseMessages: state.needsResponseMessages ?? {},
 			}),
 			"utf8",
 		);
@@ -353,6 +416,8 @@ export class SlackNotificationNotifier {
 		state,
 		stateFile = STATE_FILE,
 		mentionUserId = MENTION_USER_ID,
+		notifyChannel = NOTIFY_CHANNEL,
+		needsResponseChannel = NEEDS_RESPONSE_CHANNEL,
 		postMessage = post,
 		updateMessage = updatePost,
 		fetchImpl = globalThis.fetch,
@@ -370,6 +435,8 @@ export class SlackNotificationNotifier {
 		this.stateFile = stateFile;
 		this.state = state ?? loadState(this.stateFile);
 		this.mentionUserId = mentionUserId;
+		this.notifyChannel = notifyChannel;
+		this.needsResponseChannel = needsResponseChannel || notifyChannel;
 		this.postMessage = postMessage;
 		this.updateMessage = updateMessage;
 		this.fetchImpl = fetchImpl;
@@ -391,6 +458,7 @@ export class SlackNotificationNotifier {
 		this.state.lastDigestKey ??= null;
 		this.state.digestTs ??= null;
 		this.state.postedSignatures ??= {};
+		this.state.needsResponseMessages ??= {};
 	}
 
 	async catchUpUnread() {
@@ -442,10 +510,14 @@ export class SlackNotificationNotifier {
 		if (!key || !n) return false;
 		if (!this.state.seen.has(key)) {
 			const suppressed = shouldPost && this.suppressedByCooldown(raw);
-			const msg = shouldPost && !suppressed ? describeSlackMessage(raw, this.mentionUserId) : null;
-			if (shouldPost && !suppressed && !msg) return false;
-			if (msg) {
-				await this.postMessage(msg);
+			const rec = shouldPost && !suppressed ? needsResponseRecordFromNotification(raw) : null;
+			const msg = shouldPost && !suppressed && !rec ? describeSlackMessage(raw, this.mentionUserId) : null;
+			if (shouldPost && !suppressed && !rec && !msg) return false;
+			if (rec) {
+				await this.postNeedsResponse(rec, { trackWithSessionAttention: rec.kind !== "parked_sensitive_merge" });
+				this.recordPostedSignature(raw);
+			} else if (msg) {
+				await this.postMessage(msg, { channel: this.notifyChannel });
 				this.recordPostedSignature(raw);
 			} else if (suppressed) {
 				// A matching post is still within the cooldown: swallow the Slack
@@ -459,8 +531,94 @@ export class SlackNotificationNotifier {
 		this.state.seen.add(key);
 		this.pruneSeen();
 		saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+		if (isTerminalPRNotification(n)) {
+			await this.resolveNeedsResponsesForNotification(n);
+			if (this.hasNeedsResponsesForNotification(n)) {
+				saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+				return false;
+			}
+		}
 		await this.markRead(n.id);
 		return !this.state.seen.has(key) || shouldPost;
+	}
+
+	async postNeedsResponse(rec, { trackWithSessionAttention = true } = {}) {
+		const sig = needsResponseSignature(rec);
+		if (!sig) return false;
+		if (this.state.needsResponseMessages?.[sig]) {
+			if (trackWithSessionAttention) this.state.attentionTracker.markOpen(rec);
+			return false;
+		}
+		const text = renderAlert(rec, this.mentionUserId);
+		const posted = await this.postMessage(text, { channel: this.needsResponseChannel });
+		if (trackWithSessionAttention) this.state.attentionTracker.markOpen(rec);
+		if (posted?.ts) {
+			this.state.needsResponseMessages[sig] = {
+				ts: posted.ts,
+				channel: this.needsResponseChannel,
+				text,
+				record: rec,
+				openedAt: this.clock().toISOString(),
+			};
+		}
+		saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+		return true;
+	}
+
+	async resolveNeedsResponse(rec, details) {
+		const sig = needsResponseSignature(rec);
+		const msg = this.state.needsResponseMessages?.[sig];
+		if (!msg) return false;
+		const text = renderResolvedNeedsResponse(msg.record ?? rec, {
+			...details,
+			resolvedAt: this.clock(),
+		});
+		try {
+			if (msg.ts) {
+				await this.updateMessage(msg.ts, text, { channel: msg.channel || this.needsResponseChannel });
+			}
+			delete this.state.needsResponseMessages[sig];
+			return true;
+		} catch (e) {
+			this.state.attentionTracker.markOpen(msg.record ?? rec);
+			this.logger.error?.("ao-slack-notifier: needs-response update failed:", e.message);
+			return false;
+		}
+	}
+
+	async resolveNeedsResponsesForNotification(n) {
+		if (!isTerminalPRNotification(n)) return false;
+		let changed = false;
+		for (const [sig, msg] of Object.entries(this.state.needsResponseMessages ?? {})) {
+			const rec = msg.record;
+			if (!rec || rec.kind !== "parked_sensitive_merge") continue;
+			if (!n.prUrl || rec.url !== n.prUrl) continue;
+			const text = renderResolvedNeedsResponse(rec, {
+				reason: n.type,
+				clearedBy: n.title || n.prUrl,
+				resolvedAt: this.clock(),
+			});
+			try {
+				if (msg.ts) {
+					await this.updateMessage(msg.ts, text, { channel: msg.channel || this.needsResponseChannel });
+				}
+				delete this.state.needsResponseMessages[sig];
+				changed = true;
+			} catch (e) {
+				this.logger.error?.("ao-slack-notifier: PR needs-response update failed:", e.message);
+			}
+		}
+		if (changed) saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+		return changed;
+	}
+
+	hasNeedsResponsesForNotification(n) {
+		if (!isTerminalPRNotification(n)) return false;
+		for (const msg of Object.values(this.state.needsResponseMessages ?? {})) {
+			const rec = msg.record;
+			if (rec?.kind === "parked_sensitive_merge" && n.prUrl && rec.url === n.prUrl) return true;
+		}
+		return false;
 	}
 
 	// suppressedByCooldown reports whether an identical-content notification was
@@ -535,7 +693,7 @@ export class SlackNotificationNotifier {
 		if (this[ownLatch]) return;
 		const prefix = this.mentionUserId ? `<@${this.mentionUserId}> ` : "";
 		try {
-			await this.postMessage(`${prefix}❤️‍🩹 *daemon_unhealthy* ${message}`);
+			await this.postMessage(`${prefix}❤️‍🩹 *daemon_unhealthy* ${message}`, { channel: this.notifyChannel });
 			this[ownLatch] = true;
 		} catch (e) {
 			this.logger.error?.("ao-slack-notifier: health alert failed:", e.message);
@@ -577,13 +735,15 @@ export class SlackNotificationNotifier {
 		}
 		const resolved = this.state.attentionTracker.reconcile(current);
 		let changed = resolved.length > 0;
+		for (const rec of resolved) {
+			if (await this.resolveNeedsResponse(rec, { reason: "state cleared" })) changed = true;
+		}
 		const alerted = [];
 		for (const rec of current) {
 			if (!POLL_ALERT_KINDS.has(rec.kind)) continue;
 			if (this.state.attentionTracker.isOpen(rec)) continue;
 			try {
-				await this.postMessage(renderAlert(rec, this.mentionUserId));
-				this.state.attentionTracker.markOpen(rec);
+				await this.postNeedsResponse(rec);
 				alerted.push(rec);
 				changed = true;
 			} catch (e) {
@@ -607,7 +767,7 @@ export class SlackNotificationNotifier {
 		try {
 			if (this.state.digestTs) {
 				try {
-					if (await this.updateMessage(this.state.digestTs, text)) {
+					if (await this.updateMessage(this.state.digestTs, text, { channel: this.needsResponseChannel })) {
 						this.state.lastDigestKey = key;
 						return true;
 					}
@@ -616,7 +776,7 @@ export class SlackNotificationNotifier {
 					this.state.digestTs = null;
 				}
 			}
-			const posted = await this.postMessage(text);
+			const posted = await this.postMessage(text, { channel: this.needsResponseChannel });
 			if (posted?.ts) this.state.digestTs = posted.ts;
 			this.state.lastDigestKey = key;
 			return true;

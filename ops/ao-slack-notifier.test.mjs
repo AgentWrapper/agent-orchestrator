@@ -389,6 +389,379 @@ describe("ao Slack notifier replay/dedup", () => {
 	});
 });
 
+describe("ao Slack notifier needs-response routing", () => {
+	it("routes routine notifications to notify and operator waits to needs-response", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => posts.push({ text, channel: opts.channel }),
+			fetchImpl: async (url, init = {}) => {
+				if (init.method === "PATCH") {
+					marked.push(url.split("/").at(-1));
+					return response({});
+				}
+				return response({ notifications: [] });
+			},
+			logger: { info() {}, error() {}, warn() {} },
+			bootstrapMode: "post_all",
+		});
+
+		await notifier.handleNotification({
+			id: "ready-sensitive",
+			type: "ready_to_merge",
+			sessionId: "s1",
+			projectId: "ao",
+			title: "PR #7 ready",
+			prUrl: "https://github.example/pr/7",
+			sensitive: true,
+		});
+		await notifier.handleNotification({
+			id: "merged",
+			type: "pr_merged",
+			sessionId: "s2",
+			projectId: "ao",
+			title: "PR #8 merged",
+			prUrl: "https://github.example/pr/8",
+		});
+
+		assert.equal(posts.length, 2);
+		assert.match(posts[0].text, /parked_sensitive_merge/);
+		assert.equal(posts[0].channel, "C-needs");
+		assert.match(posts[1].text, /pr_merged/);
+		assert.equal(posts[1].channel, "C-notify");
+		assert.deepEqual(marked, ["ready-sensitive", "merged"]);
+	});
+
+	it("edits the original needs-response message when a session wait clears", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const updates = [];
+		let ts = 0;
+		const pages = [
+			{ sessions: [{ id: "blocked-1", projectId: "ao", activity: { state: "blocked" } }] },
+			{ sessions: [] },
+			{ sessions: [] },
+		];
+		let page = 0;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: `m${++ts}` };
+			},
+			updateMessage: async (messageTs, text, opts = {}) => {
+				updates.push({ ts: messageTs, text, channel: opts.channel });
+				return true;
+			},
+			fetchImpl: async () => response(pages[page++] ?? { sessions: [] }),
+			clock: () => new Date("2026-07-11T03:00:00Z"),
+			logger: { info() {}, error() {}, warn() {} },
+		});
+
+		await notifier.pollSessionAttention();
+		await notifier.pollSessionAttention();
+		await notifier.pollSessionAttention();
+
+		const needsPost = posts.find((p) => /blocked/.test(p.text) && /<@U123>/.test(p.text));
+		assert.equal(needsPost?.channel, "C-needs");
+		assert.ok(
+			updates.some(
+				(u) =>
+					u.ts === "m1" && u.channel === "C-needs" && /resolved/.test(u.text) && /2026-07-11T03:00:00Z/.test(u.text),
+			),
+		);
+	});
+
+	it("edits a parked sensitive PR message when the same PR merges", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const updates = [];
+		const marked = [];
+		let ts = 0;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: `m${++ts}` };
+			},
+			updateMessage: async (messageTs, text, opts = {}) => {
+				updates.push({ ts: messageTs, text, channel: opts.channel });
+				return true;
+			},
+			fetchImpl: async (url, init = {}) => {
+				if (init.method === "PATCH") {
+					marked.push(url.split("/").at(-1));
+					return response({});
+				}
+				return response({ notifications: [] });
+			},
+			clock: () => new Date("2026-07-11T04:00:00Z"),
+			logger: { info() {}, error() {}, warn() {} },
+			bootstrapMode: "post_all",
+		});
+
+		await notifier.handleNotification({
+			id: "ready",
+			type: "ready_to_merge",
+			sessionId: "s1",
+			projectId: "ao",
+			title: "PR #7 ready",
+			prUrl: "https://github.example/pr/7",
+			sensitive: true,
+		});
+		await notifier.handleNotification({
+			id: "merged",
+			type: "pr_merged",
+			sessionId: "s1",
+			projectId: "ao",
+			title: "PR #7 merged",
+			prUrl: "https://github.example/pr/7",
+		});
+
+		assert.equal(posts[0].channel, "C-needs");
+		assert.equal(posts[1].channel, "C-notify");
+		assert.ok(updates.some((u) => u.ts === "m1" && u.channel === "C-needs" && /PR #7 merged/.test(u.text)));
+		assert.deepEqual(marked, ["ready", "merged"]);
+	});
+
+	it("does not resolve a parked sensitive PR from an empty session poll", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const updates = [];
+		let ts = 0;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: `m${++ts}` };
+			},
+			updateMessage: async (messageTs, text, opts = {}) => {
+				updates.push({ ts: messageTs, text, channel: opts.channel });
+				return true;
+			},
+			fetchImpl: async (url, init = {}) => {
+				if (init.method === "PATCH") return response({});
+				if (/\/sessions\?active=true$/.test(url)) return response({ sessions: [] });
+				return response({ notifications: [] });
+			},
+			logger: { info() {}, error() {}, warn() {} },
+			bootstrapMode: "post_all",
+		});
+
+		await notifier.handleNotification({
+			id: "ready",
+			type: "ready_to_merge",
+			sessionId: "s1",
+			projectId: "ao",
+			title: "PR #7 ready",
+			prUrl: "https://github.example/pr/7",
+			sensitive: true,
+		});
+		await notifier.pollSessionAttention();
+		await notifier.pollSessionAttention();
+
+		assert.equal(posts.filter((p) => /parked_sensitive_merge/.test(p.text)).length, 1);
+		assert.equal(
+			updates.some((u) => /resolved/.test(u.text)),
+			false,
+		);
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 1);
+	});
+
+	it("posts a fresh parked sensitive PR alert when the head SHA changes", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		let ts = 0;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: `m${++ts}` };
+			},
+			updateMessage: async () => true,
+			fetchImpl: async (url, init = {}) => {
+				if (init.method === "PATCH") {
+					marked.push(url.split("/").at(-1));
+					return response({});
+				}
+				return response({ notifications: [] });
+			},
+			logger: { info() {}, error() {}, warn() {} },
+			bootstrapMode: "post_all",
+		});
+
+		for (const [id, headSha] of [
+			["ready-a", "aaa111"],
+			["ready-b", "bbb222"],
+		]) {
+			await notifier.handleNotification({
+				id,
+				type: "ready_to_merge",
+				sessionId: "s1",
+				projectId: "ao",
+				title: "PR #7 ready",
+				prUrl: "https://github.example/pr/7",
+				sensitive: true,
+				headSha,
+			});
+		}
+
+		assert.equal(posts.filter((p) => p.channel === "C-needs" && /parked_sensitive_merge/.test(p.text)).length, 2);
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 2);
+		assert.deepEqual(marked, ["ready-a", "ready-b"]);
+	});
+
+	it("retries parked sensitive PR resolution before marking terminal notifications read", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const updates = [];
+		const marked = [];
+		let ts = 0;
+		let failUpdate = true;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: `m${++ts}` };
+			},
+			updateMessage: async (messageTs, text, opts = {}) => {
+				if (failUpdate) {
+					failUpdate = false;
+					throw new Error("slack 503");
+				}
+				updates.push({ ts: messageTs, text, channel: opts.channel });
+				return true;
+			},
+			fetchImpl: async (url, init = {}) => {
+				if (init.method === "PATCH") {
+					marked.push(url.split("/").at(-1));
+					return response({});
+				}
+				return response({ notifications: [] });
+			},
+			clock: () => new Date("2026-07-11T06:00:00Z"),
+			logger: { info() {}, error() {}, warn() {} },
+			bootstrapMode: "post_all",
+		});
+		const merged = {
+			id: "merged",
+			type: "pr_merged",
+			sessionId: "s1",
+			projectId: "ao",
+			title: "PR #7 merged",
+			prUrl: "https://github.example/pr/7",
+		};
+
+		await notifier.handleNotification({
+			id: "ready",
+			type: "ready_to_merge",
+			sessionId: "s1",
+			projectId: "ao",
+			title: "PR #7 ready",
+			prUrl: "https://github.example/pr/7",
+			sensitive: true,
+		});
+		await notifier.handleNotification(merged);
+
+		assert.deepEqual(marked, ["ready"], "terminal notification stays unread after failed resolution edit");
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 1);
+		assert.equal(posts.filter((p) => /pr_merged/.test(p.text)).length, 1);
+
+		await notifier.handleNotification(merged);
+
+		assert.deepEqual(marked, ["ready", "merged"]);
+		assert.ok(updates.some((u) => u.ts === "m1" && /resolved/.test(u.text)));
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 0);
+		assert.equal(posts.filter((p) => /pr_merged/.test(p.text)).length, 1, "retry does not repost terminal notice");
+	});
+
+	it("retries a needs-response resolution edit after chat.update fails", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const updates = [];
+		let ts = 0;
+		let failUpdate = true;
+		const pages = [
+			{ sessions: [{ id: "blocked-1", projectId: "ao", activity: { state: "blocked" } }] },
+			{ sessions: [] },
+			{ sessions: [] },
+			{ sessions: [] },
+		];
+		let page = 0;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: `m${++ts}` };
+			},
+			updateMessage: async (messageTs, text, opts = {}) => {
+				if (failUpdate) {
+					failUpdate = false;
+					throw new Error("slack 503");
+				}
+				updates.push({ ts: messageTs, text, channel: opts.channel });
+				return true;
+			},
+			fetchImpl: async () => response(pages[page++] ?? { sessions: [] }),
+			clock: () => new Date("2026-07-11T05:00:00Z"),
+			logger: { info() {}, error() {}, warn() {} },
+		});
+
+		await notifier.pollSessionAttention();
+		await notifier.pollSessionAttention();
+		await notifier.pollSessionAttention();
+		assert.equal(
+			updates.some((u) => u.ts === "m1"),
+			false,
+			"first per-item resolution attempt fails",
+		);
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 1, "message remains open for retry");
+
+		await notifier.pollSessionAttention();
+
+		assert.ok(updates.some((u) => u.ts === "m1" && /resolved/.test(u.text)));
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 0);
+	});
+});
+
 describe("ao Slack notifier SSE parsing", () => {
 	it("parses notification SSE frames and preserves partial trailing frames", () => {
 		const parsed = parseSSEFrames(
@@ -518,9 +891,10 @@ describe("ao Slack notifier session attention polling", () => {
 		await notifier.pollSessionAttention();
 		await notifier.pollSessionAttention();
 
+		const digestUpdates = updates.filter((u) => /Nothing needs you/.test(u.text));
 		assert.equal(posts.filter((p) => /1 thing needs you/.test(p)).length, 1);
-		assert.equal(updates.length, 1);
-		assert.deepEqual(updates[0], {
+		assert.equal(digestUpdates.length, 1);
+		assert.deepEqual(digestUpdates[0], {
 			ts: "m2",
 			text: "✅ *Nothing needs you* — all sessions healthy _(as of 2026-07-10T00:00:00Z)_",
 		});
