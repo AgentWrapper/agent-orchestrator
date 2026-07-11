@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -207,6 +208,37 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
 	return true, nil
+}
+
+// IsRunningCommand reports whether the session's active pane still looks owned
+// by the command AO launched. This is intentionally separate from IsAlive:
+// tmux sessions stay alive after the agent exits because buildLaunchCommand
+// execs a keep-alive shell for operator inspection.
+func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return false, err
+	}
+	want := commandName(command)
+	if want == "" {
+		return false, errors.New("tmux runtime: launch command is required")
+	}
+	out, err := r.run(ctx, paneCurrentCommandArgs(id)...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
+			return false, nil
+		}
+		return false, fmt.Errorf("tmux runtime: probe foreground command %s: %w", id, err)
+	}
+	current := commandName(strings.TrimSpace(string(out)))
+	if current == want {
+		return true, nil
+	}
+	// A healthy harness may briefly foreground a child process or wrapper whose
+	// comm differs from argv[0]. Treat only the keep-alive shell as definitive
+	// evidence that the launched command already exited.
+	return !isShellCommand(current) || isShellCommand(want), nil
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
@@ -494,6 +526,23 @@ func sortedKeys(m map[string]string) []string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func commandName(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(filepath.Base(command)), ".exe")
+}
+
+func isShellCommand(command string) bool {
+	switch commandName(command) {
+	case "sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "csh", "tcsh", "nu", "xonsh", "elvish", "pwsh", "powershell":
+		return true
+	default:
+		return false
+	}
 }
 
 // buildLaunchCommand builds the shell command string passed to `sh -c`. It

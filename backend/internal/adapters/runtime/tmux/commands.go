@@ -50,6 +50,12 @@ func hasSessionArgs(id string) []string {
 	return []string{"has-session", "-t", exactSessionTarget(id)}
 }
 
+// paneCurrentCommandArgs asks tmux for the foreground command in the session's
+// active pane. Pane-targeting syntax does not accept the exact-match prefix.
+func paneCurrentCommandArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_current_command}"}
+}
+
 // exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
 // selection commands (-t) target only the session with that precise name.
 // Only kill-session and has-session support this prefix; pane-targeting

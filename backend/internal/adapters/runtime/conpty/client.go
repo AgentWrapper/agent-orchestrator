@@ -151,6 +151,14 @@ func clientGetOutput(addr string, lines int) (string, error) {
 // death. Mirrors ptyHostIsAlive from pty-client.ts on the alive path: host
 // reachable == alive, regardless of the inner agent's alive field.
 func clientIsAlive(addr string) (alive bool, transientErr error) {
+	return clientStatusAlive(addr, false)
+}
+
+func clientIsProcessAlive(addr string) (alive bool, transientErr error) {
+	return clientStatusAlive(addr, true)
+}
+
+func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientErr error) {
 	conn, err := dialHost(addr, isAliveTimeout)
 	if err != nil {
 		// A dial timeout is transient (the loopback hiccupped). A refused
@@ -179,9 +187,22 @@ func clientIsAlive(addr string) (alive bool, transientErr error) {
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		if msgType == MsgStatusRes {
 			var sp StatusPayload
-			ok := json.Unmarshal(payload, &sp) == nil
+			if err := json.Unmarshal(payload, &sp); err != nil {
+				if useInnerAlive {
+					return
+				}
+				select {
+				case aliveC <- false:
+				default:
+				}
+				return
+			}
+			alive := true
+			if useInnerAlive {
+				alive = sp.Alive
+			}
 			select {
-			case aliveC <- ok:
+			case aliveC <- alive:
 			default:
 			}
 		}
