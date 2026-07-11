@@ -80,6 +80,20 @@ export function diffHealth(prevHealth, harnesses, opts = {}) {
 	return { alerts, recoveries, next };
 }
 
+function sleep(ms, signal) {
+	if (signal?.aborted) return Promise.resolve();
+	return new Promise((resolve) => {
+		let timer;
+		const done = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener?.("abort", done);
+			resolve();
+		};
+		timer = setTimeout(done, ms);
+		signal?.addEventListener?.("abort", done, { once: true });
+	});
+}
+
 export class AgentHealthNotifier {
 	constructor({
 		baseUrl = `http://127.0.0.1:${process.env.AO_PORT || "3001"}/api/v1`,
@@ -107,9 +121,10 @@ export class AgentHealthNotifier {
 	// Returns the posted messages (for tests). A 501 (monitor unwired) or any
 	// non-2xx is treated as "nothing to report" rather than an error so a daemon
 	// without the monitor never spams or crashes the loop.
-	async pollOnce() {
+	async pollOnce({ signal } = {}) {
 		const res = await this.fetchImpl(`${this.baseUrl}/agents/health`, {
 			headers: { accept: "application/json" },
+			signal,
 		});
 		if (!res.ok) {
 			if (res.status === 501) return [];
@@ -143,12 +158,12 @@ export class AgentHealthNotifier {
 		for (;;) {
 			if (signal?.aborted) return;
 			try {
-				await this.pollOnce();
+				await this.pollOnce({ signal });
 			} catch (e) {
 				if (signal?.aborted) return;
 				this.logger.error?.("agent-health poll error:", e?.message);
 			}
-			await new Promise((r) => setTimeout(r, this.pollMs));
+			await sleep(this.pollMs, signal);
 		}
 	}
 }

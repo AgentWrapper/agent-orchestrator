@@ -691,7 +691,7 @@ if (isMain()) {
 			pollMs: healthPollMs,
 		});
 		loops.push(
-			health.run().catch((e) => {
+			health.run({ signal: controller.signal }).catch((e) => {
 				console.error("ao-agent-health fatal:", e.message);
 			}),
 		);

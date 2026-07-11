@@ -108,6 +108,22 @@ test("pollOnce posts transitions and 501 is a no-op", async () => {
 	assert.deepEqual(out, []);
 });
 
+test("pollOnce forwards abort signals to the health fetch", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "ah-fetch-signal-"));
+	const controller = new AbortController();
+	const n = new AgentHealthNotifier({
+		stateFile: join(dir, "state.json"),
+		postMessage: async () => {},
+		fetchImpl: async (_url, init = {}) => {
+			assert.equal(init.signal, controller.signal);
+			return { ok: true, status: 200, json: async () => ({ harnesses: [] }) };
+		},
+		logger: { error() {}, info() {}, warn() {} },
+	});
+
+	await n.pollOnce({ signal: controller.signal });
+});
+
 test("run() is a no-op when pollMs <= 0 (disabled)", async () => {
 	let polled = 0;
 	const n = new AgentHealthNotifier({
@@ -121,4 +137,29 @@ test("run() is a no-op when pollMs <= 0 (disabled)", async () => {
 	});
 	await n.run(); // must return immediately, not busy-loop
 	assert.equal(polled, 0);
+});
+
+test("run() stops promptly when aborted during poll sleep", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "ah-stop-"));
+	const controller = new AbortController();
+	let polled = 0;
+	const n = new AgentHealthNotifier({
+		stateFile: join(dir, "state.json"),
+		pollMs: 10_000,
+		postMessage: async () => {},
+		fetchImpl: async () => {
+			polled += 1;
+			controller.abort();
+			return { ok: true, status: 200, json: async () => ({ harnesses: [] }) };
+		},
+		logger: { error() {}, info() {}, warn() {} },
+	});
+
+	const result = await Promise.race([
+		n.run({ signal: controller.signal }).then(() => "stopped"),
+		new Promise((resolve) => setTimeout(() => resolve("timed out"), 100)),
+	]);
+
+	assert.equal(result, "stopped");
+	assert.equal(polled, 1);
 });
