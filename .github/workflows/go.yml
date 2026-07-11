@@ -3,11 +3,13 @@ name: Go
 on:
   push:
     branches: [main]
+  merge_group:
   pull_request:
     paths:
       - "backend/**"
       - "frontend/src/api/schema.ts"
       - "package.json"
+      - "scripts/check-migration-versions.sh"
       - ".github/workflows/go.yml"
 
 permissions:
@@ -38,8 +40,72 @@ jobs:
             exit 1
           fi
 
+      - name: Check migration versions
+        working-directory: .
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            scripts/check-migration-versions.sh "origin/${{ github.base_ref }}"
+          else
+            scripts/check-migration-versions.sh
+          fi
+
       - name: Build
         run: go build ./...
+
+      - name: Boot daemon smoke
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          binary="$(mktemp)"
+          data_dir="$(mktemp -d)"
+          run_file="$(mktemp)"
+          rm -f "$run_file"
+          log_file="$(mktemp)"
+          port="$(python3 - <<'PY'
+          import socket
+          s = socket.socket()
+          s.bind(("127.0.0.1", 0))
+          print(s.getsockname()[1])
+          s.close()
+          PY
+          )"
+
+          cleanup() {
+            if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+            fi
+            rm -rf "$binary" "$data_dir" "$run_file" "$log_file"
+          }
+          trap cleanup EXIT
+
+          go build -o "$binary" ./cmd/ao
+          AO_DATA_DIR="$data_dir" \
+          AO_RUN_FILE="$run_file" \
+            AO_PORT="$port" \
+            AO_AGENT_HEALTH_INTERVAL=0 \
+            AO_METRICS_INTERVAL=0 \
+            "$binary" daemon >"$log_file" 2>&1 &
+          pid=$!
+
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:$port/readyz" >/dev/null 2>&1; then
+              curl -fsS "http://127.0.0.1:$port/api/v1/version" >/dev/null
+              exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "daemon exited before ready" >&2
+              cat "$log_file" >&2
+              exit 1
+            fi
+            sleep 0.5
+          done
+
+          echo "daemon did not become ready" >&2
+          cat "$log_file" >&2
+          exit 1
 
       - name: Vet
         run: go vet ./...
