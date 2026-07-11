@@ -190,6 +190,7 @@ var schemaNames = map[string]string{
 	"AgentInventory":                              "ListAgentsResponse",
 	"AgentInfo":                                   "AgentInfo",
 	"AgentProbeResult":                            "ProbeAgentResponse",
+	"ControllersAgentModelAvailabilityQuery":      "AgentModelAvailabilityQuery",
 	"AgenthealthSnapshot":                         "AgentHealthResponse",
 	"AgenthealthHarnessHealth":                    "AgentHarnessHealth",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
@@ -345,6 +346,16 @@ func agentOperations() []operation {
 			summary: "Return the latest periodic per-harness health snapshot",
 			resps: []respUnit{
 				{http.StatusOK, controllers.AgentHealthResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/models", id: "getAgentModelAvailability", tag: "agents",
+			summary:    "Return per-harness model candidates and reachability status",
+			pathParams: []any{controllers.AgentModelAvailabilityQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentModelAvailabilityResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -2,6 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import {
+	fetchModelAvailability,
+	modelAvailabilityQueryKey,
+	type AgentModelAvailabilityResponse,
+	useModelAvailabilityQuery,
+} from "../hooks/useModelAvailabilityQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
@@ -10,6 +16,7 @@ import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { buildIntake, DEFAULT_OPT_OUT_LABELS, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import { ModelAvailabilityField, modelAvailabilityStatusLabel } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -76,6 +83,7 @@ const MIX_OPTIONS = [
 ] as const;
 
 type MixRow = { agent: string; model: string; weight: number };
+type MixOption = { value: string; label: string; agent: string; model: string };
 
 const mixOptionValue = (row: { agent: string; model: string }) => `${row.agent}::${row.model}`;
 
@@ -168,10 +176,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const missingWorkerAgent = form.workerAgent === "" && !mixConfigured;
 	const missingRequiredAgent = missingWorkerAgent || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
+	const modelAvailabilityQuery = useModelAvailabilityQuery();
 	const agentCatalog = agentsQuery.data;
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
+	});
+	const refreshModelsMutation = useMutation({
+		mutationFn: () => fetchModelAvailability({ force: true }),
+		onSuccess: (next) => queryClient.setQueryData(modelAvailabilityQueryKey, next),
 	});
 
 	// The Electron app only registers git projects today, so the daemon always has a usable
@@ -369,15 +382,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					{missingRequiredAgent && (
 						<p className="text-[12px] leading-5 text-error">Worker and orchestrator agents are required.</p>
 					)}
-					<Field label="Model override" htmlFor="model">
-						<input
-							id="model"
-							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.model}
-							onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-							placeholder="(agent default)"
-						/>
-					</Field>
+					<ModelAvailabilityField
+						id="model"
+						label="Model override"
+						value={form.model}
+						onChange={(model) => setForm((f) => ({ ...f, model }))}
+						availability={modelAvailabilityQuery.data}
+						isRefreshing={refreshModelsMutation.isPending || modelAvailabilityQuery.isFetching}
+						onRefresh={() => refreshModelsMutation.mutate()}
+					/>
 					<Field label="Permission mode" htmlFor="permissionMode">
 						<PermissionModeSelect
 							id="permissionMode"
@@ -392,6 +405,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				rows={form.workerMix}
 				onChange={(rows) => setForm((f) => ({ ...f, workerMix: rows }))}
 				invalid={validationError !== null && !mixIsValid(form.workerMix)}
+				modelAvailability={modelAvailabilityQuery.data}
 			/>
 
 			<Card>
@@ -501,13 +515,16 @@ function WorkerMixCard({
 	rows,
 	onChange,
 	invalid,
+	modelAvailability,
 }: {
 	rows: MixRow[];
 	onChange: (rows: MixRow[]) => void;
 	invalid: boolean;
+	modelAvailability?: AgentModelAvailabilityResponse;
 }) {
 	const total = mixTotal(rows);
 	const totalOff = rows.length > 0 && total !== 100;
+	const options = mixOptions(modelAvailability);
 	const addRow = () => onChange([...rows, { agent: "", model: "", weight: 0 }]);
 	const removeRow = (i: number) => onChange(rows.filter((_, idx) => idx !== i));
 	const patchRow = (i: number, patch: Partial<MixRow>) =>
@@ -542,6 +559,7 @@ function WorkerMixCard({
 								id={`mix-agent-${i}`}
 								ariaLabel={`Row ${i + 1} agent`}
 								row={row}
+								options={options}
 								onChange={(agent, model) => patchRow(i, { agent, model })}
 							/>
 						</div>
@@ -571,22 +589,24 @@ function WorkerMixCard({
 }
 
 // MixBucketSelect is the agent/model dropdown for one mix row. It renders the
-// curated MIX_OPTIONS and, when a loaded row's pair is not among them (e.g. an
-// exotic combo set via the CLI), a synthetic option so the existing value stays
+// live availability list when present, falls back to curated MIX_OPTIONS, and
+// keeps a synthetic option for exotic loaded pairs so existing config stays
 // visible and editable rather than silently reset.
 function MixBucketSelect({
 	id,
 	ariaLabel,
 	row,
+	options,
 	onChange,
 }: {
 	id: string;
 	ariaLabel: string;
 	row: MixRow;
+	options: MixOption[];
 	onChange: (agent: string, model: string) => void;
 }) {
 	const current = mixOptionValue(row);
-	const known = MIX_OPTIONS.some((o) => o.value === current);
+	const known = options.some((o) => o.value === current);
 	return (
 		<Select
 			value={row.agent === "" ? undefined : current}
@@ -602,7 +622,7 @@ function MixBucketSelect({
 				{!known && row.agent !== "" && (
 					<SelectItem value={current}>{row.model ? `${row.agent} — ${row.model}` : row.agent}</SelectItem>
 				)}
-				{MIX_OPTIONS.map((opt) => (
+				{options.map((opt) => (
 					<SelectItem key={opt.value} value={opt.value}>
 						{opt.label}
 					</SelectItem>
@@ -610,6 +630,30 @@ function MixBucketSelect({
 			</SelectContent>
 		</Select>
 	);
+}
+
+function mixOptions(availability?: AgentModelAvailabilityResponse): MixOption[] {
+	const out = new Map<string, MixOption>();
+	for (const opt of MIX_OPTIONS) {
+		out.set(opt.value, opt);
+	}
+	for (const harness of availability?.harnesses ?? []) {
+		if (harness.id === "codex" || harness.id === "codex-fugu") {
+			const key = `${harness.id}::`;
+			if (!out.has(key)) out.set(key, { value: key, label: harness.label || harness.id, agent: harness.id, model: "" });
+		}
+		for (const model of harness.models ?? []) {
+			const value = `${harness.id}::${model.model}`;
+			const status = modelAvailabilityStatusLabel(model);
+			out.set(value, {
+				value,
+				label: `${harness.label || harness.id} — ${model.model}${status ? ` (${status})` : ""}`,
+				agent: harness.id,
+				model: model.model,
+			});
+		}
+	}
+	return Array.from(out.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function PermissionModeSelect({

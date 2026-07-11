@@ -77,9 +77,25 @@ const agentCatalogResponse = {
 	error: undefined,
 };
 
+const modelAvailabilityResponse = {
+	data: {
+		checkedAt: "2026-07-10T12:00:00Z",
+		harnesses: [
+			{
+				id: "claude-code",
+				label: "Claude Code",
+				catalogSource: "known-set",
+				models: [{ model: "claude-opus-4-5", status: "unreachable", reason: "400 model not available" }],
+			},
+		],
+	},
+	error: undefined,
+};
+
 function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
+		if (path === "/api/v1/agents/models") return modelAvailabilityResponse;
 		return {
 			data: {
 				status: "ok",
@@ -136,13 +152,14 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Project prefix")).toHaveValue("po");
 		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
+		expect(await screen.findByText(/unreachable: 400 model not available/)).toBeInTheDocument();
 
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
 		const permissionMode = screen.getByRole("combobox", { name: "Permission mode" });
 		const reviewerAgent = screen.getByRole("combobox", { name: "Default reviewer agent" });
-		expect(workerAgent).toHaveTextContent("codex");
-		expect(orchestratorAgent).toHaveTextContent("claude-code");
+		expect(workerAgent).toHaveTextContent("Codex");
+		expect(orchestratorAgent).toHaveTextContent("Claude Code");
 		expect(permissionMode).toHaveTextContent("Auto");
 		expect(reviewerAgent).toHaveTextContent("claude-code");
 
@@ -349,7 +366,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Row 1 percentage"), "60");
 		await userEvent.click(screen.getByRole("button", { name: "Add row" }));
 		await userEvent.type(screen.getByLabelText("Row 2 percentage"), "40");
-		await chooseOption(screen.getByRole("combobox", { name: "Row 2 agent" }), "Claude — Opus");
+		await chooseOption(
+			screen.getByRole("combobox", { name: "Row 2 agent" }),
+			"Claude Code — claude-opus-4-5 (unreachable)",
+		);
 
 		expect(screen.getByText(/Total: 100%/)).toBeInTheDocument();
 
@@ -359,7 +379,7 @@ describe("ProjectSettingsForm", () => {
 		const body = putMock.mock.calls[0]?.[1]?.body;
 		expect(body.config.workerMix).toEqual([
 			{ agent: "codex", weight: 60 },
-			{ agent: "claude-code", model: "claude-opus-4-8", weight: 40 },
+			{ agent: "claude-code", model: "claude-opus-4-5", weight: 40 },
 		]);
 	}, 20_000);
 

@@ -97,6 +97,40 @@ paths:
       summary: Return the latest periodic per-harness health snapshot
       tags:
       - agents
+  /api/v1/agents/models:
+    get:
+      operationId: getAgentModelAvailability
+      parameters:
+      - description: When true, bypass the short request-path cache and run fresh
+          configured-pin probes.
+        in: query
+        name: force
+        schema:
+          description: When true, bypass the short request-path cache and run fresh
+            configured-pin probes.
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAvailabilityResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return per-harness model candidates and reachability status
+      tags:
+      - agents
   /api/v1/agents/refresh:
     post:
       operationId: refreshAgents
@@ -1881,6 +1915,28 @@ components:
       - changedAt
       - checkedAt
       type: object
+    AgentHarnessModels:
+      properties:
+        catalogSource:
+          enum:
+          - adapter
+          - known-set
+          - configured-pins
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/AgentModelAvailability'
+          type: array
+      required:
+      - id
+      - label
+      - catalogSource
+      - models
+      type: object
     AgentHealthResponse:
       properties:
         checkedAt:
@@ -1911,6 +1967,35 @@ components:
       required:
       - id
       - label
+      type: object
+    AgentModelAvailability:
+      properties:
+        model:
+          type: string
+        reason:
+          type: string
+        status:
+          enum:
+          - reachable
+          - unreachable
+          - unknown
+          type: string
+      required:
+      - model
+      - status
+      type: object
+    AgentModelAvailabilityResponse:
+      properties:
+        checkedAt:
+          format: date-time
+          type: string
+        harnesses:
+          items:
+            $ref: '#/components/schemas/AgentHarnessModels'
+          type: array
+      required:
+      - harnesses
+      - checkedAt
       type: object
     AnswerSessionDecisionRequest:
       properties:
@@ -2608,6 +2693,8 @@ components:
           - duplicate_pr
           - worker_died_unfinished
           - worker_retry_exhausted
+          - model_unreachable
+          - model_recovered
           type: string
       required:
       - id
@@ -2630,6 +2717,7 @@ components:
           enum:
           - session
           - pr
+          - none
           type: string
         prUrl:
           type: string

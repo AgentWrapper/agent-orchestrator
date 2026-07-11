@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return per-harness model candidates and reachability status */
+        get: operations["getAgentModelAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/refresh": {
         parameters: {
             query?: never;
@@ -682,6 +699,13 @@ export interface components {
             reason?: string;
             remedy?: string;
         };
+        AgentHarnessModels: {
+            /** @enum {string} */
+            catalogSource: "adapter" | "known-set" | "configured-pins";
+            id: string;
+            label: string;
+            models: components["schemas"]["AgentModelAvailability"][];
+        };
         AgentHealthResponse: {
             /** Format: date-time */
             checkedAt: string;
@@ -695,6 +719,17 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+        };
+        AgentModelAvailability: {
+            model: string;
+            reason?: string;
+            /** @enum {string} */
+            status: "reachable" | "unreachable" | "unknown";
+        };
+        AgentModelAvailabilityResponse: {
+            /** Format: date-time */
+            checkedAt: string;
+            harnesses: components["schemas"]["AgentHarnessModels"][];
         };
         AnswerSessionDecisionRequest: {
             /** @description One-based option number to select. */
@@ -967,11 +1002,11 @@ export interface components {
             target: components["schemas"]["NotificationTarget"];
             title: string;
             /** @enum {string} */
-            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "orchestrator_replaced" | "orchestrator_replacement_capped" | "duplicate_pr" | "worker_died_unfinished" | "worker_retry_exhausted";
+            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "orchestrator_replaced" | "orchestrator_replacement_capped" | "duplicate_pr" | "worker_died_unfinished" | "worker_retry_exhausted" | "model_unreachable" | "model_recovered";
         };
         NotificationTarget: {
             /** @enum {string} */
-            kind: "session" | "pr";
+            kind: "session" | "pr" | "none";
             prUrl?: string;
             sessionId: string;
         };
@@ -1508,6 +1543,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentHealthResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgentModelAvailability: {
+        parameters: {
+            query?: {
+                /** @description When true, bypass the short request-path cache and run fresh configured-pin probes. */
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentModelAvailabilityResponse"];
                 };
             };
             /** @description Internal Server Error */

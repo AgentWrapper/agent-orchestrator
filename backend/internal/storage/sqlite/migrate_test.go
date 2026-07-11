@@ -43,6 +43,63 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 	}
 }
 
+func TestMigrateIsIdempotentOnCurrentSchema(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("first migrate: %v", err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	for _, version := range []int64{33, 34, 39} {
+		applied, err := gooseVersionApplied(db, version)
+		if err != nil {
+			t.Fatalf("check goose version %d: %v", version, err)
+		}
+		if !applied {
+			t.Fatalf("goose version %d not applied after repeated migrate", version)
+		}
+	}
+	assertSQLiteColumn(t, db, "notifications", "head_sha")
+	assertSQLiteColumn(t, db, "sessions", "pending_decision")
+}
+
+func TestMigrateHandlesDivergentVersion32HeadSHAHistory(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 31)
+	if _, err := db.Exec(`ALTER TABLE notifications ADD COLUMN head_sha TEXT NOT NULL DEFAULT ''`); err != nil {
+		t.Fatalf("simulate old version 32 head_sha migration: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (32, 1)`); err != nil {
+		t.Fatalf("record old version 32: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate divergent version 32 db: %v", err)
+	}
+	assertSQLiteColumn(t, db, "notifications", "head_sha")
+	assertSQLiteColumn(t, db, "sessions", "pending_decision")
+	for _, version := range []int64{33, 34, 35} {
+		applied, err := gooseVersionApplied(db, version)
+		if err != nil {
+			t.Fatalf("check goose version %d: %v", version, err)
+		}
+		if !applied {
+			t.Fatalf("goose version %d not marked applied after compatibility migration", version)
+		}
+	}
+}
+
 func downTo(t *testing.T, db *sql.DB, version int64) {
 	t.Helper()
 	gooseMu.Lock()
@@ -54,6 +111,17 @@ func downTo(t *testing.T, db *sql.DB, version int64) {
 	}
 	if err := goose.DownTo(db, "migrations", version); err != nil {
 		t.Fatalf("migrate down to %d: %v", version, err)
+	}
+}
+
+func assertSQLiteColumn(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	ok, err := sqliteColumnExists(db, table, column)
+	if err != nil {
+		t.Fatalf("check %s.%s: %v", table, column, err)
+	}
+	if !ok {
+		t.Fatalf("missing column %s.%s", table, column)
 	}
 }
 

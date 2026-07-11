@@ -21,6 +21,7 @@ import (
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	AgentHealth        controllers.AgentHealthProvider
+	AgentModelPins     controllers.AgentModelPinProvider
 	Projects           projectsvc.Manager
 	ProjectCapacity    controllers.WorkerCapacityService
 	Sessions           controllers.SessionService
@@ -56,11 +57,16 @@ type API struct {
 // per-request timeout so the REST group can apply it without re-reading the
 // environment.
 func NewAPI(cfg config.Config, deps APIDeps) *API {
+	modelPins := deps.AgentModelPins
+	if modelPins == nil {
+		modelPins = deps.Projects
+	}
 	return &API{
 		cfg: cfg,
 		agents: &controllers.AgentsController{
-			Catalog: deps.Agents,
-			Health:  deps.AgentHealth,
+			Catalog:   deps.Agents,
+			Health:    deps.AgentHealth,
+			ModelPins: modelPins,
 		},
 		projects: &controllers.ProjectsController{
 			Mgr:      deps.Projects,

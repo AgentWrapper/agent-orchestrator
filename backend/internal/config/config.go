@@ -35,6 +35,11 @@ const (
 	// loop by design: a login expiring is a human-timescale event, so a few
 	// minutes of detection latency is fine and keeps agent-CLI probes cheap.
 	DefaultAgentHealthInterval = 5 * time.Minute
+	// DefaultModelRevalidationInterval is how often configured model pins are
+	// re-probed for provider/account reachability. Model retirement and account
+	// entitlement drift are human-timescale events, and probes can make real model
+	// calls, so the default is daily rather than tied to agent auth health.
+	DefaultModelRevalidationInterval = 24 * time.Hour
 	// DefaultAgent is the compatibility value used when AO_AGENT is unset. The
 	// daemon validates it at startup, but worker/orchestrator spawns resolve from
 	// explicit requests or project role config instead of falling back to it.
@@ -133,6 +138,9 @@ type Config struct {
 	// AgentHealthInterval is the period of the background agent-health monitor.
 	// Zero disables the monitor entirely (no periodic probing, no alerts).
 	AgentHealthInterval time.Duration
+	// ModelRevalidationInterval is the period of the configured model-pin
+	// reachability monitor. Zero disables scheduled model probing.
+	ModelRevalidationInterval time.Duration
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -161,6 +169,7 @@ func (c Config) Addr() string {
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_AGENT_HEALTH_INTERVAL agent-health probe period (Go duration >= 0, 0 disables, default 5m)
+//	AO_MODEL_REVALIDATION_INTERVAL model-pin probe period (Go duration >= 0, 0 disables, default 24h)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -176,13 +185,14 @@ func (c Config) Addr() string {
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
 	cfg := Config{
-		Host:                LoopbackHost,
-		Port:                DefaultPort,
-		RequestTimeout:      DefaultRequestTimeout,
-		ShutdownTimeout:     DefaultShutdownTimeout,
-		Agent:               DefaultAgent,
-		AgentHealthInterval: DefaultAgentHealthInterval,
-		AllowedOrigins:      DefaultAllowedOrigins,
+		Host:                      LoopbackHost,
+		Port:                      DefaultPort,
+		RequestTimeout:            DefaultRequestTimeout,
+		ShutdownTimeout:           DefaultShutdownTimeout,
+		Agent:                     DefaultAgent,
+		AgentHealthInterval:       DefaultAgentHealthInterval,
+		ModelRevalidationInterval: DefaultModelRevalidationInterval,
+		AllowedOrigins:            DefaultAllowedOrigins,
 		Telemetry: TelemetryConfig{
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
@@ -233,6 +243,14 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.AgentHealthInterval = d
+	}
+
+	if raw := os.Getenv("AO_MODEL_REVALIDATION_INTERVAL"); raw != "" {
+		d, err := parseNonNegativeDuration("AO_MODEL_REVALIDATION_INTERVAL", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ModelRevalidationInterval = d
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {

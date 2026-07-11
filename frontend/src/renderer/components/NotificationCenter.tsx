@@ -42,6 +42,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				window.open(target.prUrl, "_blank", "noopener,noreferrer");
 				return;
 			}
+			if (target.kind !== "session") return;
 			const sessionId = target.sessionId || notification.sessionId;
 			if (!sessionId) return;
 			void captureRendererEvent("ao.renderer.notification_opened", { target: "session" });

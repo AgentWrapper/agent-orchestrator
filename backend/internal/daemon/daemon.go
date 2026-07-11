@@ -163,6 +163,7 @@ func Run() error {
 	// harness for install+auth readiness and tracks transitions so operators can
 	// be alerted when a login expires. Async + bounded — never gates readiness.
 	agentHealth, agentHealthDone := startAgentHealth(ctx, agentHealthConfig{Interval: cfg.AgentHealthInterval, DefaultAgent: cfg.Agent}, agentSvc, projectSvc, log)
+	_, modelHealthDone := startModelHealth(ctx, modelHealthConfig{Interval: cfg.ModelRevalidationInterval}, agentSvc, projectSvc, notificationWriter, log)
 
 	// Resource metrics observer: coarse-tick sampling of host load/memory/disk,
 	// per-session cgroup-scope memory, per-project session/zombie counts, and
@@ -191,6 +192,7 @@ func Run() error {
 		stop()
 		<-previewDone
 		<-agentHealthDone
+		<-modelHealthDone
 		<-metricsDone
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
@@ -241,6 +243,7 @@ func Run() error {
 	<-orchestratorSupervisorDone
 	<-previewDone
 	<-agentHealthDone
+	<-modelHealthDone
 	<-metricsDone
 	lcStack.Stop()
 	if err := cdcPipe.Stop(); err != nil {

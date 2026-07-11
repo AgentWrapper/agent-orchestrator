@@ -32,12 +32,18 @@ const (
 	// NotificationWorkerRetryExhausted means tracker intake reached the clean
 	// respawn retry cap for an unfinished issue.
 	NotificationWorkerRetryExhausted NotificationType = "worker_retry_exhausted"
+	// NotificationModelUnreachable means a configured model pin was rejected by
+	// its provider/account during scheduled revalidation.
+	NotificationModelUnreachable NotificationType = "model_unreachable"
+	// NotificationModelRecovered means a previously unreachable model pin probed
+	// successfully again.
+	NotificationModelRecovered NotificationType = "model_recovered"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR, NotificationWorkerDiedUnfinished, NotificationWorkerRetryExhausted:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR, NotificationWorkerDiedUnfinished, NotificationWorkerRetryExhausted, NotificationModelUnreachable, NotificationModelRecovered:
 		return true
 	default:
 		return false

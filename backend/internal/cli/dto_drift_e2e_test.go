@@ -139,6 +139,10 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 	return agentsvc.ProbeResult{Agent: info, Supported: true, Installed: true}, nil
 }
 
+func (f *fakeAgentCatalog) ModelAvailability(context.Context, agentsvc.ModelAvailabilityRequest) (agentsvc.ModelAvailabilityResponse, error) {
+	return agentsvc.ModelAvailabilityResponse{}, nil
+}
+
 func authorizedCodexInventory() agentsvc.Inventory {
 	info := agentsvc.Info{ID: "codex", Label: "Codex", AuthStatus: "authorized"}
 	return agentsvc.Inventory{

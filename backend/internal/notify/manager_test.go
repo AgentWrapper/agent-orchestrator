@@ -247,6 +247,35 @@ func TestManagerNotifyRejectsDuplicatePRWithoutPRURL(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyModelUnreachable(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_model" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:         domain.NotificationModelUnreachable,
+		SessionID:    "ao-model-codex-gpt-5-5-codex",
+		ProjectID:    "ao",
+		ModelHarness: domain.HarnessCodex,
+		Model:        "gpt-5.5-codex",
+		ModelScope:   "workerMix[0].model",
+		Reason:       "400 model not available",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if len(st.rows) != 1 {
+		t.Fatalf("stored rows = %d, want 1", len(st.rows))
+	}
+	got := st.rows[0]
+	if got.Type != domain.NotificationModelUnreachable || got.PRURL != "" || got.Title != "gpt-5.5-codex model unreachable" {
+		t.Fatalf("stored notification = %+v", got)
+	}
+	if !strings.Contains(got.Body, "400 model not available") {
+		t.Fatalf("body = %q, want reason", got.Body)
+	}
+}
+
 func TestHubProjectFilter(t *testing.T) {
 	hub := NewHub()
 	ch, unsub := hub.Subscribe("mer")

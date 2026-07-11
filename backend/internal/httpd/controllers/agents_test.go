@@ -11,20 +11,25 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
 type fakeAgentCatalog struct {
 	inventory    agentsvc.Inventory
 	refreshed    agentsvc.Inventory
 	probed       agentsvc.ProbeResult
+	models       agentsvc.ModelAvailabilityResponse
 	err          error
 	listCalls    int
 	refreshCalls int
 	probeCalls   int
 	probeAgent   string
+	modelCalls   int
+	modelReq     agentsvc.ModelAvailabilityRequest
 }
 
 func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
@@ -44,6 +49,25 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 	f.probeCalls++
 	f.probeAgent = agentID
 	return f.probed, f.err
+}
+
+func (f *fakeAgentCatalog) ModelAvailability(_ context.Context, req agentsvc.ModelAvailabilityRequest) (agentsvc.ModelAvailabilityResponse, error) {
+	f.modelCalls++
+	f.modelReq = req
+	return f.models, f.err
+}
+
+type fakeModelPinProjects struct {
+	summaries []projectsvc.Summary
+	projects  map[domain.ProjectID]projectsvc.GetResult
+}
+
+func (f fakeModelPinProjects) List(context.Context) ([]projectsvc.Summary, error) {
+	return f.summaries, nil
+}
+
+func (f fakeModelPinProjects) Get(_ context.Context, id domain.ProjectID) (projectsvc.GetResult, error) {
+	return f.projects[id], nil
 }
 
 func TestListAgents(t *testing.T) {
@@ -163,6 +187,87 @@ func TestGetAgentHealth(t *testing.T) {
 	}
 }
 
+func TestGetAgentModelAvailability(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	catalog := &fakeAgentCatalog{models: agentsvc.ModelAvailabilityResponse{
+		CheckedAt: time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
+		Harnesses: []agentsvc.HarnessModels{{
+			ID:            "codex",
+			Label:         "Codex",
+			CatalogSource: agentsvc.ModelCatalogKnownSet,
+			Models: []agentsvc.ModelAvailability{{
+				Model:  "gpt-5.5-codex",
+				Status: agentsvc.ModelStatusUnreachable,
+				Reason: "400 model not available",
+			}},
+		}},
+	}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Agents: catalog,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/models", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /agents/models = %d, body=%s", status, body)
+	}
+	for _, want := range []string{`"harnesses"`, `"id":"codex"`, `"model":"gpt-5.5-codex"`, `"status":"unreachable"`, `400 model not available`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+	if catalog.modelCalls != 1 {
+		t.Fatalf("modelCalls=%d, want 1", catalog.modelCalls)
+	}
+}
+
+func TestGetAgentModelAvailabilityForceBypassesCache(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	catalog := &fakeAgentCatalog{models: agentsvc.ModelAvailabilityResponse{Harnesses: []agentsvc.HarnessModels{}}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Agents: catalog,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	_, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/models?force=true", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /agents/models?force=true = %d, want 200", status)
+	}
+	if !catalog.modelReq.Force {
+		t.Fatalf("force = false, want true")
+	}
+}
+
+func TestGetAgentModelAvailabilityIncludesConfiguredPins(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	catalog := &fakeAgentCatalog{models: agentsvc.ModelAvailabilityResponse{Harnesses: []agentsvc.HarnessModels{}}}
+	cfg := domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100}},
+	}
+	projects := fakeModelPinProjects{
+		summaries: []projectsvc.Summary{{ID: "ao"}},
+		projects: map[domain.ProjectID]projectsvc.GetResult{
+			"ao": {Status: "ok", Project: &projectsvc.Project{ID: "ao", Config: &cfg}},
+		},
+	}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Agents:         catalog,
+		AgentModelPins: projects,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	_, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/models", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /agents/models = %d, want 200", status)
+	}
+	if len(catalog.modelReq.Pins) != 1 {
+		t.Fatalf("pins = %#v, want one configured pin", catalog.modelReq.Pins)
+	}
+	if got := catalog.modelReq.Pins[0]; got.Harness != domain.HarnessCodex || got.Model != "gpt-5.5-codex" {
+		t.Fatalf("pin = %#v, want codex/gpt-5.5-codex", got)
+	}
+}
+
 func TestGetAgentHealthNotImplementedWhenUnset(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
@@ -171,5 +276,16 @@ func TestGetAgentHealthNotImplementedWhenUnset(t *testing.T) {
 	_, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/health", "")
 	if status != http.StatusNotImplemented {
 		t.Fatalf("GET /agents/health with no provider = %d, want 501", status)
+	}
+}
+
+func TestGetAgentModelAvailabilityNotImplementedWhenUnset(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	_, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/models", "")
+	if status != http.StatusNotImplemented {
+		t.Fatalf("GET /agents/models with no catalog = %d, want 501", status)
 	}
 }

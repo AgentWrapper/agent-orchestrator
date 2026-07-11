@@ -176,6 +176,31 @@ func TestNotificationStore_SensitiveReadyDoesNotDedupeRoutineReady(t *testing.T)
 	}
 }
 
+func TestNotificationStore_ModelAlertPersistsWithoutPR(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "ao")
+	now := time.Now().UTC().Truncate(time.Second)
+	rec := domain.NotificationRecord{
+		ID:        "ntf_model",
+		SessionID: "ao-model-codex-gpt-5-5-codex",
+		ProjectID: "ao",
+		Type:      domain.NotificationModelUnreachable,
+		Title:     "gpt-5.5-codex model unreachable",
+		Body:      "Configured pin workerMix[0].model / codex / gpt-5.5-codex is unreachable: 400 model not available.",
+		Status:    domain.NotificationUnread,
+		CreatedAt: now,
+	}
+	if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+		t.Fatalf("CreateNotification inserted=%v err=%v", inserted, err)
+	}
+	dup := rec
+	dup.ID = "ntf_model_2"
+	if _, inserted, err := s.CreateNotification(ctx, dup); err != nil || inserted {
+		t.Fatalf("duplicate inserted=%v err=%v, want false nil", inserted, err)
+	}
+}
+
 func TestNotificationStore_MarkReadMissing(t *testing.T) {
 	s := newTestStore(t)
 	_, ok, err := s.MarkNotificationRead(context.Background(), "missing")

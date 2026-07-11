@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { modelAvailabilityQueryKey } from "../hooks/useModelAvailabilityQuery";
 import { buildProjectAgentConfig, CreateProjectAgentSheet } from "./CreateProjectAgentSheet";
 
 function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
@@ -19,6 +20,17 @@ function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
 		authorized: [
 			{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
 			{ id: "codex", label: "codex", authStatus: "authorized" },
+		],
+	});
+	queryClient.setQueryData(modelAvailabilityQueryKey, {
+		checkedAt: "2026-07-10T12:00:00Z",
+		harnesses: [
+			{
+				id: "claude-code",
+				label: "Claude Code",
+				catalogSource: "known-set",
+				models: [{ model: "opus", status: "unreachable", reason: "400 model not available" }],
+			},
 		],
 	});
 	render(
@@ -88,6 +100,7 @@ describe("CreateProjectAgentSheet", () => {
 		// Defaults are visible in the form, not a hidden bare default.
 		expect(screen.getByLabelText("Permission mode")).toHaveTextContent("Bypass permissions");
 		expect(screen.getByLabelText("Model")).toHaveValue("opus");
+		expect(screen.getByText(/unreachable: 400 model not available/)).toBeInTheDocument();
 
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "claude-code");

@@ -214,6 +214,11 @@ function prSummary(sessionId: string, facts: PRFacts) {
 			hasUnresolvedHumanComments: facts.reviewComments,
 			unresolvedBy: [],
 		},
+		finalReview: {
+			status: "needs_review",
+			verdict: "pending",
+			targetSha: `fixture-${facts.number}`,
+		},
 		mergeability: {
 			state: facts.mergeability,
 			reasons: [],
@@ -258,6 +263,25 @@ export async function mockAoApi(page: Page) {
 		}
 		if (path === "/api/v1/sessions") {
 			return fulfill(route, { sessions });
+		}
+		if (path === "/api/v1/agents/health") {
+			return fulfill(route, { checkedAt: now, harnesses: [] });
+		}
+		if (path === "/api/v1/agents/models") {
+			return fulfill(route, {
+				checkedAt: now,
+				harnesses: [
+					{
+						id: "claude-code",
+						label: "Claude Code",
+						catalogSource: "known-set",
+						models: [
+							{ model: "haiku", status: "reachable" },
+							{ model: "opus", status: "unreachable", reason: "400 model not available" },
+						],
+					},
+				],
+			});
 		}
 		const sendMatch = path.match(/^\/api\/v1\/sessions\/([^/]+)\/send$/);
 		if (sendMatch) {

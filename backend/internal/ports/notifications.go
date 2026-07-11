@@ -44,4 +44,10 @@ type NotificationIntent struct {
 	// newer/duplicate PR and DuplicateOfPRURL is the pre-existing open PR.
 	IssueRef         string
 	DuplicateOfPRURL string
+
+	// Model health enrichment.
+	ModelHarness domain.AgentHarness
+	Model        string
+	ModelScope   string
+	Reason       string
 }

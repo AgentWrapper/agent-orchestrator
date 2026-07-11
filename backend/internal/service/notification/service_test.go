@@ -38,13 +38,14 @@ func TestListUnreadAddsTargets(t *testing.T) {
 	st := &fakeStore{rows: []domain.NotificationRecord{
 		{ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: time.Now()},
+		{ID: "n3", SessionID: "model-1", ProjectID: "mer", Type: domain.NotificationModelUnreachable, Title: "model unreachable", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 	}}
 	mgr := New(Deps{Store: st})
 	got, err := mgr.ListUnread(context.Background(), ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnread: %v", err)
 	}
-	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" {
+	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" || got[2].Target.Kind != TargetNone || got[2].Target.SessionID != "" {
 		t.Fatalf("targets = %+v", got)
 	}
 }

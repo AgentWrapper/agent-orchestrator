@@ -62,6 +62,10 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("worker died with unfinished work: issue %s", issueLabel(intent))
 	case domain.NotificationWorkerRetryExhausted:
 		return fmt.Sprintf("worker retry cap exhausted: issue %s", issueLabel(intent))
+	case domain.NotificationModelUnreachable:
+		return fmt.Sprintf("%s model unreachable", modelLabel(intent))
+	case domain.NotificationModelRecovered:
+		return fmt.Sprintf("%s model recovered", modelLabel(intent))
 	default:
 		return "Notification"
 	}
@@ -99,6 +103,10 @@ func bodyForIntent(intent Intent) string {
 		return fmt.Sprintf("%s terminated before issue %s landed; ao will dispatch a clean replacement if retry capacity remains.", sessionLabel(intent), issueLabel(intent))
 	case domain.NotificationWorkerRetryExhausted:
 		return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is leaving it for a human.", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit)
+	case domain.NotificationModelUnreachable:
+		return fmt.Sprintf("Configured pin %s is unreachable%s.", modelDetail(intent), reasonSuffix(intent.Reason))
+	case domain.NotificationModelRecovered:
+		return fmt.Sprintf("Configured pin %s is reachable again.", modelDetail(intent))
 	default:
 		return ""
 	}
@@ -117,6 +125,38 @@ func duplicatePRBody(intent Intent) string {
 		return fmt.Sprintf("This PR duplicates %s for issue %s. Close or adopt one of them.", existing, issue)
 	}
 	return fmt.Sprintf("This PR duplicates %s for the same issue. Close or adopt one of them.", existing)
+}
+
+func modelLabel(intent Intent) string {
+	if intent.Model != "" {
+		return intent.Model
+	}
+	return "Configured"
+}
+
+func modelDetail(intent Intent) string {
+	parts := []string{}
+	if intent.ModelScope != "" {
+		parts = append(parts, intent.ModelScope)
+	}
+	if intent.ModelHarness != "" {
+		parts = append(parts, string(intent.ModelHarness))
+	}
+	if intent.Model != "" {
+		parts = append(parts, intent.Model)
+	}
+	if len(parts) == 0 {
+		return "model"
+	}
+	return strings.Join(parts, " / ")
+}
+
+func reasonSuffix(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ""
+	}
+	return ": " + reason
 }
 
 func sessionLabel(intent Intent) string {

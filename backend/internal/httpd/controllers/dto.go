@@ -540,6 +540,14 @@ type ProbeAgentResponse = agentsvc.ProbeResult
 // periodic per-harness health snapshot from the agent-health monitor.
 type AgentHealthResponse = agenthealth.Snapshot
 
+// AgentModelAvailabilityResponse is the body of GET /api/v1/agents/models.
+type AgentModelAvailabilityResponse = agentsvc.ModelAvailabilityResponse
+
+// AgentModelAvailabilityQuery is the query string accepted by GET /api/v1/agents/models.
+type AgentModelAvailabilityQuery struct {
+	Force bool `query:"force,omitempty" description:"When true, bypass the short request-path cache and run fresh configured-pin probes."`
+}
+
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
@@ -561,7 +569,7 @@ type NotificationIDParam struct {
 
 // NotificationTarget is the dashboard navigation target for a notification.
 type NotificationTarget struct {
-	Kind      string `json:"kind" enum:"session,pr"`
+	Kind      string `json:"kind" enum:"session,pr,none"`
 	SessionID string `json:"sessionId"`
 	PRURL     string `json:"prUrl,omitempty"`
 }
@@ -572,7 +580,7 @@ type NotificationResponse struct {
 	SessionID    string             `json:"sessionId"`
 	ProjectID    string             `json:"projectId"`
 	PRURL        string             `json:"prUrl"`
-	Type         string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,orchestrator_replaced,orchestrator_replacement_capped,duplicate_pr,worker_died_unfinished,worker_retry_exhausted"`
+	Type         string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,orchestrator_replaced,orchestrator_replacement_capped,duplicate_pr,worker_died_unfinished,worker_retry_exhausted,model_unreachable,model_recovered"`
 	Title        string             `json:"title"`
 	Body         string             `json:"body"`
 	Sensitive    bool               `json:"sensitive"`

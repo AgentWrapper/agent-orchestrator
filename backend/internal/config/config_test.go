@@ -11,7 +11,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
 		t.Setenv(k, "")
 	}
 	for _, k := range []string{"AO_METRICS_INTERVAL", "AO_METRICS_DISK_FREE_PCT", "AO_METRICS_MEM_AVAIL_PCT", "AO_METRICS_LOAD_PER_CORE", "AO_METRICS_ZOMBIE_TICKS"} {
@@ -57,6 +57,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.AgentHealthInterval != DefaultAgentHealthInterval {
 		t.Errorf("AgentHealthInterval = %s, want %s", cfg.AgentHealthInterval, DefaultAgentHealthInterval)
+	}
+	if cfg.ModelRevalidationInterval != DefaultModelRevalidationInterval {
+		t.Errorf("ModelRevalidationInterval = %s, want %s", cfg.ModelRevalidationInterval, DefaultModelRevalidationInterval)
 	}
 	if cfg.Metrics.Interval != DefaultMetricsInterval {
 		t.Errorf("Metrics.Interval = %s, want %s", cfg.Metrics.Interval, DefaultMetricsInterval)
@@ -155,6 +158,26 @@ func TestLoadAgentHealthInterval(t *testing.T) {
 	}
 }
 
+func TestLoadModelRevalidationInterval(t *testing.T) {
+	t.Setenv("AO_MODEL_REVALIDATION_INTERVAL", "12h")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ModelRevalidationInterval != 12*time.Hour {
+		t.Errorf("ModelRevalidationInterval = %s, want 12h", cfg.ModelRevalidationInterval)
+	}
+
+	t.Setenv("AO_MODEL_REVALIDATION_INTERVAL", "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load zero: %v", err)
+	}
+	if cfg.ModelRevalidationInterval != 0 {
+		t.Errorf("ModelRevalidationInterval = %s, want 0 (disabled)", cfg.ModelRevalidationInterval)
+	}
+}
+
 func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
@@ -209,6 +232,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"negative shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "-5s"}},
 		{"bad agent-health interval", map[string]string{"AO_AGENT_HEALTH_INTERVAL": "soon"}},
 		{"negative agent-health interval", map[string]string{"AO_AGENT_HEALTH_INTERVAL": "-1m"}},
+		{"bad model revalidation interval", map[string]string{"AO_MODEL_REVALIDATION_INTERVAL": "daily"}},
+		{"negative model revalidation interval", map[string]string{"AO_MODEL_REVALIDATION_INTERVAL": "-1m"}},
 		{"null origin", map[string]string{"AO_ALLOWED_ORIGINS": "app://renderer,null"}},
 		{"wildcard origin", map[string]string{"AO_ALLOWED_ORIGINS": "*"}},
 		{"bad telemetry events", map[string]string{"AO_TELEMETRY_EVENTS": "maybe"}},

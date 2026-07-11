@@ -11,6 +11,8 @@ const (
 	TargetSession TargetKind = "session"
 	// TargetPR navigates to a pull request view.
 	TargetPR TargetKind = "pr"
+	// TargetNone means the notification has no dashboard navigation target.
+	TargetNone TargetKind = "none"
 )
 
 // Target is the service-facing navigation metadata for a notification.

@@ -18,7 +18,11 @@ test("New Project agents sheet pre-fills the standard bypass + opus baseline", a
 
 	// Defaults are visible and editable, not a hidden bare config.
 	await expect(sheet.getByRole("combobox", { name: "Permission mode" })).toHaveText("Bypass permissions");
-	await expect(sheet.getByRole("textbox", { name: "Model" })).toHaveValue("opus");
+	await expect(sheet.getByLabel("Model")).toHaveValue("opus");
+	await sheet.evaluate((element) => {
+		element.scrollTop = 0;
+	});
+	await page.waitForTimeout(200);
 
 	// Artifact lands under Playwright's gitignored output dir.
 	await page.screenshot({ path: "test-results/create-project-defaults.png" });

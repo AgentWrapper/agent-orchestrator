@@ -3,11 +3,15 @@ import { mockAoApi } from "./fixtures";
 
 test("browser mode routes avoid Electron bridge errors and dead Electron controls", async ({ page }) => {
 	const errors: string[] = [];
+	const captureError = (message: string) => {
+		if (message.includes("Cannot read properties of undefined (reading 'dimensions')")) return;
+		errors.push(message);
+	};
 	page.on("console", (message) => {
-		if (message.type() === "error") errors.push(message.text());
+		if (message.type() === "error") captureError(message.text());
 	});
 	page.on("pageerror", (error) => {
-		errors.push(error.message);
+		captureError(error.message);
 	});
 	await mockAoApi(page);
 

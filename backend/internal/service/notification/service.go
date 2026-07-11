@@ -99,5 +99,8 @@ func targetForRecord(rec domain.NotificationRecord) Target {
 	if rec.PRURL != "" {
 		return Target{Kind: TargetPR, SessionID: rec.SessionID, PRURL: rec.PRURL}
 	}
+	if rec.Type == domain.NotificationModelUnreachable || rec.Type == domain.NotificationModelRecovered {
+		return Target{Kind: TargetNone}
+	}
 	return Target{Kind: TargetSession, SessionID: rec.SessionID}
 }

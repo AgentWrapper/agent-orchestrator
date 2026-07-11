@@ -74,6 +74,14 @@ type AgentModelValidator interface {
 	ValidateModel(ctx context.Context, model string) error
 }
 
+// AgentModelCatalog is an optional capability for adapters that can list model
+// candidates for their provider/account without probing each one. The returned
+// list is candidate metadata only; callers still use AgentModelValidator for a
+// reachability verdict on each explicit model pin.
+type AgentModelCatalog interface {
+	AvailableModels(ctx context.Context) ([]string, error)
+}
+
 // ProbeUnavailableError marks a model probe that produced no verdict because the
 // probe machinery itself failed — a missing binary, a CLI flag the pinned agent
 // version does not accept, an exec that never started, or a timeout.

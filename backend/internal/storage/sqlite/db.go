@@ -6,9 +6,11 @@ package sqlite
 import (
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/pressly/goose/v3"
@@ -93,8 +95,135 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	compat, err := prepareDivergentVersion32Compatibility(db)
+	if err != nil {
+		return err
+	}
+	if compat.runThroughVersion33 {
+		if err := goose.UpTo(db, "migrations", 33); err != nil {
+			return fmt.Errorf("run divergent version 32 compatibility migrations through 33: %w", err)
+		}
+	}
+	for _, version := range compat.markApplied {
+		if err := markGooseVersionApplied(db, version); err != nil {
+			return err
+		}
+	}
 	if err := goose.Up(db, "migrations"); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return nil
+}
+
+type divergentVersion32Compatibility struct {
+	runThroughVersion33 bool
+	markApplied         []int64
+}
+
+func prepareDivergentVersion32Compatibility(db *sql.DB) (divergentVersion32Compatibility, error) {
+	version32, err := gooseVersionApplied(db, 32)
+	if err != nil {
+		return divergentVersion32Compatibility{}, err
+	}
+	if !version32 {
+		return divergentVersion32Compatibility{}, nil
+	}
+	hasPendingDecision, err := sqliteColumnExists(db, "sessions", "pending_decision")
+	if err != nil {
+		return divergentVersion32Compatibility{}, err
+	}
+	if !hasPendingDecision {
+		if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN pending_decision TEXT NOT NULL DEFAULT ''`); err != nil {
+			return divergentVersion32Compatibility{}, fmt.Errorf("apply divergent version 32 pending_decision compatibility: %w", err)
+		}
+	}
+	hasHeadSHA, err := sqliteColumnExists(db, "notifications", "head_sha")
+	if err != nil {
+		return divergentVersion32Compatibility{}, err
+	}
+	hasOrchestratorNotifications, err := sqliteTableSQLContains(db, "notifications", "'orchestrator_replaced'")
+	if err != nil {
+		return divergentVersion32Compatibility{}, err
+	}
+	var compat divergentVersion32Compatibility
+	if hasOrchestratorNotifications {
+		compat.markApplied = append(compat.markApplied, 33)
+	} else if hasHeadSHA {
+		compat.runThroughVersion33 = true
+	}
+	if hasHeadSHA && hasOrchestratorNotifications {
+		compat.markApplied = append(compat.markApplied, 34)
+	}
+	return compat, nil
+}
+
+func markGooseVersionApplied(db *sql.DB, version int64) error {
+	applied, err := gooseVersionApplied(db, version)
+	if err != nil {
+		return err
+	}
+	if applied {
+		return nil
+	}
+	if _, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, version); err != nil {
+		return fmt.Errorf("mark divergent version 32 migration %d applied: %w", version, err)
+	}
+	return nil
+}
+
+func gooseVersionApplied(db *sql.DB, version int64) (bool, error) {
+	var hasTable bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version')`).Scan(&hasTable); err != nil {
+		return false, fmt.Errorf("check goose version table: %w", err)
+	}
+	if !hasTable {
+		return false, nil
+	}
+	var applied bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id = ? AND is_applied = 1)`, version).Scan(&applied); err != nil {
+		return false, fmt.Errorf("check goose version %d: %w", version, err)
+	}
+	return applied, nil
+}
+
+func sqliteColumnExists(db *sql.DB, table, column string) (bool, error) {
+	if table != "notifications" && table != "sessions" {
+		return false, fmt.Errorf("unsupported sqlite column check table %q", table)
+	}
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return false, fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("scan %s schema: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate %s schema: %w", table, err)
+	}
+	return false, nil
+}
+
+func sqliteTableSQLContains(db *sql.DB, table, needle string) (bool, error) {
+	if table != "notifications" {
+		return false, fmt.Errorf("unsupported sqlite table SQL check %q", table)
+	}
+	var schemaSQL string
+	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&schemaSQL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s schema SQL: %w", table, err)
+	}
+	return strings.Contains(schemaSQL, needle), nil
 }

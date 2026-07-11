@@ -4,8 +4,14 @@ import { TriangleAlert, X } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import {
+	fetchModelAvailability,
+	modelAvailabilityQueryKey,
+	useModelAvailabilityQuery,
+} from "../hooks/useModelAvailabilityQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { buildIntake, type IntakeForm, IntakeFields } from "./IntakeFields";
+import { ModelAvailabilityField } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -91,9 +97,14 @@ export function CreateProjectAgentSheet({
 		...agentsQueryOptions,
 		enabled: open,
 	});
+	const modelAvailabilityQuery = useModelAvailabilityQuery(open);
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
+	});
+	const refreshModelsMutation = useMutation({
+		mutationFn: () => fetchModelAvailability({ force: true }),
+		onSuccess: (next) => queryClient.setQueryData(modelAvailabilityQueryKey, next),
 	});
 	const agents = agentsQuery.data;
 	const installedAgents = agents?.installed ?? [];
@@ -105,11 +116,15 @@ export function CreateProjectAgentSheet({
 			? agentsQuery.error.message
 			: "Could not load agent catalog."
 		: null;
-	const displayError = refreshAgentsMutation.isError
-		? refreshAgentsMutation.error instanceof Error
-			? refreshAgentsMutation.error.message
-			: "Could not refresh agent catalog."
-		: agentsError;
+	const displayError = refreshModelsMutation.isError
+		? refreshModelsMutation.error instanceof Error
+			? refreshModelsMutation.error.message
+			: "Could not refresh model availability."
+		: refreshAgentsMutation.isError
+			? refreshAgentsMutation.error instanceof Error
+				? refreshAgentsMutation.error.message
+				: "Could not refresh agent catalog."
+			: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [permissions, setPermissions] = useState<string>(NEW_PROJECT_DEFAULTS.permissions);
@@ -131,7 +146,7 @@ export function CreateProjectAgentSheet({
 		<Dialog.Root open={open} onOpenChange={(next) => !isCreating && onOpenChange(next)}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-32px)] w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
 							<Dialog.Title className="text-[15px] font-semibold text-foreground">Project agents</Dialog.Title>
@@ -209,18 +224,15 @@ export function CreateProjectAgentSheet({
 									</SelectContent>
 								</Select>
 							</div>
-							<div className="flex flex-col gap-1.5">
-								<Label htmlFor="newProjectModel" className="text-[12px] font-medium text-muted-foreground">
-									Model
-								</Label>
-								<input
-									id="newProjectModel"
-									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-									value={model}
-									onChange={(event) => setModel(event.target.value)}
-									placeholder="(agent default)"
-								/>
-							</div>
+							<ModelAvailabilityField
+								id="newProjectModel"
+								label="Model"
+								value={model}
+								onChange={setModel}
+								availability={modelAvailabilityQuery.data}
+								isRefreshing={refreshModelsMutation.isPending || modelAvailabilityQuery.isFetching}
+								onRefresh={() => refreshModelsMutation.mutate()}
+							/>
 						</div>
 						<p className="text-[12px] leading-5 text-muted-foreground">
 							Standard defaults keep a new project runnable unattended. The model applies to claude-code roles; codex
