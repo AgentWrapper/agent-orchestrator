@@ -29,11 +29,21 @@ type orchestratorEnsurer interface {
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error)
+	// ActiveOrchestrator returns a project's live orchestrator without spawning
+	// one, so a paused project can be messaged without creating a fresh session.
+	ActiveOrchestrator(ctx context.Context, projectID domain.ProjectID) (domain.Session, bool, error)
+	// Send delivers a one-off message to a session (the pause notice).
+	Send(ctx context.Context, id domain.SessionID, message string) error
 }
 
 type orchestratorWakeTracker struct {
 	projects     map[domain.ProjectID]orchestratorWakeState
 	replacements map[domain.ProjectID]orchestratorReplacementState
+	// pausedNotified records, per project, the orchestrator instance already
+	// told the fleet is paused, so the notice is sent once per (project,
+	// orchestrator) — re-sent if the orchestrator is replaced mid-pause, and
+	// cleared (after a resume notice) when the project resumes or disappears.
+	pausedNotified map[domain.ProjectID]domain.SessionID
 }
 
 type orchestratorWakeState struct {
@@ -50,8 +60,9 @@ type orchestratorReplacementState struct {
 
 func newOrchestratorWakeTracker() *orchestratorWakeTracker {
 	return &orchestratorWakeTracker{
-		projects:     make(map[domain.ProjectID]orchestratorWakeState),
-		replacements: make(map[domain.ProjectID]orchestratorReplacementState),
+		projects:       make(map[domain.ProjectID]orchestratorWakeState),
+		replacements:   make(map[domain.ProjectID]orchestratorReplacementState),
+		pausedNotified: make(map[domain.ProjectID]domain.SessionID),
 	}
 }
 
@@ -130,6 +141,46 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 			continue
 		}
 		seen[project.ID] = struct{}{}
+		// Respect the pause bit: for a paused (or still-draining) project, do
+		// not spawn a fresh orchestrator or nudge an existing one for new work.
+		// An existing orchestrator is kept running (to supervise the drain) but
+		// told once to idle — spawn nothing new — so it stops looping on work
+		// the spawn guard would reject anyway. Keyed by orchestrator id so a
+		// replacement started mid-pause is (re)notified.
+		if project.PauseState != "" && project.PauseState != projectsvc.PauseStateRunning {
+			if orch, ok, err := sessions.ActiveOrchestrator(ctx, project.ID); err == nil && ok && wakes.pausedNotified[project.ID] != orch.ID {
+				if err := sessions.Send(ctx, orch.ID, orchestratorPausedMessage(project.ID)); err == nil {
+					wakes.pausedNotified[project.ID] = orch.ID
+				} else if ctx.Err() == nil {
+					log.Warn("orchestrator-supervisor: send pause notice failed", "project", project.ID, "session", orch.ID, "err", err)
+				}
+			}
+			continue
+		}
+		// Just resumed: the orchestrator was told to idle until resume, so a
+		// wake-interval-gated nudge is not enough (a signal-less harness would
+		// never wake). Send an explicit resume notice on the transition, and
+		// keep the pause marker until delivery actually succeeds (or there is no
+		// notified orchestrator left) so a transient lookup/send failure retries
+		// next tick rather than stranding the orchestrator asleep.
+		if _, wasPaused := wakes.pausedNotified[project.ID]; wasPaused {
+			orch, ok, err := sessions.ActiveOrchestrator(ctx, project.ID)
+			switch {
+			case err != nil:
+				if ctx.Err() == nil {
+					log.Warn("orchestrator-supervisor: resume lookup failed; will retry", "project", project.ID, "err", err)
+				}
+			case !ok:
+				// No orchestrator remains to wake — nothing to retry.
+				delete(wakes.pausedNotified, project.ID)
+			default:
+				if err := sessions.Send(ctx, orch.ID, orchestratorResumedMessage(project.ID)); err == nil {
+					delete(wakes.pausedNotified, project.ID)
+				} else if ctx.Err() == nil {
+					log.Warn("orchestrator-supervisor: send resume notice failed; will retry", "project", project.ID, "session", orch.ID, "err", err)
+				}
+			}
+		}
 		orchestrator, err := sessions.SpawnOrchestrator(ctx, project.ID, false)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -193,6 +244,11 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 	for projectID := range wakes.replacements {
 		if _, ok := seen[projectID]; !ok {
 			delete(wakes.replacements, projectID)
+		}
+	}
+	for projectID := range wakes.pausedNotified {
+		if _, ok := seen[projectID]; !ok {
+			delete(wakes.pausedNotified, projectID)
 		}
 	}
 }
@@ -436,4 +492,12 @@ func orchestratorWakeMessage(projectID domain.ProjectID) string {
 
 func primeWakeMessage() string {
 	return "Continue your fleet supervision loop. Check all projects, project orchestrators, worker sessions, waiting input, open issues, pull requests, merge/deploy gates, metrics, resource alerts, zombies, cost and usage, and post any needed ticket, recommendation, digest, or escalation."
+}
+
+func orchestratorPausedMessage(projectID domain.ProjectID) string {
+	return "Fleet is PAUSED for project " + string(projectID) + ". Spawn nothing new — new worker spawns are blocked. Let in-flight workers finish and supervise the drain; idle until the fleet is resumed."
+}
+
+func orchestratorResumedMessage(projectID domain.ProjectID) string {
+	return "Fleet is RESUMED for project " + string(projectID) + ". Continue your normal supervision loop: dispatch and check worker sessions, issues, PRs, and merge/deploy gates as usual."
 }

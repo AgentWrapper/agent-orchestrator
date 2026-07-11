@@ -43,6 +43,7 @@ type daemonStatus struct {
 	Ready         string      `json:"ready,omitempty"`
 	Error         string      `json:"error,omitempty"`
 	Resources     string      `json:"resources,omitempty"`
+	Fleet         string      `json:"fleet,omitempty"`
 	owned         bool
 	shutdownToken string
 }
@@ -138,6 +139,7 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	if ready.Status == string(stateReady) {
 		st.State = stateReady
 		st.Resources = c.readResourceSummary(ctx, info.Port)
+		st.Fleet = c.readFleetStatus(ctx, info.Port)
 		return st, nil
 	}
 	st.State = stateNotReady
@@ -232,6 +234,35 @@ func (c *commandContext) readResourceSummary(ctx context.Context, port int) stri
 	return formatResourceSummary(body)
 }
 
+// readFleetStatus reports the daemon-global fleet-pause flag for `ao status`.
+// Best-effort: any failure returns "" so the status view degrades to omitting
+// the fleet line rather than erroring.
+func (c *commandContext) readFleetStatus(ctx context.Context, port int) string {
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	url := fmt.Sprintf("http://%s:%d/api/v1/fleet", config.LoopbackHost, port)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return ""
+	}
+	resp, err := c.deps.HTTPClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var body fleetStatusResult
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return ""
+	}
+	if body.Paused {
+		return "paused"
+	}
+	return "running"
+}
+
 // formatResourceSummary builds the compact resource line, skipping fields the
 // collector could not read (zero total → unknown on this platform).
 func formatResourceSummary(m metricsSummary) string {
@@ -307,6 +338,11 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 	}
 	if st.Resources != "" {
 		if _, err := fmt.Fprintf(out, "  resources: %s\n", st.Resources); err != nil {
+			return err
+		}
+	}
+	if st.Fleet != "" {
+		if _, err := fmt.Fprintf(out, "  fleet: %s\n", st.Fleet); err != nil {
 			return err
 		}
 	}

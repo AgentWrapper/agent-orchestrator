@@ -630,6 +630,26 @@ func projectOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/pause", id: "pauseProject", tag: "projects",
+			summary:    "Pause a project (stop dispatching new work); leaves config untouched",
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.HardPauseParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/resume", id: "resumeProject", tag: "projects",
+			summary:    "Resume a paused project; restores the prior behavior with config unchanged",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodDelete, path: "/api/v1/projects/{id}", id: "removeProject", tag: "projects",
 			summary:    "Remove a project; stops sessions, cleans workspaces, unregisters",
 			pathParams: []any{controllers.ProjectIDParam{}},
@@ -637,6 +657,31 @@ func projectOperations() []operation {
 				{http.StatusOK, projectsvc.RemoveResult{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/fleet", id: "getFleet", tag: "projects",
+			summary: "Report the daemon-global fleet-pause flag",
+			resps: []respUnit{
+				{http.StatusOK, controllers.FleetStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/fleet/pause", id: "pauseFleet", tag: "projects",
+			summary:    "Pause the whole fleet (a distinct global flag; new projects start paused)",
+			pathParams: []any{controllers.HardPauseParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.FleetStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/fleet/resume", id: "resumeFleet", tag: "projects",
+			summary: "Resume the whole fleet",
+			resps: []respUnit{
+				{http.StatusOK, controllers.FleetStatusResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},

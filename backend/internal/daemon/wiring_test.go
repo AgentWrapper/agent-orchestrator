@@ -512,6 +512,7 @@ type fakeOrchestratorEnsurer struct {
 	send         bool
 	sendErr      error
 	sends        []sentMessage
+	pauseSends   []sentMessage
 }
 
 func (f *fakeOrchestratorEnsurer) SpawnOrchestrator(_ context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
@@ -623,6 +624,24 @@ func (f *fakeOrchestratorEnsurer) WakeIdle(_ context.Context, id domain.SessionI
 	return f.send, f.sendErr
 }
 
+func (f *fakeOrchestratorEnsurer) ActiveOrchestrator(_ context.Context, projectID domain.ProjectID) (domain.Session, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, sess := range f.sessions {
+		if sess.ProjectID == projectID && sess.Kind == domain.KindOrchestrator && !sess.IsTerminated {
+			return sess, true, nil
+		}
+	}
+	return domain.Session{}, false, nil
+}
+
+func (f *fakeOrchestratorEnsurer) Send(_ context.Context, id domain.SessionID, message string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pauseSends = append(f.pauseSends, sentMessage{id: id, message: message})
+	return f.sendErr
+}
+
 func (f *fakeOrchestratorEnsurer) seen(projectID domain.ProjectID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -672,6 +691,142 @@ func TestStartOrchestratorSupervisorEnsuresEveryProject(t *testing.T) {
 			t.Fatalf("supervisor did not ensure both projects, calls=%v", ensurer.calls)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestEnsureOrchestratorsSkipsPausedProjects(t *testing.T) {
+	// A paused (or still-draining) project must not get a fresh orchestrator
+	// spawned, while a running peer is ensured as usual.
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{
+		{ID: "run", PauseState: projectsvc.PauseStateRunning},
+		{ID: "paused", PauseState: projectsvc.PauseStatePaused},
+		{ID: "draining", PauseState: projectsvc.PauseStateDraining},
+	}}
+	ensurer := &fakeOrchestratorEnsurer{}
+	ensureOrchestrators(context.Background(), projects, ensurer, nil, newOrchestratorWakeTracker(), time.Now(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if !ensurer.seen("run") {
+		t.Fatalf("running project must be ensured, calls=%v", ensurer.calls)
+	}
+	if ensurer.seen("paused") {
+		t.Fatalf("paused project must NOT be ensured, calls=%v", ensurer.calls)
+	}
+	if ensurer.seen("draining") {
+		t.Fatalf("draining project must NOT be ensured, calls=%v", ensurer.calls)
+	}
+}
+
+func TestEnsureOrchestratorsTellsLiveOrchestratorOnceOnPause(t *testing.T) {
+	// A paused project with a live orchestrator gets a one-time "fleet paused,
+	// idle" notice; it is not re-sent on subsequent ticks.
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{
+		{ID: "paused", PauseState: projectsvc.PauseStatePaused},
+	}}
+	ensurer := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{ID: "paused-orch", ProjectID: "paused", Kind: domain.KindOrchestrator},
+	}}}
+	wakes := newOrchestratorWakeTracker()
+
+	ensureOrchestrators(context.Background(), projects, ensurer, nil, wakes, time.Now(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(ensurer.pauseSends) != 1 || ensurer.pauseSends[0].id != "paused-orch" {
+		t.Fatalf("expected one pause notice to the live orchestrator, got %+v", ensurer.pauseSends)
+	}
+	// Second tick while still paused → no duplicate notice.
+	ensureOrchestrators(context.Background(), projects, ensurer, nil, wakes, time.Now(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(ensurer.pauseSends) != 1 {
+		t.Fatalf("pause notice must be sent once per pause, got %d", len(ensurer.pauseSends))
+	}
+	if ensurer.seen("paused") {
+		t.Fatalf("paused project must never be spawned, calls=%v", ensurer.calls)
+	}
+}
+
+func countMessages(sends []sentMessage, substr string) int {
+	n := 0
+	for _, s := range sends {
+		if strings.Contains(s.message, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestEnsureOrchestratorsResumeSendsNoticeAndReArms(t *testing.T) {
+	// pause → resume → pause: the orchestrator gets a PAUSED notice, then a
+	// RESUMED notice on the transition (so a signal-less harness still wakes),
+	// then a fresh PAUSED notice on the second pause.
+	orch := domain.Session{SessionRecord: domain.SessionRecord{ID: "p-orch", ProjectID: "p", Kind: domain.KindOrchestrator}}
+	ensurer := &fakeOrchestratorEnsurer{sessions: []domain.Session{orch}}
+	wakes := newOrchestratorWakeTracker()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	paused := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "p", PauseState: projectsvc.PauseStatePaused}}}
+	running := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "p", PauseState: projectsvc.PauseStateRunning}}}
+
+	ensureOrchestrators(context.Background(), paused, ensurer, nil, wakes, time.Now(), log)  // PAUSED #1
+	ensureOrchestrators(context.Background(), running, ensurer, nil, wakes, time.Now(), log) // RESUMED
+	ensureOrchestrators(context.Background(), paused, ensurer, nil, wakes, time.Now(), log)  // PAUSED #2
+
+	if got := countMessages(ensurer.pauseSends, "PAUSED"); got != 2 {
+		t.Fatalf("expected 2 PAUSED notices (re-armed after resume), got %d (%+v)", got, ensurer.pauseSends)
+	}
+	if got := countMessages(ensurer.pauseSends, "RESUMED"); got != 1 {
+		t.Fatalf("expected 1 RESUMED notice on the resume transition, got %d (%+v)", got, ensurer.pauseSends)
+	}
+}
+
+func TestEnsureOrchestratorsRetriesResumeNoticeUntilDelivered(t *testing.T) {
+	// A transient resume-delivery failure must not strand the orchestrator: the
+	// pause marker is retained so the next tick retries until it lands.
+	orch := domain.Session{SessionRecord: domain.SessionRecord{ID: "p-orch", ProjectID: "p", Kind: domain.KindOrchestrator}}
+	ensurer := &fakeOrchestratorEnsurer{sessions: []domain.Session{orch}}
+	wakes := newOrchestratorWakeTracker()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	paused := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "p", PauseState: projectsvc.PauseStatePaused}}}
+	running := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "p", PauseState: projectsvc.PauseStateRunning}}}
+
+	ensureOrchestrators(context.Background(), paused, ensurer, nil, wakes, time.Now(), log) // PAUSED notice, marker set
+
+	ensurer.sendErr = errors.New("pane closed")
+	ensureOrchestrators(context.Background(), running, ensurer, nil, wakes, time.Now(), log) // resume send fails
+	if _, ok := wakes.pausedNotified["p"]; !ok {
+		t.Fatal("pause marker must be retained after a failed resume delivery so it retries")
+	}
+
+	ensurer.sendErr = nil
+	ensureOrchestrators(context.Background(), running, ensurer, nil, wakes, time.Now(), log) // retry succeeds
+	if _, ok := wakes.pausedNotified["p"]; ok {
+		t.Fatal("pause marker must clear once the resume notice is delivered")
+	}
+	if countMessages(ensurer.pauseSends, "RESUMED") < 1 {
+		t.Fatalf("a RESUMED notice must eventually be delivered, got %+v", ensurer.pauseSends)
+	}
+}
+
+func TestEnsureOrchestratorsReNotifiesReplacedOrchestratorDuringPause(t *testing.T) {
+	// If the orchestrator is replaced while the project stays paused, the new
+	// instance must also be told to idle (dedup is keyed by orchestrator id).
+	ensurer := &fakeOrchestratorEnsurer{sessions: []domain.Session{
+		{SessionRecord: domain.SessionRecord{ID: "orch-A", ProjectID: "p", Kind: domain.KindOrchestrator}},
+	}}
+	wakes := newOrchestratorWakeTracker()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	paused := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "p", PauseState: projectsvc.PauseStatePaused}}}
+
+	ensureOrchestrators(context.Background(), paused, ensurer, nil, wakes, time.Now(), log)
+	// Replace the orchestrator (A terminated, B live) while still paused.
+	ensurer.sessions = []domain.Session{
+		{SessionRecord: domain.SessionRecord{ID: "orch-A", ProjectID: "p", Kind: domain.KindOrchestrator, IsTerminated: true}},
+		{SessionRecord: domain.SessionRecord{ID: "orch-B", ProjectID: "p", Kind: domain.KindOrchestrator}},
+	}
+	ensureOrchestrators(context.Background(), paused, ensurer, nil, wakes, time.Now(), log)
+
+	ids := map[domain.SessionID]bool{}
+	for _, s := range ensurer.pauseSends {
+		ids[s.id] = true
+	}
+	if !ids["orch-A"] || !ids["orch-B"] {
+		t.Fatalf("both orchestrator instances must be notified during the pause, got %+v", ensurer.pauseSends)
 	}
 }
 

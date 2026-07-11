@@ -78,6 +78,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ProjectID"
+          - column: "projects.paused"
+            go_type: "bool"
+          - column: "daemon_settings.fleet_paused"
+            go_type: "bool"
           - column: "workspace_repos.project_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

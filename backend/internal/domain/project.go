@@ -46,6 +46,12 @@ type ProjectRecord struct {
 	// Config holds the typed per-project configuration AO resolves at spawn. An
 	// IsZero value means unset.
 	Config ProjectConfig
+	// Paused is the per-project fleet-pause bit. It is persisted independently
+	// of Config (its own column, mutated only by SetProjectPaused) so pausing
+	// then resuming leaves Config byte-identical. Enforcement (intake gate,
+	// spawn guard, drain) treats a project as paused when this bit is set OR the
+	// daemon-global fleet-paused flag is set.
+	Paused bool
 }
 
 // WorkspaceRepoRecord is a child repo registered under a workspace project.

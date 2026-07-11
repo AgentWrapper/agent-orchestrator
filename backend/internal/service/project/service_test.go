@@ -93,8 +93,15 @@ func wantCode(t *testing.T, err error, code string) {
 }
 
 type fakeSessionOps struct {
-	projects []domain.ProjectID
-	err      error
+	projects  []domain.ProjectID
+	err       error
+	hardDrain []hardDrainCall
+	killed    int
+}
+
+type hardDrainCall struct {
+	project              domain.ProjectID
+	includeOrchestrators bool
 }
 
 type captureSink struct {
@@ -120,6 +127,11 @@ func (*captureSink) Close(context.Context) error { return nil }
 func (f *fakeSessionOps) TeardownProject(_ context.Context, project domain.ProjectID) error {
 	f.projects = append(f.projects, project)
 	return f.err
+}
+
+func (f *fakeSessionOps) HardDrain(_ context.Context, project domain.ProjectID, includeOrchestrators bool) (int, error) {
+	f.hardDrain = append(f.hardDrain, hardDrainCall{project: project, includeOrchestrators: includeOrchestrators})
+	return f.killed, f.err
 }
 
 func TestManager_AddListGetRemove(t *testing.T) {

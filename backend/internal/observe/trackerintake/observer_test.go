@@ -963,6 +963,7 @@ type fakeStore struct {
 	openPRs      []domain.PullRequest
 	openPRsErr   error
 	prsBySession map[domain.SessionID][]domain.PullRequest
+	fleetPaused  bool
 }
 
 func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
@@ -979,6 +980,10 @@ func (f *fakeStore) ListOpenPRs(context.Context) ([]domain.PullRequest, error) {
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error) {
 	return append([]domain.PullRequest(nil), f.prsBySession[sessionID]...), nil
+}
+
+func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
+	return f.fleetPaused, nil
 }
 
 type fakeNotificationSink struct {

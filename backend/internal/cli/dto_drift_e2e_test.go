@@ -156,8 +156,14 @@ func authorizedCodexInventory() agentsvc.Inventory {
 // the CLI's request body. Every other method is a no-op so it satisfies the
 // projectsvc.Manager interface.
 type fakeProjectManager struct {
-	added      projectsvc.AddInput
-	configured projectsvc.SetConfigInput
+	added         projectsvc.AddInput
+	configured    projectsvc.SetConfigInput
+	pausedProject *domain.ProjectID
+	pausedValue   bool
+	pausedHard    bool
+	fleetPaused   bool
+	fleetSet      *bool
+	fleetHard     bool
 }
 
 var _ projectsvc.Manager = (*fakeProjectManager)(nil)
@@ -188,6 +194,28 @@ func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, i
 
 func (f *fakeProjectManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
 	return projectsvc.RemoveResult{}, nil
+}
+
+func (f *fakeProjectManager) SetProjectPaused(_ context.Context, id domain.ProjectID, paused, hard bool) (projectsvc.Project, error) {
+	f.pausedProject = &id
+	f.pausedValue = paused
+	f.pausedHard = hard
+	state := projectsvc.PauseStatePaused
+	if !paused {
+		state = projectsvc.PauseStateRunning
+	}
+	return projectsvc.Project{ID: id, Paused: paused, PauseState: state}, nil
+}
+
+func (f *fakeProjectManager) FleetPaused(context.Context) (bool, error) {
+	return f.fleetPaused, nil
+}
+
+func (f *fakeProjectManager) SetFleetPaused(_ context.Context, paused, hard bool) error {
+	f.fleetPaused = paused
+	f.fleetSet = &paused
+	f.fleetHard = hard
+	return nil
 }
 
 // startDriftTestDaemon stands up the real router+controllers backed by the
