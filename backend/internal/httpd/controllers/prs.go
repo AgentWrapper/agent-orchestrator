@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -73,9 +74,18 @@ func writePRError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PRECONDITIONS_UNMET", "PR merge preconditions are not met", nil)
 	case errors.Is(err, prsvc.ErrNothingToResolve):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOTHING_TO_RESOLVE", "No unresolved review threads to resolve", nil)
+	case errors.Is(err, prsvc.ErrActionUnavailable):
+		apispec.NotImplemented(w, r, r.Method, prActionSpecPath(r.URL.Path))
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PR_OPERATION_FAILED", "PR operation failed", nil)
 	}
+}
+
+func prActionSpecPath(path string) string {
+	if strings.HasSuffix(path, "/resolve-comments") {
+		return "/api/v1/prs/{id}/resolve-comments"
+	}
+	return "/api/v1/prs/{id}/merge"
 }
 
 // isEmptyBody reports whether err signals an absent or empty request body.

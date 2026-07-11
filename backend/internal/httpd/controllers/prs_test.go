@@ -104,6 +104,15 @@ func TestPRsRoutes_Merge_MainCIRed409(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusConflict, "MAIN_CI_RED")
 }
 
+func TestPRsRoutes_Merge_ActionUnavailableReturns501(t *testing.T) {
+	svc := &fakePRService{mergeErr: prsvc.ErrActionUnavailable}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+}
+
 // ---- Merge: 422 ----
 
 func TestPRsRoutes_Merge_422(t *testing.T) {

@@ -266,6 +266,259 @@ func TestParsePRURL(t *testing.T) {
 	}
 }
 
+func TestFetchCommitChecksReportsFailingMainCI(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("per_page"); got != "100" {
+			t.Fatalf("per_page = %q, want 100", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 2,
+			"check_runs": []map[string]any{
+				{
+					"id":         1001,
+					"name":       "go",
+					"status":     "completed",
+					"conclusion": "failure",
+					"html_url":   "https://github.com/octocat/hello/actions/runs/1001",
+					"head_sha":   "fee462ed",
+				},
+				{
+					"id":         1002,
+					"name":       "cli-e2e",
+					"status":     "completed",
+					"conclusion": "success",
+					"html_url":   "https://github.com/octocat/hello/actions/runs/1002",
+					"head_sha":   "fee462ed",
+				},
+			},
+		})
+	})
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/status", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("per_page"); got != "100" {
+			t.Fatalf("status per_page = %q, want 100", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": "fee462ed", "statuses": []map[string]any{}})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIFailing) || got.HeadSHA != "fee462ed" {
+		t.Fatalf("summary/head = %q/%q, want failing/fee462ed", got.Summary, got.HeadSHA)
+	}
+	if len(got.FailedChecks) != 1 || got.FailedChecks[0].Name != "go" {
+		t.Fatalf("failed checks = %+v, want go only", got.FailedChecks)
+	}
+}
+
+func TestFetchCommitChecksReportsFailingCommitStatus(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]any{}})
+	})
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state":       "failure",
+			"sha":         "abc123",
+			"total_count": 1,
+			"statuses": []map[string]any{
+				{"context": "legacy-ci", "state": "failure", "target_url": "https://ci.example/1"},
+			},
+		})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIFailing) || got.HeadSHA != "abc123" {
+		t.Fatalf("summary/head = %q/%q, want failing/abc123", got.Summary, got.HeadSHA)
+	}
+	if len(got.FailedChecks) != 1 || got.FailedChecks[0].Name != "legacy-ci" {
+		t.Fatalf("failed checks = %+v, want legacy-ci", got.FailedChecks)
+	}
+}
+
+func TestFetchCommitChecksHonorsCombinedStatusState(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]any{}})
+	})
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state":       "failure",
+			"sha":         "abc123",
+			"total_count": 1,
+			"statuses":    []map[string]any{{"context": "visible-success", "state": "success"}},
+		})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIFailing) {
+		t.Fatalf("summary = %q, want failing from combined status state", got.Summary)
+	}
+}
+
+func TestFetchCommitChecksIgnoresEmptyCombinedStatusRollup(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 1,
+			"check_runs": []map[string]any{
+				{"name": "go", "status": "completed", "conclusion": "success", "head_sha": "abc123"},
+			},
+		})
+	})
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state":       "pending",
+			"sha":         "abc123",
+			"total_count": 0,
+			"statuses":    []map[string]any{},
+		})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIPassing) {
+		t.Fatalf("summary = %q, want passing from green check-runs", got.Summary)
+	}
+}
+
+func TestFetchCommitChecksDoesNotPassWithoutAnyChecks(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]any{}})
+	})
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state":       "success",
+			"sha":         "abc123",
+			"total_count": 0,
+			"statuses":    []map[string]any{},
+		})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIUnknown) {
+		t.Fatalf("summary = %q, want unknown with no check-runs or commit statuses", got.Summary)
+	}
+}
+
+func TestFetchCommitChecksMixedPassingAndUnknownIsUnknown(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 2,
+			"check_runs": []map[string]any{
+				{"name": "go", "status": "completed", "conclusion": "success", "head_sha": "abc123"},
+				{"name": "mystery", "status": "unexpected", "conclusion": "", "head_sha": "abc123"},
+			},
+		})
+	})
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "sha": "abc123", "total_count": 0, "statuses": []map[string]any{}})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIUnknown) {
+		t.Fatalf("summary = %q, want unknown when a check-run is unknown", got.Summary)
+	}
+}
+
+func TestFetchCommitChecksFailsClosedWhenTruncated(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 101,
+			"check_runs": []map[string]any{
+				{"name": "visible", "status": "completed", "conclusion": "success", "head_sha": "abc123"},
+			},
+		})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIUnknown) {
+		t.Fatalf("summary = %q, want unknown for truncated check runs", got.Summary)
+	}
+}
+
+func TestFetchCommitChecksPreservesVisibleFailureWhenTruncated(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 101,
+			"check_runs": []map[string]any{
+				{"name": "visible-fail", "status": "completed", "conclusion": "failure", "head_sha": "abc123"},
+			},
+		})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIFailing) || len(got.FailedChecks) != 1 || got.FailedChecks[0].Name != "visible-fail" {
+		t.Fatalf("summary/failed = %q/%+v, want failing visible-fail", got.Summary, got.FailedChecks)
+	}
+}
+
+func TestFetchCommitChecksTreatsActionRequiredAsPending(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 2,
+			"check_runs": []map[string]any{
+				{"name": "build", "status": "completed", "conclusion": "success", "head_sha": "abc123"},
+				{"name": "manual-gate", "status": "completed", "conclusion": "action_required", "head_sha": "abc123"},
+			},
+		})
+	})
+	fake.on(http.MethodGet, "/repos/octocat/hello/commits/main/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": "pending", "sha": "abc123", "statuses": []map[string]any{}})
+	})
+
+	got, err := newProviderForTest(t, fake).FetchCommitChecks(ctx(), ports.SCMRepo{Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, "main")
+	if err != nil {
+		t.Fatalf("FetchCommitChecks: %v", err)
+	}
+	if got.Summary != string(domain.CIPending) {
+		t.Fatalf("summary = %q, want pending", got.Summary)
+	}
+}
+
 func TestRestListPullToSCMCarriesHeadRepo(t *testing.T) {
 	var pull restListPull
 	pull.Number = 7

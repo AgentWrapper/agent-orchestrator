@@ -206,6 +206,23 @@ type SCMCIObservation struct {
 	FailureLogTail string
 }
 
+// SCMCommitChecksObservation carries CI state for a single repository commit
+// such as the default branch head used by merge-freeze gates.
+type SCMCommitChecksObservation struct {
+	// Repo is the repository whose commit checks were fetched.
+	Repo SCMRepo
+	// Ref is the requested branch/ref/SHA.
+	Ref string
+	// HeadSHA is the commit SHA GitHub reported for the check runs.
+	HeadSHA string
+	// Summary is AO's normalized aggregate CI state: unknown, pending, passing, or failing.
+	Summary string
+	// Checks contains all normalized visible check/status contexts.
+	Checks []SCMCheckObservation
+	// FailedChecks contains only failing/cancelled checks.
+	FailedChecks []SCMCheckObservation
+}
+
 // SCMCheckObservation is one normalized check/status context. ProviderID is an
 // optional provider-owned identifier (for GitHub, Actions job/check-run id) used
 // by the provider to fetch logs; consumers should not attach meaning to it.

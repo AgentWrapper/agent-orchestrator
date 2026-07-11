@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -219,6 +220,83 @@ func TestTrackerTokenSourcePrefersAOGitHubToken(t *testing.T) {
 	}
 	if token != "ao-token" {
 		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
+	}
+}
+
+type fakePROpenLister struct {
+	prs []domain.PullRequest
+}
+
+func (f fakePROpenLister) ListOpenPRs(context.Context) ([]domain.PullRequest, error) {
+	return f.prs, nil
+}
+
+type fakePRCommitChecks struct {
+	obs ports.SCMCommitChecksObservation
+}
+
+func (f fakePRCommitChecks) FetchCommitChecks(context.Context, ports.SCMRepo, string) (ports.SCMCommitChecksObservation, error) {
+	return f.obs, nil
+}
+
+type fakePRTracker struct {
+	labels []string
+}
+
+func (f fakePRTracker) Get(context.Context, domain.TrackerID) (domain.Issue, error) {
+	return domain.Issue{Labels: f.labels}, nil
+}
+
+func (f fakePRTracker) List(context.Context, domain.TrackerRepo, domain.ListFilter) ([]domain.Issue, error) {
+	return nil, nil
+}
+
+func (f fakePRTracker) Preflight(context.Context) error { return nil }
+
+func TestBuildPRActionServiceWiresMainCIGate(t *testing.T) {
+	svc := buildPRActionService(
+		fakePROpenLister{prs: []domain.PullRequest{{
+			URL:          "https://github.com/octocat/hello/pull/42",
+			Number:       42,
+			Repo:         "octocat/hello",
+			TargetBranch: "main",
+		}}},
+		fakePRCommitChecks{obs: ports.SCMCommitChecksObservation{
+			Summary:      string(domain.CIFailing),
+			HeadSHA:      "fee462ed",
+			FailedChecks: []ports.SCMCheckObservation{{Name: "go", Status: string(domain.PRCheckFailed)}},
+		}},
+		fakePRTracker{},
+	)
+	if svc == nil {
+		t.Fatal("buildPRActionService returned nil")
+	}
+	_, err := svc.Merge(context.Background(), "42")
+	if !errors.Is(err, prsvc.ErrMainCIRed) {
+		t.Fatalf("err = %v, want ErrMainCIRed", err)
+	}
+}
+
+func TestBuildPRActionServiceFailsClosedWithoutMergeExecutor(t *testing.T) {
+	svc := buildPRActionService(
+		fakePROpenLister{prs: []domain.PullRequest{{
+			URL:          "https://github.com/octocat/hello/pull/42",
+			Number:       42,
+			Repo:         "octocat/hello",
+			TargetBranch: "main",
+		}}},
+		fakePRCommitChecks{obs: ports.SCMCommitChecksObservation{Summary: string(domain.CIPassing), HeadSHA: "abc123"}},
+		fakePRTracker{},
+	)
+	_, err := svc.Merge(context.Background(), "42")
+	if !errors.Is(err, prsvc.ErrActionUnavailable) {
+		t.Fatalf("err = %v, want ErrActionUnavailable", err)
+	}
+}
+
+func TestBuildPRActionServiceRequiresSCM(t *testing.T) {
+	if got := buildPRActionService(fakePROpenLister{}, nil, fakePRTracker{}); got != nil {
+		t.Fatalf("service = %#v, want nil without SCM", got)
 	}
 }
 

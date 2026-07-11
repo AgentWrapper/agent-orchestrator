@@ -105,6 +105,104 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 	return ports.SCMGuardResult{ETag: firstNonEmptyHeader(resp.ETag, etag), NotModified: resp.NotModified}, nil
 }
 
+// FetchCommitChecks fetches check-runs for a single repository ref. It is used
+// by production merge-freeze gates that need the default branch's current CI.
+func (p *Provider) FetchCommitChecks(ctx context.Context, repo ports.SCMRepo, ref string) (ports.SCMCommitChecksObservation, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ports.SCMCommitChecksObservation{}, fmt.Errorf("%w: empty ref", ErrNotFound)
+	}
+	q := url.Values{}
+	q.Set("per_page", "100")
+	resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(repo.Owner, repo.Name, "commits", ref, "check-runs"), q, nil)
+	if err != nil {
+		return ports.SCMCommitChecksObservation{}, err
+	}
+	var payload restCommitCheckRuns
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		return ports.SCMCommitChecksObservation{}, fmt.Errorf("github scm: decode commit check-runs: %w", err)
+	}
+	out := ports.SCMCommitChecksObservation{Repo: repo, Ref: ref, Summary: string(domain.CIUnknown)}
+	runs := payload.CheckRuns
+	truncatedRuns := payload.TotalCount > len(runs)
+	pending, passing, unknown := false, false, false
+	for _, run := range runs {
+		ch := commitCheckRunObservation(run)
+		if out.HeadSHA == "" {
+			out.HeadSHA = run.HeadSHA
+		}
+		out.Checks = append(out.Checks, ch)
+		switch domain.PRCheckStatus(ch.Status) {
+		case domain.PRCheckFailed, domain.PRCheckCancelled:
+			out.FailedChecks = append(out.FailedChecks, ch)
+		case domain.PRCheckQueued, domain.PRCheckInProgress:
+			pending = true
+		case domain.PRCheckPassed, domain.PRCheckSkipped:
+			passing = true
+		case domain.PRCheckUnknown:
+			unknown = true
+		}
+	}
+	if truncatedRuns {
+		if len(out.FailedChecks) > 0 {
+			out.Summary = string(domain.CIFailing)
+		}
+		return out, nil
+	}
+	statuses, err := p.fetchCombinedStatus(ctx, repo, ref)
+	if err != nil {
+		return ports.SCMCommitChecksObservation{}, err
+	}
+	if out.HeadSHA == "" {
+		out.HeadSHA = statuses.SHA
+	}
+	for _, status := range statuses.Statuses {
+		ch := commitStatusObservation(status)
+		out.Checks = append(out.Checks, ch)
+		switch domain.PRCheckStatus(ch.Status) {
+		case domain.PRCheckFailed, domain.PRCheckCancelled:
+			out.FailedChecks = append(out.FailedChecks, ch)
+		case domain.PRCheckQueued, domain.PRCheckInProgress:
+			pending = true
+		case domain.PRCheckPassed, domain.PRCheckSkipped:
+			passing = true
+		case domain.PRCheckUnknown:
+			unknown = true
+		}
+	}
+	combined := domain.CIUnknown
+	if statuses.TotalCount > 0 || len(statuses.Statuses) > 0 {
+		combined = combinedStatusSummary(statuses.State)
+	}
+	switch {
+	case len(out.FailedChecks) > 0 || combined == domain.CIFailing:
+		out.Summary = string(domain.CIFailing)
+	case pending || combined == domain.CIPending:
+		out.Summary = string(domain.CIPending)
+	case unknown:
+		out.Summary = string(domain.CIUnknown)
+	case passing || combined == domain.CIPassing:
+		out.Summary = string(domain.CIPassing)
+	default:
+		out.Summary = string(domain.CIUnknown)
+	}
+	return out, nil
+}
+
+func (p *Provider) fetchCombinedStatus(ctx context.Context, repo ports.SCMRepo, ref string) (restCombinedStatus, error) {
+	q := url.Values{}
+	q.Set("per_page", "100")
+	resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(repo.Owner, repo.Name, "commits", ref, "status"), q, nil)
+	if err != nil {
+		return restCombinedStatus{}, err
+	}
+	var payload restCombinedStatus
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		return restCombinedStatus{}, fmt.Errorf("github scm: decode commit status: %w", err)
+	}
+	return payload, nil
+}
+
 // PostIssueComment posts body as an issue comment on the PR at prURL. A PR and
 // an issue share a number on GitHub, so the issue-comments endpoint is the
 // simplest way to leave a non-review comment on a pull request. It satisfies
@@ -173,6 +271,106 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 		return "", err
 	}
 	return tailLines(log, ciFailureLogTailLines), nil
+}
+
+type restCommitCheckRuns struct {
+	TotalCount int                  `json:"total_count"`
+	CheckRuns  []restCommitCheckRun `json:"check_runs"`
+}
+
+type restCommitCheckRun struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	HTMLURL    string `json:"html_url"`
+	HeadSHA    string `json:"head_sha"`
+}
+
+type restCombinedStatus struct {
+	State      string             `json:"state"`
+	SHA        string             `json:"sha"`
+	TotalCount int                `json:"total_count"`
+	Statuses   []restCommitStatus `json:"statuses"`
+}
+
+type restCommitStatus struct {
+	Context   string `json:"context"`
+	State     string `json:"state"`
+	TargetURL string `json:"target_url"`
+}
+
+func commitCheckRunObservation(run restCommitCheckRun) ports.SCMCheckObservation {
+	ch := ports.SCMCheckObservation{
+		Name:       run.Name,
+		Status:     string(commitCheckRunStatus(run)),
+		Conclusion: strings.ToLower(run.Conclusion),
+		URL:        run.HTMLURL,
+	}
+	if run.ID > 0 {
+		ch.ProviderID = strconv.FormatInt(run.ID, 10)
+	}
+	return ch
+}
+
+func commitStatusObservation(status restCommitStatus) ports.SCMCheckObservation {
+	return ports.SCMCheckObservation{
+		Name:       status.Context,
+		Status:     string(commitStatusState(status.State)),
+		Conclusion: strings.ToLower(status.State),
+		URL:        status.TargetURL,
+	}
+}
+
+func commitCheckRunStatus(run restCommitCheckRun) domain.PRCheckStatus {
+	conclusion := strings.ToLower(strings.TrimSpace(run.Conclusion))
+	status := strings.ToLower(strings.TrimSpace(run.Status))
+	switch conclusion {
+	case "success", "neutral", "skipped":
+		return domain.PRCheckPassed
+	case "failure", "timed_out", "startup_failure":
+		return domain.PRCheckFailed
+	case "cancelled":
+		return domain.PRCheckCancelled
+	case "action_required", "stale":
+		return domain.PRCheckInProgress
+	}
+	switch status {
+	case "queued", "requested", "waiting", "pending":
+		return domain.PRCheckQueued
+	case "in_progress":
+		return domain.PRCheckInProgress
+	case "completed":
+		return domain.PRCheckInProgress
+	default:
+		return domain.PRCheckUnknown
+	}
+}
+
+func commitStatusState(state string) domain.PRCheckStatus {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "success":
+		return domain.PRCheckPassed
+	case "failure", "error":
+		return domain.PRCheckFailed
+	case "pending", "expected":
+		return domain.PRCheckInProgress
+	default:
+		return domain.PRCheckUnknown
+	}
+}
+
+func combinedStatusSummary(state string) domain.CIState {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "success":
+		return domain.CIPassing
+	case "failure", "error":
+		return domain.CIFailing
+	case "pending", "expected":
+		return domain.CIPending
+	default:
+		return domain.CIUnknown
+	}
 }
 
 // FetchReviewThreads fetches review threads separately from the fast PR/CI path.
