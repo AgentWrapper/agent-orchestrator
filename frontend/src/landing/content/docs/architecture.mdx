@@ -187,7 +187,7 @@ The `orchestratorRules` field in `ProjectConfig` is reserved for orchestrator-ro
 Orchestrator sessions do not receive the standard three-layer prompt. Instead, `generateOrchestratorPrompt()` in `packages/core/src/orchestrator-prompt.ts` builds a standalone prompt that provides:
 
 - **Role rules** — read-only investigations only; never own a PR; never use `tmux send-keys` directly; always use `ao send` / `ao spawn` to delegate.
-- **Project info** — name, repo, default branch, session prefix, local path, dashboard port.
+- **Project info** — name, repo, default branch, project prefix, local path, dashboard port.
 - **Quick-start commands** — `ao status`, `ao spawn`, `ao batch-spawn`, `ao session claim-pr`, `ao send`, `ao open`.
 - **Available `ao` commands table** — full reference adapted to whether a repo is configured.
 - **Session management workflows** — spawning, monitoring, PR takeover, investigation workflow, cleanup.

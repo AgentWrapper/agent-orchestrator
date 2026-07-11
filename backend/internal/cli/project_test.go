@@ -47,7 +47,7 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
-			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"sessionPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
 			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
 		default:
@@ -79,7 +79,8 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 	if got.Config.Workspace != "in-place" {
 		t.Fatalf("workspace = %q, want in-place", got.Config.Workspace)
 	}
-	if got.Config.SessionPrefix != "fleet" ||
+	if got.Config.ProjectPrefix != "fleet" ||
+		got.Config.SessionPrefix != "" ||
 		got.Config.Env["FOO"] != "bar" ||
 		got.Config.AgentConfig.Permissions != "auto" ||
 		got.Config.Worker.Agent != "codex" ||
@@ -135,6 +136,45 @@ func TestProjectSetConfig_AutonomousMergeFlagMergesExistingConfig(t *testing.T) 
 	}
 	if got.Config.SessionPrefix != "fleet" || got.Config.Env["FOO"] != "bar" || got.Config.Worker.Agent != "codex" || got.Config.Orchestrator.Agent != "claude-code" {
 		t.Fatalf("flag update did not preserve existing config: %#v", got.Config)
+	}
+}
+
+func TestProjectSetConfig_ProjectPrefixFlagPreservesAutonomousMerge(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []projectCapture
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
+			requests = append(requests, projectCapture{method: r.Method, path: r.URL.Path, body: body})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"old","autonomousMerge":true,"env":{"FOO":"bar"}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
+			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--project-prefix", "new")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %#v, want GET then PUT", requests)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(requests[1].body, &got); err != nil {
+		t.Fatalf("decode request: %v\nbody=%s", err, requests[1].body)
+	}
+	if got.Config.ProjectPrefix != "new" || got.Config.SessionPrefix != "" || !got.Config.AutonomousMerge || got.Config.Env["FOO"] != "bar" {
+		t.Fatalf("project prefix update did not preserve existing config: %#v", got.Config)
 	}
 }
 
@@ -389,6 +429,22 @@ func TestBuildProjectConfigWorkspaceFlag(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfigRejectsConflictingProjectPrefixAliases(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{}}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--project-prefix", "new", "--session-prefix", "old")
+	if err == nil {
+		t.Fatal("expected conflicting prefix flags to fail")
+	}
+	if !strings.Contains(err.Error(), "--project-prefix and --session-prefix disagree") {
+		t.Fatalf("error = %q, want conflicting prefix message", err)
+	}
+}
+
 // TestBuildProjectConfigWorkspaceConfigJSON is the CLI-side half of the
 // silent-drop guard: --config-json must carry BOTH the top-level and per-role
 // workspace mode into the mirror, and re-marshaling the mirror (exactly what
@@ -516,7 +572,7 @@ func TestProjectList_Success(t *testing.T) {
 	if capture.method != http.MethodGet || capture.path != "/api/v1/projects" {
 		t.Fatalf("request = %s %s, want GET /api/v1/projects", capture.method, capture.path)
 	}
-	if !strings.Contains(out, "ID") || !strings.Contains(out, "SESSION PREFIX") {
+	if !strings.Contains(out, "ID") || !strings.Contains(out, "PROJECT PREFIX") {
 		t.Fatalf("output missing table header:\n%s", out)
 	}
 	if strings.Index(out, "alpha") > strings.Index(out, "zeta") {

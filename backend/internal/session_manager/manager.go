@@ -897,9 +897,9 @@ func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.Role
 }
 
 // sessionPrefix returns the display prefix for a project: the explicit
-// SessionPrefix when set, otherwise the first 12 characters of the project ID.
+// projectPrefix when set, otherwise the first 12 characters of the project ID.
 func sessionPrefix(project domain.ProjectRecord) string {
-	if p := strings.TrimSpace(project.Config.SessionPrefix); p != "" {
+	if p := project.Config.EffectiveProjectPrefix(); p != "" {
 		return p
 	}
 	return domain.DefaultProjectPrefix(project.ID)
@@ -907,7 +907,7 @@ func sessionPrefix(project domain.ProjectRecord) string {
 
 // branchSessionPrefix returns the prefix used by default branch naming.
 // Orchestrators use the stable project-derived prefix so changing the display
-// sessionPrefix cannot rename their canonical branch.
+// projectPrefix cannot rename their canonical branch.
 func branchSessionPrefix(project domain.ProjectRecord, kind domain.SessionKind) string {
 	if kind == domain.KindOrchestrator {
 		return domain.DefaultProjectPrefix(project.ID)
@@ -1113,6 +1113,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		Kind:          rec.Kind,
 		SessionPrefix: sessionPrefix(project),
 		Branch:        meta.Branch,
+		RestorePath:   meta.WorkspacePath,
 		Mode:          mode,
 	})
 	if err != nil {
@@ -1397,6 +1398,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 		Kind:          rec.Kind,
 		SessionPrefix: sessionPrefix(project),
 		Branch:        meta.Branch,
+		RestorePath:   meta.WorkspacePath,
 		Mode:          sessionWorkspaceMode(meta),
 	})
 	if err != nil {
@@ -1796,6 +1798,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
+			RestorePath:   rec.Metadata.WorkspacePath,
 			Mode:          sessionWorkspaceMode(rec.Metadata),
 		})
 		if err != nil {

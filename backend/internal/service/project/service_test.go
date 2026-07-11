@@ -296,6 +296,9 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	if list[0].SessionPrefix != "ao" {
 		t.Fatalf("default session prefix = %q, want derived 'ao'", list[0].SessionPrefix)
 	}
+	if list[0].ProjectPrefix != "ao" {
+		t.Fatalf("default project prefix = %q, want derived 'ao'", list[0].ProjectPrefix)
+	}
 }
 
 func TestManager_GetUsesConfiguredDefaultHarness(t *testing.T) {
@@ -619,7 +622,7 @@ func TestManager_SetConfigStillRejectsUnreachableAfterFailOpen(t *testing.T) {
 	wantCode(t, err, "INVALID_PROJECT_CONFIG")
 }
 
-func TestManager_SetConfigAllowsSessionPrefixChange(t *testing.T) {
+func TestManager_SetConfigAllowsProjectPrefixChange(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
@@ -633,13 +636,44 @@ func TestManager_SetConfigAllowsSessionPrefixChange(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{SessionPrefix: "lb"},
+		Config: domain.ProjectConfig{ProjectPrefix: "lb"},
 	})
 	if err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
-	if proj.Config == nil || proj.Config.SessionPrefix != "lb" {
-		t.Fatalf("SessionPrefix = %#v, want lb", proj.Config)
+	if proj.Config == nil || proj.Config.ProjectPrefix != "lb" || proj.Config.SessionPrefix != "" {
+		t.Fatalf("ProjectPrefix = %#v, want canonical lb", proj.Config)
+	}
+
+	list, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if list[0].ProjectPrefix != "lb" || list[0].SessionPrefix != "lb" {
+		t.Fatalf("prefix summary = projectPrefix %q sessionPrefix %q, want lb/lb", list[0].ProjectPrefix, list[0].SessionPrefix)
+	}
+}
+
+func TestManager_SetConfigAcceptsLegacySessionPrefixAlias(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config: domain.ProjectConfig{SessionPrefix: "old"},
+	})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if proj.Config == nil || proj.Config.ProjectPrefix != "old" || proj.Config.SessionPrefix != "" {
+		t.Fatalf("legacy alias was not normalized: %#v", proj.Config)
 	}
 }
 

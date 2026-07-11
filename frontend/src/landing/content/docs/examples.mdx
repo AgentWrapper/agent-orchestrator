@@ -102,7 +102,7 @@ projects:
     repo: org/frontend
     path: ~/frontend
     defaultBranch: main
-    sessionPrefix: fe
+    projectPrefix: fe
 
     tracker:
       plugin: github
@@ -117,7 +117,7 @@ projects:
     repo: org/backend
     path: ~/backend
     defaultBranch: main
-    sessionPrefix: api
+    projectPrefix: api
 
     tracker:
       plugin: linear
@@ -146,7 +146,7 @@ notificationRouting:
 **Notable settings:**
 
 - `defaults:` sets the runtime, agent, workspace, and notifier list for all projects — individual projects can override any of these.
-- `sessionPrefix` keeps session IDs readable (`fe-123`, `api-456`) when multiple projects run simultaneously.
+- `projectPrefix` keeps session IDs readable (`fe-123`, `api-456`) when multiple projects run simultaneously. Existing `sessionPrefix` entries are accepted as a compatibility alias.
 - Each project can use a different tracker — `frontend` uses GitHub Issues, `backend` uses Linear.
 - `notifiers.slack.webhook: ${SLACK_WEBHOOK_URL}` reads the webhook URL from an environment variable — never hardcode secrets in config files.
 - `notificationRouting` routes urgent and actionable events to both desktop and Slack, while lower-priority events go to Slack only.

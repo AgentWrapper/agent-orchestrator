@@ -177,13 +177,16 @@ type WorkspaceConfig struct {
 	ProjectID domain.ProjectID
 	SessionID domain.SessionID
 	Kind      domain.SessionKind
-	// SessionPrefix is the human-readable project prefix used to name the
-	// orchestrator worktree. Defaults to a truncation of ProjectID when empty.
+	// SessionPrefix carries the resolved project prefix for compatibility with
+	// existing workspace adapters. Defaults to a truncation of ProjectID when empty.
 	SessionPrefix string
 	Branch        string
 	// BaseBranch is the per-project default branch new session branches are
 	// created from. Empty falls back to the workspace adapter's own default.
 	BaseBranch string
+	// RestorePath is the persisted workspace path to reopen on restore. Empty
+	// means derive the managed path from ProjectID, SessionID, Kind, and prefix.
+	RestorePath string
 	// Mode selects how the workspace is provisioned. Empty means
 	// domain.WorkspaceModeWorktree (back-compat): the adapter creates a private
 	// git worktree and checks out Branch. domain.WorkspaceModeInPlace starts the

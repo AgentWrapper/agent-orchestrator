@@ -88,8 +88,10 @@ func buildProjectConfig(pc legacyProjectConfig, notes *[]string) domain.ProjectC
 	if b := strings.TrimSpace(pc.DefaultBranch); b != "" && b != domain.DefaultBranchName {
 		cfg.DefaultBranch = b
 	}
-	if pc.SessionPrefix != "" {
-		cfg.SessionPrefix = pc.SessionPrefix
+	if pc.ProjectPrefix != "" {
+		cfg.ProjectPrefix = pc.ProjectPrefix
+	} else if pc.SessionPrefix != "" {
+		cfg.ProjectPrefix = pc.SessionPrefix
 	}
 	if len(pc.Env) > 0 {
 		cfg.Env = make(map[string]string, len(pc.Env))

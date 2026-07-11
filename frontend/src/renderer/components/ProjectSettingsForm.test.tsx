@@ -113,7 +113,7 @@ describe("ProjectSettingsForm", () => {
 			defaultBranch: "main",
 			config: {
 				defaultBranch: "develop",
-				sessionPrefix: "po",
+				projectPrefix: "po",
 				env: { FOO: "bar" },
 				symlinks: [".env"],
 				postCreate: ["npm install"],
@@ -134,7 +134,7 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
-		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
+		expect(screen.getByLabelText("Project prefix")).toHaveValue("po");
 		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
 
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
@@ -148,8 +148,8 @@ describe("ProjectSettingsForm", () => {
 
 		await userEvent.clear(screen.getByLabelText("Default branch"));
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
-		await userEvent.clear(screen.getByLabelText("Session prefix"));
-		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
+		await userEvent.clear(screen.getByLabelText("Project prefix"));
+		await userEvent.type(screen.getByLabelText("Project prefix"), "rel");
 		await userEvent.clear(screen.getByLabelText("Model override"));
 		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
 		await chooseOption(workerAgent, "OpenCode");
@@ -164,7 +164,7 @@ describe("ProjectSettingsForm", () => {
 			body: {
 				config: {
 					defaultBranch: "release",
-					sessionPrefix: "rel",
+					projectPrefix: "rel",
 					env: { FOO: "bar" },
 					symlinks: [".env"],
 					postCreate: ["npm install"],
@@ -188,6 +188,34 @@ describe("ProjectSettingsForm", () => {
 			body: { projectId: "proj-1", clean: true },
 		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+	}, 20_000);
+
+	it("loads legacy sessionPrefix but saves projectPrefix", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				sessionPrefix: "old",
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByLabelText("Project prefix")).toHaveValue("old");
+		await userEvent.clear(screen.getByLabelText("Project prefix"));
+		await userEvent.type(screen.getByLabelText("Project prefix"), "new");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.projectPrefix).toBe("new");
+		expect(body.config.sessionPrefix).toBeUndefined();
 	}, 20_000);
 
 	it("does not fabricate an explicit intake disable after a mounted form refetches enabled intake", async () => {
@@ -223,7 +251,7 @@ describe("ProjectSettingsForm", () => {
 			});
 		});
 
-		await userEvent.type(screen.getByLabelText("Session prefix"), "ao");
+		await userEvent.type(screen.getByLabelText("Project prefix"), "ao");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
@@ -282,7 +310,7 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 		expect(await screen.findByLabelText("Enable issue intake")).not.toBeChecked();
 
-		await userEvent.type(screen.getByLabelText("Session prefix"), "ao");
+		await userEvent.type(screen.getByLabelText("Project prefix"), "ao");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
@@ -661,7 +689,7 @@ describe("ProjectSettingsForm", () => {
 
 		// Touch an unrelated field and save; the CLI-set maxConcurrent + the loaded
 		// excludeLabels must survive rather than being wiped by the settings PUT.
-		await userEvent.type(await screen.findByLabelText("Session prefix"), "ao");
+		await userEvent.type(await screen.findByLabelText("Project prefix"), "ao");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));

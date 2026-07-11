@@ -138,9 +138,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
+	const projectPrefix = config.projectPrefix ?? config.sessionPrefix ?? "";
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
-		sessionPrefix: config.sessionPrefix ?? "",
+		projectPrefix,
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
 		model: config.agentConfig?.model ?? "",
@@ -205,7 +206,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			const next: ProjectConfig = {
 				...config,
 				defaultBranch: form.defaultBranch || undefined,
-				sessionPrefix: form.sessionPrefix || undefined,
+				projectPrefix: form.projectPrefix || undefined,
+				sessionPrefix: undefined,
 				worker: { ...config.worker, agent: form.workerAgent },
 				orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
 				agentConfig: blankToUndefined({
@@ -305,12 +307,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							placeholder="main"
 						/>
 					</Field>
-					<Field label="Session prefix" htmlFor="sessionPrefix">
+					<Field label="Project prefix" htmlFor="projectPrefix">
 						<input
-							id="sessionPrefix"
+							id="projectPrefix"
 							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.sessionPrefix}
-							onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
+							value={form.projectPrefix}
+							onChange={(e) => setForm((f) => ({ ...f, projectPrefix: e.target.value }))}
 							placeholder="ao"
 						/>
 					</Field>

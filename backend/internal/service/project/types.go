@@ -8,6 +8,7 @@ type Summary struct {
 	Name              string               `json:"name"`
 	Path              string               `json:"path"`
 	Kind              domain.ProjectKind   `json:"kind"`
+	ProjectPrefix     string               `json:"projectPrefix"`
 	SessionPrefix     string               `json:"sessionPrefix"`
 	OrchestratorAgent domain.AgentHarness  `json:"orchestratorAgent,omitempty"`
 	Config            domain.ProjectConfig `json:"-"`

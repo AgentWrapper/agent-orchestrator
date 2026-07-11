@@ -1013,6 +1013,7 @@ export interface components {
             };
             orchestrator?: components["schemas"]["RoleOverride"];
             postCreate?: string[];
+            projectPrefix?: string;
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
             symlinks?: string[];
@@ -1037,6 +1038,7 @@ export interface components {
             name: string;
             orchestratorAgent?: string;
             path: string;
+            projectPrefix: string;
             resolveError?: string;
             sessionPrefix: string;
         };

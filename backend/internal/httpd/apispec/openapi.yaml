@@ -2738,6 +2738,8 @@ components:
           items:
             type: string
           type: array
+        projectPrefix:
+          type: string
         reviewers:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'
@@ -2797,6 +2799,8 @@ components:
           type: string
         path:
           type: string
+        projectPrefix:
+          type: string
         resolveError:
           type: string
         sessionPrefix:
@@ -2806,6 +2810,7 @@ components:
       - name
       - path
       - kind
+      - projectPrefix
       - sessionPrefix
       type: object
     RemoveProjectResult:
