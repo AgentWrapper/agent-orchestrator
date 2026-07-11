@@ -10,6 +10,7 @@ import {
 	useModelAvailabilityQuery,
 } from "../hooks/useModelAvailabilityQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
+import type { ProjectKind } from "../types/workspace";
 import { buildIntake, type IntakeForm, IntakeFields } from "./IntakeFields";
 import { ModelAvailabilityField } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
@@ -78,19 +79,65 @@ const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "", optOu
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;
+	isInitializing?: boolean;
+	kind: ProjectKind;
 	onOpenChange: (open: boolean) => void;
 	onSubmit: (selection: CreateProjectAgentSelection) => Promise<void>;
 	open: boolean;
 	path: string | null;
+	repositorySetupNeeded?: boolean;
 };
+
+type SheetError = {
+	title: string;
+	message: string;
+	tone: "warning" | "error";
+};
+
+function projectSheetError(error: string): SheetError {
+	const setupMessage = error.replace(/^Setup failed:\s*/i, "").trim();
+	const codeMatch = setupMessage.match(/\(([A-Z0-9_]+)\)\s*$/);
+	const code = codeMatch?.[1];
+	const message = codeMatch ? setupMessage.slice(0, codeMatch.index).trim() : setupMessage;
+
+	switch (code) {
+		case "PROJECT_PATH_NOT_REPO_ROOT":
+			return {
+				title: "Select the repository root",
+				message: "This folder is inside another Git repository. Choose the top-level folder and try again.",
+				tone: "warning",
+			};
+		case "PROJECT_BARE_REPOSITORY":
+			return {
+				title: "Choose a normal checkout",
+				message: "AO needs a regular working folder, not a bare Git repository.",
+				tone: "warning",
+			};
+		case "UNSUPPORTED_GIT_REPO":
+			return {
+				title: "Choose a valid Git folder",
+				message: "AO could not read the Git metadata here. Repair the repository or choose a plain folder.",
+				tone: "warning",
+			};
+		default:
+			return {
+				title: error.toLowerCase().startsWith("setup failed:") ? "Repository setup failed" : "Could not create project",
+				message: message || "Try again, or choose a different folder.",
+				tone: "error",
+			};
+	}
+}
 
 export function CreateProjectAgentSheet({
 	error,
 	isCreating,
+	isInitializing = false,
+	kind,
 	onOpenChange,
 	onSubmit,
 	open,
 	path,
+	repositorySetupNeeded = false,
 }: CreateProjectAgentSheetProps) {
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
@@ -130,7 +177,9 @@ export function CreateProjectAgentSheet({
 	const [permissions, setPermissions] = useState<string>(NEW_PROJECT_DEFAULTS.permissions);
 	const [model, setModel] = useState<string>(NEW_PROJECT_DEFAULTS.model);
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isCreating && !isLoadingAgents;
+	const isBusy = isCreating || isInitializing;
+	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isBusy && !isLoadingAgents;
+	const sheetError = error ? projectSheetError(error) : null;
 
 	useEffect(() => {
 		if (!open) {
@@ -143,14 +192,16 @@ export function CreateProjectAgentSheet({
 	}, [open, path]);
 
 	return (
-		<Dialog.Root open={open} onOpenChange={(next) => !isCreating && onOpenChange(next)}>
+		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-32px)] w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
-							<Dialog.Title className="text-[15px] font-semibold text-foreground">Project agents</Dialog.Title>
-							<Dialog.Description className="mt-1 break-all text-[12px] text-muted-foreground">
+							<Dialog.Title className="text-subtitle font-semibold text-foreground">
+								{kind === "workspace" ? "Workspace agents" : "Project agents"}
+							</Dialog.Title>
+							<Dialog.Description className="mt-1 break-all text-xs text-muted-foreground">
 								{path ?? ""}
 							</Dialog.Description>
 						</div>
@@ -159,9 +210,9 @@ export function CreateProjectAgentSheet({
 								type="button"
 								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
 								aria-label="Close project agents dialog"
-								disabled={isCreating}
+								disabled={isBusy}
 							>
-								<X className="size-4" aria-hidden="true" />
+								<X className="size-icon-base" aria-hidden="true" />
 							</button>
 						</Dialog.Close>
 					</div>
@@ -204,7 +255,7 @@ export function CreateProjectAgentSheet({
 							/>
 						</div>
 
-						{isLoadingAgents && <p className="text-[12px] leading-5 text-muted-foreground">Loading agents...</p>}
+						{isLoadingAgents && <p className="text-xs leading-row text-muted-foreground">Loading agents...</p>}
 
 						<div className="grid gap-3 sm:grid-cols-2">
 							<div className="flex flex-col gap-1.5">
@@ -252,7 +303,7 @@ export function CreateProjectAgentSheet({
 						</div>
 
 						{displayError && (
-							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-row text-destructive">
 								<span>{displayError}</span>
 								<button
 									type="button"
@@ -269,18 +320,54 @@ export function CreateProjectAgentSheet({
 							<IntakeFields form={intake} onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))} compact />
 						</div>
 
-						{error && (
-							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
-								{error}
+						{repositorySetupNeeded && (
+							<div className="rounded-md border border-border bg-surface/80 px-3 py-2.5 text-xs leading-body-md text-muted-foreground">
+								If this folder needs Git setup, AO will initialize it and create the first commit before starting.
+							</div>
+						)}
+
+						{sheetError && (
+							<div
+								role="alert"
+								className={
+									sheetError.tone === "warning"
+										? "flex gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-body-md"
+										: "flex gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-xs leading-body-md"
+								}
+							>
+								<TriangleAlert
+									className={
+										sheetError.tone === "warning"
+											? "mt-0.5 size-icon-sm shrink-0 text-warning"
+											: "mt-0.5 size-icon-sm shrink-0 text-destructive"
+									}
+									aria-hidden="true"
+								/>
+								<div className="min-w-0 space-y-0.5">
+									<p
+										className={
+											sheetError.tone === "warning" ? "font-medium text-foreground" : "font-medium text-destructive"
+										}
+									>
+										{sheetError.title}
+									</p>
+									<p className="text-muted-foreground">{sheetError.message}</p>
+								</div>
 							</div>
 						)}
 
 						<div className="flex items-center justify-end gap-2 pt-1">
-							<Button type="button" variant="ghost" disabled={isCreating} onClick={() => onOpenChange(false)}>
+							<Button type="button" variant="ghost" disabled={isBusy} onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
 							<Button type="submit" variant="primary" disabled={!canSubmit}>
-								{isCreating ? "Creating..." : "Create and start"}
+								{isInitializing
+									? "Setting up..."
+									: isCreating
+										? "Creating..."
+										: kind === "workspace"
+											? "Create workspace and start"
+											: "Create and start"}
 							</Button>
 						</div>
 					</form>
@@ -339,14 +426,14 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className="text-[12px] font-medium text-muted-foreground">
+			<Label htmlFor={id} className="text-xs font-medium text-muted-foreground">
 				{label}
 			</Label>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
-				<SelectTrigger id={id} className="h-8 w-full text-[13px]" aria-invalid={invalid || undefined}>
+				<SelectTrigger id={id} size="sm" className="w-full text-control" aria-invalid={invalid || undefined}>
 					<SelectValue placeholder={placeholder} />
 				</SelectTrigger>
-				<SelectContent position="popper" align="start" sideOffset={4} className="!max-h-80">
+				<SelectContent position="popper" side="bottom" align="start" sideOffset={4} className="max-h-select-menu-max!">
 					{options.map((agent) => (
 						<SelectItem
 							key={agent.id}
@@ -357,7 +444,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 							<span className="flex min-w-0 w-full items-center justify-between gap-4">
 								<span className="truncate">{agent.label}</span>
 								{agent.reason && (
-									<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+									<span className="inline-flex shrink-0 items-center gap-1 text-caption text-muted-foreground">
 										{agent.warning && <TriangleAlert className="size-3 text-warning" aria-hidden="true" />}
 										{agent.reason}
 									</span>

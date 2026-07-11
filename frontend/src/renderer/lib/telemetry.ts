@@ -12,8 +12,23 @@ const EMBEDDED_LOCAL_URL_PATTERN =
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
 let posthogClient: typeof import("posthog-js/dist/module.full.no-external").default | null = null;
+let telemetryContext: TelemetryProperties = {};
 
 type TelemetryProperties = Record<string, unknown>;
+
+export function buildTelemetryContext(appVersion: string, platform: string): TelemetryProperties {
+	const version = appVersion.trim() || "unknown";
+	return {
+		app_version: version,
+		ao_version: version,
+		platform,
+		build_mode: import.meta.env.DEV ? "dev" : "packaged",
+	};
+}
+
+function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
+	return { ...telemetryContext, ...properties };
+}
 
 function normalizeException(reason: unknown): Error {
 	if (reason instanceof Error) return reason;
@@ -188,7 +203,9 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.notification_opened":
 			if (properties?.target === "pr" || properties?.target === "session") safe.target = properties.target;
 			break;
-		case "ao.renderer.notification_marked_read":
+		case "ao.renderer.notification_mark_read_requested":
+		case "ao.renderer.notification_mark_read_succeeded":
+		case "ao.renderer.notification_mark_read_failed":
 			if (properties?.scope === "single" || properties?.scope === "all") safe.scope = properties.scope;
 			break;
 		case "ao.renderer.daemon_failure":
@@ -250,6 +267,7 @@ export async function initTelemetry(): Promise<boolean> {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
 		if (!bootstrap) return false;
+		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform);
 		const { default: posthog } = await import("posthog-js/dist/module.full.no-external");
 		posthogClient = posthog;
 		posthog.init(POSTHOG_KEY, {
@@ -270,19 +288,19 @@ export async function initTelemetry(): Promise<boolean> {
 			},
 		});
 		posthog.identify(bootstrap.distinctId, {
-			app_version: bootstrap.appVersion,
-			platform: bootstrap.platform,
+			...telemetryContext,
 			surface: "renderer",
 		});
 		posthog.register({
-			app_version: bootstrap.appVersion,
-			platform: bootstrap.platform,
+			...telemetryContext,
 			surface: "renderer",
-			build_mode: import.meta.env.DEV ? "dev" : "packaged",
 		});
 		bindErrorHandlers();
-		posthog.capture("ao.app.active", await sanitizeRendererProperties("ao.app.active", { channel: "renderer" }));
-		posthog.capture("ao.renderer.loaded");
+		posthog.capture(
+			"ao.app.active",
+			withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
+		);
+		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
 		return true;
 	})().catch(() => false);
 	return initPromise;

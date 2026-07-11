@@ -78,6 +78,8 @@ func Build() ([]byte, error) {
 			"Daemon resource metrics (host, per-project, per-session-scope)"),
 		*(&openapi31.Tag{Name: "version"}).WithDescription(
 			"Daemon build provenance (VCS revision, build time, dirty flag)"),
+		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
+			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 	}
 
 	for _, op := range operations() {
@@ -233,21 +235,25 @@ var schemaNames = map[string]string{
 	"MetricsHarnessCost":         "MetricsHarnessCost",
 	"MetricsCost":                "MetricsCost",
 	"MetricsAlert":               "MetricsAlert",
+	// httpd/controllers: mobile wire envelopes
+	"ControllersMobileStatusResponse": "MobileStatusResponse",
 	// legacyimport report
 	"LegacyimportReport": "ImportReport",
 	// buildinfo: daemon build provenance
 	"BuildinfoInfo": "VersionInfo",
 	// service/project entities + DTOs
-	"ProjectProject":               "Project",
-	"ProjectSummary":               "ProjectSummary",
-	"ProjectDegraded":              "DegradedProject",
-	"ProjectAddInput":              "AddProjectInput",
-	"ProjectRemoveResult":          "RemoveProjectResult",
-	"ProjectSetConfigInput":        "SetProjectConfigInput",
-	"ProjectWorkspaceRepo":         "WorkspaceRepo",
-	"ProjectWorkerCapacity":        "WorkerCapacity",
-	"ProjectWorkerCapacityBucket":  "WorkerCapacityBucket",
-	"ProjectWorkerCapacityHarness": "WorkerCapacityHarness",
+	"ProjectProject":                    "Project",
+	"ProjectSummary":                    "ProjectSummary",
+	"ProjectDegraded":                   "DegradedProject",
+	"ProjectAddInput":                   "AddProjectInput",
+	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
+	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
+	"ProjectRemoveResult":               "RemoveProjectResult",
+	"ProjectSetConfigInput":             "SetProjectConfigInput",
+	"ProjectWorkspaceRepo":              "WorkspaceRepo",
+	"ProjectWorkerCapacity":             "WorkerCapacity",
+	"ProjectWorkerCapacityBucket":       "WorkerCapacityBucket",
+	"ProjectWorkerCapacityHarness":      "WorkerCapacityHarness",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -332,6 +338,7 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, metricsOperations()...)
 	ops = append(ops, versionOperations()...)
+	ops = append(ops, mobileOperations()...)
 	return ops
 }
 
@@ -399,6 +406,51 @@ func metricsOperations() []operation {
 				{http.StatusOK, controllers.MetricsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// mobileOperations declares the 4 /mobile control operations. These are
+// mounted on the loopback router (mountMobile in router.go), not the REST
+// /api/v1 group — only the desktop/CLI may enable, disable, or regenerate the
+// phone's LAN access; the phone never toggles its own connection. Must stay
+// 1:1 with the routes mountMobile registers (enforced by the parity test).
+func mobileOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/mobile/status", id: "getMobileStatus", tag: "mobile",
+			summary: "Check whether Connect Mobile's LAN bridge is enabled",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/enable", id: "enableMobile", tag: "mobile",
+			summary: "Enable the Connect Mobile LAN bridge and issue a fresh password",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/disable", id: "disableMobile", tag: "mobile",
+			summary: "Disable the Connect Mobile LAN bridge",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/regenerate", id: "regenerateMobile", tag: "mobile",
+			summary: "Rotate the Connect Mobile password, dropping any connected phone",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
 	}
@@ -596,6 +648,16 @@ func projectOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/projects/initialize", id: "initializeProjectRepository", tag: "projects",
+			summary: "Initialize a selected folder as a Git repository with an initial commit",
+			reqBody: projectsvc.InitializeRepositoryInput{},
+			resps: []respUnit{
+				{http.StatusOK, projectsvc.InitializeRepositoryResult{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		}, {
 			method: http.MethodGet, path: "/api/v1/projects/{id}", id: "getProject", tag: "projects",
 			summary:    "Fetch one project; discriminates ok vs degraded",
 			pathParams: []any{controllers.ProjectIDParam{}},

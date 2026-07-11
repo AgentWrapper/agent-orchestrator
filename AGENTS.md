@@ -127,6 +127,17 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    new-capability work becomes its own ticket. (By-design exceptions:
    `/bug-hunt` files-only; `/deploy-verify` post-merge findings.)
 
+9. **Daemon/network boundaries.** The primary daemon listener stays loopback-only
+   and unauthenticated. A second Connect Mobile LAN listener may bind `0.0.0.0`
+   only when explicitly enabled, only behind the bearer-password auth middleware,
+   and never for loopback-gated control routes such as shutdown, telemetry, or
+   mobile control. Do not add any other network-facing bind.
+10. **Daemon storage boundary.** All app state lives under `~/.ao` only. The
+   daemon data dir, `running.json`, worktrees, and Electron `userData` must
+   resolve under `~/.ao` or the configured `AO_DATA_DIR` / `AO_RUN_FILE`.
+   `frontend/src/main.ts` pins Electron `userData` to `~/.ao/electron`; do not
+   remove that override or rely on Electron's default app-data path.
+
 ## The workflow — one skill per phase
 
 Features go through OpenSpec; bugs go to the tracker; keep spec-implementation

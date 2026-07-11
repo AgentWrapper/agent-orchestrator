@@ -29,6 +29,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
+import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
@@ -44,6 +45,13 @@ export type XtermTerminalProps = {
 	 */
 	scrollback?: number;
 	theme: Theme;
+	/**
+	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
+	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
+	 * tracking but never scrolls on wheel reports. Routes the wheel to page keys
+	 * on every platform (see the wheel handler), fixing it under a mux too.
+	 */
+	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
 	/**
@@ -75,9 +83,7 @@ function loadRenderer(term: Terminal): void {
 	}
 }
 
-// xterm palette tracks the app theme (see lib/terminal-themes.ts + --term-* in
-// styles.css). The PTY content is still the agent's own ANSI output.
-const terminalThemes = buildTerminalThemes();
+// xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
 const SUPPRESS_NATIVE_PASTE_MS = 100;
 // Fallback browser-mode scrollback cap when no configured value is passed. The
 // live default and the user control live in CenterPane; this only guards a
@@ -192,6 +198,16 @@ function sgrWheelReport(button: number, count: number): string {
 	return `\x1b[<${button};1;1M`.repeat(count);
 }
 
+// PageUp (CSI 5~) / PageDown (CSI 6~) for pane apps that scroll their transcript
+// by keyboard rather than mouse reports. One page key per wheel notch: a page
+// already scrolls a full screen, so scaling by line count would over-scroll.
+const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
+
+function pageKeyReport(lines: number): string {
+	return lines < 0 ? PAGE_UP : PAGE_DOWN;
+}
+
 function forceSelectionMode(term: Terminal): void {
 	const internal = term as XtermInternal;
 	const selectionService = internal._core?._selectionService;
@@ -218,7 +234,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const term = termRef.current;
 		if (!term) return;
-		term.options.theme = props.theme === "dark" ? terminalThemes.dark : terminalThemes.light;
+		const { dark, light } = buildTerminalThemes();
+		term.options.theme = props.theme === "dark" ? dark : light;
 	}, [props.theme]);
 
 	useEffect(() => {
@@ -245,6 +262,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		let term: Terminal;
 		try {
+			const { dark, light } = buildTerminalThemes();
 			term = new Terminal({
 				// Required for the Unicode 11 width addon below.
 				allowProposedApi: true,
@@ -257,7 +275,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				fontFamily:
 					getComputedStyle(host).getPropertyValue("--font-mono").trim() ||
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
-				fontSize: props.fontSize ?? 12,
+				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
 				// Agent TUIs leave SGR bold active while using ANSI black for
 				// separators; keep bold weight-only so black stays black.
@@ -276,7 +294,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// bounded, user-configurable cap (see CenterPane) so a busy agent's
 				// transcript stays legible without an unbounded ring.
 				scrollback: window.ao ? 0 : (props.scrollback ?? DEFAULT_BROWSER_SCROLLBACK),
-				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
+				theme: props.theme === "dark" ? dark : light,
 			});
 		} catch (error) {
 			callbacksRef.current.onError?.(error);
@@ -359,6 +377,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				});
 		};
 		term.attachCustomKeyEventHandler((event) => {
+			// xterm invokes this same handler on keydown, keyup, AND keypress (see
+			// Terminal.ts _keyDown/_keyUp/_keyPress). Only keydown should trigger our
+			// shortcut actions (copy/paste/word-nav) — otherwise releasing the key
+			// re-matches the same combo and fires the action a second time (double
+			// paste, double word-delete, etc). keyup/keypress fall through to
+			// xterm's own default handling for that event type.
+			if (event.type === "keyup" || event.type === "keypress") return true;
 			if (isTerminalCopyShortcut(event)) {
 				if (copySelection()) {
 					consumeTerminalShortcut(event);
@@ -508,14 +533,39 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			} else if (event.deltaMode === 2 /* DOM_DELTA_PAGE */) {
 				lines = (Math.trunc(event.deltaY) || Math.sign(event.deltaY)) * term.rows;
 			} else {
-				const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
+				const rowHeight = (term.options.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT) * (term.options.lineHeight ?? 1);
 				wheelAccumPx += event.deltaY;
 				lines = Math.trunc(wheelAccumPx / rowHeight);
 				wheelAccumPx -= lines * rowHeight;
 			}
 			if (lines === 0) return false;
-			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
-			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
+			// A full-screen TUI that keeps its own transcript and scrolls it only by
+			// keyboard (opencode) ignores wheel/mouse reports on every platform; route
+			// its wheel to page keys. Kept first so opencode is unaffected by the
+			// buffer-aware paths below.
+			if (callbacksRef.current.paneScrollsByKeyboard) {
+				emitUserInput(pageKeyReport(lines), "wheel");
+				return false;
+			}
+			// A normal-buffer pane with mouse tracking off (codex, a plain shell)
+			// prints its transcript and relies on the terminal's own scrollback — the
+			// way it scrolls in a raw terminal. Scroll xterm's viewport locally; the
+			// pane never sees these bytes. Requires scrollback > 0 (see Terminal opts).
+			if (term.modes.mouseTrackingMode === "none" && term.buffer.active.type === "normal") {
+				term.scrollLines(lines);
+				return false;
+			}
+			// Mouse tracking on: the pane (tmux/zellij copy-mode, or any app that
+			// tracks the mouse) acts on SGR wheel reports. On Windows conpty this
+			// reaches the app directly; under a mux it drives copy-mode.
+			if (term.modes.mouseTrackingMode !== "none") {
+				const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
+				emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
+				return false;
+			}
+			// Alt-buffer pane with mouse tracking off and no keyboard-scroll hint:
+			// no scrollback to move locally, so fall back to page keys.
+			emitUserInput(pageKeyReport(lines), "wheel");
 			return false;
 		});
 		const pasteInput = (event: ClipboardEvent) => {

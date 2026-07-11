@@ -1,16 +1,16 @@
-// Package kiro implements the Kiro (AWS) agent adapter: launching new headless
+// Package kiro implements the Kiro (AWS) agent adapter: launching interactive
 // sessions, resuming hook-tracked sessions, installing workspace-local hooks,
 // and reading hook-derived session info.
 //
 // Kiro is AWS's agentic coding assistant. Its terminal CLI ships as the
-// `kiro-cli` binary and exposes a non-interactive ("headless") mode via
-// `kiro-cli chat --no-interactive "<prompt>"`, suitable for AO-driven worker
-// sessions. See https://kiro.dev/docs/cli/headless/ and
+// `kiro-cli` binary. AO launches Kiro with a workspace-local custom agent so
+// both worker and orchestrator sessions can use Kiro's normal interactive
+// approval flow. See https://kiro.dev/docs/cli/headless/ and
 // https://kiro.dev/docs/cli/reference/cli-commands/.
 //
-// Launch delivers the initial prompt as a positional argument after `--` so a
-// leading "-" is not parsed as a flag. Permission/approval modes map onto
-// Kiro's tool-trust flags (`--trust-all-tools`, `--trust-tools=<categories>`).
+// Worker prompts are delivered after startup so AO keeps Kiro's interactive
+// TUI. Permission/approval modes map onto Kiro's tool-trust flags
+// (`--trust-all-tools`, `--trust-tools=<categories>`).
 // Restore uses `kiro-cli chat --resume-id <UUID>` with the native session id
 // captured from a Kiro hook payload.
 //
@@ -22,10 +22,12 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -67,29 +69,67 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds the argv to start a new headless Kiro session:
-// `kiro-cli chat --no-interactive [trust flags] -- <prompt>`.
+// GetLaunchCommand builds the argv to start a new Kiro session:
+// `kiro-cli chat --agent ao [trust flags] [-- <prompt>]`.
 //
 // The prompt is passed as a positional argument after `--` so a leading "-" is
-// not read as a flag. Kiro's --no-interactive mode requires a prompt argument.
+// not read as a flag for non-worker launches. Worker prompts are sent after
+// startup so AO keeps the interactive TUI and avoids Kiro's current positional
+// input submission gap. Kiro runs interactively for both workers and
+// orchestrators; standing instructions come from the generated custom agent.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kiroBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary, "chat", "--no-interactive"}
+	cmd = []string{binary, "chat", "--agent", kiroAgentName}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
+	prompt := cfg.Prompt
+	if prompt != "" && cfg.Kind == domain.KindOrchestrator {
+		cmd = append(cmd, "--", prompt)
 	}
 
 	return cmd, nil
 }
 
-// GetRestoreCommand rebuilds the argv that continues an existing Kiro session:
-// `kiro-cli chat --no-interactive --resume-id <agentSessionId> [trust flags]`.
+// GetPromptDeliveryStrategy reports how Kiro receives the initial task prompt.
+// Orchestrator standing instructions are delivered through the generated
+// custom-agent prompt, so no command or post-start prompt injection is needed
+// there.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if cfg.Prompt != "" && cfg.Kind == domain.KindOrchestrator {
+		return ports.PromptDeliveryInCommand, nil
+	}
+	if cfg.Prompt != "" && cfg.Kind != domain.KindOrchestrator {
+		return ports.PromptDeliveryAfterStart, nil
+	}
+	if cfg.Kind == domain.KindOrchestrator {
+		return ports.PromptDeliveryCustomAgent, nil
+	}
+	return ports.PromptDeliveryInCommand, nil
+}
+
+// PromptReadinessHints waits for Kiro's interactive prompt before AO injects
+// the worker's first task.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 500 * time.Millisecond,
+		Patterns:     []string{"ask a question or describe a task"},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      8 * time.Second,
+		Lines:        80,
+	}, nil
+}
+
+// GetRestoreCommand rebuilds the argv that continues an existing Kiro session.
 // ok is false when the hook-derived native session id has not landed yet, so
 // callers can fall back to fresh launch behavior.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
@@ -106,8 +146,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 8)
-	cmd = append(cmd, binary, "chat", "--no-interactive", "--resume-id", agentSessionID)
+	cmd = []string{binary, "chat", "--agent", kiroAgentName, "--resume-id", agentSessionID}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	return cmd, true, nil
 }
@@ -161,14 +200,14 @@ func (p *Plugin) kiroBinary(ctx context.Context) (string, error) {
 	return binary, nil
 }
 
-// appendApprovalFlags maps AO's 4 permission modes onto Kiro's tool-trust
-// flags. Default emits no flag so Kiro defers to the user's own configuration
-// (the interactive per-tool prompt). accept-edits grants the write-capable
-// built-in tools; auto/bypass grant all tools.
+// appendApprovalFlags maps AO's permission modes onto Kiro's tool-trust flags.
+// Default emits no flag so Kiro uses its normal interactive approval flow.
+// accept-edits grants the write-capable built-in tools; auto/bypass grant all
+// tools.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
-		// No flag: defer to the user's Kiro config / per-tool prompting.
+		// No flag: defer to Kiro's normal interactive approval flow.
 	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--trust-tools=fs_read,fs_write")
 	case ports.PermissionModeAuto:

@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
-import type { useDaemonStatus } from "../hooks/useDaemonStatus";
 import type { components } from "../../api/schema";
+import type { useDaemonStatus } from "../hooks/useDaemonStatus";
 
 // Shared state the persistent _shell layout owns and route content reads. The
 // daemon status effect (IPC poll + event transport) must run exactly once, so
@@ -14,7 +14,9 @@ export type ShellContextValue = {
 		permissions: string;
 		model: string;
 		trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+		asWorkspace?: boolean;
 	}) => Promise<void>;
+	initializeProjectRepository: (path: string) => Promise<void>;
 };
 
 const ShellContext = createContext<ShellContextValue | null>(null);

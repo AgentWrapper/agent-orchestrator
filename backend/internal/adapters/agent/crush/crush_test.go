@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -13,6 +14,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:   ports.PermissionModeBypassPermissions,
+		Kind:          domain.KindWorker,
 		Prompt:        "fix this",
 		WorkspacePath: "/tmp/workspace",
 		SessionID:     "test-session-id",
@@ -27,7 +29,6 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 		"crush",
 		"--cwd", "/tmp/workspace",
 		"--yolo",
-		"--", "fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
@@ -99,6 +100,44 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 
 	if got != ports.PromptDeliveryInCommand {
 		t.Fatalf("unexpected prompt delivery strategy: got %v, want %v", got, ports.PromptDeliveryInCommand)
+	}
+}
+
+func TestGetPromptDeliveryStrategyPromptedSessionsAreAfterStart(t *testing.T) {
+	tests := []struct {
+		name string
+		kind domain.SessionKind
+	}{
+		{name: "worker", kind: domain.KindWorker},
+		{name: "orchestrator", kind: domain.KindOrchestrator},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{}
+
+			got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+				Kind:   tt.kind,
+				Prompt: "fix this",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != ports.PromptDeliveryAfterStart {
+				t.Fatalf("unexpected prompt delivery strategy: got %v, want %v", got, ports.PromptDeliveryAfterStart)
+			}
+		})
+	}
+}
+
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
 	}
 }
 

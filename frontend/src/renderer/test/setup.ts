@@ -59,6 +59,7 @@ if (typeof window !== "undefined") {
 			canChooseDirectory: true,
 			getVersion: async () => "0.0.0-test",
 			chooseDirectory: async () => null,
+			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 		},
 		clipboard: {
 			writeText: async () => undefined,
@@ -132,7 +133,10 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			destroy: () => undefined,
+			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onAnnotationSubmit: () => () => undefined,
+			onAnnotationCancel: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

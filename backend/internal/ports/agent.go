@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -125,6 +126,23 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentPromptReadinessProvider is an optional capability for interactive
+// adapters that receive their first task after startup. It lets AO wait until a
+// terminal UI is ready before injecting text through the runtime.
+type AgentPromptReadinessProvider interface {
+	PromptReadinessHints(ctx context.Context, cfg LaunchConfig) (PromptReadinessHints, error)
+}
+
+// PromptReadinessHints describes when an after-start prompt should be sent.
+// Empty hints mean "send immediately" to preserve existing adapter behavior.
+type PromptReadinessHints struct {
+	InitialDelay time.Duration
+	Patterns     []string
+	PollInterval time.Duration
+	Timeout      time.Duration
+	Lines        int
+}
+
 // AgentResolver maps a session's harness onto the Agent adapter that drives it,
 // so the Session Manager can spawn (and restore) a different agent per session
 // without depending on the concrete adapter registry. ok=false means no adapter
@@ -212,7 +230,9 @@ const (
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
 	Config  AgentConfig
+	DataDir string
 	IssueID string
+	Kind    domain.SessionKind
 	// LaunchTitle is AO's desired native session title at process start. Agent
 	// adapters that cannot set one ignore it.
 	LaunchTitle string
@@ -237,12 +257,14 @@ type WorkspaceHookConfig struct {
 	Config        AgentConfig
 	DataDir       string
 	SessionID     string
+	SystemPrompt  string
 	WorkspacePath string
 }
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
 	Config      AgentConfig
+	Kind        domain.SessionKind
 	Permissions PermissionMode
 	Session     SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the
@@ -303,6 +325,7 @@ type PromptDeliveryStrategy string
 
 // How the orchestrator hands the initial prompt to a freshly launched agent.
 const (
-	PromptDeliveryInCommand  PromptDeliveryStrategy = "in_command"
-	PromptDeliveryAfterStart PromptDeliveryStrategy = "after_start"
+	PromptDeliveryInCommand   PromptDeliveryStrategy = "in_command"
+	PromptDeliveryAfterStart  PromptDeliveryStrategy = "after_start"
+	PromptDeliveryCustomAgent PromptDeliveryStrategy = "custom_agent"
 )

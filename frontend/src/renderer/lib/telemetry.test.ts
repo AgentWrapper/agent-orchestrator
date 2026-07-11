@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildTelemetryContext,
 	routeSurface,
 	sanitizePostHogEvent,
 	sanitizeReplayRequestName,
@@ -8,6 +9,19 @@ import {
 } from "./telemetry";
 
 describe("telemetry sanitizers", () => {
+	it("builds stable AO version context for PostHog events", () => {
+		expect(buildTelemetryContext(" 1.2.3-nightly.20260707 ", "linux")).toMatchObject({
+			app_version: "1.2.3-nightly.20260707",
+			ao_version: "1.2.3-nightly.20260707",
+			platform: "linux",
+		});
+		expect(buildTelemetryContext("", "darwin")).toMatchObject({
+			app_version: "unknown",
+			ao_version: "unknown",
+			platform: "darwin",
+		});
+	});
+
 	it("categorizes routes without exporting raw paths", () => {
 		expect(routeSurface("/")).toBe("home");
 		expect(routeSurface("/projects/demo")).toBe("project_board");
@@ -165,12 +179,18 @@ describe("telemetry sanitizers", () => {
 			target: "pr",
 		});
 		expect(await sanitizeRendererProperties("ao.renderer.notification_opened", { target: "http://x" })).toEqual({});
-		expect(await sanitizeRendererProperties("ao.renderer.notification_marked_read", { scope: "all" })).toEqual({
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_requested", { scope: "all" })).toEqual({
 			scope: "all",
 		});
-		expect(await sanitizeRendererProperties("ao.renderer.notification_marked_read", { scope: "everything" })).toEqual(
-			{},
-		);
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_succeeded", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_failed", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(
+			await sanitizeRendererProperties("ao.renderer.notification_mark_read_requested", { scope: "everything" }),
+		).toEqual({});
 	});
 
 	it("whitelists coarse daemon failure fields and drops messages", async () => {
