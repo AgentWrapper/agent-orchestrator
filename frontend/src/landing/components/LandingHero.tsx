@@ -54,14 +54,21 @@ const desktopDownloads = [
 	{ label: "Linux", href: `${RELEASE_DOWNLOAD_BASE}/agent-orchestrator-linux-x64.AppImage` },
 ];
 
+function isPortableDevice() {
+	if (typeof navigator === "undefined" || typeof window === "undefined") return false;
+	const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+	return (
+		/android|iphone|ipad|ipod|mobile|tablet/.test(platform) ||
+		(platform.includes("mac") && navigator.maxTouchPoints > 1) ||
+		window.innerWidth <= 1024
+	);
+}
+
 function getDownloadTarget() {
 	if (typeof navigator === "undefined") return null;
 	const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
-	const portable =
-		/android|iphone|ipad|ipod|mobile|tablet/.test(platform) ||
-		(platform.includes("mac") && navigator.maxTouchPoints > 1);
 
-	if (portable) return null;
+	if (isPortableDevice()) return null;
 	if (platform.includes("win")) return { label: "Download for Windows", href: desktopDownloads[2].href };
 	if (platform.includes("linux") || platform.includes("x11"))
 		return { label: "Download for Linux", href: desktopDownloads[3].href };
@@ -633,7 +640,7 @@ function HeroDashboardMockup() {
 										className="hero-pressable inline-flex h-[34px] items-center gap-1.5 rounded-[7px] bg-[color:var(--accent)] px-[15px] text-[13px] font-semibold leading-none text-[#11140c] hover:brightness-110"
 									>
 										<NetworkIcon className="h-3.5 w-3.5" />
-										Spawn Orchestrator
+										Orchestrator
 									</button>
 								</div>
 							</div>
@@ -1099,10 +1106,18 @@ export function LandingHero() {
 	const [starCount, setStarCount] = useState<string | null>(null);
 	const [downloadTarget, setDownloadTarget] = useState<ReturnType<typeof getDownloadTarget>>(null);
 	const [downloadOptions, setDownloadOptions] = useState(desktopDownloads);
+	const [showInstallGuide, setShowInstallGuide] = useState(false);
 
 	useEffect(() => {
-		setDownloadTarget(getDownloadTarget());
-		setDownloadOptions(getDownloadOptions());
+		const updateDownloadTarget = () => {
+			setShowInstallGuide(isPortableDevice());
+			setDownloadTarget(getDownloadTarget());
+			setDownloadOptions(getDownloadOptions());
+		};
+
+		updateDownloadTarget();
+		window.addEventListener("resize", updateDownloadTarget);
+		return () => window.removeEventListener("resize", updateDownloadTarget);
 	}, []);
 
 	useEffect(() => {
@@ -1196,18 +1211,30 @@ export function LandingHero() {
 						</span>
 					</h1>
 					<div className="gsap-reveal mt-8 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
-						{downloadTarget ? (
+						{showInstallGuide ? (
+							<a
+								href="/docs/installation"
+								className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-6 text-[15px] font-semibold text-[#11140c] hover:brightness-110 sm:w-auto"
+								style={{ color: "#11140c" }}
+							>
+								Installation guide
+								<ArrowRightIcon className="h-4 w-4 transition-transform duration-[450ms] group-hover:translate-x-1" />
+							</a>
+						) : downloadTarget ? (
 							<a
 								href={downloadTarget.href}
-								className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] sm:w-auto"
+								className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-6 text-[15px] font-semibold text-[#11140c] hover:brightness-110 sm:w-auto"
+								style={{ color: "#11140c" }}
 							>
 								<DownloadIcon className="h-4 w-4" />
 								{downloadTarget.label}
-								<ArrowRightIcon className="h-4 w-4 transition-transform duration-[450ms] group-hover:translate-x-1" />
 							</a>
 						) : (
 							<details className="group/download relative w-full sm:w-auto">
-								<summary className="hero-pressable flex h-12 cursor-pointer list-none items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+								<summary
+									className="hero-pressable flex h-12 cursor-pointer list-none items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-6 text-[15px] font-semibold text-[#11140c] hover:brightness-110 [&::-webkit-details-marker]:hidden"
+									style={{ color: "#11140c" }}
+								>
 									<DownloadIcon className="h-4 w-4" />
 									Desktop downloads
 									<ArrowRightIcon className="h-4 w-4 rotate-90 transition-transform group-open/download:-rotate-90" />
