@@ -231,12 +231,7 @@ type fakeRuntime struct {
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
 	aliveByHandle map[string]bool
 	aliveErr      error
-	// processAliveByHandle maps a RuntimeHandle.ID to whether the pane still
-	// appears to be running the launched agent command; missing = true.
-	processAliveByHandle map[string]bool
-	processAliveSeq      []bool
-	processAliveErr      error
-	destroyedIDs         []string
+	destroyedIDs  []string
 	// blankReads is how many GetOutput calls return empty before the pane
 	// "renders"; getOutputCallsAtSend records how many reads had happened when
 	// each SendMessage went out, so a test can prove the write waited.
@@ -265,24 +260,6 @@ func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bo
 		return false, r.aliveErr
 	}
 	return r.aliveByHandle[handle.ID], nil
-}
-func (r *fakeRuntime) IsRunningCommand(_ context.Context, handle ports.RuntimeHandle, _ string) (bool, error) {
-	if r.processAliveErr != nil {
-		return false, r.processAliveErr
-	}
-	if len(r.processAliveSeq) > 0 {
-		alive := r.processAliveSeq[0]
-		r.processAliveSeq = r.processAliveSeq[1:]
-		return alive, nil
-	}
-	if r.processAliveByHandle == nil {
-		return true, nil
-	}
-	alive, ok := r.processAliveByHandle[handle.ID]
-	if !ok {
-		return true, nil
-	}
-	return alive, nil
 }
 func (r *fakeRuntime) SendMessage(_ context.Context, _ ports.RuntimeHandle, msg string) error {
 	if r.sendErr != nil {
@@ -4487,106 +4464,5 @@ func TestSpawn_TitleWriteFailureWithUnknownLivenessRollsBack(t *testing.T) {
 	}
 	if rt.destroyed != 1 {
 		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
-	}
-}
-
-// A tmux keep-alive shell preserves the session after the agent process exits.
-// Spawn must probe the foreground command before MarkSpawned; otherwise the
-// title write can succeed against bash and AO reports a live idle worker.
-func TestSpawn_RollsBackWhenAgentProcessAlreadyExited(t *testing.T) {
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
-		WorkerMix: domain.WorkerMix{{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 100}},
-	}}
-	rt := &fakeRuntime{
-		aliveByHandle:        map[string]bool{"h1": true},
-		processAliveByHandle: map[string]bool{"h1": false},
-	}
-	lcm := &fakeLCM{store: st}
-	m := New(Deps{
-		Runtime: rt, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
-		Messenger: &fakeMessenger{}, Lifecycle: lcm,
-		LookPath: func(string) (string, error) { return "/bin/true", nil },
-	})
-
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{
-		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
-	}); err == nil {
-		t.Fatal("spawn must fail when the agent process has already been replaced by the keep-alive shell")
-	}
-	if rt.destroyed != 1 {
-		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
-	}
-	if lcm.completed != 0 {
-		t.Fatalf("MarkSpawned called %d times, want 0", lcm.completed)
-	}
-	if _, ok := st.sessions["mer-1"]; ok {
-		t.Fatal("seed row survived a rolled-back spawn")
-	}
-	if !m.workerMixBucketDown(domain.BucketKey{Harness: domain.HarnessClaudeCode, Model: "opus"}) {
-		t.Fatal("worker mix bucket was not marked down for an immediate harness exit")
-	}
-}
-
-func TestSpawn_ProcessProbeErrorKeepsAliveSession(t *testing.T) {
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
-	rt := &fakeRuntime{
-		aliveByHandle:   map[string]bool{"h1": true},
-		processAliveErr: errors.New("tmux: transient display-message failure"),
-	}
-	lcm := &fakeLCM{store: st}
-	m := New(Deps{
-		Runtime: rt, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
-		Messenger: &fakeMessenger{}, Lifecycle: lcm,
-		LookPath: func(string) (string, error) { return "/bin/true", nil },
-	})
-
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{
-		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
-	})
-	if err != nil {
-		t.Fatalf("spawn must survive a transient process probe failure while the session is alive: %v", err)
-	}
-	if rec.ID == "" {
-		t.Fatal("spawn returned no session record")
-	}
-	if rt.destroyed != 0 {
-		t.Fatalf("runtime destroyed %d times, want 0", rt.destroyed)
-	}
-	if lcm.completed != 1 {
-		t.Fatalf("MarkSpawned called %d times, want 1", lcm.completed)
-	}
-	if len(m.mixDown) != 0 {
-		t.Fatalf("worker mix bucket was marked down after a transient probe failure: %#v", m.mixDown)
-	}
-}
-
-func TestSpawn_RetriesFalseProcessProbeBeforeRollback(t *testing.T) {
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
-	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}, processAliveSeq: []bool{false, true}}
-	lcm := &fakeLCM{store: st}
-	m := New(Deps{
-		Runtime: rt, Agents: singleAgent{agent: &launchTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
-		Messenger: &fakeMessenger{}, Lifecycle: lcm,
-		LookPath: func(string) (string, error) { return "/bin/true", nil },
-	})
-	m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 30 * time.Millisecond}
-
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{
-		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
-	})
-	if err != nil {
-		t.Fatalf("spawn must retry a transient false launch-process probe: %v", err)
-	}
-	if rec.ID == "" {
-		t.Fatal("spawn returned no session record")
-	}
-	if rt.destroyed != 0 {
-		t.Fatalf("runtime destroyed %d times, want 0", rt.destroyed)
-	}
-	if lcm.completed != 1 {
-		t.Fatalf("MarkSpawned called %d times, want 1", lcm.completed)
 	}
 }

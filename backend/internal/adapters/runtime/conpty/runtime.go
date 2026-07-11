@@ -162,17 +162,6 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return clientIsAlive(sess.addr)
 }
 
-// IsRunningCommand reports whether the pty-host's child process is still
-// running. ConPTY cannot cheaply expose a portable command name here, but the
-// host status distinguishes "host reachable" from "launched child exited".
-func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, _ string) (bool, error) {
-	sess := r.resolve(handle.ID)
-	if sess == nil {
-		return false, nil
-	}
-	return clientIsProcessAlive(sess.addr)
-}
-
 // SendMessage chunks message and writes it to the pty-host followed by Enter.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
 	sess := r.resolve(handle.ID)

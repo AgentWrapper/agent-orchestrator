@@ -92,9 +92,6 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
 	}
-	if got, want := paneCurrentCommandArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_command}"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("paneCurrentCommandArgs = %#v, want %#v", got, want)
-	}
 	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
 	}
@@ -459,61 +456,6 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 	}
 	if alive {
 		t.Fatal("alive = true on probe failure")
-	}
-}
-
-func TestIsRunningCommandReturnsTrueForLaunchedAgent(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("codex\n")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "/usr/local/bin/codex")
-	if err != nil {
-		t.Fatalf("IsRunningCommand: %v", err)
-	}
-	if !running {
-		t.Fatal("running = false, want true")
-	}
-	if got, want := fr.calls[0].args, paneCurrentCommandArgs("sess-1"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("display-message args = %#v, want %#v", got, want)
-	}
-}
-
-func TestIsRunningCommandReturnsFalseForKeepAliveShell(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("bash\n")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
-	if err != nil {
-		t.Fatalf("IsRunningCommand: %v", err)
-	}
-	if running {
-		t.Fatal("running = true for keep-alive shell, want false")
-	}
-}
-
-func TestIsRunningCommandReturnsFalseForAlternateKeepAliveShell(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("tcsh\n")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
-	if err != nil {
-		t.Fatalf("IsRunningCommand: %v", err)
-	}
-	if running {
-		t.Fatal("running = true for alternate keep-alive shell, want false")
-	}
-}
-
-func TestIsRunningCommandToleratesForegroundChild(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("git\n")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
-	if err != nil {
-		t.Fatalf("IsRunningCommand: %v", err)
-	}
-	if !running {
-		t.Fatal("running = false for non-shell foreground child, want true")
 	}
 }
 
