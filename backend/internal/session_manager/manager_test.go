@@ -783,6 +783,71 @@ func TestSpawn_AfterStartPromptFailureCleansUpWorkspaceProjectRows(t *testing.T)
 	}
 }
 
+// terminatedOnReReadStore wraps fakeStore and reports the spawned session as
+// terminated every time GetSession is called AFTER CreateSession, so the guard
+// re-reads a terminated row and suppresses the after-start prompt delivery.
+type terminatedOnReReadStore struct {
+	*fakeStore
+	spawned domain.SessionID
+	saw     bool
+}
+
+func (s *terminatedOnReReadStore) CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+	out, err := s.fakeStore.CreateSession(ctx, rec)
+	// fakeStore assigns the "{project}-{n}" id inside CreateSession, so capture
+	// it from the returned record.
+	s.spawned = out.ID
+	s.saw = true
+	return out, err
+}
+
+func (s *terminatedOnReReadStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	// Once spawn created the row, surface it as terminated so the guard's
+	// just-in-time re-read sees a dead session and suppresses the write.
+	if s.saw && id == s.spawned {
+		rec := s.sessions[id]
+		rec.IsTerminated = true
+		rec.Activity.State = domain.ActivityExited
+		return rec, true, nil
+	}
+	return s.fakeStore.GetSession(ctx, id)
+}
+
+// TestSpawn_AfterStartPromptSuppressedTerminationFailsSpawn: if a session is
+// gone by the time the after-start prompt is delivered, the Guard's Deliver
+// suppresses — and deliverAfterStartPrompt must surface that as an error
+// (not fold it into nil / report a successful spawn with no prompt). This is
+// the case the Guard.Send wrapper used to swallow (see review on #2357).
+func TestSpawn_AfterStartPromptSuppressedTerminationFailsSpawn(t *testing.T) {
+	base := newFakeStore()
+	base.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	st := &terminatedOnReReadStore{fakeStore: base}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	msg := &fakeMessenger{} // underlying messenger is fine; suppression comes from the guard's re-read
+	agent := &recordingAgent{}
+	lcm := &fakeLCM{store: base}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: afterStartAgent{recordingAgent: agent}},
+		Workspace: ws,
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: lcm,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want failure because the after-start prompt was suppressed (session terminated)")
+	}
+	// The suppressed termination must not have been folded into success: the
+	// prompt was never delivered.
+	if len(msg.msgs) != 0 {
+		t.Fatalf("delivered prompts = %#v, want none (delivery was suppressed)", msg.msgs)
+	}
+}
+
 func TestSpawn_PromptDeliveryStrategyFailureCleansUpWorkspaceProjectRows(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{

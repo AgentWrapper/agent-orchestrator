@@ -2071,7 +2071,26 @@ func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent
 	if err := m.waitForPromptReadiness(ctx, agent, cfg, handle); err != nil {
 		return err
 	}
-	return m.messenger.Send(ctx, id, prompt)
+	// Call Deliver directly (not the Guard.Send wrapper, which folds a suppressed
+	// outcome into nil): a freshly-spawned session can terminate or hit a
+	// permission dialog between readiness and prompt injection, and folding that
+	// into success would report a spawn/restore that never delivered its prompt.
+	outcome, err := m.messenger.Deliver(ctx, id, prompt)
+	if err != nil {
+		return fmt.Errorf("send %s: %w", id, err)
+	}
+	switch outcome {
+	case sessionguard.SuppressedNotFound:
+		return fmt.Errorf("send %s: %w", id, ErrNotFound)
+	case sessionguard.SuppressedTerminated:
+		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+	case sessionguard.SuppressedAwaitingUser:
+		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
+	case sessionguard.SuppressedUnknown:
+		return fmt.Errorf("send %s: pre-write session read failed", id)
+	default:
+		return nil
+	}
 }
 
 func (m *Manager) waitForPromptReadiness(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle) error {

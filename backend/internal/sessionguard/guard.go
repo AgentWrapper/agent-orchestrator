@@ -86,15 +86,15 @@ func New(store SessionReader, messenger ports.AgentMessenger, logger *slog.Logge
 	return &Guard{store: store, messenger: messenger, logger: logger}
 }
 
-// Send makes Guard a drop-in ports.AgentMessenger decorator: it applies the
-// Deliver policy (refuse only a blocked session) and folds the Outcome away,
-// returning just the error. This is the form the initial-prompt delivery paths
-// (Spawn/Restore) want — they hand a freshly-spawned session its prompt, where
-// blocked is impossible, so a suppression there is a no-op they need not
-// distinguish. Callers that must act on WHY a write was suppressed (Send's 409
-// mapping, reaction nudges' don't-stamp-delivered) call Deliver/Nudge directly
-// for the Outcome. Wrapping the raw messenger in a Guard lets both Manager
-// structs keep a single ports.AgentMessenger field that is already guarded.
+// Send satisfies ports.AgentMessenger so a Guard can sit in for the raw
+// messenger. It applies the Deliver policy but FOLDS a suppressed outcome into
+// nil: a caller that learns only "did Send error?" cannot tell that the write
+// was actually refused. That is fine for callers that only need a best-effort
+// delivery, but paths whose success CONTRACT depends on the write landing
+// (after-start prompt delivery in Spawn/Restore) must call Deliver directly and
+// map non-Sent outcomes to an error, or a session that terminates or blocks
+// before injection is reported as a successful spawn with a prompt that was
+// never delivered.
 func (g *Guard) Send(ctx context.Context, id domain.SessionID, msg string) error {
 	_, err := g.Deliver(ctx, id, msg)
 	return err
