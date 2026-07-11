@@ -1325,7 +1325,7 @@ func TestActivity_WaitingInputTransitionEmitsNotification(t *testing.T) {
 	m := New(st, nil, WithNotificationSink(sink))
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
 	m.clock = func() time.Time { return now }
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "checkout-flow", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "checkout-flow", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
 
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
 		t.Fatal(err)
@@ -1336,6 +1336,30 @@ func TestActivity_WaitingInputTransitionEmitsNotification(t *testing.T) {
 	intent := sink.intents[0]
 	if intent.Type != domain.NotificationNeedsInput || intent.SessionID != "mer-1" || intent.ProjectID != "mer" || intent.SessionDisplayName != "checkout-flow" {
 		t.Fatalf("intent = %+v", intent)
+	}
+}
+
+func TestActivity_OrchestratorWaitingInputTransitionDoesNotEmitNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, DisplayName: "mer-orchestrator", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("routine orchestrator waiting_input emitted %+v", sink.intents)
 	}
 }
 
@@ -1373,6 +1397,68 @@ func TestActivity_BlockedTransitionEmitsNotification(t *testing.T) {
 	}
 }
 
+func TestActivity_OrchestratorWaitingInputToBlockedEmitsNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, DisplayName: "mer-orchestrator", Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(sink.intents))
+	}
+	if sink.intents[0].Type != domain.NotificationNeedsInput || sink.intents[0].SessionID != "mer-orch" {
+		t.Fatalf("intent = %+v", sink.intents[0])
+	}
+}
+
+func TestActivity_OrchestratorDirectBlockedTransitionEmitsNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, DisplayName: "mer-orchestrator", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(sink.intents))
+	}
+	if sink.intents[0].Type != domain.NotificationNeedsInput || sink.intents[0].SessionID != "mer-orch" {
+		t.Fatalf("intent = %+v", sink.intents[0])
+	}
+}
+
+func TestActivity_OrchestratorRepeatedBlockedDoesNotReNotify(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:            "mer-orch",
+		ProjectID:     "mer",
+		Kind:          domain.KindOrchestrator,
+		DisplayName:   "mer-orchestrator",
+		Activity:      domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now.Add(-time.Minute)},
+		FirstSignalAt: now.Add(-time.Minute),
+		Metadata:      domain.SessionMetadata{PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindPermission}},
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("repeat blocked emitted notification: %+v", sink.intents)
+	}
+}
+
 func TestActivity_WaitingInputToBlockedDoesNotReNotify(t *testing.T) {
 	// waiting_input -> blocked is an in-family escalation: the user was already
 	// pinged once for this pause, so no second notification and no telemetry
@@ -1383,7 +1469,7 @@ func TestActivity_WaitingInputToBlockedDoesNotReNotify(t *testing.T) {
 	m := New(st, nil, WithNotificationSink(sink), WithTelemetry(tele))
 	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	m.clock = func() time.Time { return now }
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
 
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
 		t.Fatal(err)

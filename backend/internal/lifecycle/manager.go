@@ -223,10 +223,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return err
 	}
-	// Transition into the needs-input family (waiting_input or blocked) pings
-	// the user; an in-family escalation (waiting_input -> blocked) does not
-	// re-notify — the user was already pinged once for this pause.
-	if !rec.Activity.State.NeedsInput() && next.Activity.State.NeedsInput() && !next.IsTerminated {
+	if shouldEmitNeedsInputNotification(rec, next) && !next.IsTerminated {
 		intent = &ports.NotificationIntent{
 			Type:               domain.NotificationNeedsInput,
 			SessionID:          next.ID,
@@ -263,6 +260,24 @@ func nextPendingDecision(s ports.ActivitySignal) *domain.PendingDecision {
 		return &decision
 	}
 	return &domain.PendingDecision{Kind: domain.DecisionKindPermission}
+}
+
+func shouldEmitNeedsInputNotification(prev, next domain.SessionRecord) bool {
+	switch next.Activity.State {
+	case domain.ActivityWaitingInput:
+		// Orchestrator wake cycles normally end at an empty prompt again; that
+		// healthy idle cadence must not page the operator every turn.
+		return next.Kind != domain.KindOrchestrator && !prev.Activity.State.NeedsInput()
+	case domain.ActivityBlocked:
+		if !prev.Activity.State.NeedsInput() {
+			return true
+		}
+		// An orchestrator's prior waiting_input may have been intentionally
+		// suppressed, so a later decision block is its first real page.
+		return next.Kind == domain.KindOrchestrator && prev.Activity.State == domain.ActivityWaitingInput
+	default:
+		return false
+	}
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending
