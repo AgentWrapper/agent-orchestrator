@@ -7,6 +7,7 @@ name: Prettier
 # locally to fix the reported files.
 
 on:
+  merge_group:
   pull_request:
 
 jobs:
@@ -22,6 +23,8 @@ jobs:
 
       - name: Check formatting of changed files with Prettier
         run: |
+          base_ref="${{ github.base_ref || github.event.merge_group.base_ref }}"
+          base_ref="${base_ref#refs/heads/}"
           git diff --name-only -z --diff-filter=d \
-            "origin/${{ github.base_ref }}...HEAD" \
+            "origin/${base_ref}...HEAD" \
             | xargs -0 --no-run-if-empty npx --yes prettier@3 --check --ignore-unknown

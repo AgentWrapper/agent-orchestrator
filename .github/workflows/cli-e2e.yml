@@ -3,22 +3,52 @@ name: CLI E2E
 on:
   push:
     branches: [main]
+  merge_group:
   pull_request:
-    paths:
-      - "backend/**"
-      - "test/cli/**"
-      - ".github/workflows/cli-e2e.yml"
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      cli-e2e: ${{ steps.filter.outputs.cli-e2e }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "cli-e2e=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! changed_files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD"); then
+            echo "cli-e2e=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if grep -Eq '^(backend/|test/cli/|\.github/workflows/cli-e2e\.yml$)' <<<"$changed_files"; then
+            echo "cli-e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "cli-e2e=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Primary tier: the cross-platform Go E2E suite (build tag `e2e`) runs the real
   # `ao` binary against isolated state on every OS GitHub hosts. These runners
   # are the "VMs" — the only place that exercises the OS-specific process-detach
   # paths (unix Setsid vs Windows CREATE_NEW_PROCESS_GROUP) and os.UserConfigDir
   # resolution. The suite builds its own binary and self-allocates a free port.
   native:
+    needs: changes
+    if: needs.changes.outputs.cli-e2e == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -44,12 +74,19 @@ jobs:
   # --init gives a real PID-1 reaper so the daemon the check starts is reaped
   # after `stop` instead of lingering as a zombie.
   container:
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build fresh-install image
+        if: needs.changes.outputs.cli-e2e == 'true'
         run: docker build -f test/cli/Dockerfile -t ao-cli-smoke .
 
       - name: Fresh-install check (container)
+        if: needs.changes.outputs.cli-e2e == 'true'
         run: docker run --rm --init ao-cli-smoke
+
+      - name: No CLI E2E changes
+        if: needs.changes.outputs.cli-e2e != 'true'
+        run: echo "No CLI E2E inputs changed; reporting required container check."
