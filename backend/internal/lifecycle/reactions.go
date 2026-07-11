@@ -228,13 +228,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		sent, err := m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
-		if err != nil {
-			return err
-		}
-		if sent == sendOnceSent {
-			return nil
-		}
+		nudges = append(nudges, pendingNudge{key: "review:" + o.URL, sig: sig, msg: msg, maxAttempts: reviewMaxNudge})
 	}
 	if o.Mergeability == domain.MergeConflicting {
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR

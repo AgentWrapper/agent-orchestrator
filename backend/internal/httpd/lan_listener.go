@@ -26,6 +26,9 @@ type LANManager struct {
 	srv   *http.Server
 	ln    net.Listener
 	bound int
+
+	connMu sync.Mutex
+	conns  map[net.Conn]struct{}
 }
 
 // NewLANManager wraps handler in the LAN control-block and authMiddleware
@@ -38,6 +41,7 @@ func NewLANManager(handler http.Handler, state *authState, defaultPort int, log 
 		defaultPort: defaultPort,
 		log:         loggerOrDefault(log),
 		state:       state,
+		conns:       make(map[net.Conn]struct{}),
 	}
 }
 
@@ -101,6 +105,10 @@ func NewMobileLAN(handler http.Handler, defaultPort int, log *slog.Logger) *LANM
 // against it. Satisfies controllers.LANController.
 func (m *LANManager) SetPasswordHash(hash string) {
 	m.state.setHash(hash)
+	// Authentication is checked only during the HTTP/WebSocket handshake.
+	// Revoke connections authenticated with the previous password immediately;
+	// otherwise an established terminal mux survives password regeneration.
+	m.closeConnections()
 }
 
 // PasswordHash returns the current connection password hash. Used to snapshot the
@@ -143,12 +151,16 @@ func (m *LANManager) Start(port int) (int, error) {
 		return 0, fmt.Errorf("bind LAN: unexpected listener address type %T", ln.Addr())
 	}
 	m.bound = tcpAddr.Port
-	m.srv = &http.Server{Handler: m.handler, ReadHeaderTimeout: 10 * time.Second}
+	m.srv = &http.Server{
+		Handler:           m.handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ConnState:         m.trackConnection,
+	}
 	srv := m.srv
 	boundPort := m.bound
 	m.mu.Unlock()
 	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			m.log.Error("LAN listener serve", "err", err)
 		}
 	}()
@@ -161,12 +173,54 @@ func (m *LANManager) Start(port int) (int, error) {
 func (m *LANManager) Stop(ctx context.Context) error {
 	m.mu.Lock()
 	srv := m.srv
-	m.srv, m.ln, m.bound = nil, nil, 0
+	ln := m.ln
+	if ln != nil {
+		// Stop accepting before snapshotting tracked connections, so no new
+		// authenticated connection can race the revocation below.
+		_ = ln.Close()
+	}
 	m.mu.Unlock()
 	if srv == nil {
 		return nil
 	}
-	return srv.Shutdown(ctx)
+
+	// http.Server.Shutdown deliberately ignores hijacked connections, including
+	// the terminal WebSocket at /mux. Close every connection tracked by this LAN
+	// listener so Disable actually revokes an already-connected phone.
+	m.closeConnections()
+	err := srv.Shutdown(ctx)
+
+	m.mu.Lock()
+	if m.srv == srv {
+		m.srv, m.ln, m.bound = nil, nil, 0
+	}
+	m.mu.Unlock()
+	return err
+}
+
+func (m *LANManager) trackConnection(conn net.Conn, state http.ConnState) {
+	m.connMu.Lock()
+	defer m.connMu.Unlock()
+	switch state {
+	case http.StateNew, http.StateActive, http.StateIdle, http.StateHijacked:
+		m.conns[conn] = struct{}{}
+	case http.StateClosed:
+		delete(m.conns, conn)
+	}
+}
+
+func (m *LANManager) closeConnections() {
+	m.connMu.Lock()
+	conns := make([]net.Conn, 0, len(m.conns))
+	for conn := range m.conns {
+		conns = append(conns, conn)
+	}
+	m.conns = make(map[net.Conn]struct{})
+	m.connMu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 // Running reports whether the LAN listener is currently serving.

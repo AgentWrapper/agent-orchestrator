@@ -2,12 +2,15 @@ package httpd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
@@ -107,4 +110,91 @@ func TestLANManagerStartStopIdempotent(t *testing.T) {
 		t.Fatal("still running after stop")
 	}
 	_ = m.Stop(ctx) // second stop is a no-op
+}
+
+func TestLANManagerPasswordRotationClosesEstablishedWebSockets(t *testing.T) {
+	accepted := make(chan struct{})
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		close(accepted)
+		defer c.CloseNow()
+		_, _, _ = c.Read(r.Context())
+	})
+	m := NewLANManager(inner, &authState{}, 0, slog.Default())
+	m.SetPasswordHash(mobilebridge.HashPassword("secret12"))
+	port, err := m.Start(0)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop(context.Background())
+
+	headers := http.Header{"Authorization": []string{"Bearer secret12"}}
+	c, _, err := websocket.Dial(context.Background(), fmt.Sprintf("ws://127.0.0.1:%d/mux", port), &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("websocket was not accepted")
+	}
+
+	m.SetPasswordHash(mobilebridge.HashPassword("newpass1"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err = c.Read(ctx)
+	if err == nil {
+		t.Fatal("established websocket remained open after password rotation")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("password rotation did not revoke the established websocket")
+	}
+}
+
+func TestLANManagerStopClosesEstablishedWebSockets(t *testing.T) {
+	accepted := make(chan struct{})
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		close(accepted)
+		defer c.CloseNow()
+		_, _, _ = c.Read(r.Context())
+	})
+	m := NewLANManager(inner, &authState{}, 0, slog.Default())
+	m.SetPasswordHash(mobilebridge.HashPassword("secret12"))
+	port, err := m.Start(0)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	headers := http.Header{"Authorization": []string{"Bearer secret12"}}
+	c, _, err := websocket.Dial(context.Background(), fmt.Sprintf("ws://127.0.0.1:%d/mux", port), &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("websocket was not accepted")
+	}
+
+	if err := m.Stop(context.Background()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err = c.Read(ctx)
+	if err == nil {
+		t.Fatal("established websocket remained open after stop")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("stop did not revoke the established websocket")
+	}
 }
