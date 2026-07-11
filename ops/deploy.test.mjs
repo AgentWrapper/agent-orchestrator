@@ -70,6 +70,54 @@ describe("ao self-deploy script", () => {
 		);
 	});
 
+	it("installs frontend dependencies before restarting web when package metadata changes", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "frontend", "package.json"), '{"dependencies":{"qrcode.react":"^4.2.0"}}\n');
+		await writeFile(path.join(fixture.dir, "frontend", "package-lock.json"), '{"lockfileVersion":3}\n');
+		await git(fixture.dir, ["add", "frontend/package.json", "frontend/package-lock.json"]);
+		await git(fixture.dir, ["commit", "-m", "frontend package metadata change"]);
+
+		const result = await runDeployDryRun(fixture.dir, fixture.home, { AO_DEPLOY_BASE: base.stdout.trim() });
+
+		assert.equal(result.code, 0, result.stderr);
+		assert.match(result.stdout, /frontend package metadata changed; installing dependencies with npm ci/);
+		assert.match(result.stdout, /DRY-RUN: cd .*\/frontend && npm ci/);
+		assert(
+			result.stdout.indexOf("DRY-RUN: cd ") < result.stdout.indexOf("DRY-RUN: systemctl --user restart ao-web.service"),
+			"npm ci must run before ao-web.service restart triggers the bundle build",
+		);
+	});
+
+	it("aborts before restarting web when frontend dependency install fails", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		await writeFile(path.join(fixture.dir, "frontend", "package.json"), '{"dependencies":{"qrcode.react":"^4.2.0"}}\n');
+		await writeFile(path.join(fixture.dir, "frontend", "package-lock.json"), '{"lockfileVersion":3}\n');
+		await git(fixture.dir, ["add", "frontend/package.json", "frontend/package-lock.json"]);
+		await git(fixture.dir, ["commit", "-m", "frontend package metadata change"]);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_BASE: base.stdout.trim(),
+			NPM_STUB_FAIL: "1",
+		});
+
+		assert.notEqual(result.code, 0, "a failed npm ci must fail the deploy");
+		assert.match(
+			result.stderr,
+			/Frontend dependency install failed; aborting deploy before restarting ao-web\.service/,
+		);
+
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.doesNotMatch(systemctlLog, /^--user restart ao-web\.service$/m);
+		await assert.rejects(access(fixture.stateFile), "a failed dependency install must not record the deployed ref");
+	});
+
 	it("does not restart web or notifier units when their directories are unchanged", async () => {
 		const fixture = await makeGitFixture();
 		await commitFixture(fixture.dir, "initial");
@@ -432,6 +480,14 @@ if [[ "$1" = "api" ]]; then
   exit 0
 fi
 exit 1
+`,
+		npm: `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "\${NPM_LOG:-/dev/null}"
+if [[ "\${NPM_STUB_FAIL:-0}" = "1" ]]; then
+  printf 'npm ci failed in stub\\n' >&2
+  exit 42
+fi
+exit 0
 `,
 	};
 

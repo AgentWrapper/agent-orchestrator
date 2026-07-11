@@ -238,7 +238,10 @@ Shared skills describe _process_ and resolve the _who/how_ from this contract:
 - **Tracking:** GitHub-only (no `.beads/` here — skills degrade
   automatically; the issue is the sole tracker).
 - **Build/test gates:** backend is Go — `cd backend && go build ./... &&
-go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
+go vet ./... && go test ./...`; frontend is npm-lockfile-managed Vite under
+  `frontend/` (`frontend/package-lock.json` is authoritative; use
+  `npm --prefix frontend ci` / `npm --prefix frontend run ...`, even though an
+  upstream `pnpm-workspace.yaml` is present).
   Upstream CI workflows are the remote gate.
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —
@@ -285,9 +288,11 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   `ops/deploy.sh`. The script backs up `~/.local/bin/ao` to
   `~/.local/bin/ao.prev`, rebuilds the daemon binary from `backend/`, restarts
   `ao.service`, and retries readiness for about 30 seconds so the brief
-  self-hosted API outage is not treated as a failure. If `frontend/` changed
-  in the deployed range it restarts `ao-web.service` (whose `ExecStartPre`
-  rebuilds the web bundle); if `ops/` changed it restarts
+  self-hosted API outage is not treated as a failure. If frontend package
+  metadata changed in the deployed range it first runs `npm ci` under
+  `frontend/` and aborts before the web restart on install failure. If
+  `frontend/` changed in the deployed range it restarts `ao-web.service`
+  (whose `ExecStartPre` rebuilds the web bundle); if `ops/` changed it restarts
   `ao-slack-notifier.service`. After the restart it verifies the running
   daemon reports the just-built VCS revision (via `/api/v1/version`), warns
   loudly when the binary was built from a dirty tree, and appends every deploy

@@ -311,6 +311,18 @@ changed_in_range() {
   git -C "${repo_root}" diff --name-only "${base}" "${head}" -- "${pathspec}" | grep -q .
 }
 
+install_frontend_dependencies() {
+  if [[ ! -f "${repo_root}/frontend/package-lock.json" ]]; then
+    printf 'Refusing to install frontend dependencies: %s is missing; this deploy expects npm lockfile management.\n' "${repo_root}/frontend/package-lock.json" >&2
+    return 1
+  fi
+  log "frontend package metadata changed; installing dependencies with npm ci."
+  if ! run_in "${repo_root}/frontend" npm ci; then
+    printf 'Frontend dependency install failed; aborting deploy before restarting %s.\n' "${web_unit}" >&2
+    return 1
+  fi
+}
+
 session_count() {
   ao session ls --json | node -e '
 let body = "";
@@ -539,7 +551,7 @@ rollback_deploy() {
 }
 
 deploy() {
-  local head base frontend_changed=false ops_changed=false pre_sessions
+  local head base frontend_changed=false frontend_package_metadata_changed=false ops_changed=false pre_sessions
 
   if [[ "${dry_run}" != "1" && ! -x "${ao_bin}" ]]; then
     printf 'Current ao binary is not executable: %s\n' "${ao_bin}" >&2
@@ -555,6 +567,10 @@ deploy() {
 
   if changed_in_range "${base}" "${head}" "frontend/"; then
     frontend_changed=true
+  fi
+  if changed_in_range "${base}" "${head}" "frontend/package.json" ||
+    changed_in_range "${base}" "${head}" "frontend/package-lock.json"; then
+    frontend_package_metadata_changed=true
   fi
   if changed_in_range "${base}" "${head}" "ops/"; then
     ops_changed=true
@@ -587,6 +603,9 @@ deploy() {
   verify_daemon_revision "${built_revision:-}"
 
   if [[ "${frontend_changed}" == "true" ]]; then
+    if [[ "${frontend_package_metadata_changed}" == "true" ]]; then
+      install_frontend_dependencies
+    fi
     log "frontend/ changed; restarting ${web_unit} (ExecStartPre rebuilds the production web bundle)."
     restart_unit "${web_unit}"
     verify_unit_active "${web_unit}" "ao web"
