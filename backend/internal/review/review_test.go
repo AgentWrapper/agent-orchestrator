@@ -477,6 +477,82 @@ func TestTriggerRetriesAfterFailedRunForSameCommit(t *testing.T) {
 	}
 }
 
+// reviewCandidateSink captures telemetry so reviewer candidate-health tests can
+// assert the shared alerting path fired.
+type reviewCandidateSink struct {
+	mu     sync.Mutex
+	events []ports.TelemetryEvent
+}
+
+func (s *reviewCandidateSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, ev)
+}
+
+func (s *reviewCandidateSink) Close(context.Context) error { return nil }
+
+func (s *reviewCandidateSink) named(name string) []ports.TelemetryEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ports.TelemetryEvent
+	for _, ev := range s.events {
+		if ev.Name == name {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func newEngineWithTelemetry(store Store, sessions Sessions, prs PRs, projects Projects, launcher Launcher, sink ports.EventSink) *Engine {
+	ids := 0
+	return New(Deps{
+		Store: store, Sessions: sessions, PRs: prs, Projects: projects, Launcher: launcher,
+		Clock:     func() time.Time { return time.Unix(0, 0).UTC() },
+		NewID:     func() string { ids++; return "id-" + string(rune('0'+ids)) },
+		Telemetry: sink,
+	})
+}
+
+// TestTriggerReviewerLaunchFailureMarksCandidateDown brings the reviewer
+// selection surface under the shared candidate-health policy (GH #142): the
+// exact resolved reviewer harness that fails to launch is marked down and
+// alerted, and a later successful spawn of that harness recovers it.
+func TestTriggerReviewerLaunchFailureMarksCandidateDown(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{spawnErr: fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)}
+	sink := &reviewCandidateSink{}
+	eng := newEngineWithTelemetry(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher, sink)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ErrAgentBinaryNotFound", err)
+	}
+	// claude-code is the default reviewer harness for a claude worker.
+	if !eng.reviewerHealth.IsDown(reviewerCandidate(domain.ReviewerClaudeCode)) {
+		t.Fatal("failed reviewer harness was not marked down")
+	}
+	down := sink.named("ao.candidate_health.candidate_down")
+	if len(down) != 1 {
+		t.Fatalf("want 1 candidate_down event, got %d", len(down))
+	}
+	if got := down[0].Payload["surface"]; got != "reviewer" {
+		t.Fatalf("candidate_down surface = %v, want reviewer", got)
+	}
+
+	// A later successful spawn of the same harness recovers the candidate.
+	launcher.spawnErr = nil
+	launcher.handle = "review-mer-1"
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("second trigger should succeed: %v", err)
+	}
+	if eng.reviewerHealth.IsDown(reviewerCandidate(domain.ReviewerClaudeCode)) {
+		t.Fatal("successful reviewer spawn did not recover the candidate")
+	}
+	if got := len(sink.named("ao.candidate_health.candidate_recovered")); got != 1 {
+		t.Fatalf("want 1 candidate_recovered event, got %d", got)
+	}
+}
+
 func TestTriggerCreatesRunsForMultipleEligiblePRsWithOneReviewer(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{handle: "review-mer-1"}

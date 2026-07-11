@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -215,14 +216,27 @@ type Manager struct {
 	telemetry ports.EventSink
 	spawnMu   sync.Mutex
 
-	mixMu      sync.Mutex
-	mixDown    map[domain.BucketKey]workerMixBucketDown
-	mixSkipped map[domain.BucketKey]int
+	// mixHealth is the worker-mix selection surface's candidate-health circuit
+	// breaker (GH #142): the shared policy that, when an exact selected bucket
+	// fails to launch, marks that bucket down, debits its share, and alerts —
+	// instead of silently substituting another bucket. It generalises the
+	// worker-mix-specific breaker from GH #95.
+	mixHealth *candidatehealth.Tracker
 }
 
-type workerMixBucketDown struct {
-	Reason    string
-	ChangedAt time.Time
+// workerMixSurface is the candidate-health surface name for worker-mix bucket
+// selection.
+const workerMixSurface = "worker_mix"
+
+// bucketCandidate maps a worker-mix bucket onto the shared candidate-health
+// identity. Harness and model are the two axes the mix distributes over, so they
+// are the axes that must match to avoid false substitution.
+func bucketCandidate(key domain.BucketKey) candidatehealth.Candidate {
+	return candidatehealth.Candidate{
+		Surface: workerMixSurface,
+		Harness: string(key.Harness),
+		Model:   strings.TrimSpace(key.Model),
+	}
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -331,10 +345,8 @@ func New(d Deps) *Manager {
 			pollInterval: paneReadyPollInterval,
 			deadline:     paneReadyDeadline,
 		},
-		logger:     d.Logger,
-		telemetry:  d.Telemetry,
-		mixDown:    map[domain.BucketKey]workerMixBucketDown{},
-		mixSkipped: map[domain.BucketKey]int{},
+		logger:    d.Logger,
+		telemetry: d.Telemetry,
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -351,6 +363,14 @@ func New(d Deps) *Manager {
 	if m.logger == nil {
 		m.logger = slog.Default()
 	}
+	// Build the worker-mix candidate-health tracker after clock/logger defaults
+	// resolve so it shares the manager's clock and logger.
+	m.mixHealth = candidatehealth.New(candidatehealth.Config{
+		Source:    "session_manager",
+		Logger:    m.logger,
+		Telemetry: m.telemetry,
+		Clock:     m.clock,
+	})
 	m.guard = sessionguard.New(d.Store, d.Messenger, m.logger)
 	return m
 }
@@ -405,7 +425,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			} else {
 				key.Model = strings.TrimSpace(cfg.Model)
 			}
-			if m.recordWorkerMixBucketSkippedIfDown(key) {
+			if m.mixHealth.RecordSkipIfDown(bucketCandidate(key)) {
 				return domain.SessionRecord{}, fmt.Errorf("spawn: worker mix selected %s: %w", formatBucketKey(key), ErrWorkerMixBucketDown)
 			}
 			mixBucket = &key
@@ -516,7 +536,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markWorkerMixBucketDown(mixBucket, err)
+		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
@@ -532,7 +552,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markWorkerMixBucketDown(mixBucket, err)
+		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -542,7 +562,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.validateAgentBinary(argv); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markWorkerMixBucketDown(mixBucket, err)
+		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	runtimeToken, err := newRuntimeToken()
@@ -560,7 +580,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markWorkerMixBucketDown(mixBucket, err)
+		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -582,7 +602,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			_ = m.runtime.Destroy(ctx, handle)
 			_ = m.workspace.Destroy(ctx, ws)
 			m.rollbackSpawnSeedRow(ctx, id)
-			m.markWorkerMixBucketDown(mixBucket, err)
+			m.markWorkerMixBucketDown(ctx, mixBucket, err)
 			if aliveErr != nil {
 				err = errors.Join(err, fmt.Errorf("pane liveness probe: %w", aliveErr))
 			}
@@ -603,7 +623,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markWorkerMixBucketDown(mixBucket, err)
+		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 	}
 
@@ -792,94 +812,38 @@ func (m *Manager) runningWorkerBuckets(ctx context.Context, projectID domain.Pro
 	return counts, nil
 }
 
+// applyWorkerMixSkipped folds each down bucket's accumulated skip debit into the
+// running-count map the selector consumes, so a down bucket's share is accounted
+// for as still-occupied capacity rather than silently reallocated to a healthy
+// bucket. The debit lives in the shared candidate-health tracker.
 func (m *Manager) applyWorkerMixSkipped(counts map[domain.BucketKey]int) {
-	m.mixMu.Lock()
-	defer m.mixMu.Unlock()
-	for k, skipped := range m.mixSkipped {
-		if skipped > 0 {
-			counts[k] += skipped
-		}
-	}
+	m.mixHealth.ForEachSkipped(func(c candidatehealth.Candidate, skipped int) {
+		counts[domain.BucketKey{Harness: domain.AgentHarness(c.Harness), Model: c.Model}] += skipped
+	})
 }
 
+// workerMixBucketDown reports whether the exact bucket is currently down. Kept as
+// a thin method over the shared tracker for the package's tests.
 func (m *Manager) workerMixBucketDown(key domain.BucketKey) bool {
-	m.mixMu.Lock()
-	defer m.mixMu.Unlock()
-	_, ok := m.mixDown[key]
-	return ok
+	return m.mixHealth.IsDown(bucketCandidate(key))
 }
 
-func (m *Manager) recordWorkerMixBucketSkippedIfDown(key domain.BucketKey) bool {
-	m.mixMu.Lock()
-	down, ok := m.mixDown[key]
-	if !ok {
-		m.mixMu.Unlock()
-		return false
-	}
-	m.mixSkipped[key]++
-	skipped := m.mixSkipped[key]
-	m.mixMu.Unlock()
-	m.logger.Warn("worker mix bucket skipped",
-		"bucket", formatBucketKey(key), "skipped", skipped, "reason", down.Reason)
-	return true
-}
-
-func (m *Manager) markWorkerMixBucketDown(key *domain.BucketKey, err error) {
-	if key == nil || err == nil {
+// markWorkerMixBucketDown records an exact-bucket launch failure (the mix-only
+// #95 behavior) through the shared candidate-health policy.
+func (m *Manager) markWorkerMixBucketDown(ctx context.Context, key *domain.BucketKey, err error) {
+	if key == nil {
 		return
 	}
-	reason := err.Error()
-	m.mixMu.Lock()
-	_, alreadyDown := m.mixDown[*key]
-	m.mixDown[*key] = workerMixBucketDown{Reason: reason, ChangedAt: m.clock()}
-	m.mixSkipped[*key]++
-	skipped := m.mixSkipped[*key]
-	m.mixMu.Unlock()
-	if alreadyDown {
-		m.logger.Warn("worker mix bucket still down",
-			"bucket", formatBucketKey(*key), "skipped", skipped, "reason", reason)
-		return
-	}
-	m.logger.Warn("worker mix bucket down",
-		"bucket", formatBucketKey(*key), "skipped", skipped, "reason", reason)
-	m.emitWorkerMixBucketEvent("ao.worker_mix.bucket_down", ports.TelemetryLevelWarn, *key, reason)
+	m.mixHealth.MarkDownForAttempt(ctx, bucketCandidate(*key), err)
 }
 
+// markWorkerMixBucketRecovered clears a bucket's down state after a successful
+// exact-bucket spawn.
 func (m *Manager) markWorkerMixBucketRecovered(key *domain.BucketKey) {
 	if key == nil {
 		return
 	}
-	m.mixMu.Lock()
-	_, wasDown := m.mixDown[*key]
-	delete(m.mixDown, *key)
-	delete(m.mixSkipped, *key)
-	m.mixMu.Unlock()
-	if wasDown {
-		m.logger.Info("worker mix bucket recovered", "bucket", formatBucketKey(*key))
-		m.emitWorkerMixBucketEvent("ao.worker_mix.bucket_recovered", ports.TelemetryLevelInfo, *key, "")
-	}
-}
-
-func (m *Manager) emitWorkerMixBucketEvent(name string, level ports.TelemetryLevel, key domain.BucketKey, reason string) {
-	if m.telemetry == nil {
-		return
-	}
-	payload := map[string]any{
-		"component": "session_manager",
-		"bucket":    formatBucketKey(key),
-		"harness":   string(key.Harness),
-		"model":     strings.TrimSpace(key.Model),
-	}
-	if reason != "" {
-		payload["reason"] = reason
-	}
-	m.telemetry.Emit(context.Background(), ports.TelemetryEvent{
-		Name:       name,
-		Source:     "session_manager",
-		OccurredAt: m.clock(),
-		Level:      level,
-		Payload:    payload,
-	})
+	m.mixHealth.MarkRecovered(bucketCandidate(*key))
 }
 
 func formatBucketKey(key domain.BucketKey) string {

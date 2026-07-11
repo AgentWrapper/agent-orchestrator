@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,33 @@ import (
 )
 
 var ctx = context.Background()
+
+// candidateHealthSink captures telemetry events so worker-mix candidate-health
+// tests can assert the shared alerting path fired.
+type candidateHealthSink struct {
+	mu     sync.Mutex
+	events []ports.TelemetryEvent
+}
+
+func (s *candidateHealthSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, ev)
+}
+
+func (s *candidateHealthSink) Close(context.Context) error { return nil }
+
+func (s *candidateHealthSink) named(name string) []ports.TelemetryEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ports.TelemetryEvent
+	for _, ev := range s.events {
+		if ev.Name == name {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
 
 type fakeStore struct {
 	sessions           map[domain.SessionID]domain.SessionRecord
@@ -1241,6 +1269,48 @@ func TestSpawn_WorkerMixMarksFailedBucketDownWithoutSameAttemptSubstitution(t *t
 	}
 	if m.workerMixBucketDown(downKey) {
 		t.Fatal("successful exact bucket spawn did not mark bucket recovered")
+	}
+}
+
+// TestSpawn_WorkerMixEmitsCandidateHealthTelemetry confirms the worker-mix
+// surface now alerts through the shared candidate-health policy (GH #142): a
+// failed exact bucket emits ao.candidate_health.candidate_down naming the
+// surface and reason, and a later successful exact spawn emits
+// candidate_recovered.
+func TestSpawn_WorkerMixEmitsCandidateHealthTelemetry(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100}},
+	}}
+	agent := &modelFailAgent{failModel: "gpt-5.5-codex", err: errors.New("400 model not available")}
+	sink := &candidateHealthSink{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+		Telemetry: sink,
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil {
+		t.Fatal("spawn should fail on the down bucket")
+	}
+	down := sink.named("ao.candidate_health.candidate_down")
+	if len(down) != 1 {
+		t.Fatalf("want 1 candidate_down event, got %d", len(down))
+	}
+	if got := down[0].Payload["surface"]; got != "worker_mix" {
+		t.Fatalf("candidate_down surface = %v, want worker_mix", got)
+	}
+	if got := down[0].Payload["reason"]; got != "400 model not available" {
+		t.Fatalf("candidate_down reason = %v, want the observed error", got)
+	}
+
+	agent.failModel = ""
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"}); err != nil {
+		t.Fatalf("successful exact spawn should recover the bucket: %v", err)
+	}
+	if got := len(sink.named("ao.candidate_health.candidate_recovered")); got != 1 {
+		t.Fatalf("want 1 candidate_recovered event, got %d", got)
 	}
 }
 

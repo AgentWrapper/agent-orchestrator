@@ -12,12 +12,14 @@ import (
 	stdctx "context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -68,6 +70,13 @@ type Deps struct {
 	// Clock and NewID are injectable for deterministic tests.
 	Clock func() time.Time
 	NewID func() string
+
+	// Telemetry receives reviewer candidate-health alerts. Nil disables the
+	// structured events while preserving log alerts.
+	Telemetry ports.EventSink
+	// Logger receives reviewer candidate-health diagnostics. Nil defaults to
+	// slog.Default().
+	Logger *slog.Logger
 }
 
 // Engine is the core code-review engine.
@@ -80,11 +89,27 @@ type Engine struct {
 	clock    func() time.Time
 	newID    func() string
 
+	// reviewerHealth is the reviewer selection surface's candidate-health
+	// circuit breaker (GH #142): when the exact resolved reviewer harness fails
+	// to launch, AO marks that harness down and alerts instead of silently
+	// letting the failure look like a healthy review. A later successful spawn of
+	// the same harness clears it.
+	reviewerHealth *candidatehealth.Tracker
+
 	// triggerMu guards triggerLocks; triggerLocks holds one mutex per worker
 	// session so concurrent Trigger calls for the same worker serialise (see
 	// lockWorker). Distinct workers never contend.
 	triggerMu    sync.Mutex
 	triggerLocks map[domain.SessionID]*sync.Mutex
+}
+
+// reviewerSurface is the candidate-health surface name for reviewer selection.
+const reviewerSurface = "reviewer"
+
+// reviewerCandidate maps a reviewer harness onto the shared candidate-health
+// identity. Harness is the axis reviewer selection distributes over.
+func reviewerCandidate(h domain.ReviewerHarness) candidatehealth.Candidate {
+	return candidatehealth.Candidate{Surface: reviewerSurface, Harness: string(h)}
 }
 
 // New wires an Engine from its dependencies, defaulting the clock and id source.
@@ -97,14 +122,24 @@ func New(d Deps) *Engine {
 	if newID == nil {
 		newID = uuid.NewString
 	}
+	logger := d.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Engine{
-		store:        d.Store,
-		sessions:     d.Sessions,
-		prs:          d.PRs,
-		projects:     d.Projects,
-		launcher:     d.Launcher,
-		clock:        clock,
-		newID:        newID,
+		store:    d.Store,
+		sessions: d.Sessions,
+		prs:      d.PRs,
+		projects: d.Projects,
+		launcher: d.Launcher,
+		clock:    clock,
+		newID:    newID,
+		reviewerHealth: candidatehealth.New(candidatehealth.Config{
+			Source:    "review",
+			Logger:    logger,
+			Telemetry: d.Telemetry,
+			Clock:     clock,
+		}),
 		triggerLocks: make(map[domain.SessionID]*sync.Mutex),
 	}
 }
@@ -297,8 +332,15 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	if handleID == "" {
 		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
 		if err != nil {
+			// The exact resolved reviewer harness failed to launch. Mark it down
+			// and alert (GH #142) instead of letting the failure look like a
+			// healthy review; the failure is surfaced to the caller unchanged, so
+			// no other reviewer is silently substituted for this attempt.
+			e.reviewerHealth.MarkDownForAttempt(ctx, reviewerCandidate(harness), err)
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
+		// A successful exact-harness spawn clears any prior down state.
+		e.reviewerHealth.MarkRecovered(reviewerCandidate(harness))
 		handleID = h
 	} else {
 		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0)); err != nil {

@@ -148,6 +148,11 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		PRs:      store,
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime),
+		// Bring reviewer selection under the shared agent-candidate health policy
+		// (GH #142): a reviewer harness that fails to launch is marked down and
+		// alerted through the same telemetry surface as worker-mix buckets.
+		Telemetry: telemetry,
+		Logger:    log,
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
 	return sessionSvc, reviewSvc, mgr, nil
