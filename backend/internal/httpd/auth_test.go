@@ -85,6 +85,38 @@ func TestAuthRejectsMissingAndWrong(t *testing.T) {
 	}
 }
 
+func TestAuthSetsCookieForFollowupWebViewRequests(t *testing.T) {
+	h, _ := newAuthUnderTest("secret12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer secret12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("bearer request: got %d want 200", w.Code)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != mobileAuthCookie || cookies[0].Value == "" {
+		t.Fatalf("auth cookie not set: %#v", cookies)
+	}
+
+	followup := req("")
+	followup.AddCookie(cookies[0])
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, followup)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cookie followup: got %d want 200", w.Code)
+	}
+}
+
+func TestAuthRejectsWrongCookie(t *testing.T) {
+	h, _ := newAuthUnderTest("secret12", time.Now)
+	r := req("")
+	r.AddCookie(&http.Cookie{Name: mobileAuthCookie, Value: "wrong"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong cookie: got %d want 401", w.Code)
+	}
+}
+
 func TestAuthLockoutAfterFive(t *testing.T) {
 	now := time.Now()
 	h, _ := newAuthUnderTest("secret12", func() time.Time { return now })

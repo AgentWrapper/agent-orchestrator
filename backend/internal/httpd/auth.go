@@ -1,6 +1,7 @@
 package httpd
 
 import (
+	"crypto/subtle"
 	"net"
 	"net/http"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
+
+const mobileAuthCookie = "ao_mobile_auth"
 
 // authState holds the current password hash for the LAN listener. Swapped
 // atomically on regenerate so an in-flight request never sees a torn value.
@@ -107,6 +110,17 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
+func hasMobileAuthCookie(r *http.Request, hash string) bool {
+	if hash == "" {
+		return false
+	}
+	c, err := r.Cookie(mobileAuthCookie)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(hash)) == 1
+}
+
 func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +130,20 @@ func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Han
 					"too many failed attempts; try again shortly", nil)
 				return
 			}
-			if mobilebridge.PasswordMatches(state.currentHash(), bearerToken(r)) {
+			hash := state.currentHash()
+			if hasMobileAuthCookie(r, hash) {
+				lock.reset(src)
+				next.ServeHTTP(w, r)
+				return
+			}
+			if mobilebridge.PasswordMatches(hash, bearerToken(r)) {
+				http.SetCookie(w, &http.Cookie{
+					Name:     mobileAuthCookie,
+					Value:    hash,
+					Path:     "/",
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+				})
 				lock.reset(src)
 				next.ServeHTTP(w, r)
 				return
