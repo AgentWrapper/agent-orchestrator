@@ -267,7 +267,7 @@ func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (se
 	}
 	return sessionmanager.CleanupResult{
 		Cleaned: []domain.SessionID{"mer-1"},
-		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-2", Reason: "workspace has uncommitted changes"}},
+		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-2", Reason: "workspace has uncommitted changes", Path: "/ws/mer-2", UserWorkPreserved: true}},
 	}, nil
 }
 func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
@@ -309,24 +309,18 @@ func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
 	}
 }
 
-func TestTeardownProjectBlocksOnKillError(t *testing.T) {
+func TestTeardownProjectIgnoresKillTeardownError(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}}
 	boom := &sessionmanager.TeardownError{SessionID: "mer-1", Phase: sessionmanager.TeardownPhaseWorkspace, Err: errors.New("boom")}
 	fc := &fakeCommander{killErr: boom, cleanupResult: &sessionmanager.CleanupResult{}}
 	svc := &Service{manager: fc, store: st}
 
-	err := svc.TeardownProject(context.Background(), "mer")
-	var apiErr *apierr.Error
-	if !errors.As(err, &apiErr) || apiErr.Code != "PROJECT_REMOVE_BLOCKED" {
-		t.Fatalf("TeardownProject err = %v, want PROJECT_REMOVE_BLOCKED", err)
+	if err := svc.TeardownProject(context.Background(), "mer"); err != nil {
+		t.Fatalf("TeardownProject: %v, want nil for best-effort teardown error", err)
 	}
 	if len(fc.cleanupProjects) != 1 || fc.cleanupProjects[0] != "mer" {
-		t.Fatalf("cleanup projects = %#v, want cleanup after aggregating kill failure", fc.cleanupProjects)
-	}
-	blockers := apiErr.Details["blockers"].([]ProjectTeardownBlocker)
-	if len(blockers) != 1 || blockers[0].SessionID != "mer-1" || blockers[0].Phase != "workspace" || blockers[0].Reason != "workspace teardown failed" {
-		t.Fatalf("blockers = %#v, want workspace teardown blocker", blockers)
+		t.Fatalf("cleanup projects = %#v, want cleanup after best-effort kill failure", fc.cleanupProjects)
 	}
 }
 
@@ -348,6 +342,9 @@ func TestTeardownProjectBlocksLiveDirtyWorktree(t *testing.T) {
 	if len(blockers) != 1 || blockers[0].SessionID != "mer-1" || blockers[0].Reason != "workspace has uncommitted changes" {
 		t.Fatalf("blockers = %#v, want dirty workspace blocker", blockers)
 	}
+	if len(blockers[0].Paths) != 1 || blockers[0].Paths[0] != "/ws/mer-1" || len(blockers[0].RecoverySteps) == 0 {
+		t.Fatalf("blocker details = %#v, want path and recovery steps", blockers[0])
+	}
 }
 
 func TestTeardownProjectCleansStalePrunableWorktree(t *testing.T) {
@@ -367,11 +364,24 @@ func TestTeardownProjectCleansStalePrunableWorktree(t *testing.T) {
 	}
 }
 
-func TestTeardownProjectBlocksCleanupFailure(t *testing.T) {
+func TestTeardownProjectIgnoresNonDirtyCleanupFailure(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}}
 	fc := &fakeCommander{cleanupResult: &sessionmanager.CleanupResult{
-		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-1", Reason: "workspace teardown failed"}},
+		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-1", Reason: "workspace teardown failed", Path: "/ws/mer-1"}},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	if err := svc.TeardownProject(context.Background(), "mer"); err != nil {
+		t.Fatalf("TeardownProject: %v, want nil for non-dirty cleanup failure", err)
+	}
+}
+
+func TestTeardownProjectBlocksDirtyCleanupSkip(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}}
+	fc := &fakeCommander{cleanupResult: &sessionmanager.CleanupResult{
+		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-1", Reason: "workspace has uncommitted changes", Path: "/ws/mer-1", UserWorkPreserved: true}},
 	}}
 	svc := &Service{manager: fc, store: st}
 
@@ -381,8 +391,11 @@ func TestTeardownProjectBlocksCleanupFailure(t *testing.T) {
 		t.Fatalf("TeardownProject err = %v, want PROJECT_REMOVE_BLOCKED", err)
 	}
 	blockers := apiErr.Details["blockers"].([]ProjectTeardownBlocker)
-	if len(blockers) != 1 || blockers[0].SessionID != "mer-1" || blockers[0].Phase != "workspace" || blockers[0].Reason != "workspace teardown failed" {
-		t.Fatalf("blockers = %#v, want cleanup workspace blocker", blockers)
+	if len(blockers) != 1 || blockers[0].SessionID != "mer-1" || blockers[0].Phase != "workspace" || blockers[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("blockers = %#v, want dirty cleanup blocker", blockers)
+	}
+	if len(blockers[0].Paths) != 1 || blockers[0].Paths[0] != "/ws/mer-1" || len(blockers[0].RecoverySteps) == 0 {
+		t.Fatalf("blocker details = %#v, want path and recovery steps", blockers[0])
 	}
 }
 

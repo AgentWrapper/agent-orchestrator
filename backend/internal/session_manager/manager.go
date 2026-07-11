@@ -62,7 +62,9 @@ var (
 type TeardownPhase string
 
 const (
-	TeardownPhaseRuntime   TeardownPhase = "runtime"
+	// TeardownPhaseRuntime identifies runtime-adapter teardown failures.
+	TeardownPhaseRuntime TeardownPhase = "runtime"
+	// TeardownPhaseWorkspace identifies workspace-adapter teardown failures.
 	TeardownPhaseWorkspace TeardownPhase = "workspace"
 )
 
@@ -1726,11 +1728,13 @@ func (m *Manager) waitForActive(ctx context.Context, id domain.SessionID) (waitO
 	}
 }
 
-// CleanupSkip reports one terminal session whose workspace was preserved
-// rather than reclaimed, and why.
+// CleanupSkip reports one terminal session whose workspace cleanup was skipped,
+// and whether the skip protects user work.
 type CleanupSkip struct {
-	SessionID domain.SessionID
-	Reason    string
+	SessionID         domain.SessionID
+	Reason            string
+	Path              string
+	UserWorkPreserved bool
 }
 
 // CleanupResult reports what Cleanup reclaimed and what it preserved.
@@ -1762,14 +1766,14 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		}
 		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed", Path: ws.Path})
 			continue
 		} else if ok {
 			if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
 				if !errors.Is(err, ports.ErrWorkspaceDirty) {
 					m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 				}
-				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
+				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err), Path: ws.Path, UserWorkPreserved: cleanupSkipPreservesUserWork(err)})
 				continue
 			}
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
@@ -1779,7 +1783,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 				// internal filesystem paths); the full cause lands here.
 				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 			}
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err), Path: ws.Path, UserWorkPreserved: cleanupSkipPreservesUserWork(err)})
 			continue
 		} else {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
@@ -1799,6 +1803,10 @@ func cleanupSkipReason(err error) string {
 		return "workspace has uncommitted changes"
 	}
 	return "workspace teardown failed"
+}
+
+func cleanupSkipPreservesUserWork(err error) bool {
+	return errors.Is(err, ports.ErrWorkspaceDirty)
 }
 
 func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {

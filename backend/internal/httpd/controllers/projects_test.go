@@ -55,10 +55,12 @@ type removeConflictManager struct{ projectsvc.Manager }
 func (removeConflictManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
 	return projectsvc.RemoveResult{}, apierr.Conflict("PROJECT_REMOVE_BLOCKED", "Project removal is blocked by session workspaces that could not be removed. Resolve the listed sessions, then retry.", map[string]any{
 		"projectId": "proj",
-		"blockers": []map[string]string{{
-			"sessionId": "proj-1",
-			"phase":     "workspace",
-			"reason":    "workspace has uncommitted changes",
+		"blockers": []map[string]any{{
+			"sessionId":     "proj-1",
+			"phase":         "workspace",
+			"reason":        "workspace has uncommitted changes",
+			"paths":         []string{"/ws/proj-1"},
+			"recoverySteps": []string{"Commit, stash, or remove the uncommitted changes in the listed workspace path, then retry project removal."},
 		}},
 	})
 }
@@ -375,9 +377,11 @@ func TestProjectsAPI_DeleteBlockedReturns409Details(t *testing.T) {
 		Details struct {
 			ProjectID string `json:"projectId"`
 			Blockers  []struct {
-				SessionID string `json:"sessionId"`
-				Phase     string `json:"phase"`
-				Reason    string `json:"reason"`
+				SessionID     string   `json:"sessionId"`
+				Phase         string   `json:"phase"`
+				Reason        string   `json:"reason"`
+				Paths         []string `json:"paths"`
+				RecoverySteps []string `json:"recoverySteps"`
 			} `json:"blockers"`
 		} `json:"details"`
 	}
@@ -387,6 +391,9 @@ func TestProjectsAPI_DeleteBlockedReturns409Details(t *testing.T) {
 	}
 	if blocker := got.Details.Blockers[0]; blocker.SessionID != "proj-1" || blocker.Phase != "workspace" || blocker.Reason != "workspace has uncommitted changes" {
 		t.Fatalf("blocker = %#v, want dirty workspace blocker", blocker)
+	}
+	if blocker := got.Details.Blockers[0]; len(blocker.Paths) != 1 || blocker.Paths[0] != "/ws/proj-1" || len(blocker.RecoverySteps) == 0 {
+		t.Fatalf("blocker details = %#v, want path and recovery steps", blocker)
 	}
 }
 
