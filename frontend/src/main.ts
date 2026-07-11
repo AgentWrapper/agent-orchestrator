@@ -380,10 +380,14 @@ function ensureShellEnv(): Promise<void> {
 }
 
 function daemonEnv(): NodeJS.ProcessEnv {
-	// AO_OWNER=app marks this daemon as app-spawned so the app can re-link the
-	// supervisor on attach (headless `ao start` daemons get no AO_OWNER and stay
-	// unlinked, preserving their persistence across app quit).
-	const ownerTag = { AO_OWNER: "app" };
+	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
+	// into running.json and the attach path reads it to decide the supervisor
+	// link from the daemon's own state (not this Electron process's env, which
+	// differs across launches). A keep-alive daemon is "persistent" (never
+	// re-linked, survives app quit); a normal app-owned daemon is "app";
+	// headless `ao start` sets none (stays unlinked, persistent by default).
+	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
+	const ownerTag = { AO_OWNER };
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -603,11 +607,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	}
 	if (existing) {
 		setDaemonStatus(existing.status);
-		// Re-link the supervisor only when attaching to an app-owned daemon (one we
-		// previously spawned). Headless `ao start` daemons (owner unset) stay unlinked
-		// so they remain persistent after app quit. AO_KEEP_DAEMON also skips the
-		// link so the app's own daemon stays persistent across quit.
-		if (shouldLinkOnAttach(existing.owner, process.env)) {
+		// Re-link the supervisor only when attaching to a normal app-owned daemon
+		// (owner "app"). The keep decision is durable: a daemon spawned keep-alive
+		// is owner "persistent" and stays unlinked even when the app reopens
+		// without AO_KEEP_DAEMON, so closing it does not stop the persistent daemon.
+		if (shouldLinkOnAttach(existing.owner)) {
 			establishSupervisorLink();
 		}
 		return daemonStatus;
@@ -647,7 +651,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 				// run-file absent or unreadable: treat as headless, skip link.
 			}
 		}
-		if (shouldLinkOnAttach(portAttachOwner, process.env)) {
+		if (shouldLinkOnAttach(portAttachOwner)) {
 			establishSupervisorLink();
 		}
 		return daemonStatus;

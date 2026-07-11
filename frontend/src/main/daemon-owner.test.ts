@@ -19,16 +19,14 @@ describe("shouldLinkOnAttach", () => {
 		expect(shouldLinkOnAttach("cli")).toBe(false);
 	});
 
-	it("returns false for an app-owned daemon when AO_KEEP_DAEMON is set", () => {
-		expect(shouldLinkOnAttach("app", { AO_KEEP_DAEMON: "1" })).toBe(false);
-	});
-
-	it("still returns true for an app-owned daemon when AO_KEEP_DAEMON is unset", () => {
-		expect(shouldLinkOnAttach("app", {})).toBe(true);
-	});
-
-	it('still links an app-owned daemon when AO_KEEP_DAEMON is "0" (off)', () => {
-		expect(shouldLinkOnAttach("app", { AO_KEEP_DAEMON: "0" })).toBe(true);
+	// Cross-launch regression (PR #2231 review): a daemon spawned with
+	// AO_KEEP_DAEMON is stamped owner:"persistent" in running.json. A LATER
+	// launch of the app — which may have AO_KEEP_DAEMON unset — must NOT
+	// re-establish the supervisor link from that durable owner, or closing the
+	// second instance would kill the supposedly-persistent daemon. The decision
+	// is read only from the daemon's record, never from the current process env.
+	it("does NOT re-link a persistent daemon on attach, even when AO_KEEP_DAEMON is unset now", () => {
+		expect(shouldLinkOnAttach("persistent")).toBe(false);
 	});
 });
 

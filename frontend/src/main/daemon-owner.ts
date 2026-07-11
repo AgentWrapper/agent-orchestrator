@@ -13,15 +13,14 @@ export function keepDaemonAlive(env: { AO_KEEP_DAEMON?: string }): boolean {
 
 /**
  * Whether the app should hold a supervisor link to a daemon it ATTACHED to
- * (did not spawn). Only re-link app-owned daemons (owner === "app"); leave
- * headless `ao start` daemons (owner unset or empty) unlinked so they stay
+ * (did not spawn). The decision is read from the daemon's durable owner record
+ * in running.json — NOT the current Electron process env, which can differ
+ * across launches (a cross-launch regression: a daemon spawned keep-alive must
+ * stay unlinked even when the app is later reopened without AO_KEEP_DAEMON).
+ * Only a normal app-owned daemon ("app") is linked; a keep-alive daemon
+ * ("persistent") and headless `ao start` daemons (owner unset/empty) stay
  * persistent across app quit.
- *
- * When the user set AO_KEEP_DAEMON, never re-link — even an app-owned daemon
- * stays persistent across app quit, so reopening the app does not re-arm the
- * app-lifetime link that would kill it on the next close.
  */
-export function shouldLinkOnAttach(owner: string | undefined, env: { AO_KEEP_DAEMON?: string } = {}): boolean {
-	if (keepDaemonAlive(env)) return false;
+export function shouldLinkOnAttach(owner: string | undefined): boolean {
 	return owner === "app";
 }
