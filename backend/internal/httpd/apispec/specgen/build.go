@@ -15,6 +15,7 @@ import (
 	openapi "github.com/swaggest/openapi-go"
 	"github.com/swaggest/openapi-go/openapi31"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/buildinfo"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -73,6 +74,8 @@ func Build() ([]byte, error) {
 			"Legacy AO project import (availability probe and run)"),
 		*(&openapi31.Tag{Name: "metrics"}).WithDescription(
 			"Daemon resource metrics (host, per-project, per-session-scope)"),
+		*(&openapi31.Tag{Name: "version"}).WithDescription(
+			"Daemon build provenance (VCS revision, build time, dirty flag)"),
 	}
 
 	for _, op := range operations() {
@@ -227,6 +230,8 @@ var schemaNames = map[string]string{
 	"MetricsAlert":               "MetricsAlert",
 	// legacyimport report
 	"LegacyimportReport": "ImportReport",
+	// buildinfo: daemon build provenance
+	"BuildinfoInfo": "VersionInfo",
 	// service/project entities + DTOs
 	"ProjectProject":               "Project",
 	"ProjectSummary":               "ProjectSummary",
@@ -320,6 +325,7 @@ func operations() []operation {
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, importOperations()...)
 	ops = append(ops, metricsOperations()...)
+	ops = append(ops, versionOperations()...)
 	return ops
 }
 
@@ -377,6 +383,21 @@ func metricsOperations() []operation {
 				{http.StatusOK, controllers.MetricsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// versionOperations declares the single /version operation. Must stay 1:1 with
+// the route VersionController.Register mounts (enforced by the parity test).
+func versionOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/version", id: "getVersion", tag: "version",
+			summary: "Return the running daemon's build provenance",
+			resps: []respUnit{
+				{http.StatusOK, buildinfo.Info{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
 	}

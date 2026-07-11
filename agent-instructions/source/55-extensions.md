@@ -53,7 +53,10 @@ go vet ./... && go test ./...`; frontend is pnpm/vite under `frontend/`.
   self-hosted API outage is not treated as a failure. If `frontend/` changed
   in the deployed range it restarts `ao-web.service` (whose `ExecStartPre`
   rebuilds the web bundle); if `ops/` changed it restarts
-  `ao-slack-notifier.service`.
+  `ao-slack-notifier.service`. After the restart it verifies the running
+  daemon reports the just-built VCS revision (via `/api/v1/version`), warns
+  loudly when the binary was built from a dirty tree, and appends every deploy
+  (timestamp, source ref, revision) to `~/.ao/deploy/agent-orchestrator.deploy.log`.
 
 ### Codex-family reviewers run in the foreground only
 
@@ -85,7 +88,12 @@ blocking, attached commands that run to completion in view.
   `curl http://127.0.0.1:3001/api/v1/projects` returns 200; the
   pre-restart `ao session ls --json` count matches the post-restart
   re-adopted count; the tailnet web URL returns 200; and
-  `ao-slack-notifier.service` is active after notifier restarts.
+  `ao-slack-notifier.service` is active after notifier restarts. Also confirm
+  the running daemon's build revision — `ao version` (or `ao version --json`)
+  and `curl http://127.0.0.1:3001/api/v1/version` report the embedded VCS
+  revision, build time, and dirty flag — matches the deployed commit and is
+  not a dirty (`vcs.modified=true`) build; `deploy.sh` verifies this
+  automatically and fails on a mismatch.
 - **Logs:** `journalctl --user -u ao`; for web and notifier follow-ups use
   `journalctl --user -u ao-web` and
   `journalctl --user -u ao-slack-notifier`.

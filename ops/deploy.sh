@@ -27,6 +27,12 @@ ao_prev="${AO_DEPLOY_AO_PREV:-${ao_bin}.prev}"
 systemd_user_dir="${AO_DEPLOY_SYSTEMD_USER_DIR:-${HOME}/.config/systemd/user}"
 state_dir="${AO_DEPLOY_STATE_DIR:-${HOME}/.ao/deploy}"
 state_file="${AO_DEPLOY_STATE_FILE:-${state_dir}/agent-orchestrator.last-deployed}"
+# Durable, append-only record of every deploy: timestamp, source ref, and the
+# built revision. The old ~/.ao/deploy-main.log went stale (last written by a
+# since-deleted worktree) because nothing appended to it reliably; log() now
+# tees here on every run so the log can never silently fall behind again.
+deploy_log="${AO_DEPLOY_LOG:-${state_dir}/agent-orchestrator.deploy.log}"
+deploy_log_warned=0
 ao_unit="${AO_DEPLOY_AO_UNIT:-ao.service}"
 web_unit="${AO_DEPLOY_WEB_UNIT:-ao-web.service}"
 notifier_unit="${AO_DEPLOY_NOTIFIER_UNIT:-ao-slack-notifier.service}"
@@ -65,6 +71,25 @@ quote_cmd() {
 
 log() {
   printf '%s\n' "$*"
+  # Mirror every human-facing line into the durable deploy log with a UTC
+  # timestamp. Best-effort (never abort the deploy if the log is unwritable),
+  # but the common path always appends so source ref + revision + timestamps
+  # land on disk. Skipped under dry-run so a rehearsal cannot pollute the log.
+  if [[ "${dry_run}" != "1" ]]; then
+    # A silently-failing audit log recreates the stale-log condition this log
+    # exists to prevent, so surface the first write failure loudly on stderr
+    # (once, to avoid spamming) rather than swallowing it. The deploy still
+    # proceeds: the console output and commit-status markers remain the
+    # authoritative record, and blocking a production deploy solely because a
+    # log file is unwritable would be worse than a loud warning.
+    if ! { mkdir -p "$(dirname "${deploy_log}")" 2>/dev/null &&
+      printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "${deploy_log}" 2>/dev/null; }; then
+      if [[ "${deploy_log_warned}" != "1" ]]; then
+        printf 'WARNING: could not append to deploy log %s; deploy proceeding without a durable file record.\n' "${deploy_log}" >&2
+        deploy_log_warned=1
+      fi
+    fi
+  fi
 }
 
 run() {
@@ -87,6 +112,76 @@ run_in() {
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+# binary_build_setting reads a single Go build setting (e.g. vcs.revision,
+# vcs.modified) embedded in a compiled binary by the toolchain. Emits the value
+# or an empty string when go is unavailable or the setting is absent (e.g. a
+# binary built outside a VCS checkout). Never fails, so callers can compare
+# against an empty string rather than being killed by `set -e`.
+binary_build_setting() {
+  local path="$1" key="$2"
+  if ! command_exists go; then
+    return 0
+  fi
+  # `grep` exits 1 when the setting is absent (e.g. a binary built with
+  # -buildvcs=false), which under `set -o pipefail` would fail the pipeline
+  # and, because callers assign the result under `set -e`, abort the whole
+  # deploy instead of degrading to the intended empty-value warning. Force
+  # the pipeline to succeed so a missing setting yields "" not a fatal error.
+  go version -m "${path}" 2>/dev/null | grep -F "${key}=" | head -n1 | sed "s/.*${key}=//" || true
+}
+
+# daemon_reported_revision asks the running daemon which revision it was built
+# from via /api/v1/version. Emits the revision or an empty string when the
+# endpoint is unreachable or does not report one. Never fails.
+daemon_reported_revision() {
+  local url="http://127.0.0.1:${ao_port}/api/v1/version"
+  local node_read='let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{try{process.stdout.write(String(JSON.parse(b).revision||""))}catch{process.stdout.write("")}});'
+  curl --silent --fail --max-time 5 "${url}" 2>/dev/null | node -e "${node_read}" 2>/dev/null || true
+}
+
+# warn_if_dirty loudly flags a binary built from a dirty working tree. A dirty
+# build means the running revision does not fully describe the code on disk —
+# exactly the "undetectable from any ao surface" trap this issue exists to close.
+warn_if_dirty() {
+  local path="$1" modified
+  modified="$(binary_build_setting "${path}" vcs.modified)"
+  if [[ "${modified}" == "true" ]]; then
+    log ""
+    log "WARNING: ao binary was built from a DIRTY working tree (vcs.modified=true)."
+    log "WARNING: the running revision does not fully describe the code on disk."
+    log "WARNING: commit or stash local changes before deploying to production."
+    log ""
+  fi
+}
+
+# verify_daemon_revision confirms the just-restarted daemon reports the same
+# revision the deploy just built. A mismatch means the restart did not pick up
+# the new binary (stale service, wrong path) and is a hard failure. An
+# unreadable built revision or an unavailable /version endpoint degrades to a
+# loud warning so the check never blocks a deploy on missing provenance data.
+verify_daemon_revision() {
+  local expected="$1"
+  if [[ "${dry_run}" == "1" ]]; then
+    log "DRY-RUN: would verify running daemon revision matches ${expected:-<unknown>}"
+    return 0
+  fi
+  if [[ -z "${expected}" ]]; then
+    log "WARNING: could not read built binary revision (go version -m); skipping revision-match verification."
+    return 0
+  fi
+  local reported
+  reported="$(daemon_reported_revision)"
+  if [[ -z "${reported}" ]]; then
+    log "WARNING: running daemon did not report a revision (/api/v1/version unavailable); cannot verify it matches built ${expected}."
+    return 0
+  fi
+  if [[ "${reported}" != "${expected}" ]]; then
+    printf 'Revision mismatch: built %s but running daemon reports %s\n' "${expected}" "${reported}" >&2
+    return 1
+  fi
+  log "Running daemon revision matches built binary: ${reported}"
 }
 
 git_head() {
@@ -387,8 +482,21 @@ deploy() {
   install_ao_unit
   run cp "${ao_bin}" "${ao_prev}"
   run_in "${repo_root}/backend" go build -o "${ao_bin}" ./cmd/ao
+
+  # Record + flag the built revision before restarting: the log line lands in
+  # the durable deploy log, and a dirty tree gets a loud warning so a
+  # vcs.modified=true binary is never shipped silently.
+  local built_revision built_modified
+  if [[ "${dry_run}" != "1" ]]; then
+    built_revision="$(binary_build_setting "${ao_bin}" vcs.revision)"
+    built_modified="$(binary_build_setting "${ao_bin}" vcs.modified)"
+    log "Built ao revision: ${built_revision:-<unknown>} (dirty=${built_modified:-unknown})"
+    warn_if_dirty "${ao_bin}"
+  fi
+
   restart_unit "${ao_unit}"
   verify_after_restart "${pre_sessions}"
+  verify_daemon_revision "${built_revision:-}"
 
   if [[ "${frontend_changed}" == "true" ]]; then
     log "frontend/ changed; restarting ${web_unit} (ExecStartPre rebuilds the production web bundle)."

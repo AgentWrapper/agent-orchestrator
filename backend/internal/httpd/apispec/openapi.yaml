@@ -1783,6 +1783,25 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/version:
+    get:
+      operationId: getVersion
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionInfo'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Return the running daemon's build provenance
+      tags:
+      - version
 components:
   schemas:
     APIError:
@@ -3526,6 +3545,22 @@ components:
       - reviewerHandleId
       - reviews
       type: object
+    VersionInfo:
+      properties:
+        goVersion:
+          type: string
+        modified:
+          type: boolean
+        revision:
+          type: string
+        time:
+          type: string
+        version:
+          type: string
+      required:
+      - version
+      - modified
+      type: object
     WorkerCapacity:
       properties:
         activeWorkers:
@@ -3688,3 +3723,5 @@ tags:
   name: import
 - description: Daemon resource metrics (host, per-project, per-session-scope)
   name: metrics
+- description: Daemon build provenance (VCS revision, build time, dirty flag)
+  name: version

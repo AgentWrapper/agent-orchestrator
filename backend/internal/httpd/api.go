@@ -49,6 +49,7 @@ type API struct {
 	imports       *controllers.ImportController
 	events        *EventsController
 	metrics       *controllers.MetricsController
+	version       *controllers.VersionController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -75,6 +76,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 		metrics:       &controllers.MetricsController{Provider: deps.Metrics},
+		version:       &controllers.VersionController{},
 	}
 }
 
@@ -100,6 +102,7 @@ func (a *API) Register(root chi.Router) {
 			a.notifications.Register(r)
 			a.imports.Register(r)
 			a.metrics.Register(r)
+			a.version.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
