@@ -89,6 +89,20 @@ func (s *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 	return append([]domain.PullRequest(nil), s.prs[id]...), nil
 }
 
+func (s *fakeStore) ListOpenPRs(_ context.Context) ([]domain.PullRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []domain.PullRequest{}
+	for _, prs := range s.prs {
+		for _, pr := range prs {
+			if !pr.Merged && !pr.Closed {
+				out = append(out, pr)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (s *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

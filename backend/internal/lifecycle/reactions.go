@@ -118,10 +118,14 @@ type reactionState struct {
 	// seen/attempts during this process. Lazy: we only pay the DB read on the
 	// first reaction touching each PR after startup.
 	loaded map[string]bool
+	// inflight reserves a dedup key while its external effect runs with the
+	// reaction mutex released, so two concurrent reactions for the same key can't
+	// both perform the effect (check-then-act). It maps key -> signature reserved.
+	inflight map[string]string
 }
 
 func newReactionState() reactionState {
-	return reactionState{seen: map[string]string{}, attempts: map[string]int{}, loaded: map[string]bool{}}
+	return reactionState{seen: map[string]string{}, attempts: map[string]int{}, loaded: map[string]bool{}, inflight: map[string]string{}}
 }
 
 // reactionPayload is the JSON document persisted in pr.last_nudge_signature.
@@ -864,4 +868,167 @@ func reactionKeyTargetsPR(key, prURL string) bool {
 	}
 	rest := parts[1]
 	return rest == prURL || strings.HasPrefix(rest, prURL+":")
+}
+
+// HandleDuplicatePR reacts to a detected duplicate PR (issue #181): it posts a
+// best-effort auto-comment on the newer/duplicate PR naming the pre-existing
+// one, and emits a loud duplicate_pr notification (Slack-forwarded) against the
+// duplicate PR's session.
+//
+// The two effects are independently idempotent. Each has its own persisted
+// per-PR signature (reusing pr.last_nudge_signature, keyed "dup-comment:<dupURL>"
+// and "dup-notify:<dupURL>", fingerprinted by the existing PR URL), so a failure
+// of one never suppresses or repeats the other, and a re-observation across polls
+// or a daemon restart does not re-fire a settled effect. External I/O (the GitHub
+// comment and the notification write) runs WITHOUT the reaction mutex held, then
+// only the effects that actually succeeded are settled and persisted under the
+// lock — a failed effect stays unsettled and retries on the next poll.
+func (m *Manager) HandleDuplicatePR(ctx context.Context, fact ports.DuplicatePRFact) error {
+	dupURL := strings.TrimSpace(fact.DupPRURL)
+	existingURL := strings.TrimSpace(fact.ExistingPRURL)
+	if dupURL == "" || existingURL == "" || dupURL == existingURL {
+		return nil
+	}
+	const commentKeyPrefix, notifyKeyPrefix = "dup-comment:", "dup-notify:"
+	commentKey := commentKeyPrefix + dupURL
+	notifyKey := notifyKeyPrefix + dupURL
+	sig := existingURL
+
+	// Phase 1: read persisted dedup state under the lock and RESERVE the effects
+	// this call will run. Reservation makes the "is it due?" check and the intent
+	// to run it atomic, so two concurrent reactions for the same key can't both
+	// slip past the check and each fire the effect while the lock is released for
+	// I/O.
+	m.react.mu.Lock()
+	if !m.react.loaded[dupURL] {
+		if err := m.loadPRSignaturesLocked(ctx, dupURL); err != nil {
+			m.react.mu.Unlock()
+			return err
+		}
+		m.react.loaded[dupURL] = true
+	}
+	// Treat ANY existing reservation as occupied (not just one matching sig): a
+	// concurrent holder — even one reserving a different, e.g. newer, signature —
+	// owns the effect until it releases, so we must not overwrite its reservation
+	// and race to settle a stale signature. The holder clears its reservation in
+	// phase 3; the next poll re-evaluates against the freshest signature.
+	_, commentReserved := m.react.inflight[commentKey]
+	_, notifyReserved := m.react.inflight[notifyKey]
+	needComment := m.commenter != nil && m.react.seen[commentKey] != sig && !commentReserved
+	needNotify := m.react.seen[notifyKey] != sig && !notifyReserved
+	if needComment {
+		m.react.inflight[commentKey] = sig
+	}
+	if needNotify {
+		m.react.inflight[notifyKey] = sig
+	}
+	m.react.mu.Unlock()
+	if !needComment && !needNotify {
+		return nil
+	}
+
+	// Phase 2: external I/O without the reaction mutex, so a slow GitHub/store
+	// call never blocks the other lifecycle reaction lanes sharing that lock.
+	commentDone := false
+	if needComment {
+		if err := m.commenter.PostIssueComment(ctx, dupURL, duplicatePRComment(fact)); err != nil {
+			slog.Default().Warn("lifecycle: duplicate PR auto-comment failed", "dup_pr", dupURL, "existing_pr", existingURL, "err", err)
+		} else {
+			commentDone = true
+		}
+	}
+	notifyDone := false
+	if needNotify {
+		intent := ports.NotificationIntent{
+			Type:               domain.NotificationDuplicatePR,
+			SessionID:          fact.DupSessionID,
+			ProjectID:          fact.ProjectID,
+			PRURL:              dupURL,
+			SessionDisplayName: fact.DupSessionDisplay,
+			PRNumber:           fact.DupPRNumber,
+			PRTitle:            fact.DupPRTitle,
+			Provider:           fact.Provider,
+			Repo:               fact.Repo,
+			IssueRef:           fact.IssueRef,
+			DuplicateOfPRURL:   existingURL,
+		}
+		if m.notifications == nil {
+			// No sink wired: treat as delivered so we don't spin retrying an
+			// effect that can never run in this deployment.
+			notifyDone = true
+		} else if err := m.notifications.Notify(ctx, intent); err != nil {
+			slog.Default().Warn("lifecycle: duplicate PR notification failed", "dup_pr", dupURL, "existing_pr", existingURL, "err", err)
+		} else {
+			notifyDone = true
+		}
+	}
+
+	// Phase 3: release the reservations, settle only the effects that succeeded,
+	// then persist once. The in-memory settle and the durable write happen
+	// together under the lock; a persist failure restores each signature's PRIOR
+	// value (not a blind delete) so a signature another caller settled meanwhile
+	// is preserved. A restart and this process then agree the effect is still due
+	// (at worst one extra attempt: the notification store dedups it and a repeat
+	// comment is harmless).
+	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+	if needComment && m.react.inflight[commentKey] == sig {
+		delete(m.react.inflight, commentKey)
+	}
+	if needNotify && m.react.inflight[notifyKey] == sig {
+		delete(m.react.inflight, notifyKey)
+	}
+	if !commentDone && !notifyDone {
+		return nil
+	}
+	priorComment, hadComment := m.react.seen[commentKey]
+	priorNotify, hadNotify := m.react.seen[notifyKey]
+	if commentDone {
+		m.react.seen[commentKey] = sig
+	}
+	if notifyDone {
+		m.react.seen[notifyKey] = sig
+	}
+	if err := m.persistPRSignaturesLocked(ctx, dupURL); err != nil {
+		if commentDone {
+			restoreSignature(m.react.seen, commentKey, priorComment, hadComment)
+		}
+		if notifyDone {
+			restoreSignature(m.react.seen, notifyKey, priorNotify, hadNotify)
+		}
+		return err
+	}
+	return nil
+}
+
+// restoreSignature reverts a dedup key to its prior value after a failed persist:
+// it re-sets the earlier signature when one existed, or deletes the key when it
+// was previously absent. A blind delete would drop a signature that a concurrent
+// caller had already settled.
+func restoreSignature(m map[string]string, key, prior string, had bool) {
+	if had {
+		m[key] = prior
+		return
+	}
+	delete(m, key)
+}
+
+// duplicatePRComment is the body auto-posted on the newer duplicate PR. It names
+// the pre-existing open PR and the shared issue so a reader (human or a resumed/
+// compacted worker) can adopt the existing PR instead of continuing the dup.
+func duplicatePRComment(fact ports.DuplicatePRFact) string {
+	existing := strings.TrimSpace(fact.ExistingPRURL)
+	if n := fact.ExistingPRNumber; n > 0 {
+		existing = fmt.Sprintf("#%d (%s)", n, existing)
+	}
+	issue := strings.TrimSpace(fact.IssueRef)
+	var b strings.Builder
+	b.WriteString("⚠️ Duplicate PR detected by agent-orchestrator.\n\n")
+	if issue != "" {
+		fmt.Fprintf(&b, "This pull request targets issue %s, which already has an open PR: %s.\n\n", domain.SanitizeControlChars(issue), domain.SanitizeControlChars(existing))
+	} else {
+		fmt.Fprintf(&b, "The issue this pull request targets already has an open PR: %s.\n\n", domain.SanitizeControlChars(existing))
+	}
+	b.WriteString("One issue should have one open PR. Close or adopt the existing PR (push to its branch) rather than continuing here, unless this is an intentional stacked PR.")
+	return b.String()
 }

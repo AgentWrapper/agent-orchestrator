@@ -105,6 +105,20 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 	return ports.SCMGuardResult{ETag: firstNonEmptyHeader(resp.ETag, etag), NotModified: resp.NotModified}, nil
 }
 
+// PostIssueComment posts body as an issue comment on the PR at prURL. A PR and
+// an issue share a number on GitHub, so the issue-comments endpoint is the
+// simplest way to leave a non-review comment on a pull request. It satisfies
+// ports.SCMCommenter for the duplicate-PR auto-comment (issue #181).
+func (p *Provider) PostIssueComment(ctx context.Context, prURL, body string) error {
+	owner, repo, number, err := parsePRURL(prURL)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"body": body}
+	_, err = p.client.doREST(ctx, http.MethodPost, repoPath(owner, repo, "issues", strconv.Itoa(number), "comments"), nil, payload)
+	return err
+}
+
 // FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs in
 // one GraphQL request. The observer owns chunking; this method rejects larger
 // batches so tests catch accidental over-batching.

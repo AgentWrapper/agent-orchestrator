@@ -72,6 +72,11 @@ SELECT * FROM pr
 WHERE session_id = ?
 ORDER BY updated_at DESC;
 
+-- name: ListOpenPRs :many
+SELECT * FROM pr
+WHERE is_merged = 0 AND is_closed = 0
+ORDER BY number ASC, url ASC;
+
 -- name: GetPRLastNudgeSignature :one
 SELECT last_nudge_signature FROM pr WHERE url = ?;
 

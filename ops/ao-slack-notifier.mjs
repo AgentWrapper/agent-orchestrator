@@ -128,6 +128,7 @@ const INTERESTING = new Set([
 	"pr_closed_unmerged",
 	"orchestrator_replaced",
 	"orchestrator_replacement_capped",
+	"duplicate_pr",
 ]);
 const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal"]);
 const ICONS = {
@@ -138,6 +139,7 @@ const ICONS = {
 	pr_closed_unmerged: "🗑️",
 	orchestrator_replaced: "🔁",
 	orchestrator_replacement_capped: "🚨",
+	duplicate_pr: "♊",
 };
 
 export function digestContentKey(records) {
@@ -204,9 +206,12 @@ function notificationLabel(n) {
 }
 
 function isMentionableNotification(n) {
+	// duplicate_pr is a loud operator alert (issue #181): the fleet opened a
+	// second PR for one issue and a human should intervene, so @mention it.
 	return (
 		n.type === "needs_input" ||
 		n.type === "orchestrator_replacement_capped" ||
+		n.type === "duplicate_pr" ||
 		(n.type === "ready_to_merge" && n.sensitive)
 	);
 }

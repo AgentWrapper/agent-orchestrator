@@ -45,6 +45,13 @@ func WithNotificationSink(sink notificationSink) Option {
 	return func(m *Manager) { m.notifications = sink }
 }
 
+// WithSCMCommenter wires the optional outbound SCM comment surface used by the
+// duplicate-PR guard (issue #181) to auto-comment on a newer duplicate PR. When
+// unset, the guard still fires the notification but skips the comment.
+func WithSCMCommenter(commenter ports.SCMCommenter) Option {
+	return func(m *Manager) { m.commenter = commenter }
+}
+
 // WithTelemetry wires lifecycle activity transitions to the shared telemetry sink.
 func WithTelemetry(sink ports.EventSink) Option {
 	return func(m *Manager) { m.telemetry = sink }
@@ -59,6 +66,7 @@ type Manager struct {
 	// nudges become no-ops but the reducer still runs.
 	guard         *sessionguard.Guard
 	notifications notificationSink
+	commenter     ports.SCMCommenter
 
 	mu        sync.Mutex
 	window    time.Duration

@@ -121,6 +121,24 @@ describe("ao Slack notifier notification formatting", () => {
 		assert.equal(msg, "<@U123> 🚨 *orchestrator_replacement_capped* [mer] mer-orch: mer-orch replacement paused");
 	});
 
+	it("mentions duplicate_pr notifications loudly", () => {
+		const msg = describeSlackMessage(
+			{
+				type: "duplicate_pr",
+				sessionId: "agent-94",
+				projectId: "ao",
+				title: "Duplicate PR #180 for the same issue",
+				prUrl: "https://github.example/pr/180",
+			},
+			"U123",
+		);
+
+		assert.equal(
+			msg,
+			"<@U123> ♊ *duplicate_pr* [ao] agent-94: Duplicate PR #180 for the same issue https://github.example/pr/180",
+		);
+	});
+
 	it("accepts the SSE envelope shape from older tests", () => {
 		const msg = describeSlackMessage(
 			{

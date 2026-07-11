@@ -12,6 +12,7 @@ import (
 	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -19,14 +20,35 @@ import (
 // provider used by v1. Missing credentials do not fail daemon startup; the
 // observer performs a lazy credential check in its background goroutine, logs
 // one warning, and disables itself before any provider API calls.
-func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, logger *slog.Logger) <-chan struct{} {
-	provider, err := newGitHubSCMProvider(logger)
-	if err != nil {
-		logSCMProviderDisabled(logger, err)
+func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, provider *scmgithub.Provider, logger *slog.Logger) <-chan struct{} {
+	if provider == nil {
 		return closedDone()
 	}
 	observer := scmobserve.New(provider, store, lcm, scmobserve.Config{Logger: logger})
 	return observer.Start(ctx)
+}
+
+// buildSCMProvider constructs the GitHub SCM provider used by both the observer
+// (reads) and lifecycle's duplicate-PR auto-comment (writes). A setup failure
+// (e.g. no token) logs one warning and returns nil, which disables both the
+// observer and the auto-comment without failing daemon startup.
+func buildSCMProvider(logger *slog.Logger) *scmgithub.Provider {
+	provider, err := newGitHubSCMProvider(logger)
+	if err != nil {
+		logSCMProviderDisabled(logger, err)
+		return nil
+	}
+	return provider
+}
+
+// scmCommenter adapts the optional SCM provider to the lifecycle commenter
+// surface, returning nil (not a typed-nil interface) when no provider is
+// available so lifecycle's nil check works.
+func scmCommenter(provider *scmgithub.Provider) ports.SCMCommenter {
+	if provider == nil {
+		return nil
+	}
+	return provider
 }
 
 func newGitHubSCMProvider(logger *slog.Logger) (*scmgithub.Provider, error) {

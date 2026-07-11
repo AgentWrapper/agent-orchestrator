@@ -32,6 +32,11 @@ const (
 type Store interface {
 	ListProjects(ctx context.Context) ([]domain.ProjectRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+	// ListOpenPRs returns every tracked PR that is neither merged nor closed.
+	// Intake uses it to skip issues that already have an open linked PR even when
+	// the owning session row is gone (a replaced/respawned worker), which is the
+	// mechanical half of the duplicate-PR guard (issue #181).
+	ListOpenPRs(ctx context.Context) ([]domain.PullRequest, error)
 }
 
 // Spawner is the session creation surface used by intake.
@@ -138,7 +143,16 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	seen := seenIssueIDs(enabledProjects, sessions)
+	// A worker session may have ended (replaced/respawned) while its PR stays
+	// open. Reading open PRs lets intake treat "issue already has an open PR" as
+	// seen even when no live session ties back to it, closing the duplicate-PR
+	// intake gap (issue #181). A read failure must not silently re-dispatch a
+	// duplicate, so it fails the pass (retried after backoff).
+	openPRs, err := o.store.ListOpenPRs(ctx)
+	if err != nil {
+		return err
+	}
+	seen := seenIssueIDs(enabledProjects, sessions, openPRs)
 	liveByProject := liveWorkersByProject(sessions)
 	runningByProject := runningWorkerBucketsByProject(sessions)
 	for _, project := range enabledProjects {
@@ -364,21 +378,44 @@ func containsFold(values []string, needle string) bool {
 	return false
 }
 
-func seenIssueIDs(projects []domain.ProjectRecord, sessions []domain.SessionRecord) map[domain.IssueID]bool {
+func seenIssueIDs(projects []domain.ProjectRecord, sessions []domain.SessionRecord, openPRs []domain.PullRequest) map[domain.IssueID]bool {
 	seen := make(map[domain.IssueID]bool, len(sessions))
 	projectByID := make(map[domain.ProjectID]domain.ProjectRecord, len(projects))
 	for _, project := range projects {
 		projectByID[domain.ProjectID(project.ID)] = project
 	}
-	for _, sess := range sessions {
-		if sess.IssueID != "" {
-			seen[sess.IssueID] = true
-			if project, ok := projectByID[sess.ProjectID]; ok {
-				if canonical, ok := CanonicalIssueIDFromRef(project, sess.IssueID); ok {
-					seen[canonical] = true
-				}
+	markSeen := func(projectID domain.ProjectID, issue domain.IssueID) {
+		if issue == "" {
+			return
+		}
+		seen[issue] = true
+		if project, ok := projectByID[projectID]; ok {
+			if canonical, ok := CanonicalIssueIDFromRef(project, issue); ok {
+				seen[canonical] = true
 			}
 		}
+	}
+	sessionByID := make(map[domain.SessionID]domain.SessionRecord, len(sessions))
+	for _, sess := range sessions {
+		sessionByID[sess.ID] = sess
+		markSeen(sess.ProjectID, sess.IssueID)
+	}
+	// An issue with an open linked PR must never be re-dispatched (issue #181).
+	// This is a direct, PR-anchored guarantee rather than relying only on the
+	// session-linkage pass above: even if the session-side attribution changes
+	// (a future filter of the sessions slice, a linkage the session row lost, or
+	// an intake pass that scopes sessions differently), an open PR still pins its
+	// issue as seen. A PR cascade-deletes with its session so it always has a
+	// session row (possibly terminated); a PR whose session has no issue linkage
+	// can't be attributed and is left to the pass above. Belt-and-suspenders here
+	// is deliberate: re-dispatching a duplicate is the exact failure #181 exists
+	// to stop, so the two passes reinforce each other.
+	for _, pr := range openPRs {
+		sess, ok := sessionByID[pr.SessionID]
+		if !ok {
+			continue
+		}
+		markSeen(sess.ProjectID, sess.IssueID)
 	}
 	return seen
 }

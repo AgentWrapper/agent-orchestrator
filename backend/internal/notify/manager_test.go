@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,63 @@ func TestManagerNotifyRejectsUnknownType(t *testing.T) {
 	err := mgr.Notify(context.Background(), Intent{Type: "surprise", SessionID: "mer-1", ProjectID: "mer"})
 	if !errors.Is(err, domain.ErrInvalidNotificationType) {
 		t.Fatalf("err = %v, want invalid type", err)
+	}
+}
+
+// A duplicate_pr intent is enriched with a title/body that names the existing PR
+// and the shared issue (issue #181).
+func TestManagerNotifyDuplicatePREnrichment(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_dup" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:             domain.NotificationDuplicatePR,
+		SessionID:        "ao-94b",
+		ProjectID:        "ao",
+		PRURL:            "https://github.com/acme/demo/pull/180",
+		PRNumber:         180,
+		IssueRef:         "acme/demo#169",
+		DuplicateOfPRURL: "https://github.com/acme/demo/pull/172",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if len(st.rows) != 1 {
+		t.Fatalf("stored rows = %d, want 1", len(st.rows))
+	}
+	got := st.rows[0]
+	if got.Type != domain.NotificationDuplicatePR {
+		t.Fatalf("type = %q, want duplicate_pr", got.Type)
+	}
+	if !strings.Contains(got.Title, "180") {
+		t.Fatalf("title should name the duplicate PR number; got %q", got.Title)
+	}
+	if !strings.Contains(got.Body, "https://github.com/acme/demo/pull/172") || !strings.Contains(got.Body, "acme/demo#169") {
+		t.Fatalf("body should name the existing PR and issue; got %q", got.Body)
+	}
+}
+
+// duplicate_pr is a PR-scoped alert: the whole point is naming the offending PR,
+// so a duplicate_pr intent with no PRURL is invalid and must be rejected rather
+// than stored with an empty pr_url (which would also collide in the unread
+// dedupe index). This pins the requiresPR contract for the type (issue #181).
+func TestManagerNotifyRejectsDuplicatePRWithoutPRURL(t *testing.T) {
+	st := &fakeStore{}
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Now() }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:             domain.NotificationDuplicatePR,
+		SessionID:        "ao-94b",
+		ProjectID:        "ao",
+		IssueRef:         "acme/demo#169",
+		DuplicateOfPRURL: "https://github.com/acme/demo/pull/172",
+	})
+	if !errors.Is(err, domain.ErrInvalidNotificationRecord) {
+		t.Fatalf("err = %v, want invalid record for duplicate_pr without a PR URL", err)
+	}
+	if len(st.rows) != 0 {
+		t.Fatalf("stored rows = %d, want 0 (invalid intent must not persist)", len(st.rows))
 	}
 }
 

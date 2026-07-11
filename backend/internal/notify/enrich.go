@@ -56,6 +56,8 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s was replaced", sessionLabel(intent))
 	case domain.NotificationOrchestratorReplacementCapped:
 		return fmt.Sprintf("%s replacement paused", sessionLabel(intent))
+	case domain.NotificationDuplicatePR:
+		return fmt.Sprintf("Duplicate %s for the same issue", prLabel(intent))
 	default:
 		return "Notification"
 	}
@@ -84,9 +86,26 @@ func bodyForIntent(intent Intent) string {
 		return "AO replaced an unresponsive project orchestrator."
 	case domain.NotificationOrchestratorReplacementCapped:
 		return "AO stopped replacing this project orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline."
+	case domain.NotificationDuplicatePR:
+		return duplicatePRBody(intent)
 	default:
 		return ""
 	}
+}
+
+// duplicatePRBody explains which two PRs collided on one issue. The existing PR
+// is always named; the issue reference is included when known so the operator
+// can see the collision without opening either PR.
+func duplicatePRBody(intent Intent) string {
+	existing := strings.TrimSpace(intent.DuplicateOfPRURL)
+	if existing == "" {
+		existing = "another open PR"
+	}
+	issue := strings.TrimSpace(intent.IssueRef)
+	if issue != "" {
+		return fmt.Sprintf("This PR duplicates %s for issue %s. Close or adopt one of them.", existing, issue)
+	}
+	return fmt.Sprintf("This PR duplicates %s for the same issue. Close or adopt one of them.", existing)
 }
 
 func sessionLabel(intent Intent) string {

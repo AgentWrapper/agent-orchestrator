@@ -12,12 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/trackerintake"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
@@ -52,6 +54,7 @@ type Store interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	ListOpenPRs(ctx context.Context) ([]domain.PullRequest, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
 }
@@ -59,6 +62,15 @@ type Store interface {
 // Lifecycle is the provider-neutral lifecycle notification sink.
 type Lifecycle interface {
 	ApplySCMObservation(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
+}
+
+// DuplicatePRReactor is the optional lifecycle surface that reacts to a detected
+// duplicate PR (issue #181): loud notification, best-effort auto-comment on the
+// newer PR, and idempotent dedup so a re-observation does not re-fire. A
+// Lifecycle that does not implement it disables duplicate reactions; detection
+// still runs but is a no-op, so wiring stays backward compatible.
+type DuplicatePRReactor interface {
+	HandleDuplicatePR(ctx context.Context, fact ports.DuplicatePRFact) error
 }
 
 type credentialChecker interface {
@@ -408,6 +420,13 @@ func (o *Observer) Poll(ctx context.Context) error {
 			o.cacheSetString(o.Cache.RepoPRListETag, &o.Cache.repoOrder, key, etag)
 		}
 	}
+	// Duplicate-PR detection runs after discovery/refresh so this poll's newly
+	// discovered open PRs are already durable in the store. It reads the whole
+	// fleet's open PRs, groups them by their owning session's linked issue, and
+	// hands each collision to lifecycle (which owns the notification, auto-
+	// comment, and idempotent dedup). Detection is best-effort: an error here
+	// must not fail the observation cycle.
+	o.detectDuplicatePRs(ctx)
 	return nil
 }
 
@@ -417,6 +436,147 @@ func (o *Observer) checkCredentials(ctx context.Context) (bool, error) {
 		probe = checker.SCMCredentialsAvailable
 	}
 	return observe.CheckCredentialsOnce(ctx, probe, &o.credentialsChecked, &o.disabled, o.logger, "scm observer")
+}
+
+// detectDuplicatePRs finds tracker issues that have more than one OPEN pull
+// request across the fleet and reports each collision to the duplicate reactor.
+// The oldest PR (lowest number) is treated as the canonical one that keeps the
+// work; every newer open PR for the same issue is a duplicate. Merged/closed PRs
+// never participate — only currently-open work can be a live duplicate. The
+// reactor owns notification/comment/dedup, so re-observing the same pair does
+// not re-fire.
+func (o *Observer) detectDuplicatePRs(ctx context.Context) {
+	reactor, ok := o.lifecycle.(DuplicatePRReactor)
+	if !ok || reactor == nil {
+		return
+	}
+	sessions, err := o.store.ListAllSessions(ctx)
+	if err != nil {
+		o.logger.Error("scm observer: duplicate detection: list sessions failed", "err", err)
+		return
+	}
+	sessionByID := make(map[domain.SessionID]domain.SessionRecord, len(sessions))
+	for _, s := range sessions {
+		sessionByID[s.ID] = s
+	}
+	openPRs, err := o.store.ListOpenPRs(ctx)
+	if err != nil {
+		o.logger.Error("scm observer: duplicate detection: list open prs failed", "err", err)
+		return
+	}
+	// Per-pass project cache so a repeated project lookup for many PRs is one read.
+	projectCache := map[string]domain.ProjectRecord{}
+	getProject := func(id string) (domain.ProjectRecord, bool) {
+		if p, ok := projectCache[id]; ok {
+			return p, p.ID != ""
+		}
+		p, found, gErr := o.store.GetProject(ctx, id)
+		if gErr != nil {
+			o.logger.Debug("scm observer: duplicate detection: project lookup failed", "project", id, "err", gErr)
+			projectCache[id] = domain.ProjectRecord{}
+			return domain.ProjectRecord{}, false
+		}
+		if !found {
+			projectCache[id] = domain.ProjectRecord{}
+			return domain.ProjectRecord{}, false
+		}
+		projectCache[id] = p
+		return p, true
+	}
+	// Group open PRs by the canonical linked issue of their owning session. A PR
+	// whose session has no linked issue (or whose session row is gone) cannot be
+	// attributed to an issue and is skipped — attribution is the whole basis for
+	// calling two PRs duplicates.
+	type openPR struct {
+		pr      domain.PullRequest
+		session domain.SessionRecord
+		ref     string
+	}
+	// The group key is scoped by project as well as issue id: two projects can
+	// carry the same issue number, and when project lookup/canonicalization fails
+	// the fallback raw id (e.g. a bare "169") is only meaningful within its own
+	// project. Keying on project+issue prevents a cross-project false positive.
+	byIssue := map[string][]openPR{}
+	for _, pr := range openPRs {
+		sess, ok := sessionByID[pr.SessionID]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(string(sess.IssueID)) == "" {
+			continue
+		}
+		// Canonicalize the linked issue before grouping: sessions may store the
+		// issue in different shapes (a bare number "170" from `ao spawn --issue`
+		// vs the canonical "github:owner/repo#170" from intake). Grouping on the
+		// raw id would split two PRs that target the same issue into different
+		// buckets and miss the duplicate. Canonicalization needs the owning
+		// project; fall back to the raw id when the project or mapping is
+		// unavailable so detection degrades rather than dropping the PR.
+		issueID := sess.IssueID
+		ref := humanIssueRef(sess.IssueID)
+		if proj, ok := getProject(string(sess.ProjectID)); ok {
+			if canonical, ok := trackerintake.CanonicalIssueIDFromRef(proj, sess.IssueID); ok {
+				issueID = canonical
+				ref = humanIssueRef(canonical)
+			}
+		}
+		key := string(sess.ProjectID) + "\x00" + string(issueID)
+		byIssue[key] = append(byIssue[key], openPR{pr: pr, session: sess, ref: ref})
+	}
+	for groupKey, group := range byIssue {
+		if len(group) < 2 {
+			continue
+		}
+		// Deterministic canonical choice: the lowest PR number is the original;
+		// ties on number (cross-repo) break on URL. ListOpenPRs already orders by
+		// (number, url), so group[0] is the canonical PR.
+		sort.Slice(group, func(i, j int) bool {
+			if group[i].pr.Number != group[j].pr.Number {
+				return group[i].pr.Number < group[j].pr.Number
+			}
+			return group[i].pr.URL < group[j].pr.URL
+		})
+		canonical := group[0]
+		for _, dup := range group[1:] {
+			// A single session that legitimately owns a stack of PRs for one issue
+			// is not a cross-worker duplicate: the stacked-PR case is the intended
+			// multi-PR-per-session flow. Only flag PRs owned by a DIFFERENT session
+			// than the canonical one.
+			if dup.session.ID == canonical.session.ID {
+				continue
+			}
+			fact := ports.DuplicatePRFact{
+				ProjectID:         dup.session.ProjectID,
+				IssueRef:          dup.ref,
+				DupSessionID:      dup.session.ID,
+				DupSessionDisplay: dup.session.DisplayName,
+				DupPRURL:          dup.pr.URL,
+				DupPRNumber:       dup.pr.Number,
+				DupPRTitle:        dup.pr.Title,
+				ExistingSessionID: canonical.session.ID,
+				ExistingPRURL:     canonical.pr.URL,
+				ExistingPRNumber:  canonical.pr.Number,
+				Provider:          firstNonEmpty(dup.pr.Provider, canonical.pr.Provider),
+				Repo:              firstNonEmpty(dup.pr.Repo, canonical.pr.Repo),
+			}
+			if err := reactor.HandleDuplicatePR(ctx, fact); err != nil {
+				o.logger.Error("scm observer: duplicate PR reaction failed", "group", groupKey, "dup_pr", dup.pr.URL, "existing_pr", canonical.pr.URL, "err", err)
+			}
+		}
+	}
+}
+
+// humanIssueRef strips the canonical "provider:" prefix a session stores on its
+// issue id, leaving the operator-facing reference (e.g. "owner/repo#169"). An id
+// without a recognized prefix is returned trimmed as-is.
+func humanIssueRef(id domain.IssueID) string {
+	raw := strings.TrimSpace(string(id))
+	if _, native, ok := strings.Cut(raw, ":"); ok {
+		if strings.TrimSpace(native) != "" {
+			return strings.TrimSpace(native)
+		}
+	}
+	return raw
 }
 
 // discoverSubjects builds the per-PR refresh subjects (one per open tracked PR)

@@ -5,8 +5,11 @@
 package ports
 
 import (
+	"context"
 	"errors"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 // ErrSCMNotFound is the provider-neutral sentinel for successful SCM lookups
@@ -46,6 +49,45 @@ type SCMGuardResult struct {
 	ETag string
 	// NotModified is true when the provider reported no change since the ETag.
 	NotModified bool
+}
+
+// SCMCommenter is the optional outbound-write surface a provider exposes so the
+// SCM observer can post an issue-style comment on a pull request (issue #181's
+// duplicate-PR auto-comment). It is intentionally separate from the read-only
+// Provider contract: not every provider/token can write, so the observer treats
+// a nil commenter (or a write failure) as best-effort and keeps operating on the
+// read path. Providers implement it on the same adapter that reads PRs.
+type SCMCommenter interface {
+	// PostIssueComment posts body as an issue comment on the PR identified by
+	// prURL. Implementations resolve owner/repo/number from the URL.
+	PostIssueComment(ctx context.Context, prURL, body string) error
+}
+
+// DuplicatePRFact describes a detected duplicate: two distinct OPEN pull
+// requests that both target the same tracker issue. Dup* is the newer PR (the
+// one that should be closed/adopted, and the one that gets the auto-comment);
+// ExistingOpen* is the pre-existing PR that keeps the work. The SCM observer
+// fills it after grouping open PRs by their owning session's linked issue and
+// hands it to lifecycle, which owns the notification, auto-comment, and dedup.
+type DuplicatePRFact struct {
+	ProjectID domain.ProjectID
+	// IssueRef is the tracker reference both PRs claim, e.g. "owner/repo#169".
+	IssueRef string
+
+	// The newer/duplicate PR.
+	DupSessionID      domain.SessionID
+	DupSessionDisplay string
+	DupPRURL          string
+	DupPRNumber       int
+	DupPRTitle        string
+
+	// The pre-existing open PR the duplicate collides with.
+	ExistingSessionID domain.SessionID
+	ExistingPRURL     string
+	ExistingPRNumber  int
+
+	Provider string
+	Repo     string
 }
 
 // SCMObservation is the provider-neutral pull-request observation emitted by

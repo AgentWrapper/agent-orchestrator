@@ -93,6 +93,62 @@ func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	}
 }
 
+// An issue whose worker session has ended but whose PR is still open must not be
+// re-dispatched: the open PR (attributed to its owning session's linked issue)
+// marks the issue seen, closing the respawn duplicate-PR gap (issue #181).
+func TestPollSkipsIssueWithOpenLinkedPRAfterSessionEnded(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		}},
+		// The worker session is terminated but its row (and issue linkage) remains,
+		// and its PR is still open.
+		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true}},
+		openPRs: []domain.PullRequest{{
+			URL:       "https://github.com/acme/demo/pull/99",
+			SessionID: "demo-1",
+			Number:    99,
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Has an open PR already",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %d, want 0 (issue with an open linked PR must not be dispatched)", len(spawner.calls))
+	}
+}
+
+// A read failure on the open-PR surface must not silently re-dispatch a
+// duplicate: the pass fails (and is retried after backoff).
+func TestPollFailsWhenOpenPRReadFails(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		}},
+		openPRsErr: errors.New("boom"),
+	}
+	spawner := &fakeSpawner{}
+	err := New(singleResolver(&fakeTracker{}), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background())
+	if err == nil {
+		t.Fatal("Poll() error = nil, want the open-PR read error to surface")
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %d, want 0 on read failure", len(spawner.calls))
+	}
+}
+
 func TestPollSkipsSessionScanWhenIntakeDisabled(t *testing.T) {
 	store := &fakeStore{
 		projects:    []domain.ProjectRecord{{ID: "demo"}},
@@ -460,7 +516,7 @@ func TestSeenIssueIDsCanonicalizesLegacyBareNumbers(t *testing.T) {
 		IssueID:   "170",
 	}}
 
-	seen := seenIssueIDs(projects, sessions)
+	seen := seenIssueIDs(projects, sessions, nil)
 	if !seen["170"] {
 		t.Fatal("raw legacy issue id was not preserved in seen map")
 	}
@@ -526,6 +582,8 @@ type fakeStore struct {
 	projects    []domain.ProjectRecord
 	sessions    []domain.SessionRecord
 	sessionsErr error
+	openPRs     []domain.PullRequest
+	openPRsErr  error
 }
 
 func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
@@ -534,6 +592,10 @@ func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error
 
 func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
 	return append([]domain.SessionRecord(nil), f.sessions...), f.sessionsErr
+}
+
+func (f *fakeStore) ListOpenPRs(context.Context) ([]domain.PullRequest, error) {
+	return append([]domain.PullRequest(nil), f.openPRs...), f.openPRsErr
 }
 
 type fakeTracker struct {

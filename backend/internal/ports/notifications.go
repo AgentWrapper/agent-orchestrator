@@ -31,4 +31,10 @@ type NotificationIntent struct {
 	// change) and is surfaced to downstream consumers such as the Slack
 	// notifier so they can dedupe on it too.
 	HeadSHA string
+
+	// Duplicate-PR enrichment (domain.NotificationDuplicatePR only). IssueRef is
+	// the tracker reference both PRs claim (e.g. "owner/repo#169"); PRURL is the
+	// newer/duplicate PR and DuplicateOfPRURL is the pre-existing open PR.
+	IssueRef         string
+	DuplicateOfPRURL string
 }

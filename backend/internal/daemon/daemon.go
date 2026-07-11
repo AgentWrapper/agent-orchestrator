@@ -114,8 +114,14 @@ func Run() error {
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, log)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	//
+	// The SCM provider is built once here so lifecycle can use it as the outbound
+	// comment surface for the duplicate-PR guard (issue #181) while the observer
+	// uses the same adapter for reads. A nil provider (no token) simply disables
+	// both the observer and the auto-comment; detection/notification still work.
+	scmProvider := buildSCMProvider(log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, scmCommenter(scmProvider), log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, scmProvider, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, a gitworktree workspace, the per-session agent resolver

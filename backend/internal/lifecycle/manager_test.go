@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1297,13 +1298,25 @@ func TestMarkSpawnedClearsFirstSignal(t *testing.T) {
 }
 
 type fakeNotificationSink struct {
-	intents []ports.NotificationIntent
-	err     error
+	mu sync.Mutex
+	// intents records deliveries that succeeded; attempts counts every Notify
+	// call including failures. A failed emit is a real attempt (the caller must
+	// not settle its dedupe signature) but not a delivery, so the two are
+	// tracked separately.
+	intents  []ports.NotificationIntent
+	attempts int
+	err      error
 }
 
 func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attempts++
+	if f.err != nil {
+		return f.err
+	}
 	f.intents = append(f.intents, intent)
-	return f.err
+	return nil
 }
 
 func TestActivity_WaitingInputTransitionEmitsNotification(t *testing.T) {
@@ -1770,8 +1783,8 @@ func TestSCMObservation_EmitFailureDoesNotRecordSignature(t *testing.T) {
 	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err == nil {
 		t.Fatal("want emit error to surface")
 	}
-	if len(sink.intents) != 1 {
-		t.Fatalf("attempts = %d, want 1", len(sink.intents))
+	if sink.attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", sink.attempts)
 	}
 	if st.signatureWrites != 0 {
 		t.Fatalf("signature persisted despite emit failure: writes=%d", st.signatureWrites)
@@ -1782,8 +1795,8 @@ func TestSCMObservation_EmitFailureDoesNotRecordSignature(t *testing.T) {
 	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.intents) != 2 {
-		t.Fatalf("attempts = %d, want 2 (retry after sink recovery)", len(sink.intents))
+	if sink.attempts != 2 {
+		t.Fatalf("attempts = %d, want 2 (retry after sink recovery)", sink.attempts)
 	}
 	if st.signatureWrites != 1 {
 		t.Fatalf("signature writes = %d, want 1 (persisted only after successful emit)", st.signatureWrites)

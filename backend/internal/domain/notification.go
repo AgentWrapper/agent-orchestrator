@@ -21,12 +21,17 @@ const (
 	NotificationOrchestratorReplaced NotificationType = "orchestrator_replaced"
 	// NotificationOrchestratorReplacementCapped means AO stopped replacing an unhealthy orchestrator after hitting its replacement limit.
 	NotificationOrchestratorReplacementCapped NotificationType = "orchestrator_replacement_capped"
+	// NotificationDuplicatePR means a second open PR was observed for a tracker
+	// issue that already has a different open PR. It is a loud, operator-facing
+	// alert: the fleet opened a duplicate and one of the PRs should be closed or
+	// adopted. See issue #181.
+	NotificationDuplicatePR NotificationType = "duplicate_pr"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR:
 		return true
 	default:
 		return false

@@ -253,6 +253,22 @@ func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID
 	return out, nil
 }
 
+// ListOpenPRs returns every tracked PR that is neither merged nor closed,
+// ordered by PR number then URL. Duplicate-PR detection (issue #181) and tracker
+// intake's open-PR dedup read it to group open PRs by their owning session's
+// linked issue across the whole fleet.
+func (s *Store) ListOpenPRs(ctx context.Context) ([]domain.PullRequest, error) {
+	rows, err := s.qr.ListOpenPRs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list open prs: %w", err)
+	}
+	out := make([]domain.PullRequest, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, prRowFromGen(p))
+	}
+	return out, nil
+}
+
 // ListChecks returns every recorded check run for a PR.
 func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error) {
 	rows, err := s.qr.ListChecksByPR(ctx, prURL)
