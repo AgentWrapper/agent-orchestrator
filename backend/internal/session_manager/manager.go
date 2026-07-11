@@ -231,7 +231,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = defaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault())
+		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault(), m.dataDir)
 	}
 	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
 	if err != nil {
@@ -1480,22 +1480,66 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
-func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix string) string {
+func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix, branchNamespace string) string {
 	if kind == domain.KindOrchestrator {
-		return "ao/" + prefix + "-orchestrator"
+		return aoBranch(branchNamespace, prefix+"-orchestrator")
 	}
 	// A fresh, unique branch per worker session: gitworktree can't add a worktree
 	// on a branch already checked out elsewhere (e.g. main). Put the root work
 	// branch under a session namespace so sibling PR branches such as
 	// ao/<session>/<topic> remain valid Git refs.
-	return "ao/" + string(id) + "/root"
+	return aoBranch(branchNamespace, string(id), "root")
 }
 
-func defaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind) string {
+// DefaultSpawnBranch returns AO's generated work branch for a spawn. Explicit
+// user-provided branches bypass this helper.
+func DefaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind, dataDir string) string {
+	branchNamespace := generatedBranchNamespace(dataDir)
 	if projectKind == domain.ProjectKindWorkspace {
-		return "ao/" + string(id)
+		return aoBranch(branchNamespace, string(id))
 	}
-	return defaultSessionBranch(id, kind, prefix)
+	return defaultSessionBranch(id, kind, prefix, branchNamespace)
+}
+
+// DefaultOrchestratorBranch returns the generated canonical orchestrator branch
+// for a project in the current data-dir namespace.
+func DefaultOrchestratorBranch(prefix, dataDir string) string {
+	return defaultSessionBranch("", domain.KindOrchestrator, prefix, generatedBranchNamespace(dataDir))
+}
+
+func aoBranch(namespace string, parts ...string) string {
+	all := []string{"ao"}
+	if namespace != "" {
+		all = append(all, namespace)
+	}
+	all = append(all, parts...)
+	return strings.Join(all, "/")
+}
+
+func generatedBranchNamespace(dataDir string) string {
+	if isDefaultDevDataDir(dataDir) {
+		return "dev"
+	}
+	return ""
+}
+
+func isDefaultDevDataDir(dataDir string) bool {
+	if strings.TrimSpace(dataDir) == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	want, err := filepath.Abs(filepath.Join(home, ".ao", "dev", "data"))
+	if err != nil {
+		return false
+	}
+	got, err := filepath.Abs(dataDir)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(got) == filepath.Clean(want)
 }
 
 func buildPrompt(cfg ports.SpawnConfig) string {

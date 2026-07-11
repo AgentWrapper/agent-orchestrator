@@ -1429,6 +1429,44 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 }
 
+func TestSpawn_DefaultsBranchUnderDevNamespaceForDevDataDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	m, st, _, _ := newManager()
+	m.dataDir = filepath.Join(home, ".ao", "dev", "data")
+
+	worker, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[worker.ID].Metadata.Branch; got != "ao/dev/mer-1/root" {
+		t.Fatalf("worker branch = %q, want ao/dev/mer-1/root", got)
+	}
+
+	orchestrator, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[orchestrator.ID].Metadata.Branch; got != "ao/dev/mer-orchestrator" {
+		t.Fatalf("orchestrator branch = %q, want ao/dev/mer-orchestrator", got)
+	}
+}
+
+func TestSpawn_ExplicitBranchBypassesDevNamespace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	m, st, _, _ := newManager()
+	m.dataDir = filepath.Join(home, ".ao", "dev", "data")
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "ao/custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/custom" {
+		t.Fatalf("explicit branch = %q, want ao/custom", got)
+	}
+}
+
 func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
