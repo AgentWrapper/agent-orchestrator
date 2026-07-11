@@ -32,5 +32,6 @@ trigger: Using the ao CLI in an AO workspace: spawning workers, managing session
 - Session and project ids are shown by `ao session ls` and `ao project ls`.
 - `--agent` is an alias for `--harness` on `ao spawn`.
 - Every command accepts `-h / --help` for the full flag list.
+- A session's display name is not permanent — it can change after spawn via `ao session rename <id> <name>`. Unlike the session id (fixed for the session's lifetime), a name you learned earlier in a conversation may now be stale. When accuracy matters (long conversations, or after any renaming activity), re-confirm the current name with `ao session get`/`ao session ls` rather than relying on memory.
 
 See [references.md](references.md) for natural-language-to-command mappings.
