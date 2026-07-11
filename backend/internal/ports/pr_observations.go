@@ -24,6 +24,9 @@ type PRObservation struct {
 	Fetched      bool
 	URL          string
 	Number       int
+	Title        string
+	SourceBranch string
+	TargetBranch string
 	Draft        bool
 	Merged       bool
 	Closed       bool

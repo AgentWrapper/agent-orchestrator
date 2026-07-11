@@ -7,6 +7,7 @@ export const aoBridge: AoBridge =
 			canChooseDirectory: false,
 			getVersion: async () => "0.0.0-preview",
 			chooseDirectory: async () => null,
+			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 		},
 		clipboard: {
 			writeText: async (text: string) => {
@@ -87,7 +88,10 @@ export const aoBridge: AoBridge =
 				isLoading: false,
 			}),
 			destroy: () => undefined,
+			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onAnnotationSubmit: () => () => undefined,
+			onAnnotationCancel: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

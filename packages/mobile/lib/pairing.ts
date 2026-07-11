@@ -1,0 +1,26 @@
+// Parses the JSON payload encoded in the desktop's pairing QR code. Pure and
+// dependency-free (no React/RN imports) so it typechecks trivially and needs
+// no test runner in this package. The QR payload deliberately carries only
+// non-secret connection coordinates; the password is entered out-of-band.
+export function parsePairingPayload(raw: string): { host: string; port: string } | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+
+	if (typeof parsed !== "object" || parsed === null) return null;
+	const obj = parsed as Record<string, unknown>;
+
+	if (obj.v !== 1) return null;
+
+	const { host, port } = obj;
+	if (typeof host !== "string" || host.length === 0) return null;
+	if (typeof port !== "string" && typeof port !== "number") return null;
+
+	return {
+		host,
+		port: String(port),
+	};
+}

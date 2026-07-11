@@ -79,3 +79,6 @@ frontend/daemon/
 
 #dumb old ao code from my attempts
 oldao/
+
+# Locally-added agent skills (not for the team)
+skills-lock.json

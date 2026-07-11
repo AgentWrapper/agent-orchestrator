@@ -27,13 +27,18 @@ const (
 	// skips duplicates and uninstall recognizes AO entries by prefix without an
 	// embedded template to diff against.
 	kiroHookCommandPrefix = "ao hooks kiro "
+
+	kiroAgentName        = "ao"
+	kiroAgentDescription = "Agent Orchestrator session instructions"
 )
 
 // kiroHookFile is the on-disk shape of .kiro/agents/ao.json. It is used by
 // tests to decode the written file. Kiro hooks are a map of camelCase event
 // name to a flat array of {matcher?, command} entries.
 type kiroHookFile struct {
-	Hooks map[string][]kiroHookEntry `json:"hooks"`
+	Name   string                     `json:"name"`
+	Prompt *string                    `json:"prompt"`
+	Hooks  map[string][]kiroHookEntry `json:"hooks"`
 }
 
 type kiroHookEntry struct {
@@ -97,7 +102,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		}
 	}
 
-	if err := writeKiroHooks(hooksPath, topLevel, rawHooks); err != nil {
+	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, cfg.SystemPrompt, cfg.Config); err != nil {
 		return fmt.Errorf("kiro.GetAgentHooks: %w", err)
 	}
 	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), kiroAgentFileName); err != nil {
@@ -137,7 +142,7 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 		}
 	}
 
-	if err := writeKiroHooks(hooksPath, topLevel, rawHooks); err != nil {
+	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, "", ports.AgentConfig{}); err != nil {
 		return fmt.Errorf("kiro.UninstallHooks: %w", err)
 	}
 	return nil
@@ -210,7 +215,11 @@ func readKiroHooks(hooksPath string) (topLevel, rawHooks map[string]json.RawMess
 
 // writeKiroHooks folds rawHooks back into topLevel and writes the file. An
 // empty hooks map drops the "hooks" key entirely.
-func writeKiroHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMessage) error {
+func writeKiroHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMessage, systemPrompt string, agentConfig ports.AgentConfig) error {
+	if err := setKiroAgentDefaults(topLevel, systemPrompt, agentConfig); err != nil {
+		return err
+	}
+
 	if len(rawHooks) == 0 {
 		delete(topLevel, "hooks")
 	} else {
@@ -231,6 +240,44 @@ func writeKiroHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMess
 	data = append(data, '\n')
 	if err := hookutil.AtomicWriteFile(hooksPath, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", hooksPath, err)
+	}
+	return nil
+}
+
+func setKiroAgentDefaults(topLevel map[string]json.RawMessage, systemPrompt string, agentConfig ports.AgentConfig) error {
+	defaults := map[string]any{
+		"name":           kiroAgentName,
+		"description":    kiroAgentDescription,
+		"prompt":         nil,
+		"mcpServers":     map[string]any{},
+		"tools":          []string{"*"},
+		"toolAliases":    map[string]any{},
+		"allowedTools":   []any{},
+		"resources":      []any{},
+		"toolsSettings":  map[string]any{},
+		"includeMcpJson": true,
+	}
+	if systemPrompt != "" {
+		defaults["prompt"] = systemPrompt
+	}
+	if model := strings.TrimSpace(agentConfig.Model); model != "" {
+		defaults["model"] = model
+	} else {
+		delete(topLevel, "model")
+	}
+
+	for key, value := range defaults {
+		managedKey := key == "name" || key == "prompt" || key == "model"
+		if !managedKey {
+			if _, ok := topLevel[key]; ok {
+				continue
+			}
+		}
+		data, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("encode agent %s: %w", key, err)
+		}
+		topLevel[key] = data
 	}
 	return nil
 }

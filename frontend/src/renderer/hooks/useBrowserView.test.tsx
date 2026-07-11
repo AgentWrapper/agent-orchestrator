@@ -51,10 +51,13 @@ function setupBridge() {
 		reload: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		stop: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		destroy: vi.fn(),
+		setAnnotationMode: vi.fn(async () => undefined),
 		onNavState: vi.fn((listener: Listener) => {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		}),
+		onAnnotationSubmit: vi.fn(() => () => undefined),
+		onAnnotationCancel: vi.fn(() => () => undefined),
 		emit(state: BrowserNavState) {
 			listeners.forEach((listener) => listener(state));
 		},

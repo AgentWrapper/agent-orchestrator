@@ -6,7 +6,7 @@ import { cn } from "../../lib/utils";
 // emdash buttons are font-normal (400) with 6px radius; blue is the live edge
 // (primary). See DESIGN.md → Spacing / Color.
 const buttonVariants = cva(
-	"inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-[13px] font-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-45",
+	"inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-control font-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-45",
 	{
 		variants: {
 			variant: {
@@ -16,10 +16,10 @@ const buttonVariants = cva(
 				ghost: "text-muted-foreground hover:bg-surface hover:text-foreground",
 			},
 			size: {
-				default: "h-8 px-3",
-				sm: "h-7 px-2.5 text-xs",
-				icon: "h-8 w-8",
-				"icon-sm": "h-7 w-7",
+				default: "h-control-form px-3",
+				sm: "h-control-md px-2.5 text-xs",
+				icon: "size-control-form",
+				"icon-sm": "size-control-md",
 			},
 		},
 		defaultVariants: {

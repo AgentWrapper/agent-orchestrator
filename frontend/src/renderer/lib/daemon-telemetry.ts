@@ -10,6 +10,7 @@ let started = false;
 let lastFailureKey: string | null = null;
 
 function failureKey(status: DaemonStatus): string | null {
+	if (status.state === "ready") return null;
 	if (!status.code) return null;
 	return [status.state, status.code, status.exitCode ?? "", status.signal ?? ""].join("|");
 }

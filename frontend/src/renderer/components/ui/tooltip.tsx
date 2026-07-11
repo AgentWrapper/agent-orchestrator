@@ -14,7 +14,7 @@ export function TooltipContent({
 		<TooltipPrimitive.Portal>
 			<TooltipPrimitive.Content
 				className={cn(
-					"z-50 rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md",
+					"z-overlay rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md",
 					className,
 				)}
 				sideOffset={sideOffset}

@@ -52,6 +52,18 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 	);
 }
 
+// Agents whose full-screen TUI keeps its own transcript and scrolls it only by
+// keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
+// PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
+// kilocode is a fork of opencode and shares its TUI surface, so it scrolls the
+// same way.
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode"]);
+
+// Whether the given provider's TUI is one of the keyboard-scroll agents above.
+export function providerScrollsByKeyboard(provider?: string): boolean {
+	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
+}
+
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
 	if (state === "reattaching") return "Terminal disconnected — reattaching…";
 	if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
@@ -74,6 +86,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const queryClient = useQueryClient();
 	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
+	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
 	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
 
@@ -127,7 +140,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	if (initFailed) {
 		return (
-			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-[12px] text-muted-foreground">
+			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
 				Terminal failed to initialize on this GPU/driver. Restart the app to retry.
 			</div>
 		);
@@ -136,6 +149,12 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
 	const showExitedState = state === "exited";
+	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
+	const emptyStateMessage = session
+		? session.kind === "orchestrator"
+			? "Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent."
+			: "Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent."
+		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-terminal">
@@ -155,20 +174,19 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					scrollback={scrollback}
 					onError={handleInitError}
 					onReady={handleReady}
+					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}
 				/>
 				{showEmptyState && (
-					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-[13px]">
+					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
 						<div className="text-center">
-							<div className="text-[var(--term-fg)]">Agent Orchestrator</div>
-							<div className="mt-2 text-[var(--term-dim)]">
-								No session selected. Pick a worker to attach its terminal.
-							</div>
+							<div className="text-terminal">{emptyStateTitle}</div>
+							<div className="mt-2 text-terminal-dim">{emptyStateMessage}</div>
 						</div>
 					</div>
 				)}
 				{banner && (
-					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
 					</div>
 				)}
@@ -272,18 +290,18 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
-			<div className="flex min-h-9 items-center gap-3">
+			<div className="flex min-h-control-board items-center gap-3">
 				<div className="min-w-0 flex-1">
-					<div className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+					<div className="font-mono text-caption font-medium uppercase tracking-wide-md text-muted-foreground">
 						Terminal ended
 					</div>
-					<div className="mt-0.5 truncate text-[12px] text-muted-foreground">{message}</div>
+					<div className="mt-0.5 truncate text-xs text-muted-foreground">{message}</div>
 				</div>
-				{error && <div className="max-w-[320px] truncate text-[12px] text-destructive">{error}</div>}
+				{error && <div className="max-w-content-max truncate text-xs text-destructive">{error}</div>}
 				{canRestore && (
 					<button
 						type="button"
-						className="h-8 shrink-0 rounded-md border border-border bg-raised px-3 text-[12px] font-medium text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+						className="h-control-form shrink-0 rounded-md border border-border bg-raised px-3 text-xs font-medium text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={isRestoring}
 						onClick={onRestore}
 					>

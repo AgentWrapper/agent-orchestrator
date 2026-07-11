@@ -364,6 +364,100 @@ paths:
       summary: Return the latest resource metrics snapshot plus a short history
       tags:
       - metrics
+  /api/v1/mobile/disable:
+    post:
+      operationId: disableMobile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Disable the Connect Mobile LAN bridge
+      tags:
+      - mobile
+  /api/v1/mobile/enable:
+    post:
+      operationId: enableMobile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Enable the Connect Mobile LAN bridge and issue a fresh password
+      tags:
+      - mobile
+  /api/v1/mobile/regenerate:
+    post:
+      operationId: regenerateMobile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Rotate the Connect Mobile password, dropping any connected phone
+      tags:
+      - mobile
+  /api/v1/mobile/status:
+    get:
+      operationId: getMobileStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+      summary: Check whether Connect Mobile's LAN bridge is enabled
+      tags:
+      - mobile
   /api/v1/notifications:
     get:
       operationId: listNotifications
@@ -916,6 +1010,43 @@ paths:
           description: Not Implemented
       summary: Return worker mix allocation, health, and health-adjusted capacity
         for one project
+      tags:
+      - projects
+  /api/v1/projects/initialize:
+    post:
+      operationId: initializeProjectRepository
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitializeRepositoryInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InitializeRepositoryResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Initialize a selected folder as a Git repository with an initial commit
       tags:
       - projects
   /api/v1/prs/{id}/merge:
@@ -2431,6 +2562,20 @@ components:
       - available
       - legacyRoot
       type: object
+    InitializeRepositoryInput:
+      properties:
+        path:
+          type: string
+      required:
+      - path
+      type: object
+    InitializeRepositoryResult:
+      properties:
+        path:
+          type: string
+      required:
+      - path
+      type: object
     KillSessionResponse:
       properties:
         freed:
@@ -2825,6 +2970,25 @@ components:
       - zombiesKnown
       - cost
       - alerts
+      type: object
+    MobileStatusResponse:
+      properties:
+        enabled:
+          type: boolean
+        host:
+          type: string
+        password:
+          type: string
+        port:
+          type: integer
+        warning:
+          type: string
+      required:
+      - enabled
+      - host
+      - port
+      - password
+      - warning
       type: object
     NotificationEnvelope:
       properties:
@@ -4097,3 +4261,5 @@ tags:
   name: metrics
 - description: Daemon build provenance (VCS revision, build time, dirty flag)
   name: version
+- description: Connect Mobile LAN bridge control (loopback/desktop only)
+  name: mobile

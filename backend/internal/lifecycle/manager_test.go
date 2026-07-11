@@ -573,6 +573,29 @@ func TestPRObservation_ReviewNudgeNotStarvedByDedupedCI(t *testing.T) {
 	}
 }
 
+func TestPRObservation_AllActionableSignalsNudgeAgent(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{
+		Fetched:      true,
+		URL:          "pr1",
+		CI:           domain.CIFailing,
+		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:       domain.ReviewChangesRequest,
+		Comments:     []ports.PRCommentObservation{{ID: "c9", Author: "alice", Body: "please fix"}},
+		Mergeability: domain.MergeConflicting,
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 3 {
+		t.Fatalf("want CI, review, and merge-conflict nudges, got %v", msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "boom") || !strings.Contains(msg.msgs[1], "please fix") || !strings.Contains(msg.msgs[2], "merge conflicts") {
+		t.Fatalf("unexpected nudge sequence: %v", msg.msgs)
+	}
+}
+
 func TestPRObservation_DuplicateCheckNamesDoNotAlternateAndStarveReview(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -712,6 +735,34 @@ func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 	}
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "merge conflicts") {
 		t.Fatalf("want merge-conflict nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_NudgeIncludesPRIdentity(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{
+		Fetched:      true,
+		URL:          "https://github.com/o/r/pull/7",
+		Number:       7,
+		Title:        "Add auth",
+		SourceBranch: "feat/x/auth",
+		TargetBranch: "feat/x",
+		CI:           domain.CIFailing,
+		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	got := msg.msgs[0]
+	if !strings.Contains(got, `PR #7 "Add auth" (feat/x/auth → feat/x)`) {
+		t.Fatalf("nudge missing PR identity: %q", got)
+	}
+	if !strings.Contains(got, "PR: https://github.com/o/r/pull/7") {
+		t.Fatalf("nudge missing PR URL: %q", got)
 	}
 }
 

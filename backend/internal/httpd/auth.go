@@ -1,0 +1,194 @@
+package httpd
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
+)
+
+const mobileAuthCookie = "ao_mobile_auth"
+
+// authState holds the current password hash and WebView cookie token for the
+// LAN listener. Values are swapped atomically on regenerate so an in-flight
+// request never sees torn auth state.
+type authState struct{ snapshot atomic.Pointer[authSnapshot] }
+
+type authSnapshot struct {
+	hash        string
+	cookieToken string
+}
+
+func (a *authState) setHash(h string) {
+	a.snapshot.Store(&authSnapshot{hash: h, cookieToken: newMobileAuthCookieToken(h)})
+}
+func (a *authState) current() authSnapshot {
+	if p := a.snapshot.Load(); p != nil {
+		return *p
+	}
+	return authSnapshot{}
+}
+func (a *authState) currentHash() string {
+	return a.current().hash
+}
+
+func newMobileAuthCookieToken(hash string) string {
+	if hash == "" {
+		return ""
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// lockout throttles password guessing per source address.
+type lockout struct {
+	mu       sync.Mutex
+	limit    int
+	cooldown time.Duration
+	now      func() time.Time
+	fails    map[string]int
+	failAt   map[string]time.Time
+	until    map[string]time.Time
+}
+
+func newLockout(limit int, cooldown time.Duration, now func() time.Time) *lockout {
+	return &lockout{limit: limit, cooldown: cooldown, now: now, fails: map[string]int{}, failAt: map[string]time.Time{}, until: map[string]time.Time{}}
+}
+
+func (l *lockout) blocked(src string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pruneSource(src)
+	t, ok := l.until[src]
+	if !ok {
+		return false
+	}
+	if l.now().Before(t) {
+		return true
+	}
+	// Cooldown elapsed: clear the lockout AND the fail counter so the source
+	// starts a fresh window. Without this the counter stays at the limit and the
+	// very next failure would immediately re-lock for another full cooldown —
+	// and a client that keeps polling would stay locked out forever. This also
+	// bounds map growth, since expired entries are pruned on the next request.
+	delete(l.until, src)
+	delete(l.fails, src)
+	delete(l.failAt, src)
+	return false
+}
+
+func (l *lockout) fail(src string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pruneSource(src)
+	l.fails[src]++
+	l.failAt[src] = l.now()
+	if l.fails[src] >= l.limit {
+		l.until[src] = l.now().Add(l.cooldown)
+	}
+}
+
+func (l *lockout) reset(src string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.fails, src)
+	delete(l.failAt, src)
+	delete(l.until, src)
+}
+
+func (l *lockout) pruneSource(src string) {
+	last, ok := l.failAt[src]
+	if !ok || l.cooldown <= 0 {
+		return
+	}
+	if l.now().Sub(last) > l.cooldown {
+		delete(l.fails, src)
+		delete(l.failAt, src)
+		delete(l.until, src)
+	}
+}
+
+func sourceKey(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	return ""
+}
+
+func hasMobileAuthCookie(r *http.Request, token string) bool {
+	if token == "" {
+		return false
+	}
+	c, err := r.Cookie(mobileAuthCookie)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1
+}
+
+func hasPresentedMobileAuthCookie(r *http.Request) bool {
+	_, err := r.Cookie(mobileAuthCookie)
+	return err == nil
+}
+
+func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			src := sourceKey(r)
+			if lock.blocked(src) {
+				envelope.WriteAPIError(w, r, http.StatusTooManyRequests, "too_many_requests", "LOCKED_OUT",
+					"too many failed attempts; try again shortly", nil)
+				return
+			}
+			snapshot := state.current()
+			if hasMobileAuthCookie(r, snapshot.cookieToken) {
+				lock.reset(src)
+				next.ServeHTTP(w, r)
+				return
+			}
+			bearer := bearerToken(r)
+			if bearer == "" && hasPresentedMobileAuthCookie(r) {
+				envelope.WriteAPIError(w, r, http.StatusUnauthorized, "unauthorized", "BAD_PASSWORD",
+					"missing or invalid connection password", nil)
+				return
+			}
+			if mobilebridge.PasswordMatches(snapshot.hash, bearer) {
+				if snapshot.cookieToken != "" {
+					//nolint:gosec // G124: Connect Mobile serves plaintext HTTP on trusted LANs by design; Secure cookies would be dropped for http:// LAN preview URLs. HttpOnly and SameSite=Strict are set.
+					http.SetCookie(w, &http.Cookie{
+						Name:     mobileAuthCookie,
+						Value:    snapshot.cookieToken,
+						Path:     "/",
+						HttpOnly: true,
+						SameSite: http.SameSiteStrictMode,
+					})
+				}
+				lock.reset(src)
+				next.ServeHTTP(w, r)
+				return
+			}
+			lock.fail(src)
+			envelope.WriteAPIError(w, r, http.StatusUnauthorized, "unauthorized", "BAD_PASSWORD",
+				"missing or invalid connection password", nil)
+		})
+	}
+}

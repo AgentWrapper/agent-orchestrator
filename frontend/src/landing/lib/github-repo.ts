@@ -6,15 +6,15 @@ export interface GitHubRepoStats {
 }
 
 const FALLBACK_STATS: GitHubRepoStats = {
-	stars: 6295,
-	forks: 853,
-	openIssues: 622,
+	stars: 8200,
+	forks: 1200,
+	openIssues: 320,
 	watchers: 21,
 };
 
 export async function getGitHubRepoStats(): Promise<GitHubRepoStats> {
 	try {
-		const response = await fetch("https://api.github.com/repos/ComposioHQ/agent-orchestrator", {
+		const response = await fetch("https://api.github.com/repos/AgentWrapper/agent-orchestrator", {
 			next: { revalidate: 3600 },
 			headers: {
 				Accept: "application/vnd.github+json",

@@ -83,6 +83,7 @@ type AgentMessenger interface {
 type Runtime interface {
 	Create(ctx context.Context, cfg RuntimeConfig) (RuntimeHandle, error)
 	Destroy(ctx context.Context, handle RuntimeHandle) error
+	GetOutput(ctx context.Context, handle RuntimeHandle, lines int) (string, error)
 	IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
 }
 
@@ -144,6 +145,15 @@ type Workspace interface {
 	ApplyPreserved(ctx context.Context, info WorkspaceInfo, ref string) error
 }
 
+// WorkspaceProject is an optional extension for projects composed from a
+// root-as-repo parent plus child repositories. It materialises the parent
+// worktree at the session root and each child repo at its registered relative
+// path inside that root.
+type WorkspaceProject interface {
+	CreateWorkspaceProject(ctx context.Context, cfg WorkspaceProjectConfig) (WorkspaceProjectInfo, error)
+	DestroyWorkspaceProject(ctx context.Context, info WorkspaceProjectInfo) error
+}
+
 // Workspace-level sentinels surfaced through Create/Restore/Destroy so callers
 // can map them to typed errors rather than collapsing every adapter failure
 // into an opaque 500. Adapters wrap these via fmt.Errorf("...: %w", sentinel).
@@ -193,6 +203,10 @@ type WorkspaceConfig struct {
 	// session at the project's repo root and creates neither a branch nor a
 	// worktree.
 	Mode domain.WorkspaceMode
+	// RepoPath optionally overrides ProjectID-based repo resolution.
+	RepoPath string
+	// Path optionally supplies an existing managed worktree path for restore.
+	Path string
 }
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
@@ -205,4 +219,50 @@ type WorkspaceInfo struct {
 	// self-describing rather than inferred from the path. Empty means
 	// domain.WorkspaceModeWorktree (back-compat).
 	Mode domain.WorkspaceMode
+	// RepoPath optionally overrides ProjectID-based repo resolution. It is used
+	// when the normal workspace lifecycle primitives operate on one child repo
+	// inside a workspace project.
+	RepoPath string
+}
+
+// WorkspaceProjectConfig describes a multi-repo workspace session. RootRepoPath
+// and child RepoPath values are absolute paths to the canonical repositories.
+type WorkspaceProjectConfig struct {
+	ProjectID     domain.ProjectID
+	SessionID     domain.SessionID
+	Kind          domain.SessionKind
+	SessionPrefix string
+	Branch        string
+	RootRepoPath  string
+	BaseBranch    string
+	Repos         []WorkspaceProjectRepoConfig
+}
+
+// WorkspaceProjectRepoConfig describes one registered child repo in a
+// workspace project session.
+type WorkspaceProjectRepoConfig struct {
+	Name         string
+	RelativePath string
+	RepoPath     string
+	BaseBranch   string
+}
+
+// WorkspaceProjectInfo returns the root worktree plus every child worktree.
+// Worktrees are ordered root first, then children in creation order.
+type WorkspaceProjectInfo struct {
+	Root      WorkspaceInfo
+	Worktrees []WorkspaceRepoInfo
+}
+
+// WorkspaceRepoInfo describes one materialized repo worktree in a workspace
+// project session.
+type WorkspaceRepoInfo struct {
+	RepoName     string
+	RepoPath     string
+	Path         string
+	Branch       string
+	BaseSHA      string
+	SessionID    domain.SessionID
+	ProjectID    domain.ProjectID
+	RelativePath string
 }

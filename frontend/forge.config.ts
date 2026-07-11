@@ -8,6 +8,12 @@ import { writeFileSync } from "node:fs";
 // home; releases land on AgentWrapper (spec §1.1).
 const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
 
+// The packaged binary name (no extension). Single source of truth: the packager
+// names the exe/ELF from this, and the NSIS + deb makers must point their
+// shortcut/launcher at the SAME name. Drift here means a broken Start menu
+// shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
+const EXECUTABLE_NAME = "agent-orchestrator";
+
 // parseReleaseRepo turns an "owner/repo" string (from AO_RELEASE_REPO) into the
 // publisher-github { owner, name } shape, falling back to the production default
 // when unset or malformed.
@@ -25,7 +31,7 @@ const config: ForgeConfig = {
 		asar: true,
 		appBundleId: "dev.agent-orchestrator.desktop",
 		name: "Agent Orchestrator",
-		executableName: "agent-orchestrator",
+		executableName: EXECUTABLE_NAME,
 		appCategoryType: "public.app-category.developer-tools",
 		// App icon. electron-packager appends the per-platform extension
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
@@ -84,6 +90,9 @@ const config: ForgeConfig = {
 			{
 				appId: "dev.agent-orchestrator.desktop",
 				productName: "Agent Orchestrator",
+				// Match the packaged binary name so the Start menu shortcut targets
+				// the real "agent-orchestrator.exe" (not "Agent Orchestrator.exe").
+				executableName: EXECUTABLE_NAME,
 				icon: "assets/icon.ico",
 			},
 			["win32"],
@@ -108,7 +117,7 @@ const config: ForgeConfig = {
 					// Must match packagerConfig.executableName, or the deb maker
 					// looks for the package name and fails with "could not find
 					// the Electron app binary". (Both are "agent-orchestrator".)
-					bin: "agent-orchestrator",
+					bin: EXECUTABLE_NAME,
 					icon: "assets/icon.png",
 					maintainer: "Agent Orchestrator",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
