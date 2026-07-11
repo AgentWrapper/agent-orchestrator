@@ -92,6 +92,51 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	}
 }
 
+func TestNotificationStore_WorkerTerminalDedupeSurvivesRead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	now := time.Now().UTC().Truncate(time.Second)
+	cases := []domain.NotificationType{
+		domain.NotificationWorkerDiedUnfinished,
+		domain.NotificationWorkerRetryExhausted,
+	}
+	for i, notificationType := range cases {
+		sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+		if err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+		rec := domain.NotificationRecord{
+			ID:        "ntf_first_" + string(rune('a'+i)),
+			SessionID: sess.ID,
+			ProjectID: sess.ProjectID,
+			Type:      notificationType,
+			Title:     "worker notification",
+			Status:    domain.NotificationUnread,
+			CreatedAt: now.Add(time.Duration(i) * time.Minute),
+		}
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("%s first CreateNotification inserted=%v err=%v", notificationType, inserted, err)
+		}
+		if _, ok, err := s.MarkNotificationRead(ctx, rec.ID); err != nil || !ok {
+			t.Fatalf("%s MarkNotificationRead ok=%v err=%v", notificationType, ok, err)
+		}
+		again := rec
+		again.ID = "ntf_again_" + string(rune('a'+i))
+		again.CreatedAt = now.Add(time.Hour + time.Duration(i)*time.Minute)
+		if _, inserted, err := s.CreateNotification(ctx, again); err != nil || inserted {
+			t.Fatalf("%s CreateNotification after read inserted=%v err=%v, want false nil", notificationType, inserted, err)
+		}
+		rows, err := s.ListUnreadNotifications(ctx, 10)
+		if err != nil {
+			t.Fatalf("ListUnreadNotifications: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("rows = %+v, want no re-opened worker terminal notification", rows)
+		}
+	}
+}
+
 func TestNotificationStore_SensitiveReadyDoesNotDedupeRoutineReady(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -95,6 +95,76 @@ func TestManagerNotifyAcceptsOrchestratorReplacementWithoutPR(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyWorkerDiedUnfinished(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationWorkerDiedUnfinished,
+		SessionID:          "demo-1",
+		ProjectID:          "demo",
+		SessionDisplayName: "demo #12 fix-login",
+		IssueID:            "github:acme/demo#12",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := st.rows[0]
+	if got.Title != "worker died with unfinished work: issue #12" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed; ao will dispatch a clean replacement if retry capacity remains." {
+		t.Fatalf("body = %q", got.Body)
+	}
+}
+
+func TestManagerNotifyWorkerDiedUnfinishedWithSuppressedRespawn(t *testing.T) {
+	st := &fakeStore{}
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationWorkerDiedUnfinished,
+		SessionID:          "demo-1",
+		ProjectID:          "demo",
+		SessionDisplayName: "demo #12 fix-login",
+		IssueID:            "github:acme/demo#12",
+		RespawnSuppressed:  true,
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := st.rows[0]
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed, but an open PR already exists; ao will not start a duplicate replacement." {
+		t.Fatalf("body = %q", got.Body)
+	}
+}
+
+func TestManagerNotifyWorkerRetryExhausted(t *testing.T) {
+	st := &fakeStore{}
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationWorkerRetryExhausted,
+		SessionID:          "demo-3",
+		ProjectID:          "demo",
+		SessionDisplayName: "demo #12 fix-login",
+		IssueID:            "github:acme/demo#12",
+		RetryCount:         3,
+		RetryLimit:         2,
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := st.rows[0]
+	if got.Title != "worker retry cap exhausted: issue #12" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	if got.Body != "demo #12 fix-login terminated after 3 attempts for issue #12; retry cap is 2, so ao is leaving it for a human." {
+		t.Fatalf("body = %q", got.Body)
+	}
+}
+
 func TestManagerNotifyDuplicateDoesNotPublish(t *testing.T) {
 	st := &fakeStore{duplicate: true}
 	hub := NewHub()

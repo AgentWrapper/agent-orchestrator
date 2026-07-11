@@ -18,13 +18,18 @@ import (
 var _ notificationsvc.Store = (*Store)(nil)
 
 // CreateNotification inserts one unread notification. It returns created=false
-// when the unread dedupe index already has a matching row.
+// when a matching dedupe row already exists.
 func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	if err := rec.Validate(); err != nil {
 		return domain.NotificationRecord{}, false, err
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if existing, ok, err := s.getPersistentNotificationByDedupe(ctx, rec); err != nil {
+		return domain.NotificationRecord{}, false, err
+	} else if ok {
+		return existing, false, nil
+	}
 	if existing, ok, err := s.getUnreadNotificationByDedupe(ctx, rec); err != nil {
 		return domain.NotificationRecord{}, false, err
 	} else if ok {
@@ -46,6 +51,11 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	})
 	if err != nil {
 		if isSQLiteUnique(err) {
+			if existing, ok, lookupErr := s.getPersistentNotificationByDedupe(ctx, rec); lookupErr != nil {
+				return domain.NotificationRecord{}, false, lookupErr
+			} else if ok {
+				return existing, false, nil
+			}
 			if existing, ok, lookupErr := s.getUnreadNotificationByDedupe(ctx, rec); lookupErr != nil {
 				return domain.NotificationRecord{}, false, lookupErr
 			} else if ok {
@@ -55,6 +65,32 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		return domain.NotificationRecord{}, false, fmt.Errorf("create notification %s: %w", rec.ID, err)
 	}
 	return notificationFromGen(row), true, nil
+}
+
+func (s *Store) getPersistentNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
+	if !notificationDedupeSurvivesRead(rec.Type) {
+		return domain.NotificationRecord{}, false, nil
+	}
+	row, err := s.qw.GetWorkerTerminalNotificationByDedupe(ctx, gen.GetWorkerTerminalNotificationByDedupeParams{
+		SessionID: rec.SessionID,
+		Type:      rec.Type,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.NotificationRecord{}, false, nil
+	}
+	if err != nil {
+		return domain.NotificationRecord{}, false, fmt.Errorf("lookup persistent notification dedupe: %w", err)
+	}
+	return notificationFromGen(row), true, nil
+}
+
+func notificationDedupeSurvivesRead(t domain.NotificationType) bool {
+	switch t {
+	case domain.NotificationWorkerDiedUnfinished, domain.NotificationWorkerRetryExhausted:
+		return true
+	default:
+		return false
+	}
 }
 
 // ListUnreadNotifications returns unread notifications newest-first.

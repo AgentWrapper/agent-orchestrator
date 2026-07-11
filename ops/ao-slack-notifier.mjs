@@ -20,6 +20,9 @@
 //   pr_closed_unmerged -> plain post
 //   orchestrator_replaced -> plain post
 //   orchestrator_replacement_capped -> @mention
+//   worker_died_unfinished -> plain post
+//   worker_retry_exhausted -> @mention
+//   duplicate_pr -> @mention
 //
 // It also polls GET /api/v1/sessions and @mentions on blocked, no_signal,
 // orchestrator_dead, and daemon_unhealthy conditions. A changed "what needs
@@ -129,6 +132,8 @@ const INTERESTING = new Set([
 	"orchestrator_replaced",
 	"orchestrator_replacement_capped",
 	"duplicate_pr",
+	"worker_died_unfinished",
+	"worker_retry_exhausted",
 ]);
 const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal"]);
 const ICONS = {
@@ -140,6 +145,8 @@ const ICONS = {
 	orchestrator_replaced: "🔁",
 	orchestrator_replacement_capped: "🚨",
 	duplicate_pr: "♊",
+	worker_died_unfinished: "🧯",
+	worker_retry_exhausted: "🚨",
 };
 
 export function digestContentKey(records) {
@@ -212,6 +219,7 @@ function isMentionableNotification(n) {
 		n.type === "needs_input" ||
 		n.type === "orchestrator_replacement_capped" ||
 		n.type === "duplicate_pr" ||
+		n.type === "worker_retry_exhausted" ||
 		(n.type === "ready_to_merge" && n.sensitive)
 	);
 }

@@ -139,6 +139,34 @@ describe("ao Slack notifier notification formatting", () => {
 		);
 	});
 
+	it("posts worker death notifications without mentioning", () => {
+		const msg = describeSlackMessage(
+			{
+				type: "worker_died_unfinished",
+				sessionId: "agent-5",
+				projectId: "ao",
+				title: "worker died with unfinished work: issue #155",
+			},
+			"U123",
+		);
+
+		assert.equal(msg, "🧯 *worker_died_unfinished* [ao] agent-5: worker died with unfinished work: issue #155");
+	});
+
+	it("mentions retry cap exhaustion notifications", () => {
+		const msg = describeSlackMessage(
+			{
+				type: "worker_retry_exhausted",
+				sessionId: "agent-6",
+				projectId: "ao",
+				title: "worker retry cap exhausted: issue #155",
+			},
+			"U123",
+		);
+
+		assert.equal(msg, "<@U123> 🚨 *worker_retry_exhausted* [ao] agent-6: worker retry cap exhausted: issue #155");
+	});
+
 	it("accepts the SSE envelope shape from older tests", () => {
 		const msg = describeSlackMessage(
 			{

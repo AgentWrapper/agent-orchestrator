@@ -28,12 +28,12 @@ import (
 //
 // tracker is shared with the session service (which resolves issue titles for
 // computed session names), so one token resolution serves both.
-func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, tracker ports.Tracker, logger *slog.Logger) <-chan struct{} {
+func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, tracker ports.Tracker, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
 	resolver := trackerintake.SingleTrackerResolver{
 		Provider: domain.TrackerProviderGitHub,
 		Adapter:  tracker,
 	}
-	observer := trackerintake.New(resolver, store, sessions, trackerintake.Config{Logger: logger})
+	observer := trackerintake.New(resolver, store, sessions, trackerintake.Config{Logger: logger, Notifications: notifier})
 	return observer.Start(ctx)
 }
 

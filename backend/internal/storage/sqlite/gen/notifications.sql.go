@@ -108,6 +108,40 @@ func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnre
 	return i, err
 }
 
+const getWorkerTerminalNotificationByDedupe = `-- name: GetWorkerTerminalNotificationByDedupe :one
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths, head_sha
+FROM notifications
+WHERE session_id = ?
+  AND type = ?
+  AND type IN ('worker_died_unfinished', 'worker_retry_exhausted')
+LIMIT 1
+`
+
+type GetWorkerTerminalNotificationByDedupeParams struct {
+	SessionID domain.SessionID
+	Type      domain.NotificationType
+}
+
+func (q *Queries) GetWorkerTerminalNotificationByDedupe(ctx context.Context, arg GetWorkerTerminalNotificationByDedupeParams) (Notification, error) {
+	row := q.db.QueryRowContext(ctx, getWorkerTerminalNotificationByDedupe, arg.SessionID, arg.Type)
+	var i Notification
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.ProjectID,
+		&i.PRURL,
+		&i.Type,
+		&i.Title,
+		&i.Body,
+		&i.Status,
+		&i.CreatedAt,
+		&i.Sensitive,
+		&i.ChangedPaths,
+		&i.HeadSha,
+	)
+	return i, err
+}
+
 const listUnreadNotifications = `-- name: ListUnreadNotifications :many
 SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths, head_sha
 FROM notifications

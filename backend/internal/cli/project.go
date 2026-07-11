@@ -118,14 +118,20 @@ type reviewerConfig struct {
 }
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
+type trackerRespawnPolicy struct {
+	Disabled   bool `json:"disabled,omitempty"`
+	MaxRetries *int `json:"maxRetries,omitempty"`
+}
+
 type trackerIntakeConfig struct {
-	Enabled       bool     `json:"enabled,omitempty"`
-	Provider      string   `json:"provider,omitempty"`
-	Repo          string   `json:"repo,omitempty"`
-	Assignee      string   `json:"assignee,omitempty"`
-	Labels        []string `json:"labels,omitempty"`
-	ExcludeLabels []string `json:"excludeLabels,omitempty"`
-	MaxConcurrent int      `json:"maxConcurrent,omitempty"`
+	Enabled       bool                  `json:"enabled,omitempty"`
+	Provider      string                `json:"provider,omitempty"`
+	Repo          string                `json:"repo,omitempty"`
+	Assignee      string                `json:"assignee,omitempty"`
+	Labels        []string              `json:"labels,omitempty"`
+	ExcludeLabels []string              `json:"excludeLabels,omitempty"`
+	MaxConcurrent int                   `json:"maxConcurrent,omitempty"`
+	Respawn       *trackerRespawnPolicy `json:"respawn,omitempty"`
 }
 
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI

@@ -13,6 +13,7 @@ type NotificationIntent struct {
 	Type      domain.NotificationType
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
+	IssueID   domain.IssueID
 	PRURL     string
 	CreatedAt time.Time
 
@@ -31,6 +32,12 @@ type NotificationIntent struct {
 	// change) and is surfaced to downstream consumers such as the Slack
 	// notifier so they can dedupe on it too.
 	HeadSHA string
+	// Worker retry enrichment.
+	RetryCount int
+	RetryLimit int
+	// RespawnSuppressed means a worker death notification is informational only;
+	// intake deliberately will not start a replacement for this issue.
+	RespawnSuppressed bool
 
 	// Duplicate-PR enrichment (domain.NotificationDuplicatePR only). IssueRef is
 	// the tracker reference both PRs claim (e.g. "owner/repo#169"); PRURL is the

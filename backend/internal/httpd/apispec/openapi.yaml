@@ -2129,6 +2129,15 @@ components:
       required:
       - harness
       type: object
+    DomainTrackerRespawnPolicy:
+      properties:
+        disabled:
+          type: boolean
+        maxRetries:
+          type:
+          - "null"
+          - integer
+      type: object
     ImportReport:
       properties:
         dryRun:
@@ -2596,6 +2605,9 @@ components:
           - pr_closed_unmerged
           - orchestrator_replaced
           - orchestrator_replacement_capped
+          - duplicate_pr
+          - worker_died_unfinished
+          - worker_retry_exhausted
           type: string
       required:
       - id
@@ -3547,6 +3559,8 @@ components:
           type: string
         repo:
           type: string
+        respawn:
+          $ref: '#/components/schemas/DomainTrackerRespawnPolicy'
       type: object
     TriggerReviewResponse:
       properties:

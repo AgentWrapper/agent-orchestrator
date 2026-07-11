@@ -28,3 +28,11 @@ SELECT *
 FROM notifications
 WHERE session_id = ? AND type = ? AND pr_url = ? AND sensitive = ? AND head_sha = ? AND status = 'unread'
 LIMIT 1;
+
+-- name: GetWorkerTerminalNotificationByDedupe :one
+SELECT *
+FROM notifications
+WHERE session_id = ?
+  AND type = ?
+  AND type IN ('worker_died_unfinished', 'worker_retry_exhausted')
+LIMIT 1;

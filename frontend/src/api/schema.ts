@@ -777,6 +777,10 @@ export interface components {
         DomainReviewerConfig: {
             harness: string;
         };
+        DomainTrackerRespawnPolicy: {
+            disabled?: boolean;
+            maxRetries?: null | number;
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -963,7 +967,7 @@ export interface components {
             target: components["schemas"]["NotificationTarget"];
             title: string;
             /** @enum {string} */
-            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "orchestrator_replaced" | "orchestrator_replacement_capped";
+            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "orchestrator_replaced" | "orchestrator_replacement_capped" | "duplicate_pr" | "worker_died_unfinished" | "worker_retry_exhausted";
         };
         NotificationTarget: {
             /** @enum {string} */
@@ -1325,6 +1329,7 @@ export interface components {
             /** @enum {string} */
             provider?: "github";
             repo?: string;
+            respawn?: components["schemas"]["DomainTrackerRespawnPolicy"];
         };
         TriggerReviewResponse: {
             reviewerHandleId: string;

@@ -35,10 +35,10 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 
 func notificationRequiresPR(t domain.NotificationType) bool {
 	switch t {
-	case domain.NotificationNeedsInput, domain.NotificationOrchestratorReplaced, domain.NotificationOrchestratorReplacementCapped:
-		return false
-	default:
+	case domain.NotificationReadyToMerge, domain.NotificationPRMerged, domain.NotificationPRClosedUnmerged, domain.NotificationDuplicatePR:
 		return true
+	default:
+		return false
 	}
 }
 
@@ -58,6 +58,10 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s replacement paused", sessionLabel(intent))
 	case domain.NotificationDuplicatePR:
 		return fmt.Sprintf("Duplicate %s for the same issue", prLabel(intent))
+	case domain.NotificationWorkerDiedUnfinished:
+		return fmt.Sprintf("worker died with unfinished work: issue %s", issueLabel(intent))
+	case domain.NotificationWorkerRetryExhausted:
+		return fmt.Sprintf("worker retry cap exhausted: issue %s", issueLabel(intent))
 	default:
 		return "Notification"
 	}
@@ -88,6 +92,13 @@ func bodyForIntent(intent Intent) string {
 		return "AO stopped replacing this project orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline."
 	case domain.NotificationDuplicatePR:
 		return duplicatePRBody(intent)
+	case domain.NotificationWorkerDiedUnfinished:
+		if intent.RespawnSuppressed {
+			return fmt.Sprintf("%s terminated before issue %s landed, but an open PR already exists; ao will not start a duplicate replacement.", sessionLabel(intent), issueLabel(intent))
+		}
+		return fmt.Sprintf("%s terminated before issue %s landed; ao will dispatch a clean replacement if retry capacity remains.", sessionLabel(intent), issueLabel(intent))
+	case domain.NotificationWorkerRetryExhausted:
+		return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is leaving it for a human.", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit)
 	default:
 		return ""
 	}
@@ -126,4 +137,18 @@ func prLabel(intent Intent) string {
 		return "PR " + title
 	}
 	return "PR"
+}
+
+func issueLabel(intent Intent) string {
+	raw := strings.TrimSpace(string(intent.IssueID))
+	if raw == "" {
+		return "unknown"
+	}
+	if i := strings.LastIndexByte(raw, '#'); i >= 0 && i+1 < len(raw) {
+		return "#" + raw[i+1:]
+	}
+	if strings.HasPrefix(raw, "#") {
+		return raw
+	}
+	return "#" + raw
 }

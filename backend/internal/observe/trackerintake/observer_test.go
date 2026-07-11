@@ -128,6 +128,94 @@ func TestPollSkipsIssueWithOpenLinkedPRAfterSessionEnded(t *testing.T) {
 	}
 }
 
+func TestPollRespawnDisabledEscalatesWithoutReplacement(t *testing.T) {
+	issueID := domain.IssueID("github:acme/demo#12")
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled: true,
+				Respawn: &domain.TrackerRespawnPolicy{Disabled: true},
+			}},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:           "demo-1",
+			ProjectID:    "demo",
+			IssueID:      issueID,
+			Kind:         domain.KindWorker,
+			DisplayName:  "demo #12 fix-login",
+			IsTerminated: true,
+			Activity:     domain.Activity{State: domain.ActivityExited},
+			UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Fix login",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %+v, want none when respawn is disabled", spawner.calls)
+	}
+	if len(notifications.intents) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notifications.intents))
+	}
+	got := notifications.intents[0]
+	if got.Type != domain.NotificationWorkerRetryExhausted || got.SessionID != "demo-1" || got.IssueID != issueID || got.RetryCount != 1 || got.RetryLimit != 0 {
+		t.Fatalf("notification = %+v", got)
+	}
+}
+
+func TestPollNotifiesWhenDeadWorkerHasOpenPR(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:           "demo-1",
+			ProjectID:    "demo",
+			IssueID:      "github:acme/demo#12",
+			Kind:         domain.KindWorker,
+			IsTerminated: true,
+			DisplayName:  "demo #12 fix-login",
+			UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+		}},
+		openPRs: []domain.PullRequest{{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-1", Number: 99}},
+		prsBySession: map[domain.SessionID][]domain.PullRequest{
+			"demo-1": {{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-1", Number: 99}},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Has an open PR already",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %+v, want none while PR is open", spawner.calls)
+	}
+	if len(notifications.intents) != 1 {
+		t.Fatalf("notifications = %+v, want worker death notification", notifications.intents)
+	}
+	if got := notifications.intents[0]; got.Type != domain.NotificationWorkerDiedUnfinished || got.SessionID != "demo-1" || got.IssueID != "github:acme/demo#12" || !got.RespawnSuppressed {
+		t.Fatalf("notification = %+v", got)
+	}
+}
+
 // A read failure on the open-PR surface must not silently re-dispatch a
 // duplicate: the pass fails (and is retried after backoff).
 func TestPollFailsWhenOpenPRReadFails(t *testing.T) {
@@ -579,11 +667,12 @@ func singleResolver(tracker ports.Tracker) TrackerResolver {
 }
 
 type fakeStore struct {
-	projects    []domain.ProjectRecord
-	sessions    []domain.SessionRecord
-	sessionsErr error
-	openPRs     []domain.PullRequest
-	openPRsErr  error
+	projects     []domain.ProjectRecord
+	sessions     []domain.SessionRecord
+	sessionsErr  error
+	openPRs      []domain.PullRequest
+	openPRsErr   error
+	prsBySession map[domain.SessionID][]domain.PullRequest
 }
 
 func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
@@ -596,6 +685,19 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 
 func (f *fakeStore) ListOpenPRs(context.Context) ([]domain.PullRequest, error) {
 	return append([]domain.PullRequest(nil), f.openPRs...), f.openPRsErr
+}
+
+func (f *fakeStore) ListPRsBySession(_ context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error) {
+	return append([]domain.PullRequest(nil), f.prsBySession[sessionID]...), nil
+}
+
+type fakeNotificationSink struct {
+	intents []ports.NotificationIntent
+}
+
+func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
+	f.intents = append(f.intents, intent)
+	return nil
 }
 
 type fakeTracker struct {

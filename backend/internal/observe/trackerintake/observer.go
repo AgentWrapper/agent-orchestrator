@@ -37,6 +37,7 @@ type Store interface {
 	// the owning session row is gone (a replaced/respawned worker), which is the
 	// mechanical half of the duplicate-PR guard (issue #181).
 	ListOpenPRs(ctx context.Context) ([]domain.PullRequest, error)
+	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 }
 
 // Spawner is the session creation surface used by intake.
@@ -76,6 +77,11 @@ type Config struct {
 	FailureBackoff time.Duration
 	Clock          func() time.Time
 	Logger         *slog.Logger
+	Notifications  notificationSink
+}
+
+type notificationSink interface {
+	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
 // Observer polls configured projects and starts sessions for eligible issues.
@@ -87,12 +93,13 @@ type Observer struct {
 	failureBackoff time.Duration
 	clock          func() time.Time
 	logger         *slog.Logger
+	notifications  notificationSink
 	backoffUntil   map[string]time.Time
 }
 
 // New constructs an Observer with safe defaults.
 func New(resolver TrackerResolver, store Store, spawner Spawner, cfg Config) *Observer {
-	o := &Observer{resolver: resolver, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, backoffUntil: map[string]time.Time{}}
+	o := &Observer{resolver: resolver, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, notifications: cfg.Notifications, backoffUntil: map[string]time.Time{}}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -153,6 +160,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		return err
 	}
 	seen := seenIssueIDs(enabledProjects, sessions, openPRs)
+	issueSessions := issueSessionsByProject(enabledProjects, sessions)
 	liveByProject := liveWorkersByProject(sessions)
 	runningByProject := runningWorkerBucketsByProject(sessions)
 	for _, project := range enabledProjects {
@@ -163,7 +171,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 			o.logger.Debug("tracker intake: project in failure backoff", "project", project.ID, "until", until)
 			continue
 		}
-		if failed := o.pollProject(ctx, project, seen, liveByProject[project.ID], runningByProject[project.ID]); failed {
+		if failed := o.pollProject(ctx, project, seen, issueSessions[domain.ProjectID(project.ID)], liveByProject[project.ID], runningByProject[project.ID]); failed {
 			o.backoffUntil[project.ID] = now.Add(o.failureBackoff)
 		} else {
 			delete(o.backoffUntil, project.ID)
@@ -174,7 +182,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, liveWorkers int, running map[domain.BucketKey]int) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, sessionsByIssue map[domain.IssueID][]domain.SessionRecord, liveWorkers int, running map[domain.BucketKey]int) (failed bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled {
 		return false
@@ -229,7 +237,38 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		issueID := CanonicalIssueID(issue.ID)
-		if issueID == "" || seen[issueID] {
+		if issueID == "" {
+			continue
+		}
+		sessionsForIssue := sessionsByIssue[issueID]
+		if seen[issueID] {
+			if _, _, ok := latestTerminatedWorker(sessionsForIssue); ok {
+				retry, err := o.retryDecision(ctx, cfg, issueID, sessionsForIssue)
+				if err != nil {
+					o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
+					spawnFailed = true
+					continue
+				}
+				if retry.intent != nil {
+					o.emitNotification(ctx, *retry.intent)
+				}
+			}
+			continue
+		}
+		retry, err := o.retryDecision(ctx, cfg, issueID, sessionsForIssue)
+		if err != nil {
+			o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
+			spawnFailed = true
+			continue
+		}
+		if retry.intent != nil {
+			o.emitNotification(ctx, *retry.intent)
+		}
+		if retry.done {
+			seen[issueID] = true
+			continue
+		}
+		if !retry.spawn {
 			continue
 		}
 		bypassPool := domain.IssueLabelsBypassWorkerPool(issue.Labels)
@@ -284,6 +323,122 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 func isWorkerConcurrencyCap(err error) bool {
 	var apiError *apierr.Error
 	return errors.As(err, &apiError) && apiError.Code == "WORKER_CONCURRENCY_CAP"
+}
+
+type retryDecision struct {
+	spawn  bool
+	done   bool
+	intent *ports.NotificationIntent
+}
+
+func (o *Observer) retryDecision(ctx context.Context, cfg domain.TrackerIntakeConfig, issueID domain.IssueID, sessions []domain.SessionRecord) (retryDecision, error) {
+	if len(sessions) == 0 {
+		return retryDecision{spawn: true}, nil
+	}
+	latest, deadCount, hasDeadWorker := latestTerminatedWorker(sessions)
+	if handled, open, err := o.issueHasHandledPR(ctx, sessions); err != nil {
+		return retryDecision{}, err
+	} else if handled {
+		if open && hasDeadWorker {
+			intent := workerDiedIntent(latest, issueID)
+			intent.RespawnSuppressed = true
+			return retryDecision{done: true, intent: &intent}, nil
+		}
+		return retryDecision{done: true}, nil
+	}
+	if !hasDeadWorker {
+		return retryDecision{spawn: true}, nil
+	}
+	policy := cfg.EffectiveRespawnPolicy()
+	limit := policy.EffectiveMaxRetries()
+	intent := workerDiedIntent(latest, issueID)
+	if !policy.IsEnabled() {
+		exhausted := workerRetryExhaustedIntent(latest, issueID, deadCount, 0)
+		return retryDecision{spawn: false, intent: &exhausted}, nil
+	}
+	if deadCount > limit {
+		exhausted := workerRetryExhaustedIntent(latest, issueID, deadCount, limit)
+		return retryDecision{spawn: false, intent: &exhausted}, nil
+	}
+	return retryDecision{spawn: true, intent: &intent}, nil
+}
+
+func (o *Observer) issueHasHandledPR(ctx context.Context, sessions []domain.SessionRecord) (handled, open bool, err error) {
+	if o.store == nil {
+		return false, false, nil
+	}
+	for _, sess := range sessions {
+		if sess.Kind != domain.KindWorker {
+			continue
+		}
+		prs, err := o.store.ListPRsBySession(ctx, sess.ID)
+		if err != nil {
+			return false, false, err
+		}
+		for _, pr := range prs {
+			// An open PR is completed work waiting on review or merge authority; a
+			// merged PR is already landed. Closed-unmerged PRs remain retry-eligible.
+			if pr.Merged || !pr.Closed {
+				return true, !pr.Closed && !pr.Merged, nil
+			}
+		}
+	}
+	return false, false, nil
+}
+
+func (o *Observer) emitNotification(ctx context.Context, intent ports.NotificationIntent) {
+	if o.notifications == nil {
+		return
+	}
+	if err := o.notifications.Notify(ctx, intent); err != nil {
+		o.logger.Warn("tracker intake: notification failed", "session", intent.SessionID, "issue", intent.IssueID, "type", intent.Type, "err", err)
+	}
+}
+
+func latestTerminatedWorker(sessions []domain.SessionRecord) (domain.SessionRecord, int, bool) {
+	var latest domain.SessionRecord
+	var count int
+	for _, sess := range sessions {
+		if sess.Kind != domain.KindWorker || !sess.IsTerminated {
+			continue
+		}
+		count++
+		if latest.ID == "" || sessionSortTime(sess).After(sessionSortTime(latest)) {
+			latest = sess
+		}
+	}
+	return latest, count, count > 0
+}
+
+func sessionSortTime(sess domain.SessionRecord) time.Time {
+	if !sess.UpdatedAt.IsZero() {
+		return sess.UpdatedAt
+	}
+	return sess.CreatedAt
+}
+
+func workerDiedIntent(sess domain.SessionRecord, issueID domain.IssueID) ports.NotificationIntent {
+	return ports.NotificationIntent{
+		Type:               domain.NotificationWorkerDiedUnfinished,
+		SessionID:          sess.ID,
+		ProjectID:          sess.ProjectID,
+		IssueID:            issueID,
+		CreatedAt:          sessionSortTime(sess),
+		SessionDisplayName: sess.DisplayName,
+	}
+}
+
+func workerRetryExhaustedIntent(sess domain.SessionRecord, issueID domain.IssueID, retryCount, retryLimit int) ports.NotificationIntent {
+	return ports.NotificationIntent{
+		Type:               domain.NotificationWorkerRetryExhausted,
+		SessionID:          sess.ID,
+		ProjectID:          sess.ProjectID,
+		IssueID:            issueID,
+		CreatedAt:          sessionSortTime(sess),
+		SessionDisplayName: sess.DisplayName,
+		RetryCount:         retryCount,
+		RetryLimit:         retryLimit,
+	}
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
@@ -398,6 +553,9 @@ func seenIssueIDs(projects []domain.ProjectRecord, sessions []domain.SessionReco
 	sessionByID := make(map[domain.SessionID]domain.SessionRecord, len(sessions))
 	for _, sess := range sessions {
 		sessionByID[sess.ID] = sess
+		if sess.IsTerminated {
+			continue
+		}
 		markSeen(sess.ProjectID, sess.IssueID)
 	}
 	// An issue with an open linked PR must never be re-dispatched (issue #181).
@@ -418,6 +576,34 @@ func seenIssueIDs(projects []domain.ProjectRecord, sessions []domain.SessionReco
 		markSeen(sess.ProjectID, sess.IssueID)
 	}
 	return seen
+}
+
+func issueSessionsByProject(projects []domain.ProjectRecord, sessions []domain.SessionRecord) map[domain.ProjectID]map[domain.IssueID][]domain.SessionRecord {
+	out := make(map[domain.ProjectID]map[domain.IssueID][]domain.SessionRecord)
+	projectByID := make(map[domain.ProjectID]domain.ProjectRecord, len(projects))
+	for _, project := range projects {
+		projectByID[domain.ProjectID(project.ID)] = project
+	}
+	for _, sess := range sessions {
+		if sess.IssueID == "" {
+			continue
+		}
+		byIssue := out[sess.ProjectID]
+		if byIssue == nil {
+			byIssue = make(map[domain.IssueID][]domain.SessionRecord)
+			out[sess.ProjectID] = byIssue
+		}
+		byIssue[sess.IssueID] = append(byIssue[sess.IssueID], sess)
+		if project, ok := projectByID[sess.ProjectID]; ok {
+			if canonical, ok := CanonicalIssueIDFromRef(project, sess.IssueID); ok {
+				if canonical == sess.IssueID {
+					continue
+				}
+				byIssue[canonical] = append(byIssue[canonical], sess)
+			}
+		}
+	}
+	return out
 }
 
 // liveWorkersByProject counts live (non-terminated) worker sessions that consume

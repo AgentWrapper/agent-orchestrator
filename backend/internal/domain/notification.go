@@ -26,12 +26,18 @@ const (
 	// alert: the fleet opened a duplicate and one of the PRs should be closed or
 	// adopted. See issue #181.
 	NotificationDuplicatePR NotificationType = "duplicate_pr"
+	// NotificationWorkerDiedUnfinished means a worker session terminated while
+	// its assigned issue still needs work.
+	NotificationWorkerDiedUnfinished NotificationType = "worker_died_unfinished"
+	// NotificationWorkerRetryExhausted means tracker intake reached the clean
+	// respawn retry cap for an unfinished issue.
+	NotificationWorkerRetryExhausted NotificationType = "worker_retry_exhausted"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR, NotificationWorkerDiedUnfinished, NotificationWorkerRetryExhausted:
 		return true
 	default:
 		return false

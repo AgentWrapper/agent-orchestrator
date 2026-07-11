@@ -79,6 +79,7 @@ function notification(overrides: Partial<NotificationDTO> = {}): NotificationDTO
 		body: "The agent is waiting for your response.",
 		sensitive: false,
 		changedPaths: [],
+		headSha: "",
 		status: "unread",
 		createdAt: "2026-06-16T10:00:00Z",
 		target: { kind: "session", sessionId: "mer-1" },

@@ -92,6 +92,38 @@ func TestTrackerIntakeWithDefaultsDisabledLeavesExcludeLabelsNil(t *testing.T) {
 	}
 }
 
+func TestTrackerIntakeWithDefaultsEnablesRespawnPolicy(t *testing.T) {
+	got := TrackerIntakeConfig{Enabled: true}.WithDefaults()
+	policy := got.EffectiveRespawnPolicy()
+	if !policy.IsEnabled() {
+		t.Fatal("respawn policy should default on when intake is enabled")
+	}
+	if policy.EffectiveMaxRetries() != DefaultWorkerRespawnMaxRetries {
+		t.Fatalf("respawn max retries = %d, want %d", policy.EffectiveMaxRetries(), DefaultWorkerRespawnMaxRetries)
+	}
+	if got.Respawn != nil {
+		t.Fatalf("WithDefaults should not persist materialized respawn defaults, got %#v", got.Respawn)
+	}
+}
+
+func TestTrackerIntakeRespawnPolicyCanDisableOrSetZeroRetries(t *testing.T) {
+	zero := 0
+	got := TrackerIntakeConfig{
+		Enabled: true,
+		Respawn: &TrackerRespawnPolicy{
+			Disabled:   true,
+			MaxRetries: &zero,
+		},
+	}.WithDefaults()
+	policy := got.EffectiveRespawnPolicy()
+	if policy.IsEnabled() {
+		t.Fatal("explicit disabled respawn policy should stay disabled")
+	}
+	if policy.EffectiveMaxRetries() != 0 {
+		t.Fatalf("explicit zero retries = %d, want 0", policy.EffectiveMaxRetries())
+	}
+}
+
 func TestTrackerIntakeValidateNoLongerRequiresAssignee(t *testing.T) {
 	// Issue #80 flips intake to opt-out-by-default: the work gate is opt-out
 	// labels only, so an assignee is no longer required to enable intake. The
@@ -110,5 +142,13 @@ func TestTrackerIntakeValidateStillRejectsPaddedLabels(t *testing.T) {
 	cfg := TrackerIntakeConfig{Enabled: true, ExcludeLabels: []string{" no-ao"}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate accepted an exclude label with leading whitespace")
+	}
+}
+
+func TestTrackerIntakeValidateRejectsNegativeRespawnRetries(t *testing.T) {
+	negative := -1
+	cfg := TrackerIntakeConfig{Enabled: true, Respawn: &TrackerRespawnPolicy{MaxRetries: &negative}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate accepted negative respawn max retries")
 	}
 }

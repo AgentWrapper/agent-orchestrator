@@ -144,6 +144,43 @@ type ListFilter struct {
 	Limit    int             `json:"limit,omitempty"`
 }
 
+// DefaultWorkerRespawnMaxRetries is the number of clean replacement workers
+// tracker intake may launch after the original worker for an issue dies.
+const DefaultWorkerRespawnMaxRetries = 2
+
+// TrackerRespawnPolicy controls clean worker retry behavior for tracker intake.
+// Disabled=false and MaxRetries=nil is the default-on policy: retry twice after
+// the original worker dies. MaxRetries is a pointer so an explicit JSON zero can
+// mean "notify but do not respawn" instead of being confused with "unset".
+type TrackerRespawnPolicy struct {
+	Disabled   bool `json:"disabled,omitempty"`
+	MaxRetries *int `json:"maxRetries,omitempty"`
+}
+
+// WithDefaults materializes the default retry cap.
+func (p TrackerRespawnPolicy) WithDefaults() TrackerRespawnPolicy {
+	if p.MaxRetries == nil {
+		defaultMaxRetries := DefaultWorkerRespawnMaxRetries
+		p.MaxRetries = &defaultMaxRetries
+	}
+	return p
+}
+
+// IsEnabled reports whether tracker intake should launch clean replacement
+// workers after an unfinished worker dies.
+func (p TrackerRespawnPolicy) IsEnabled() bool {
+	return !p.Disabled
+}
+
+// EffectiveMaxRetries returns the materialized retry cap.
+func (p TrackerRespawnPolicy) EffectiveMaxRetries() int {
+	p = p.WithDefaults()
+	if p.MaxRetries == nil {
+		return DefaultWorkerRespawnMaxRetries
+	}
+	return *p.MaxRetries
+}
+
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
 // Intake is opt-out-by-default (issue #80): once enabled it works every open
 // issue that carries none of the ExcludeLabels (which default to
@@ -183,6 +220,18 @@ type TrackerIntakeConfig struct {
 	// durable spawn state is created. Lifecycle restore/re-adoption paths do not
 	// terminate saved work to enforce this admission cap retroactively.
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
+	// Respawn controls clean replacement workers for unfinished issues whose
+	// previous worker sessions terminated. Defaults to enabled with two retries.
+	Respawn *TrackerRespawnPolicy `json:"respawn,omitempty"`
+}
+
+// EffectiveRespawnPolicy returns the configured respawn policy with defaults
+// applied without mutating the persisted config shape.
+func (c TrackerIntakeConfig) EffectiveRespawnPolicy() TrackerRespawnPolicy {
+	if c.Respawn == nil {
+		return (TrackerRespawnPolicy{}).WithDefaults()
+	}
+	return c.Respawn.WithDefaults()
 }
 
 // WithDefaults fills the provider and the opt-out taxonomy only when intake is
@@ -238,6 +287,9 @@ func (c TrackerIntakeConfig) Validate() error {
 	}
 	if c.MaxConcurrent < 0 {
 		return fmt.Errorf("trackerIntake.maxConcurrent: must not be negative")
+	}
+	if c.Respawn != nil && c.Respawn.MaxRetries != nil && *c.Respawn.MaxRetries < 0 {
+		return fmt.Errorf("trackerIntake.respawn.maxRetries: must not be negative")
 	}
 	return nil
 }
