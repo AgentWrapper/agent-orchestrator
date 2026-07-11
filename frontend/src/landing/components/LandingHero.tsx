@@ -63,7 +63,8 @@ function getDownloadTarget() {
 
 	if (portable) return null;
 	if (platform.includes("win")) return { label: "Download for Windows", href: desktopDownloads[2].href };
-	if (platform.includes("linux") || platform.includes("x11")) return { label: "Download for Linux", href: desktopDownloads[3].href };
+	if (platform.includes("linux") || platform.includes("x11"))
+		return { label: "Download for Linux", href: desktopDownloads[3].href };
 	return null;
 }
 
@@ -1195,33 +1196,39 @@ export function LandingHero() {
 						</span>
 					</h1>
 					<div className="gsap-reveal mt-8 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
-					{downloadTarget ? (
-						<a
-							href={downloadTarget.href}
-							className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] sm:w-auto"
-						>
-							<DownloadIcon className="h-4 w-4" />
-							{downloadTarget.label}
-							<ArrowRightIcon className="h-4 w-4 transition-transform duration-[450ms] group-hover:translate-x-1" />
-						</a>
-					) : (
-						<details className="group/download relative w-full sm:w-auto">
-							<summary className="hero-pressable flex h-12 cursor-pointer list-none items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+						{downloadTarget ? (
+							<a
+								href={downloadTarget.href}
+								className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] sm:w-auto"
+							>
 								<DownloadIcon className="h-4 w-4" />
-								Desktop downloads
-								<ArrowRightIcon className="h-4 w-4 rotate-90 transition-transform group-open/download:-rotate-90" />
-							</summary>
-							<div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 overflow-hidden rounded-lg border border-[color:var(--border-strong)] bg-[color:var(--bg-elevated)] p-1.5 text-left shadow-2xl sm:min-w-[260px]">
-								<p className="px-3 py-2 text-xs leading-relaxed text-[color:var(--fg-muted)]">Choose the computer where you’ll run AO.</p>
-								{downloadOptions.map((download) => (
-									<a key={download.label} href={download.href} className="flex items-center justify-between gap-4 rounded-md px-3 py-2.5 text-sm font-medium text-[color:var(--fg)] hover:bg-white/[0.06]">
-										{download.label}
-										<DownloadIcon className="h-3.5 w-3.5 text-[color:var(--fg-muted)]" />
-									</a>
-								))}
-							</div>
-						</details>
-					)}
+								{downloadTarget.label}
+								<ArrowRightIcon className="h-4 w-4 transition-transform duration-[450ms] group-hover:translate-x-1" />
+							</a>
+						) : (
+							<details className="group/download relative w-full sm:w-auto">
+								<summary className="hero-pressable flex h-12 cursor-pointer list-none items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+									<DownloadIcon className="h-4 w-4" />
+									Desktop downloads
+									<ArrowRightIcon className="h-4 w-4 rotate-90 transition-transform group-open/download:-rotate-90" />
+								</summary>
+								<div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 overflow-hidden rounded-lg border border-[color:var(--border-strong)] bg-[color:var(--bg-elevated)] p-1.5 text-left shadow-2xl sm:min-w-[260px]">
+									<p className="px-3 py-2 text-xs leading-relaxed text-[color:var(--fg-muted)]">
+										Choose the computer where you’ll run AO.
+									</p>
+									{downloadOptions.map((download) => (
+										<a
+											key={download.label}
+											href={download.href}
+											className="flex items-center justify-between gap-4 rounded-md px-3 py-2.5 text-sm font-medium text-[color:var(--fg)] hover:bg-white/[0.06]"
+										>
+											{download.label}
+											<DownloadIcon className="h-3.5 w-3.5 text-[color:var(--fg-muted)]" />
+										</a>
+									))}
+								</div>
+							</details>
+						)}
 						<a
 							href="https://github.com/AgentWrapper/agent-orchestrator"
 							target="_blank"
