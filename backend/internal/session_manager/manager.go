@@ -619,16 +619,35 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
+	// Probe launch-process liveness BEFORE any pane write — the first of two
+	// gates. On the immediate-exit path the pane is already the keep-alive
+	// interactive shell, so a title or after-start prompt typed now would be
+	// executed as shell input on a spawn that is about to roll back (issue #237).
+	// Gating here means an exited agent is rejected without ever typing spawn
+	// content into that shell; a healthy slow start still passes via the
+	// configurable grace window and proceeds to the title/prompt writes below.
+	// A second, post-write gate below preserves issue #219's end-of-spawn
+	// liveness guarantee for an agent that dies *during* those writes.
+	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		_ = m.workspace.Destroy(ctx, ws)
+		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(ctx, mixBucket, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch process: %w", id, err)
+	}
+
 	// The harness title is cosmetic and the prompt already reached the agent
 	// through argv, so a failed title write must not tear down a session that is
 	// otherwise working — AO keeps its own DisplayName and Rename can re-issue
 	// the command later.
 	//
-	// But for argv-prompt harnesses this write is the only thing that touches
-	// the pane during spawn. If the harness died between Create and here, a
-	// blanket "cosmetic" would hand back a live-looking session that never ran.
-	// So the failure is forgiven only against a pane we can prove is still
-	// alive; anything else rolls back exactly as it did before.
+	// The launch-process gate above passed — either the agent was confirmed
+	// running, or a probe error was forgiven because the runtime session was
+	// still alive (verifyLaunchCommandRunning does not reject on a probe hiccup
+	// against a live session). Either way the pane is not the bare keep-alive
+	// shell, so a title-write failure here is treated as a transient send-keys
+	// hiccup rather than a dead session — but only while we can still prove the
+	// pane is alive; anything else rolls back exactly as it did before.
 	if err := m.deliverLaunchTitle(ctx, agent, handle, cfg.DisplayName); err != nil {
 		if alive, aliveErr := m.runtime.IsAlive(ctx, handle); alive && aliveErr == nil {
 			m.logger.Warn("spawn: could not set the harness title; session keeps AO's display name",
@@ -663,6 +682,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 	}
+
+	// Re-probe launch-process liveness now that the pane writes are done — the
+	// second gate. The early gate above proved the agent was running before we
+	// typed anything; this one catches an agent that passed that gate but then
+	// exited *during* the title/prompt delivery (the pane writes succeed against
+	// the persistent keep-alive shell, so a dead agent would otherwise reach
+	// MarkSpawned and hand back a live-looking record). This preserves issue
+	// #219's end-of-spawn liveness guarantee across the issue #237 reorder.
 	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)

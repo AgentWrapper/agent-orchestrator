@@ -5728,6 +5728,138 @@ func TestSpawn_RollsBackWhenAgentProcessAlreadyExited(t *testing.T) {
 	}
 }
 
+// TestSpawn_ImmediateExitWritesNothingToThePaneBeforeRollback locks issue #237:
+// the launch-process gate must run BEFORE any pane write. On the immediate-exit
+// path the pane is already the keep-alive interactive shell, so a title (or, for
+// after-start harnesses, the prompt) typed now would be executed as shell input
+// on a spawn that is about to be destroyed. The guard must reject the spawn
+// without ever calling SendMessage.
+func TestSpawn_ImmediateExitWritesNothingToThePaneBeforeRollback(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent ports.Agent
+	}{
+		// argv-prompt harness (claude/codex): only the cosmetic title is typed.
+		{"argv-prompt harness", &launchTitleAgent{}},
+		// after-start harness: BOTH the title and the prompt are typed, so an
+		// unguarded write would execute the prompt text as shell input.
+		{"after-start harness", &afterStartTitleAgent{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+				WorkerMix: domain.WorkerMix{{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 100}},
+			}}
+			rt := &fakeRuntime{
+				aliveByHandle:        map[string]bool{"h1": true},
+				processAliveByHandle: map[string]bool{"h1": false},
+			}
+			lcm := &fakeLCM{store: st}
+			m := New(Deps{
+				Runtime: rt, Agents: singleAgent{agent: tc.agent}, Workspace: &fakeWorkspace{}, Store: st,
+				Messenger: &fakeMessenger{}, Lifecycle: lcm,
+				LookPath: func(string) (string, error) { return "/bin/true", nil },
+			})
+			m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 30 * time.Millisecond}
+			m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 1}
+
+			if _, err := m.Spawn(ctx, ports.SpawnConfig{
+				ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+			}); err == nil {
+				t.Fatal("spawn must fail when the agent exited into the keep-alive shell")
+			}
+			// The core #237 guarantee: not one byte was typed into the pane
+			// before the guard rolled the spawn back.
+			if len(rt.sent) != 0 {
+				t.Fatalf("pane writes before rollback = %#v, want none (nothing may be typed into the keep-alive shell)", rt.sent)
+			}
+			if rt.destroyed != 1 {
+				t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+			}
+			if lcm.completed != 0 {
+				t.Fatalf("MarkSpawned called %d times, want 0", lcm.completed)
+			}
+			if _, ok := st.sessions["mer-1"]; ok {
+				t.Fatal("seed row survived a rolled-back spawn")
+			}
+		})
+	}
+}
+
+// TestSpawn_HealthySlowStartDeliversTitleAndPromptAfterProbe proves the reorder
+// did not regress the happy path: once the launch-process probe passes (here a
+// transient false-then-true, exercising the grace window), a slow-starting
+// after-start harness still delivers BOTH the title and the prompt into the
+// pane, in order, and the spawn completes.
+func TestSpawn_HealthySlowStartDeliversTitleAndPromptAfterProbe(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}, processAliveSeq: []bool{false, true}}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: &afterStartTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 5 * time.Second}
+	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 3}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err != nil {
+		t.Fatalf("healthy slow-start spawn must complete: %v", err)
+	}
+	if got, want := rt.sent, []string{"/rename titled", "task"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-start sends = %#v, want %#v (title then prompt, after the probe passes)", got, want)
+	}
+	if lcm.completed != 1 {
+		t.Fatalf("MarkSpawned called %d times, want 1", lcm.completed)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times, want 0", rt.destroyed)
+	}
+}
+
+// TestSpawn_LateExitAfterProbeRollsBack proves the second (post-write) gate
+// preserves issue #219's end-of-spawn liveness guarantee across the issue #237
+// reorder: an agent that passes the early probe (true) but then exits *during*
+// the title/prompt delivery (false on the re-probe) must roll back rather than
+// return a live-looking record. The pane writes succeed against the persistent
+// keep-alive shell, so without the second gate MarkSpawned would run on a dead
+// agent.
+func TestSpawn_LateExitAfterProbeRollsBack(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	// Early probe reads true (agent up → pane writes proceed); the post-write
+	// re-probe reads false (agent has since exited). attempts=1 so each probe is
+	// a single read of the sequence.
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}, processAliveSeq: []bool{true, false}}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: &afterStartTitleAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.paneReady = paneReadyConfig{pollInterval: time.Millisecond, deadline: 30 * time.Millisecond}
+	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 1}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must roll back when the agent exits after the early probe but before completion")
+	}
+	if lcm.completed != 0 {
+		t.Fatalf("MarkSpawned called %d times, want 0 (late-exit spawn must not complete)", lcm.completed)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	}
+	// Both probes ran: the early one (true) and the post-write one (false).
+	if len(rt.processAliveSeq) != 0 {
+		t.Fatalf("processAliveSeq has %d entries left, want 0 (early + post-write probe both run)", len(rt.processAliveSeq))
+	}
+}
+
 func TestSpawn_ProcessProbeErrorKeepsAliveSession(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
