@@ -100,6 +100,20 @@ func TestMigrateHandlesDivergentVersion32HeadSHAHistory(t *testing.T) {
 	}
 }
 
+func TestMainCIRedMigrationPreservesWorkerTerminalDedupeIndex(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 42)
+	assertWorkerTerminalDedupeIndex(t, db)
+
+	downTo(t, db, 41)
+	assertWorkerTerminalDedupeIndex(t, db)
+}
+
 func downTo(t *testing.T, db *sql.DB, version int64) {
 	t.Helper()
 	gooseMu.Lock()
@@ -122,6 +136,28 @@ func assertSQLiteColumn(t *testing.T, db *sql.DB, table, column string) {
 	}
 	if !ok {
 		t.Fatalf("missing column %s.%s", table, column)
+	}
+}
+
+func assertWorkerTerminalDedupeIndex(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable foreign keys for raw notification index assertion: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM notifications`); err != nil {
+		t.Fatalf("clear notifications: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, session_id, project_id, type, title, status, created_at)
+		VALUES ('terminal-1', 'session-1', 'project-1', 'worker_died_unfinished', 'worker died', 'read', '2026-07-11T00:00:00Z')
+	`); err != nil {
+		t.Fatalf("insert first terminal notification: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, session_id, project_id, type, title, status, created_at)
+		VALUES ('terminal-2', 'session-1', 'project-1', 'worker_died_unfinished', 'worker died again', 'unread', '2026-07-11T00:01:00Z')
+	`); err == nil {
+		t.Fatal("worker terminal dedupe index allowed duplicate session/type notification")
 	}
 }
 

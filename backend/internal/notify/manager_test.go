@@ -165,6 +165,34 @@ func TestManagerNotifyWorkerRetryExhausted(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyMainCIRed(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_main_red" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:         domain.NotificationMainCIRed,
+		SessionID:    "main",
+		ProjectID:    "ao",
+		Repo:         "polymath-ventures/agent-orchestrator",
+		HeadSHA:      "fee462ed3aabb",
+		ChangedPaths: []string{"go", "cli-e2e"},
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := st.rows[0]
+	if got.Title != "main is red at fee462ed: go, cli-e2e" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	if got.Body != "Main-branch CI failed for polymath-ventures/agent-orchestrator at fee462ed. Merge is frozen until main is green; only fix PRs should merge." {
+		t.Fatalf("body = %q", got.Body)
+	}
+	if got.Type != domain.NotificationMainCIRed || got.HeadSHA != "fee462ed3aabb" {
+		t.Fatalf("record = %+v", got)
+	}
+}
+
 func TestManagerNotifyDuplicateDoesNotPublish(t *testing.T) {
 	st := &fakeStore{duplicate: true}
 	hub := NewHub()

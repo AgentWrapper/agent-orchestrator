@@ -66,6 +66,10 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s model unreachable", modelLabel(intent))
 	case domain.NotificationModelRecovered:
 		return fmt.Sprintf("%s model recovered", modelLabel(intent))
+	case domain.NotificationMainCIRed:
+		// Main-CI alerts reuse ChangedPaths to carry failed job names until the
+		// notification record grows a dedicated failed_jobs field.
+		return fmt.Sprintf("main is red at %s: %s", shortSHA(intent.HeadSHA), failedJobsLabel(intent.ChangedPaths))
 	default:
 		return "Notification"
 	}
@@ -107,6 +111,12 @@ func bodyForIntent(intent Intent) string {
 		return fmt.Sprintf("Configured pin %s is unreachable%s.", modelDetail(intent), reasonSuffix(intent.Reason))
 	case domain.NotificationModelRecovered:
 		return fmt.Sprintf("Configured pin %s is reachable again.", modelDetail(intent))
+	case domain.NotificationMainCIRed:
+		repo := strings.TrimSpace(intent.Repo)
+		if repo == "" {
+			repo = "the repository"
+		}
+		return fmt.Sprintf("Main-branch CI failed for %s at %s. Merge is frozen until main is green; only fix PRs should merge.", repo, shortSHA(intent.HeadSHA))
 	default:
 		return ""
 	}
@@ -191,4 +201,28 @@ func issueLabel(intent Intent) string {
 		return raw
 	}
 	return "#" + raw
+}
+
+func shortSHA(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	if sha == "" {
+		return "unknown"
+	}
+	return sha
+}
+
+func failedJobsLabel(jobs []string) string {
+	out := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		if trimmed := strings.TrimSpace(job); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return "unknown jobs"
+	}
+	return strings.Join(out, ", ")
 }

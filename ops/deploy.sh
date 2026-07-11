@@ -14,6 +14,7 @@ Environment overrides:
   AO_DEPLOY_SYSTEMD_USER_DIR systemd user unit dir (default: ~/.config/systemd/user)
   AO_DEPLOY_BASE            base git ref for changed-path detection
   AO_DEPLOY_HEAD            head git ref for changed-path detection (default: HEAD)
+  AO_DEPLOY_GITHUB_REPO     GitHub repo owner/name for main CI verification
   AO_DEPLOY_WEB_URL         tailnet/public web URL to verify
   AO_DEPLOY_WAIT_SECONDS    ao restart + web readiness timeout (default: 30)
   AO_DEPLOY_DRY_RUN=1       print actions without changing the host
@@ -186,6 +187,92 @@ verify_daemon_revision() {
 
 git_head() {
   git -C "${repo_root}" rev-parse "${AO_DEPLOY_HEAD:-HEAD}"
+}
+
+github_repo() {
+  if [[ -n "${AO_DEPLOY_GITHUB_REPO:-}" ]]; then
+    printf '%s\n' "${AO_DEPLOY_GITHUB_REPO}"
+    return 0
+  fi
+  local url
+  url="$(git -C "${repo_root}" remote get-url origin 2>/dev/null || true)"
+  url="${url%.git}"
+  url="${url#https://github.com/}"
+  url="${url#git@github.com:}"
+  if [[ "${url}" == */* ]]; then
+    printf '%s\n' "${url}"
+  fi
+}
+
+main_ci_report() {
+  local repo="$1" sha="$2"
+  gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" | node -e '
+let body = "";
+process.stdin.on("data", (chunk) => (body += chunk));
+process.stdin.on("end", () => {
+  const parsed = JSON.parse(body || "{}");
+  if (typeof parsed.state === "string") {
+    const jobs = Array.isArray(parsed.failedJobs) ? parsed.failedJobs : [];
+    console.log(`${parsed.state}\t${jobs.join(", ")}`);
+    return;
+  }
+  const runs = Array.isArray(parsed.check_runs) ? parsed.check_runs : [];
+  if (Number(parsed.total_count || 0) > runs.length) {
+    console.log(`unknown\tcheck runs truncated at ${runs.length}/${parsed.total_count}`);
+    return;
+  }
+  // Deploy verification is stricter than Slack paging: hard-red conclusions
+  // are failures, while action_required/pending/empty results still block as
+  // not-known-green without claiming a hard red.
+  const bad = new Set(["failure", "cancelled", "timed_out"]);
+  const failed = runs.filter((r) => String(r.status || "").toLowerCase() === "completed" && bad.has(String(r.conclusion || "").toLowerCase()));
+  const pending = runs.filter((r) => String(r.status || "").toLowerCase() !== "completed" || String(r.conclusion || "").toLowerCase() === "action_required");
+  if (failed.length) {
+    console.log(`failure\t${failed.map((r) => r.name || r.check_suite?.app?.name || "unknown").join(", ")}`);
+  } else if (pending.length) {
+    console.log(`pending\t${pending.map((r) => r.name || "unknown").join(", ")}`);
+  } else if (runs.length === 0) {
+    console.log("unknown\tno check runs");
+  } else {
+    console.log("success\t");
+  }
+});
+'
+}
+
+verify_main_ci_green() {
+  local head="$1"
+  if [[ "${dry_run}" == "1" ]]; then
+    log "DRY-RUN: would verify main CI is green for ${head}"
+    return 0
+  fi
+  local repo
+  repo="$(github_repo)"
+  if [[ -z "${repo}" ]]; then
+    printf 'Refusing to deploy %s: cannot resolve GitHub repo for main CI verification\n' "${head}" >&2
+    return 1
+  fi
+  if ! command_exists gh; then
+    printf 'Refusing to deploy %s: gh is required for main CI verification\n' "${head}" >&2
+    return 1
+  fi
+  local report state jobs
+  report="$(main_ci_report "${repo}" "${head}")"
+  state="${report%%$'\t'*}"
+  jobs="${report#*$'\t'}"
+  case "${state}" in
+    success)
+      log "Main CI is green for ${head}."
+      ;;
+    failure|error|cancelled|timed_out|action_required)
+      printf 'Refusing to deploy %s: main CI is %s: %s\n' "${head}" "${state}" "${jobs:-unknown jobs}" >&2
+      return 1
+      ;;
+    *)
+      printf 'Refusing to deploy %s: main CI is not green (%s: %s)\n' "${head}" "${state:-unknown}" "${jobs:-unknown jobs}" >&2
+      return 1
+      ;;
+  esac
 }
 
 default_base_ref() {
@@ -464,6 +551,7 @@ deploy() {
 
   log "Deploying ao from ${repo_root}"
   log "Deploy range: ${base:-<unknown/first deploy>}..${head}"
+  verify_main_ci_green "${head}"
 
   if changed_in_range "${base}" "${head}" "frontend/"; then
     frontend_changed=true

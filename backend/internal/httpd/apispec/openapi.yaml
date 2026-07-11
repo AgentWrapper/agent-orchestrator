@@ -2729,6 +2729,7 @@ components:
           - worker_retry_exhausted
           - model_unreachable
           - model_recovered
+          - main_ci_red
           type: string
       required:
       - id
