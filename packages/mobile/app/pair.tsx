@@ -8,9 +8,9 @@ import { useApp } from "../lib/store";
 import { theme } from "../lib/theme";
 import { Button } from "../lib/ui";
 
-// Scans the desktop's pairing QR code (a `{v,host,port,password}` JSON payload),
-// writes host/httpPort/password into the saved server config, kicks off a
-// reconnect, and returns to Settings — so one scan connects with no typing.
+// Scans the desktop's pairing QR code (a `{v,host,port}` JSON payload), writes
+// host/httpPort into the saved server config, kicks off a reconnect, and returns
+// to Settings. The connection password is entered separately.
 export default function PairScreen() {
 	const router = useRouter();
 	const { reloadConfig } = useApp();
@@ -38,7 +38,7 @@ export default function PairScreen() {
 				...cfg,
 				host: parsed.host,
 				httpPort: parsed.port,
-				password: parsed.password || cfg.password,
+				password: cfg.password,
 			});
 			await reloadConfig(); // reconnect with the scanned credentials
 			router.back();

@@ -742,20 +742,6 @@ func prIdentity(o ports.PRObservation) string {
 	return id
 }
 
-// firstFailedCheck returns the first check in a failed state, preserving the
-// original CI-nudge behavior of surfacing a single failing check. Extracting it
-// lets the CI branch queue its nudge and fall through instead of returning from
-// inside the loop, so review/merge-conflict feedback for the same PR is no
-// longer skipped.
-func firstFailedCheck(checks []ports.PRCheckObservation) (ports.PRCheckObservation, bool) {
-	for _, ch := range checks {
-		if ch.Status == domain.PRCheckFailed {
-			return ch, true
-		}
-	}
-	return ports.PRCheckObservation{}, false
-}
-
 func hasUnresolvedComments(comments []ports.PRCommentObservation) bool {
 	for _, c := range comments {
 		if !c.Resolved {

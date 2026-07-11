@@ -6,7 +6,7 @@ import { Alert, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { getPreview, isTerminalStatus, killSession, sendMessage } from "../../lib/api";
-import { isConfigured, loadConfig, type ServerConfig } from "../../lib/config";
+import { authHeaders, isConfigured, loadConfig, type ServerConfig } from "../../lib/config";
 import { MuxClient, type MuxStatus } from "../../lib/mux";
 import { useApp } from "../../lib/store";
 import { theme } from "../../lib/theme";
@@ -695,7 +695,7 @@ export default function TerminalScreen() {
 						</View>
 						<WebView
 							ref={previewWebRef}
-							source={{ uri: preview.url }}
+							source={{ uri: preview.url, headers: cfg ? authHeaders(cfg) : {} }}
 							originWhitelist={["*"]}
 							style={styles.browserWeb}
 							onError={() => setBanner("Preview failed to load.")}

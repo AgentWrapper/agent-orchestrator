@@ -158,14 +158,16 @@ func (b *BridgeService) Regenerate() (MobileStatusResponse, error) {
 	return b.enableWithPassword(pw) // rotate → drops current phone (new hash)
 }
 
-// Disable stops the LAN listener and persists the disabled state.
+// Disable persists the disabled state before stopping the LAN listener. If the
+// durable write fails, leave the current listener state untouched so a caller
+// never sees a successful "off" that reopens on the next daemon boot.
 func (b *BridgeService) Disable() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := b.LAN.Stop(ctx); err != nil {
-		return err
-	}
 	st, _ := mobilebridge.Load(b.ConfigPath)
 	st.Enabled = false
-	return mobilebridge.Save(b.ConfigPath, st)
+	if err := mobilebridge.Save(b.ConfigPath, st); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return b.LAN.Stop(ctx)
 }

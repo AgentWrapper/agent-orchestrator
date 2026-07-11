@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+func TestProcStatStateParsesCommandWithSpacesAndParens(t *testing.T) {
+	state, err := procStatState([]byte("123 (worker ) name) Z 1 2 3"))
+	if err != nil {
+		t.Fatalf("parse proc stat: %v", err)
+	}
+	if state != 'Z' {
+		t.Fatalf("state = %q, want Z", state)
+	}
+}
+
+func TestProcStatStateRejectsMalformedInput(t *testing.T) {
+	if _, err := procStatState([]byte("123 worker Z")); err == nil {
+		t.Fatal("expected malformed proc stat error")
+	}
+}
+
 func TestAliveReportsZombieAsDead(t *testing.T) {
 	cmd := exec.Command("sh", "-c", "exit 0")
 	if err := cmd.Start(); err != nil {

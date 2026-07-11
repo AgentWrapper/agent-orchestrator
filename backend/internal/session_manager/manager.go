@@ -1014,23 +1014,6 @@ func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.Sessi
 	_ = m.lcm.MarkTerminated(ctx, id)
 }
 
-// markSpawnFailedTerminatedWithoutWorkspace parks a spawn failure after the
-// runtime row had become observable, but clears launch handles for resources
-// that were destroyed during rollback. This keeps later restore/cleanup paths
-// from treating a removed worktree as reusable state.
-func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context, id domain.SessionID) {
-	m.markSpawnFailedTerminated(ctx, id)
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
-		return
-	}
-	rec.Metadata.Branch = ""
-	rec.Metadata.WorkspacePath = ""
-	rec.Metadata.RuntimeHandleID = ""
-	rec.Metadata.AgentSessionID = ""
-	_ = m.store.UpdateSession(ctx, rec)
-}
-
 // rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
 // before anything observable (worktree, runtime) was built, so failed spawns
 // don't accumulate terminated rows in session lists. DeleteSession only removes

@@ -73,6 +73,25 @@ func TestMobileEnableRollsBackListenerWhenSaveFails(t *testing.T) {
 	}
 }
 
+func TestMobileDisableDoesNotStopListenerWhenSaveFails(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lan := &fakeLAN{running: true}
+	b := &BridgeService{LAN: lan, ConfigPath: filepath.Join(blocker, "mobile", "config.json"), DefaultPort: 3011}
+
+	if err := b.Disable(); err == nil {
+		t.Fatal("expected disable to fail on Save error")
+	}
+	if !lan.Running() {
+		t.Fatal("listener stopped even though disabled state was not persisted")
+	}
+	if lan.stopCalls != 0 {
+		t.Fatalf("Stop calls = %d, want 0", lan.stopCalls)
+	}
+}
+
 func TestMobileEnableReturnsPassword(t *testing.T) {
 	c := &MobileController{Bridge: &fakeBridge{}}
 	w := httptest.NewRecorder()

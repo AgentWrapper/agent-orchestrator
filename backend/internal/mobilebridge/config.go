@@ -89,12 +89,20 @@ const pwAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567
 // GeneratePassword returns a fresh 8-character alphanumeric connection password
 // drawn from a cryptographically secure source.
 func GeneratePassword() (string, error) {
-	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	for i, b := range buf {
-		buf[i] = pwAlphabet[int(b)%len(pwAlphabet)]
+	const length = 8
+	buf := make([]byte, length)
+	max := byte(256 - (256 % len(pwAlphabet)))
+	var one [1]byte
+	for i := range buf {
+		for {
+			if _, err := rand.Read(one[:]); err != nil {
+				return "", err
+			}
+			if one[0] < max {
+				buf[i] = pwAlphabet[int(one[0])%len(pwAlphabet)]
+				break
+			}
+		}
 	}
 	return string(buf), nil
 }

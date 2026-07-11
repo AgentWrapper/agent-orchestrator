@@ -35,6 +35,14 @@ function cleanHost(host: string): string {
 		.replace(/\/+$/, "");
 }
 
+function urlHost(host: string): string {
+	const cleaned = cleanHost(host);
+	if (cleaned.startsWith("[") && cleaned.endsWith("]")) {
+		return cleaned;
+	}
+	return cleaned.includes(":") ? `[${cleaned}]` : cleaned;
+}
+
 // Non-secret host/port/TLS config lives in AsyncStorage (plaintext app sandbox).
 const KEY = "ao.serverConfig";
 // The connection password is the Bearer secret for REST and /mux — it authorizes
@@ -79,13 +87,13 @@ export async function saveConfig(cfg: ServerConfig): Promise<void> {
 }
 
 export function httpBase(cfg: ServerConfig): string {
-	return `${cfg.secure ? "https" : "http"}://${cleanHost(cfg.host)}:${cfg.httpPort}`;
+	return `${cfg.secure ? "https" : "http"}://${urlHost(cfg.host)}:${cfg.httpPort}`;
 }
 
 export function muxUrl(cfg: ServerConfig): string {
 	// The Go daemon serves the terminal mux at /mux on the same HTTP port as the
 	// REST API (not a separate mux port).
-	return `${cfg.secure ? "wss" : "ws"}://${cleanHost(cfg.host)}:${cfg.httpPort}/mux`;
+	return `${cfg.secure ? "wss" : "ws"}://${urlHost(cfg.host)}:${cfg.httpPort}/mux`;
 }
 
 export function isConfigured(cfg: ServerConfig): boolean {

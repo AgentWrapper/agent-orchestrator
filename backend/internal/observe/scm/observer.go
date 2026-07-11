@@ -775,12 +775,10 @@ func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRe
 	if len(repos) == 1 {
 		return repos[0], true
 	}
-	for _, repo := range repos {
-		if strings.EqualFold(repo.Repo, repos[0].Repo) {
-			return repo, true
-		}
+	if len(repos) > 0 {
+		return repos[0], true
 	}
-	return repos[0], len(repos) > 0
+	return ports.SCMRepo{}, false
 }
 
 func matchesTrackedPRRepo(pr domain.PullRequest, repo ports.SCMRepo) bool {

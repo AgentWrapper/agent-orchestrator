@@ -139,3 +139,27 @@ func TestAuthLockoutIsPerSource(t *testing.T) {
 		t.Fatalf("source B with wrong password: got %d want 401", w.Code)
 	}
 }
+
+func TestAuthLockoutPrunesSubThresholdFailuresAfterCooldown(t *testing.T) {
+	now := time.Now()
+	_, lock := newAuthUnderTest("secret12", func() time.Time { return now })
+	src := "192.168.1.50"
+
+	for i := 0; i < 3; i++ {
+		lock.fail(src)
+	}
+	if got := lock.fails[src]; got != 3 {
+		t.Fatalf("fails before cooldown = %d, want 3", got)
+	}
+
+	now = now.Add(time.Minute + time.Second)
+	if lock.blocked(src) {
+		t.Fatal("source should not be blocked")
+	}
+	if _, ok := lock.fails[src]; ok {
+		t.Fatal("sub-threshold fail counter was not pruned after cooldown")
+	}
+	if _, ok := lock.failAt[src]; ok {
+		t.Fatal("sub-threshold fail timestamp was not pruned after cooldown")
+	}
+}

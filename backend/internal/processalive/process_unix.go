@@ -7,7 +7,9 @@ package processalive
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"syscall"
 )
@@ -28,9 +30,32 @@ func Alive(pid int) bool {
 }
 
 func isZombie(pid int) bool {
+	if runtime.GOOS == "linux" {
+		state, err := linuxProcState(pid)
+		if err == nil {
+			return state == 'Z'
+		}
+		return false
+	}
 	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return false
 	}
 	return bytes.HasPrefix(bytes.TrimSpace(out), []byte("Z"))
+}
+
+func linuxProcState(pid int) (byte, error) {
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, err
+	}
+	return procStatState(stat)
+}
+
+func procStatState(stat []byte) (byte, error) {
+	closeParen := bytes.LastIndexByte(stat, ')')
+	if closeParen < 0 || closeParen+2 >= len(stat) || stat[closeParen+1] != ' ' {
+		return 0, errors.New("malformed proc stat")
+	}
+	return stat[closeParen+2], nil
 }

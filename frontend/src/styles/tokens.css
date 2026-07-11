@@ -313,6 +313,47 @@
 	--bridge-preview-terminal-border: var(--color-preview-terminal-border);
 	--bridge-preview-terminal-fg: var(--color-preview-terminal-fg);
 
+	/* Legacy aliases retained for renderer and landing CSS migrated in stages. */
+	--bg: var(--color-bg-primary);
+	--bg-0: var(--color-bg-primary);
+	--bg-1: var(--color-bg-secondary);
+	--bg-2: var(--color-bg-tertiary);
+	--bg-3: var(--color-bg-elevated);
+	--raised: var(--color-bg-elevated);
+	--fg: var(--color-text-primary);
+	--fg-muted: var(--color-text-muted);
+	--fg-passive: var(--color-text-passive);
+	--fg-dim: var(--color-text-passive);
+	--border: var(--color-border);
+	--border-1: var(--color-border-strong);
+	--border-strong: var(--color-border-strong);
+	--border-bright: color-mix(in srgb, var(--color-accent) 45%, var(--color-border-strong));
+	--accent: var(--color-accent);
+	--accent-fg: var(--color-accent-foreground);
+	--accent-weak: var(--color-accent-weak);
+	--accent-dim: var(--color-accent-dim);
+	--orange: var(--color-working);
+	--green: var(--color-success);
+	--green-strong: var(--color-success-bright);
+	--amber: var(--color-warning);
+	--red: var(--color-danger);
+	--purple: var(--color-purple);
+	--term-bg: var(--color-bg-terminal);
+	--term-fg: var(--color-text-terminal);
+	--term-green: var(--color-success);
+	--term-dim: var(--color-text-terminal-dim);
+	--term-blue: var(--color-accent);
+	--term-amber: var(--color-warning);
+	--shadow: var(--elevation-md);
+	--sidebar-bg: var(--color-bg-sidebar);
+	--sidebar-border: var(--color-border);
+	--sidebar-accent: var(--color-bg-tertiary);
+	--sidebar-accent-foreground: var(--color-text-primary);
+	--interactive-hover: var(--color-interactive-hover);
+	--interactive-active: var(--color-interactive-active);
+	--kanban-column-bg: var(--color-overlay-subtle);
+	--kanban-pending-glow: var(--color-overlay-faint);
+
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
 }

@@ -31,16 +31,18 @@ type lockout struct {
 	cooldown time.Duration
 	now      func() time.Time
 	fails    map[string]int
+	failAt   map[string]time.Time
 	until    map[string]time.Time
 }
 
 func newLockout(limit int, cooldown time.Duration, now func() time.Time) *lockout {
-	return &lockout{limit: limit, cooldown: cooldown, now: now, fails: map[string]int{}, until: map[string]time.Time{}}
+	return &lockout{limit: limit, cooldown: cooldown, now: now, fails: map[string]int{}, failAt: map[string]time.Time{}, until: map[string]time.Time{}}
 }
 
 func (l *lockout) blocked(src string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneSource(src)
 	t, ok := l.until[src]
 	if !ok {
 		return false
@@ -55,13 +57,16 @@ func (l *lockout) blocked(src string) bool {
 	// bounds map growth, since expired entries are pruned on the next request.
 	delete(l.until, src)
 	delete(l.fails, src)
+	delete(l.failAt, src)
 	return false
 }
 
 func (l *lockout) fail(src string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneSource(src)
 	l.fails[src]++
+	l.failAt[src] = l.now()
 	if l.fails[src] >= l.limit {
 		l.until[src] = l.now().Add(l.cooldown)
 	}
@@ -71,7 +76,20 @@ func (l *lockout) reset(src string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.fails, src)
+	delete(l.failAt, src)
 	delete(l.until, src)
+}
+
+func (l *lockout) pruneSource(src string) {
+	last, ok := l.failAt[src]
+	if !ok || l.cooldown <= 0 {
+		return
+	}
+	if l.now().Sub(last) > l.cooldown {
+		delete(l.fails, src)
+		delete(l.failAt, src)
+		delete(l.until, src)
+	}
 }
 
 func sourceKey(r *http.Request) string {
