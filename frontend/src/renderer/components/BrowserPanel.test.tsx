@@ -97,7 +97,6 @@ function PersistentBrowserPanelView({
 	});
 	const annotationQueue = useBrowserAnnotationQueue({
 		sessionId: currentSession.id,
-		sessionStatus: currentSession.status,
 		navUrl: browserView.navState.url,
 	});
 	if (!visible) return null;
@@ -243,7 +242,14 @@ describe("BrowserPanel", () => {
 
 	it("sends submitted annotation instructions to the session agent", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "idle" }}
+			/>,
+		);
 
 		act(() => {
 			annotationSubmitListeners.forEach((listener) =>
@@ -278,11 +284,9 @@ describe("BrowserPanel", () => {
 		expect(body.message.length).toBeLessThanOrEqual(4096);
 	});
 
-	it("waits for the agent turn cycle before sending a follow-up annotation", async () => {
+	it("sends a follow-up annotation without waiting for an activity-state cycle", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const { rerender } = render(
-			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
-		);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		act(() => {
 			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button blue.")));
@@ -294,20 +298,6 @@ describe("BrowserPanel", () => {
 			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button green.")));
 		});
 
-		expect(screen.getByText("Queued")).toBeInTheDocument();
-		expect(postMock).toHaveBeenCalledTimes(1);
-
-		rerender(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{ ...session, status: "working" }}
-			/>,
-		);
-		expect(postMock).toHaveBeenCalledTimes(1);
-
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect(postMock).toHaveBeenCalledTimes(2);
 		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this button green.");
@@ -323,9 +313,7 @@ describe("BrowserPanel", () => {
 			)
 			.mockResolvedValueOnce({ data: {} });
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const { rerender } = render(
-			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
-		);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const firstPayload = {
 			viewId: "42:sess-1",
 			instruction: "Make this button blue.",
@@ -356,20 +344,6 @@ describe("BrowserPanel", () => {
 		await act(async () => {
 			resolvePost({ data: {} });
 		});
-		expect(screen.getByText("Queued")).toBeInTheDocument();
-		expect(postMock).toHaveBeenCalledTimes(1);
-
-		rerender(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{ ...session, status: "working" }}
-			/>,
-		);
-		expect(postMock).toHaveBeenCalledTimes(1);
-
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect(postMock).toHaveBeenCalledTimes(2);
 		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
@@ -398,21 +372,17 @@ describe("BrowserPanel", () => {
 		await act(async () => {
 			resolvePost({ data: {} });
 		});
-		expect(screen.getByText("Queued")).toBeInTheDocument();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
 
 		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
 		rerender(<PersistentBrowserPanelView currentSession={{ ...session, status: "working" }} visible={false} />);
-		expect(postMock).toHaveBeenCalledTimes(1);
-
-		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
 
 		rerender(<PersistentBrowserPanelView currentSession={session} visible />);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
 	});
 
-	it("does not drain queued annotations on the idle state before needs input", async () => {
+	it("continues queued delivery across activity status changes", async () => {
 		let resolvePost: (value: unknown) => void = () => undefined;
 		postMock
 			.mockReturnValueOnce(
@@ -445,10 +415,6 @@ describe("BrowserPanel", () => {
 				listener({ ...payload, instruction: "Make this button blue." });
 			});
 		});
-		await act(async () => {
-			resolvePost({ data: {} });
-		});
-
 		rerender(
 			<BrowserPanel
 				active
@@ -457,6 +423,9 @@ describe("BrowserPanel", () => {
 				session={{ ...session, status: "working" }}
 			/>,
 		);
+		await act(async () => {
+			resolvePost({ data: {} });
+		});
 		rerender(
 			<BrowserPanel
 				active
@@ -465,17 +434,13 @@ describe("BrowserPanel", () => {
 				session={{ ...session, status: "idle" }}
 			/>,
 		);
-		expect(screen.getByText("Queued")).toBeInTheDocument();
-		expect(postMock).toHaveBeenCalledTimes(1);
-
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect(postMock).toHaveBeenCalledTimes(2);
 	});
 
-	it("queues submitted annotations while the session is working", async () => {
+	it("sends submitted annotations while the session status is working", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const { rerender } = render(
+		render(
 			<BrowserPanel
 				active
 				onTogglePopOut={() => undefined}
@@ -502,10 +467,6 @@ describe("BrowserPanel", () => {
 			);
 		});
 
-		expect(screen.getByText("Queued")).toBeInTheDocument();
-		expect(postMock).not.toHaveBeenCalled();
-
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect(postMock).toHaveBeenCalledTimes(1);
 	});

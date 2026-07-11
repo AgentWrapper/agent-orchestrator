@@ -30,11 +30,9 @@ export type BrowserAnnotationQueueModel = {
 
 export function useBrowserAnnotationQueue({
 	sessionId,
-	sessionStatus,
 	navUrl,
 }: {
 	sessionId?: string;
-	sessionStatus?: WorkspaceSession["status"];
 	navUrl?: string;
 }): BrowserAnnotationQueueModel {
 	const [state, setState] = useState<{ status: AnnotationStatus; error: string; queuedCount: number }>({
@@ -44,11 +42,6 @@ export function useBrowserAnnotationQueue({
 	});
 	const annotationQueueRef = useRef<BrowserAnnotationSubmitPayload[]>([]);
 	const annotationSendingRef = useRef(false);
-	const annotationWaitingForAgentCycleRef = useRef(false);
-	const annotationWaitAfterCycleRef = useRef(0);
-	const annotationSawAgentWorkingRef = useRef(sessionStatus === "working");
-	const annotationAgentCycleRef = useRef(0);
-	const sessionReadyForAnnotationRef = useRef(sessionStatus === "needs_input");
 	const sessionIdRef = useRef(sessionId ?? "");
 	const generationRef = useRef(0);
 
@@ -56,18 +49,11 @@ export function useBrowserAnnotationQueue({
 		generationRef.current += 1;
 		annotationQueueRef.current = [];
 		annotationSendingRef.current = false;
-		annotationWaitingForAgentCycleRef.current = false;
-		annotationWaitAfterCycleRef.current = annotationAgentCycleRef.current;
 		setState({ status: "idle", error: "", queuedCount: 0 });
 	}, []);
 
 	const drainAnnotationQueue = useCallback(() => {
-		if (
-			annotationSendingRef.current ||
-			!sessionIdRef.current ||
-			!sessionReadyForAnnotationRef.current ||
-			annotationWaitingForAgentCycleRef.current
-		) {
+		if (annotationSendingRef.current || !sessionIdRef.current) {
 			return;
 		}
 
@@ -78,7 +64,6 @@ export function useBrowserAnnotationQueue({
 		annotationSendingRef.current = true;
 		const sendGeneration = generationRef.current;
 		const sendSessionId = sessionIdRef.current;
-		const sendCycle = annotationAgentCycleRef.current;
 		setState({ status: "sending", error: "", queuedCount: annotationQueueRef.current.length });
 
 		void (async () => {
@@ -110,25 +95,15 @@ export function useBrowserAnnotationQueue({
 					return;
 				}
 
-				annotationWaitingForAgentCycleRef.current = true;
-				annotationWaitAfterCycleRef.current = sendCycle;
-				if (
-					sessionReadyForAnnotationRef.current &&
-					annotationAgentCycleRef.current > annotationWaitAfterCycleRef.current
-				) {
-					annotationWaitingForAgentCycleRef.current = false;
-				}
-
 				const queuedCount = annotationQueueRef.current.length;
 				setState({ status: queuedCount > 0 ? "queued" : "sent", error: "", queuedCount });
-				if (!annotationWaitingForAgentCycleRef.current && queuedCount > 0) drainAnnotationQueue();
+				if (queuedCount > 0) drainAnnotationQueue();
 			}
 		})();
 	}, []);
 
 	useEffect(() => {
 		sessionIdRef.current = sessionId ?? "";
-		annotationAgentCycleRef.current = 0;
 		resetQueue();
 	}, [resetQueue, sessionId]);
 
@@ -136,28 +111,6 @@ export function useBrowserAnnotationQueue({
 		if (navUrl) return;
 		resetQueue();
 	}, [navUrl, resetQueue]);
-
-	useEffect(() => {
-		const nextWorking = sessionStatus === "working";
-		const nextReady = sessionStatus === "needs_input";
-		sessionReadyForAnnotationRef.current = nextReady;
-
-		if (nextWorking) {
-			annotationSawAgentWorkingRef.current = true;
-			return;
-		}
-
-		if (!nextReady) return;
-		if (annotationSawAgentWorkingRef.current) {
-			annotationAgentCycleRef.current += 1;
-			annotationSawAgentWorkingRef.current = false;
-		}
-		if (annotationWaitingForAgentCycleRef.current) {
-			if (annotationAgentCycleRef.current <= annotationWaitAfterCycleRef.current) return;
-			annotationWaitingForAgentCycleRef.current = false;
-		}
-		drainAnnotationQueue();
-	}, [drainAnnotationQueue, sessionStatus]);
 
 	const beginPicking = useCallback(() => {
 		setState((current) => ({ ...current, status: "picking", error: "" }));
@@ -212,7 +165,6 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 	});
 	const annotationQueue = useBrowserAnnotationQueue({
 		sessionId: session.id,
-		sessionStatus: session.status,
 		navUrl: browserView.navState.url,
 	});
 	return (
