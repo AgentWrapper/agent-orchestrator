@@ -260,6 +260,46 @@ func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
 	}
 }
 
+func TestHooks_AgySessionStartInjectsSystemPromptContext(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	promptDir := filepath.Join(cfg.dataDir, "prompts", "ao-7")
+	if err := os.MkdirAll(promptDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(promptDir, "system.md"), []byte("follow AO standing instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"source":"startup"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "agy", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode Agy hook output: %v\n%s", err, out)
+	}
+	if got.HookSpecificOutput.HookEventName != "SessionStart" {
+		t.Fatalf("hookEventName = %q", got.HookSpecificOutput.HookEventName)
+	}
+	if got.HookSpecificOutput.AdditionalContext != "follow AO standing instructions" {
+		t.Fatalf("additionalContext = %q", got.HookSpecificOutput.AdditionalContext)
+	}
+	if capture.hits != 0 {
+		t.Errorf("Agy session-start should only inject context, got %d daemon calls", capture.hits)
+	}
+}
+
 func TestHooks_RejectsMalformedSessionID(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "../etc/passwd")
 	cfg := setConfigEnv(t)

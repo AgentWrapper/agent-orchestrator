@@ -1,9 +1,10 @@
 // Package crush implements the Crush agent adapter: launching new sessions,
 // resuming sessions by native ID, and reading session info.
 //
-// Crush differs from other agents in that it doesn't have full hooks support,
-// so GetAgentHooks and SessionInfo are no-ops for now. Session tracking is
-// done through basic session ID management only.
+// Crush differs from other agents in that it doesn't yet expose AO-compatible
+// activity hooks. GetAgentHooks only injects AO's standing system prompt through
+// project-local context configuration; activity tracking still falls back to
+// basic session ID management.
 package crush
 
 import (
@@ -59,11 +60,11 @@ func (p *Plugin) Manifest() adapters.Manifest {
 //	crush [--cwd <WorkspacePath>] [--yolo]
 //
 // The session runs in the worktree (cwd is set by the runtime). Crush doesn't
-// have native system prompt support, so cfg.SystemPrompt / SystemPromptFile are
-// intentionally ignored. Worker task prompts are delivered after startup so AO
-// keeps the interactive TUI; Crush's documented `run` command is intentionally
-// not used here because it is non-interactive. The --yolo flag corresponds to
-// bypass-permissions mode.
+// have a launch-time system-prompt flag, so GetAgentHooks installs AO's system
+// prompt as a workspace-local context file before launch. Worker task prompts
+// are delivered after startup so AO keeps the interactive TUI; Crush's
+// documented `run` command is intentionally not used here because it is
+// non-interactive. The --yolo flag corresponds to bypass-permissions mode.
 //
 // We intentionally do not pass --session on launch: cfg.SessionID is the
 // AO-internal id, not a Crush-native session id. Letting Crush mint its own

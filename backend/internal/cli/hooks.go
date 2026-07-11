@@ -72,7 +72,7 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 	return p.ToolName, p.ToolUseID
 }
 
-type devinHookOutput struct {
+type sessionStartHookOutput struct {
 	HookSpecificOutput struct {
 		HookEventName     string `json:"hookEventName"`
 		AdditionalContext string `json:"additionalContext"`
@@ -114,8 +114,8 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// agent. The deriver tolerates an empty payload.
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read stdin: %w", err))
 	}
-	if agent == "devin" && event == "session-start" {
-		c.emitDevinSessionStartContext(agent, event, sessionID)
+	if shouldEmitSessionStartContext(agent, event) {
+		c.emitSessionStartContext(agent, event, sessionID)
 	}
 
 	state, ok := activitydispatch.Derive(agent, event, payload)
@@ -134,7 +134,19 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	return nil
 }
 
-func (c *commandContext) emitDevinSessionStartContext(agent, event, sessionID string) {
+func shouldEmitSessionStartContext(agent, event string) bool {
+	if event != "session-start" {
+		return false
+	}
+	switch agent {
+	case "agy", "devin":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *commandContext) emitSessionStartContext(agent, event, sessionID string) {
 	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
 	if dataDir == "" {
 		return
@@ -149,11 +161,11 @@ func (c *commandContext) emitDevinSessionStartContext(agent, event, sessionID st
 	if prompt == "" {
 		return
 	}
-	var out devinHookOutput
+	var out sessionStartHookOutput
 	out.HookSpecificOutput.HookEventName = "SessionStart"
 	out.HookSpecificOutput.AdditionalContext = prompt
 	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
-		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write Devin context: %w", err))
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write session-start context: %w", err))
 	}
 }
 
