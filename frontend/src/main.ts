@@ -26,8 +26,8 @@ import {
 	type UpdateSettings,
 	type UpdateStatus,
 } from "./main/update-settings";
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { existsSync, openSync } from "node:fs";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -88,8 +88,8 @@ if (process.platform === "win32") {
 app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
 
 let mainWindow: BrowserWindow | null = null;
-let daemonProcess: ChildProcessWithoutNullStreams | null = null;
-let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
+let daemonProcess: ChildProcess | null = null;
+let daemonStoppingProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
@@ -731,6 +731,26 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// runs the command through /bin/sh, a plain kill() would only signal the shell
 	// wrapper and orphan the real daemon (which keeps holding the port). Killing
 	// the whole group via killDaemon() reaches the daemon and any PTY children.
+	//
+	// AO_KEEP_DAEMON: the daemon must survive this app, so it cannot inherit
+	// Electron-owned stdout/stderr pipes — when Electron exits, the pipe read
+	// ends close and the daemon's next stderr log write (SIGPIPE/EPIPE) kills it,
+	// defeating the keep-alive. Redirect stdio to ~/.ao/daemon.log and unref the
+	// child so the parent does not wait on it. Port discovery then relies on the
+	// running.json handshake (the log pipe scan is skipped).
+	const keep = keepDaemonAlive(process.env);
+	let keepDaemonLogFd: number | undefined;
+	const stdio: "pipe" | "ignore" | ["ignore", number, number] = keep
+		? (() => {
+				const logPath = path.join(os.homedir(), ".ao", "daemon.log");
+				try {
+					keepDaemonLogFd = openSync(logPath, "a");
+				} catch {
+					keepDaemonLogFd = undefined;
+				}
+				return keepDaemonLogFd !== undefined ? ["ignore", keepDaemonLogFd, keepDaemonLogFd] : "ignore";
+			})()
+		: "pipe";
 	const child = spawn(launch.command, launch.args, {
 		cwd: launch.cwd,
 		env: daemonEnv(),
@@ -738,7 +758,9 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		detached: true,
 		// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
 		windowsHide: true,
+		stdio,
 	});
+	if (keep) child.unref();
 	daemonProcess = child;
 
 	// Discover the port the daemon ACTUALLY bound rather than trusting AO_PORT:
@@ -779,20 +801,24 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	};
 
 	// One scanner per stream: each keeps its own partial-line buffer.
-	const scanStdout = createListenPortScanner(reportBoundPort);
-	const scanStderr = createListenPortScanner(reportBoundPort);
+	// Skipped under AO_KEEP_DAEMON: stdio is redirected to a log file (no pipes
+	// to scan), so port discovery falls back to the running.json handshake below.
+	if (!keep) {
+		const scanStdout = createListenPortScanner(reportBoundPort);
+		const scanStderr = createListenPortScanner(reportBoundPort);
 
-	child.stdout.on("data", (chunk: Buffer) => {
-		const text = chunk.toString("utf8");
-		console.log(text.trimEnd());
-		scanStdout(text);
-	});
+		child.stdout?.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			console.log(text.trimEnd());
+			scanStdout(text);
+		});
 
-	child.stderr.on("data", (chunk: Buffer) => {
-		const text = chunk.toString("utf8");
-		console.error(text.trimEnd());
-		scanStderr(text);
-	});
+		child.stderr?.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			console.error(text.trimEnd());
+			scanStderr(text);
+		});
+	}
 
 	const handshakePath = runFilePath();
 	if (handshakePath) {
@@ -861,7 +887,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 // behind the /bin/sh wrapper (and any PTY children it forked), not just the
 // shell. Falls back to a direct kill if the group signal can't be delivered
 // (e.g. the process already exited).
-function killDaemon(child: ChildProcessWithoutNullStreams): void {
+function killDaemon(child: ChildProcess): void {
 	if (child.pid === undefined) return;
 	try {
 		process.kill(-child.pid, "SIGTERM");
