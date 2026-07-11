@@ -82,6 +82,7 @@ export function ShellTopbar() {
 	// route slug. "agent-orchestrator" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
+	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
@@ -169,7 +170,7 @@ export function ShellTopbar() {
 						</div>
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : isProjectBoardRoute ? null : (
+				) : isProjectBoardRoute || (isMac && isRootBoardRoute) ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
