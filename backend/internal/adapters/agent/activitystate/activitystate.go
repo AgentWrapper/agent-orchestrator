@@ -26,6 +26,11 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 // waiting_input state. It mirrors how the agy adapter treats tool activity
 // (after-tool → active). permission-request stays reserved for events that
 // genuinely gate on a user decision (e.g. Cursor's beforeShellExecution).
+//
+// permission-request maps to waiting_input, not blocked: none of the sharing
+// adapters install the pre/post-tool-use trio, so a blocked state could never
+// be cleared before the turn ends. waiting_input still suppresses automated
+// nudges (NeedsInput) while leaving user-initiated sends deliverable.
 func StandardDeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "session-start":

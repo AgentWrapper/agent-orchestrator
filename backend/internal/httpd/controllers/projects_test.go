@@ -250,6 +250,34 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 }
 
+func TestProjectsAPI_InitializeRepository(t *testing.T) {
+	srv := newTestServer(t)
+
+	plain := t.TempDir()
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(plain)+`}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST initialize plain = %d, want 200; body=%s", status, body)
+	}
+	if out, err := exec.Command("git", "-C", plain, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("plain folder was not committed: %v\\n%s", err, out)
+	}
+
+	unborn := filepath.Join(t.TempDir(), "unborn")
+	if out, err := exec.Command("git", "init", "-b", "main", unborn).CombinedOutput(); err != nil {
+		t.Fatalf("git init unborn fixture: %v\\n%s", err, out)
+	}
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(unborn)+`}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST initialize unborn = %d, want 200; body=%s", status, body)
+	}
+	if out, err := exec.Command("git", "-C", unborn, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("unborn repo was not committed: %v\\n%s", err, out)
+	}
+
+	committed := gitRepo(t, "committed")
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(committed)+`}`)
+	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_ALREADY_INITIALIZED")
+}
 func TestProjectsAPI_Delete(t *testing.T) {
 
 	srv := newTestServer(t)
@@ -514,7 +542,9 @@ func gitRepo(t *testing.T, name string) string {
 		t.Fatalf("git init fixture: %v\n%s", err, out)
 
 	}
-
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=ao@example.com", "-c", "user.name=AO Test", "commit", "--allow-empty", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit fixture: %v\n%s", err, out)
+	}
 	return dir
 
 }

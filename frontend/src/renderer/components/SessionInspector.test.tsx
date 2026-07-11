@@ -133,7 +133,7 @@ afterEach(() => {
 describe("SessionInspector PR section", () => {
 	// Scope assertions to the PR section so the card order is explicit.
 	const prSection = (title: string) =>
-		within(screen.getByText(title).closest("section.inspector-section") as HTMLElement);
+		within(screen.getByText(title).closest("[data-testid='inspector-section']") as HTMLElement);
 
 	it("renders one card per PR, ordered actionable-first, when a session owns a stack", () => {
 		renderWithQuery(<SessionInspector session={session([pr(40, "merged"), pr(41, "open"), pr(42, "draft")])} />);
@@ -173,7 +173,7 @@ describe("SessionInspector PR section", () => {
 
 describe("SessionInspector Activity section", () => {
 	const activitySection = () =>
-		within(screen.getByText("Activity").closest("section.inspector-section") as HTMLElement);
+		within(screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement);
 
 	it.each([
 		["idle", "Idle"],
@@ -223,7 +223,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("No Signal")).toBeInTheDocument();
 	});
 
@@ -254,7 +256,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText(label)).toBeInTheDocument();
 	});
 
@@ -268,7 +272,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
@@ -286,7 +292,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Working").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Working")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
@@ -303,7 +311,9 @@ describe("SessionInspector Activity section", () => {
 		expect(activitySection().getByText(/Created worktree/)).toBeInTheDocument();
 		expect(activitySection().getByText("Opened")).toBeInTheDocument();
 		expect(activitySection().getByText("PR #7")).toBeInTheDocument();
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("CI Failed")).toBeInTheDocument();
 		expect(within(activityRow).getByText("Changes Requested")).toBeInTheDocument();
 	});
@@ -323,8 +333,8 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const section = screen.getByText("Activity").closest("section.inspector-section") as HTMLElement;
-		const rows = Array.from(section.querySelectorAll(".inspector-timeline__ev"), (row) =>
+		const section = screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement;
+		const rows = Array.from(section.querySelectorAll("[data-testid='inspector-timeline-event']"), (row) =>
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([

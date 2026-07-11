@@ -18,6 +18,7 @@ import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
@@ -50,32 +51,32 @@ const COLUMNS: Column[] = [
 	{
 		level: "working",
 		label: "Working",
-		glow: "color-mix(in srgb, var(--orange) 7%, transparent)",
-		dot: "var(--orange)",
+		glow: "color-mix(in srgb, var(--color-working) 7%, transparent)",
+		dot: "var(--color-working)",
 		dotGlow: true,
 		titleClass: "text-working",
 	},
 	{
 		level: "action",
 		label: "Needs you",
-		glow: "color-mix(in srgb, var(--amber) 6%, transparent)",
-		dot: "var(--amber)",
+		glow: "color-mix(in srgb, var(--color-warning) 6%, transparent)",
+		dot: "var(--color-warning)",
 		dotGlow: true,
 		titleClass: "text-warning",
 	},
 	{
 		level: "pending",
 		label: "In review",
-		glow: "var(--kanban-pending-glow)",
-		dot: "var(--fg-muted)",
+		glow: "var(--color-overlay-faint)",
+		dot: "var(--color-text-muted)",
 		dotGlow: false,
 		titleClass: "text-muted-foreground",
 	},
 	{
 		level: "merge",
 		label: "Ready to merge",
-		glow: "color-mix(in srgb, var(--green) 7%, transparent)",
-		dot: "var(--green)",
+		glow: "color-mix(in srgb, var(--color-success) 7%, transparent)",
+		dot: "var(--color-success)",
 		dotGlow: true,
 		titleClass: "text-success",
 	},
@@ -197,28 +198,26 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		<>
 			{isLinux ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
-				<span className="dashboard-app-header__kill-error max-w-[320px] truncate" title={visibleSpawnError}>
+				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
-				</span>
+				</TopbarKillError>
 			)}
-			<button
+			<TopbarButton
 				aria-label="New task"
-				className="dashboard-app-header__accent-btn"
 				disabled={isProjectRestarting}
 				onClick={() => setIsNewTaskOpen(true)}
-				type="button"
+				variant="accent"
 			>
-				<Plus className="h-3.5 w-3.5" aria-hidden="true" />
+				<Plus className="size-icon-md" aria-hidden="true" />
 				New task
-			</button>
-			<button
+			</TopbarButton>
+			<TopbarButton
 				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
-				className="dashboard-app-header__primary-btn"
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
-				type="button"
+				variant="primary"
 			>
-				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{isProjectRestarting
 					? "Restarting..."
 					: isSpawning
@@ -226,7 +225,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						: orchestrator
 							? "Orchestrator"
 							: "Spawn Orchestrator"}
-			</button>
+			</TopbarButton>
 		</>
 	) : isLinux ? (
 		<NotificationCenter />
@@ -245,26 +244,21 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				/>
 			)}
 
-			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
+			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
 				{projectId && health.state !== "ok" ? (
-					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
-						<AlertTriangle className="size-4 shrink-0 text-warning" aria-hidden="true" />
+					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
-							<button
-								className="dashboard-app-header__primary-btn"
-								disabled={isProjectRestarting}
-								onClick={() => void restartOrchestrator()}
-								type="button"
-							>
+							<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
 								<RotateCw className="size-3.5" aria-hidden="true" />
 								Restart
-							</button>
+							</TopbarButton>
 						) : null}
 					</div>
 				) : null}
 				{workspaceQuery.isError ? (
-					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
+					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
 				) : showWelcome ? (
 					<BoardWelcome />
 				) : showProjectEmpty ? (
@@ -286,23 +280,23 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{done.length > 0 && (
-				<div className="shrink-0 border-t border-border px-[18px]">
+				<div className="shrink-0 border-t border-border px-4.5">
 					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. min-h matches
 					    the sidebar footer (7px pad ×2 + 37px Settings button) so this
 					    border-t aligns with the sidebar's footer border. The button is
-					    37px (not the 35.5px its text-[13px] implies) because the
+					    37px (not the 35.5px its text-control implies) because the
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
 					<button
 						aria-expanded={doneExpanded}
-						className="group flex min-h-[51px] w-full items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+						className="group flex min-h-row-md w-full items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
 						onClick={() => setDoneExpanded((v) => !v)}
 						type="button"
 					>
 						<svg
 							aria-hidden="true"
-							className={cn("h-3 w-3 shrink-0 transition-transform duration-150", doneExpanded && "rotate-90")}
+							className={cn("size-icon-2xs shrink-0 transition-transform duration-normal", doneExpanded && "rotate-90")}
 							fill="none"
 							stroke="currentColor"
 							strokeWidth="2"
@@ -310,19 +304,19 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						>
 							<path d="m9 18 6-6-6-6" />
 						</svg>
-						<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em]">Done / Terminated</span>
-						<span className="ml-auto shrink-0 font-mono text-[10px] text-passive">{done.length}</span>
+						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Done / Terminated</span>
+						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{done.length}</span>
 					</button>
 					{doneExpanded && (
 						<div className="flex flex-wrap gap-2 pb-2.5 pt-1">
 							{done.map((s) => (
 								<button
 									key={s.id}
-									className="rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
+									className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
 									onClick={() => openSession(s)}
 									type="button"
 								>
-									<span className="text-[12px] text-muted-foreground">{s.title}</span>
+									<span className="text-xs text-muted-foreground">{s.title}</span>
 								</button>
 							))}
 						</div>
@@ -350,21 +344,23 @@ function ZoneColumn({
 }) {
 	return (
 		<section
-			className="flex min-w-0 flex-col overflow-hidden rounded-[13px]"
-			style={{ background: `linear-gradient(180deg, ${col.glow}, transparent 130px), var(--kanban-column-bg)` }}
+			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			style={{
+				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
+			}}
 		>
-			<div className="flex shrink-0 items-center gap-[9px] px-[15px] pb-[11px] pt-[14px]">
+			<div className="flex shrink-0 items-center gap-2.25 px-3.75 pb-2.75 pt-3.5">
 				<span
-					className="h-[7px] w-[7px] rounded-full"
+					className="size-dot-sm rounded-full"
 					style={{
 						background: col.dot,
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", col.titleClass)}>{col.label}</span>
-				<span className="ml-auto font-mono text-[11px] leading-none text-passive">{sessions.length}</span>
+				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClass)}>{col.label}</span>
+				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
+			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
 				<div className="flex flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
@@ -388,38 +384,38 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 		onOpen();
 	};
 	return (
-		<div className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong">
+		<div className="w-full rounded-md border border-border bg-surface text-left transition-colors hover:border-border-strong">
 			<div onClick={onOpen} onKeyDown={handleKeyDown} role="button" tabIndex={0}>
-				<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
-					<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
-						<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
+				<div className="flex items-center gap-2 px-3.25 pb-2.25 pt-3">
+					<span className={cn("inline-flex items-center gap-1.5 text-caption font-medium", badge.className)}>
+						<span className={cn("size-dot-sm rounded-full bg-current")} />
 						{badge.label}
 					</span>
 					{issueId && (
 						<span
-							className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
+							className="inline-flex max-w-branch-chip items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
 							title={`Intake issue: ${issueId}`}
 						>
 							{issueId}
 						</span>
 					)}
-					<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
+					<span className="ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive">
 						{agentLabel(session.provider)}
 					</span>
 				</div>
 				<div
 					className={cn(
-						"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+						"px-3.25 text-control font-medium leading-snug tracking-tight text-foreground",
 						showBranch ? "pb-2" : "pb-3",
 						"line-clamp-2 overflow-hidden",
 					)}
 				>
 					{session.title}
 				</div>
-				{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
+				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
 			<div
-				className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive"
+				className="border-t border-border px-3.25 py-2 font-mono text-2xs text-passive"
 				onClick={(event) => event.stopPropagation()}
 			>
 				{prSummaries.length === 0 ? (

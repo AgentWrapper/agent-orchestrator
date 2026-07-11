@@ -56,6 +56,16 @@ describe("CreateProjectAgentSheet", () => {
 		expect(screen.getByLabelText("Agent")).toHaveAttribute("data-size", "sm");
 	});
 
+	it("caps the agent menu height with a theme token", async () => {
+		render(
+			<RequiredAgentField id="agent" label="Agent" onChange={() => undefined} placeholder="Project default" value="" />,
+		);
+
+		await userEvent.click(screen.getByLabelText("Agent"));
+
+		expect(await screen.findByRole("listbox")).toHaveClass("max-h-select-menu-max!");
+	});
+
 	it("creates without intake when the toggle is left off", async () => {
 		const onSubmit = renderSheet();
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");

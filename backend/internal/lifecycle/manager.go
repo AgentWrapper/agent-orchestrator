@@ -13,6 +13,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
 type sessionStore interface {
@@ -50,8 +51,11 @@ func WithTelemetry(sink ports.EventSink) Option {
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
-	store         sessionStore
-	messenger     ports.AgentMessenger
+	store sessionStore
+	// guard is the shared pane-write primitive every reaction nudge goes
+	// through (see sessionguard). Nil when no messenger was wired: reaction
+	// nudges become no-ops but the reducer still runs.
+	guard         *sessionguard.Guard
 	notifications notificationSink
 
 	mu        sync.Mutex
@@ -59,6 +63,9 @@ type Manager struct {
 	clock     func() time.Time
 	react     reactionState
 	telemetry ports.EventSink
+	// flights tracks, per session, the in-flight tool executions and the
+	// pending permission dialog's identity (see toolFlight). Guarded by mu.
+	flights map[domain.SessionID]*toolFlight
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -68,7 +75,10 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState()}
+	m := &Manager{store: store, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), flights: map[domain.SessionID]*toolFlight{}}
+	if messenger != nil {
+		m.guard = sessionguard.New(store, messenger, nil)
+	}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -105,6 +115,12 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		next := cur
 		next.IsTerminated = true
 		next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
+		// Reaper-driven death (crash/SIGKILL) never fires a session-end hook,
+		// so this is the last chance to release the session's tool-flight
+		// state; a leaked entry would otherwise persist for the daemon's life
+		// (later observations return early on cur.IsTerminated). Runs under
+		// m.mu — mutate holds it across this callback.
+		delete(m.flights, id)
 		return next, true
 	})
 }
@@ -127,6 +143,17 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	now := m.clock()
 	if rec.IsTerminated {
+		delete(m.flights, id)
+		m.mu.Unlock()
+		return nil
+	}
+	// Event-tagged signals fold through the session's tool-flight state first:
+	// they may be suppressed (state write skipped) by the blocked-precedence
+	// rule, while their tracking side effects still land. Untagged signals
+	// (old CLIs, adapters without tool identity) pass through untouched —
+	// last-writer-wins, exactly as before.
+	s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
+	if !s.Valid {
 		m.mu.Unlock()
 		return nil
 	}
@@ -155,7 +182,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return err
 	}
-	if rec.Activity.State != domain.ActivityWaitingInput && next.Activity.State == domain.ActivityWaitingInput && !next.IsTerminated {
+	// Transition into the needs-input family (waiting_input or blocked) pings
+	// the user; an in-family escalation (waiting_input -> blocked) does not
+	// re-notify — the user was already pinged once for this pause.
+	if !rec.Activity.State.NeedsInput() && next.Activity.State.NeedsInput() && !next.IsTerminated {
 		intent = &ports.NotificationIntent{
 			Type:               domain.NotificationNeedsInput,
 			SessionID:          next.ID,
@@ -173,6 +203,157 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	return nil
 }
 
+// toolFlight tracks one session's in-flight tool executions and the pending
+// permission dialog's identity, so a sticky `blocked` is cleared by the post
+// of the exact approved tool — and by nothing else tool-shaped. Answering a
+// permission dialog fires no hook of its own, so the approved tool's
+// post-tool-use is the earliest observable "the decision was resolved"
+// signal; but tool hooks also fire for parallel subagents on the same
+// session, whose traffic must never clear a dialog that is still on screen.
+// In-memory only: a daemon restart loses it and the session degrades to
+// clearing at the next turn boundary — fail-safe staleness, never a spurious
+// clear.
+type toolFlight struct {
+	// inflight maps toolUseID -> toolName for pre-tool-use signals whose post
+	// has not arrived yet.
+	inflight map[string]string
+	// blockedCandidate is the tool-use id of the UNIQUE in-flight tool bearing
+	// the dialog's tool_name when it appeared — the tool whose post proves the
+	// dialog was answered. Empty when no in-flight tool matched, or when the
+	// match was ambiguous (two same-name tools in flight: the permission
+	// payload carries no tool_use_id to disambiguate, so a sibling's post must
+	// NOT be mistaken for the approval). Either way, empty means nothing
+	// tool-shaped may clear the block and it lifts only at a turn boundary.
+	blockedCandidate string
+}
+
+// maxInflightTools caps a session's in-flight map so lost posts cannot grow
+// it without bound; hitting the cap resets the map, degrading that session to
+// turn-boundary clearing (fail-safe).
+const maxInflightTools = 128
+
+// isToolUseEvent reports whether the AO hook event is one of the tool-use
+// trio whose signals must not demote a sticky state on their own.
+func isToolUseEvent(event string) bool {
+	return event == "pre-tool-use" || event == "post-tool-use" || event == "post-tool-use-failure"
+}
+
+// isTurnBoundaryEvent reports the events that reliably mean the pending
+// dialog is gone: a prompt cannot be submitted while a dialog holds the
+// composer, and a turn cannot end (or the session exit) with one on screen.
+func isTurnBoundaryEvent(event string) bool {
+	return event == "user-prompt-submit" || event == "stop" || event == "session-end"
+}
+
+// applyToolPrecedenceLocked folds an event-tagged activity signal through the
+// session's tool-flight state and decides whether its state write may
+// proceed. Returned signal with Valid=false means "suppressed": the tracking
+// side effects have landed but the state must not change. Signals without an
+// Event pass through untouched — the compatibility contract for old CLIs and
+// for adapters that don't tag their signals (their last-writer-wins semantics
+// are pinned by tests). Caller must hold m.mu.
+func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.ActivityState, s ports.ActivitySignal) ports.ActivitySignal {
+	if s.Event == "" {
+		return s
+	}
+	suppressed := s
+	suppressed.Valid = false
+
+	fl := m.flights[id]
+	ensure := func() *toolFlight {
+		if fl == nil {
+			fl = &toolFlight{inflight: map[string]string{}}
+			m.flights[id] = fl
+		}
+		return fl
+	}
+
+	// Tracking side effects happen regardless of what the state decision is.
+	switch s.Event {
+	case "pre-tool-use":
+		if s.ToolUseID != "" {
+			f := ensure()
+			if len(f.inflight) >= maxInflightTools {
+				f.inflight = map[string]string{}
+			}
+			f.inflight[s.ToolUseID] = s.ToolName
+		}
+	case "post-tool-use", "post-tool-use-failure":
+		if fl != nil {
+			delete(fl.inflight, s.ToolUseID)
+		}
+	}
+
+	switch {
+	case s.State == domain.ActivityBlocked:
+		// Entering (or re-asserting) blocked: snapshot the dialog's identity.
+		// permission-request carries the blocking tool_name; the Notification
+		// duplicate does not and must not wipe an existing snapshot.
+		//
+		// The permission hook payload does not carry the blocking tool's
+		// tool_use_id (only its name), so we can only identify the blocking
+		// tool unambiguously when EXACTLY ONE in-flight tool bears that name.
+		// With two same-name tools in flight (a batch of Bash calls, one of
+		// them the one at the dialog), a sibling's post could otherwise clear
+		// a still-open dialog — the exact permission-bypass this change exists
+		// to prevent. So we correlate only in the unique case; otherwise no
+		// candidate is recorded and the block clears only at a turn boundary
+		// (fail-closed).
+		f := ensure()
+		if s.ToolName != "" {
+			// Recompute from scratch: this is a fresh dialog, so any candidate
+			// carried from a prior one must not leak in.
+			f.blockedCandidate = ""
+			for useID, name := range f.inflight {
+				if name != s.ToolName {
+					continue
+				}
+				if f.blockedCandidate != "" {
+					// A second same-name tool: ambiguous, fail closed by
+					// leaving no candidate (only a turn boundary clears).
+					f.blockedCandidate = ""
+					break
+				}
+				f.blockedCandidate = useID
+			}
+		}
+		return s
+
+	case cur == domain.ActivityBlocked:
+		// Paused on a decision: only a turn boundary or the correlated post
+		// may change the state.
+		switch {
+		case isTurnBoundaryEvent(s.Event):
+			delete(m.flights, id)
+			return s
+		case (s.Event == "post-tool-use" || s.Event == "post-tool-use-failure") &&
+			fl != nil && fl.blockedCandidate != "" && s.ToolUseID == fl.blockedCandidate:
+			// The single unambiguous blocking tool finished: the dialog was
+			// answered. Clear the candidate so a later dialog in the same turn
+			// starts from a clean slate.
+			fl.blockedCandidate = ""
+			return s
+		default:
+			// Subagent/sibling tool traffic (including a same-name sibling when
+			// the block was ambiguous), notification sub-types (idle_prompt,
+			// agent_completed), and anything else that is not proof the dialog
+			// closed.
+			return suppressed
+		}
+
+	case cur.IsSticky() && isToolUseEvent(s.Event):
+		// waiting_input: background tool traffic must not clear the "waiting
+		// on the user" marker; only an explicit user/turn signal does.
+		return suppressed
+
+	default:
+		if isTurnBoundaryEvent(s.Event) {
+			delete(m.flights, id)
+		}
+		return s
+	}
+}
+
 func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain.ActivityState, prevAt, now time.Time) []ports.TelemetryEvent {
 	if m.telemetry == nil {
 		return nil
@@ -180,7 +361,11 @@ func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain
 	projectID := next.ProjectID
 	sessionID := next.ID
 	var events []ports.TelemetryEvent
-	if prevState != domain.ActivityWaitingInput && next.Activity.State == domain.ActivityWaitingInput && !next.IsTerminated {
+	// Entry/exit is measured on the needs-input family boundary (waiting_input
+	// or blocked): the event names stay waiting_input_* for dashboard
+	// continuity, the payload state distinguishes the two, and an in-family
+	// transition emits neither event so dwell covers the whole pause.
+	if !prevState.NeedsInput() && next.Activity.State.NeedsInput() && !next.IsTerminated {
 		events = append(events, ports.TelemetryEvent{
 			Name:       "ao.session.waiting_input_entered",
 			Source:     "lifecycle",
@@ -193,7 +378,7 @@ func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain
 			},
 		})
 	}
-	if prevState == domain.ActivityWaitingInput && next.Activity.State != domain.ActivityWaitingInput {
+	if prevState.NeedsInput() && !next.Activity.State.NeedsInput() {
 		payload := map[string]any{
 			"state":     string(next.Activity.State),
 			"dwell_ms":  now.Sub(prevAt).Milliseconds(),
@@ -259,6 +444,7 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		}
 		cur.IsTerminated = true
 		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+		delete(m.flights, id) // runs under m.mu (mutate holds it)
 		return cur, true
 	})
 }

@@ -895,7 +895,11 @@ async function chooseDirectory(title: string): Promise<string | null> {
 		properties: ["openDirectory"],
 		title,
 	};
-	const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+	// On Windows, parenting the common file dialog forces a repaint of the main
+	// window while Explorer initializes, which produces a visible white flash.
+	// The unparented native dialog remains foregrounded by Electron without that
+	// compositor handoff.
+	const result = await dialog.showOpenDialog(options);
 
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;

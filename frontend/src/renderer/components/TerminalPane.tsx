@@ -27,23 +27,23 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);
 		return (
 			<pre
-				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-[var(--term-fg)]"
+				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal"
 				style={{ fontSize }}
 			>
-				<span className="text-[var(--term-dim)]">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
-				<span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {provider}
+				<span className="text-terminal-dim">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
+				<span className="text-accent">{session?.branch || "main"}</span> $ {provider}
 				{"\n"}
 				{lines.map((line, index) => (
 					<span
 						key={`${line}:${index}`}
 						className={
 							line.startsWith("PASS") || line.startsWith("DONE")
-								? "text-[var(--term-green)]"
+								? "text-success"
 								: line.startsWith("WARN") || line.startsWith("TODO")
-									? "text-[var(--term-amber)]"
+									? "text-warning"
 									: line.startsWith("$")
-										? "text-[var(--term-blue)]"
-										: "text-[var(--term-fg)]"
+										? "text-accent"
+										: "text-terminal"
 						}
 					>
 						{line}
@@ -205,7 +205,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	if (initFailed) {
 		return (
-			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-[12px] text-muted-foreground">
+			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
 				Terminal failed to initialize on this GPU/driver. Restart the app to retry.
 			</div>
 		);
@@ -242,15 +242,15 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					theme={theme}
 				/>
 				{showEmptyState && (
-					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-[13px]">
+					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
 						<div className="text-center">
-							<div className="text-[var(--term-fg)]">{emptyStateTitle}</div>
-							<div className="mt-2 text-[var(--term-dim)]">{emptyStateMessage}</div>
+							<div className="text-terminal">{emptyStateTitle}</div>
+							<div className="mt-2 text-terminal-dim">{emptyStateMessage}</div>
 						</div>
 					</div>
 				)}
 				{banner && (
-					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
 					</div>
 				)}
@@ -286,18 +286,18 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
-			<div className="flex min-h-9 items-center gap-3">
+			<div className="flex min-h-control-board items-center gap-3">
 				<div className="min-w-0 flex-1">
-					<div className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+					<div className="font-mono text-caption font-medium uppercase tracking-wide-md text-muted-foreground">
 						Terminal ended
 					</div>
-					<div className="mt-0.5 truncate text-[12px] text-muted-foreground">{message}</div>
+					<div className="mt-0.5 truncate text-xs text-muted-foreground">{message}</div>
 				</div>
-				{error && <div className="max-w-[320px] truncate text-[12px] text-destructive">{error}</div>}
+				{error && <div className="max-w-content-max truncate text-xs text-destructive">{error}</div>}
 				{canRestore && (
 					<button
 						type="button"
-						className="h-8 shrink-0 rounded-md border border-border bg-raised px-3 text-[12px] font-medium text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+						className="h-control-form shrink-0 rounded-md border border-border bg-raised px-3 text-xs font-medium text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={isRestoring}
 						onClick={onRestore}
 					>

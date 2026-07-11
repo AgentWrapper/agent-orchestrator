@@ -57,7 +57,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<DashboardSubhead title="Settings" subtitle={query.data.path} />
-			<div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				<SettingsBody
 					key={projectId}
 					project={query.data}
@@ -191,9 +191,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		>
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-[13px]">Identity</CardTitle>
+					<CardTitle className="text-control">Identity</CardTitle>
 				</CardHeader>
-				<CardContent className="flex flex-col gap-2 font-mono text-[12px] text-muted-foreground">
+				<CardContent className="flex flex-col gap-2 font-mono text-xs text-muted-foreground">
 					<ReadonlyRow label="id" value={project.id} />
 					<ReadonlyRow label="kind" value={project.kind === "workspace" ? "workspace" : "single repo"} />
 					<ReadonlyRow label="path" value={project.path} />
@@ -229,13 +229,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-[13px]">Worktrees</CardTitle>
+					<CardTitle className="text-control">Worktrees</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					<Field label="Default branch" htmlFor="defaultBranch">
 						<input
 							id="defaultBranch"
-							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.defaultBranch}
 							onChange={(e) => setForm((f) => ({ ...f, defaultBranch: e.target.value }))}
 							placeholder="main"
@@ -244,7 +244,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<Field label="Session prefix" htmlFor="sessionPrefix">
 						<input
 							id="sessionPrefix"
-							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.sessionPrefix}
 							onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
 							placeholder="ao"
@@ -255,7 +255,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-[13px]">Agents</CardTitle>
+					<CardTitle className="text-control">Agents</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					<RequiredAgentField
@@ -282,7 +282,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						invalid={validationError !== null && form.orchestratorAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 					/>
-					<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
+					<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
 						<span>Agent availability is cached.</span>
 						<button
 							type="button"
@@ -294,19 +294,19 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						</button>
 					</div>
 					{refreshAgentsMutation.isError && (
-						<p className="text-[12px] leading-5 text-error">
+						<p className="text-xs leading-row text-error">
 							{refreshAgentsMutation.error instanceof Error
 								? refreshAgentsMutation.error.message
 								: "Could not refresh agent catalog."}
 						</p>
 					)}
 					{missingRequiredAgent && (
-						<p className="text-[12px] leading-5 text-error">Worker and orchestrator agents are required.</p>
+						<p className="text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
 					)}
 					<Field label="Model override" htmlFor="model">
 						<input
 							id="model"
-							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.model}
 							onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
 							placeholder="(agent default)"
@@ -324,7 +324,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-[13px]">Reviewers</CardTitle>
+					<CardTitle className="text-control">Reviewers</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					<Field label="Default reviewer agent" htmlFor="reviewerHarness">
@@ -339,7 +339,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-[13px]">Tracker intake</CardTitle>
+					<CardTitle className="text-control">Tracker intake</CardTitle>
 				</CardHeader>
 				<CardContent>
 					<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
@@ -350,17 +350,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
 				</Button>
-				{validationError && <span className="text-[12px] text-error">{validationError}</span>}
+				{validationError && <span className="text-xs text-error">{validationError}</span>}
 				{mutation.isError && (
-					<span className="text-[12px] text-error">
+					<span className="text-xs text-error">
 						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
 					</span>
 				)}
-				{savedAt && !mutation.isPending && !mutation.isError && (
-					<span className="text-[12px] text-success">Saved.</span>
-				)}
+				{savedAt && !mutation.isPending && !mutation.isError && <span className="text-xs text-success">Saved.</span>}
 				{replacementError && !mutation.isPending && !mutation.isError && (
-					<span className="text-[12px] text-warning">Orchestrator restart failed: {replacementError}</span>
+					<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
 				)}
 			</div>
 		</form>
@@ -378,7 +376,7 @@ function PermissionModeSelect({
 }) {
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
+			<SelectTrigger id={id} className="h-control-form w-full text-control">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
@@ -396,7 +394,7 @@ function PermissionModeSelect({
 function ReviewerSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
+			<SelectTrigger id={id} className="h-control-form w-full text-control">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
@@ -414,7 +412,7 @@ function ReviewerSelect({ id, value, onChange }: { id: string; value: string; on
 function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={htmlFor} className="text-[12px] text-muted-foreground">
+			<Label htmlFor={htmlFor} className="text-xs text-muted-foreground">
 				{label}
 			</Label>
 			{children}
@@ -433,9 +431,7 @@ function ReadonlyRow({ label, value }: { label: string; value: string }) {
 
 function CenteredNote({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="grid h-full place-items-center bg-background p-6 text-center text-[12px] text-passive">
-			{children}
-		</div>
+		<div className="grid h-full place-items-center bg-background p-6 text-center text-xs text-passive">{children}</div>
 	);
 }
 

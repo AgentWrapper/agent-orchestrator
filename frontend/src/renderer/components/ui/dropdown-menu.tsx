@@ -16,7 +16,7 @@ export function DropdownMenuContent({
 			<DropdownMenuPrimitive.Content
 				sideOffset={sideOffset}
 				className={cn(
-					"z-50 min-w-[10rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow)]",
+					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
 					"data-[state=open]:animate-overlay-in",
 					className,
 				)}
@@ -34,9 +34,9 @@ export function DropdownMenuItem({
 	return (
 		<DropdownMenuPrimitive.Item
 			className={cn(
-				"relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] outline-none transition-colors",
+				"relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-control outline-none transition-colors",
 				"text-muted-foreground focus:bg-surface focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-				"[&_svg]:size-[15px] [&_svg]:shrink-0 [&_svg]:text-passive",
+				"[&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-passive",
 				inset && "pl-8",
 				className,
 			)}
@@ -53,7 +53,7 @@ export function DropdownMenuLabel({
 	return (
 		<DropdownMenuPrimitive.Label
 			className={cn(
-				"px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-passive",
+				"px-2 py-1.5 font-mono text-micro uppercase tracking-wide-xl text-passive",
 				inset && "pl-8",
 				className,
 			)}
@@ -70,5 +70,5 @@ export function DropdownMenuSeparator({
 }
 
 export function DropdownMenuShortcut({ className, ...props }: React.ComponentProps<"span">) {
-	return <span className={cn("ml-auto font-mono text-[10px] tracking-[0.08em] text-passive", className)} {...props} />;
+	return <span className={cn("ml-auto font-mono text-micro tracking-wide-md text-passive", className)} {...props} />;
 }

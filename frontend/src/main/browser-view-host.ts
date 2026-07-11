@@ -143,6 +143,16 @@ export function clampBoundsToWindow(
 	};
 }
 
+export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): BrowserRect {
+	if (!Number.isFinite(zoomFactor) || zoomFactor <= 0 || zoomFactor === 1) return rect;
+	return {
+		x: rect.x * zoomFactor,
+		y: rect.y * zoomFactor,
+		width: rect.width * zoomFactor,
+		height: rect.height * zoomFactor,
+	};
+}
+
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserEntry>();
 	const viewIdsByWebContentsId = new Map<number, string>();
@@ -173,7 +183,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return entry;
 	};
 
-	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput): void => {
+	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput, zoomFactor = 1): void => {
 		const entry = entries.get(viewId);
 		if (!entry) return;
 		if (!visible) {
@@ -181,7 +191,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			entry.view.setBounds(OFFSCREEN_BOUNDS);
 			return;
 		}
-		const bounds = clampBoundsToWindow(rect, options.mainWindow.getContentBounds());
+		// The renderer measures the slot in page-zoomed CSS pixels, while
+		// WebContentsView bounds are window coordinates. Convert before clamping so
+		// Cmd+/Cmd- page zoom does not detach the native view from its React slot.
+		const bounds = clampBoundsToWindow(scaleBoundsForZoom(rect, zoomFactor), options.mainWindow.getContentBounds());
 		entry.view.setBounds(bounds);
 		entry.view.setVisible?.(bounds.width > 0 && bounds.height > 0);
 	};
@@ -299,7 +312,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	handle("browser:ensure", (event, sessionId: string) => pushNavState(options, ensure(scopedViewId(event, sessionId))));
-	on("browser:setBounds", (_event, input: BrowserBoundsInput) => setBounds(input));
+	on("browser:setBounds", (event, input: BrowserBoundsInput) => setBounds(input, event.sender.getZoomFactor()));
 	handle("browser:navigate", (_event, input: BrowserNavigateInput) => navigate(input));
 	handle("browser:clear", (_event, viewId: string) => clear(viewId));
 	handle("browser:goBack", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goBack(), true));

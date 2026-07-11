@@ -74,6 +74,7 @@ const orchestratorSession: Session = {
 };
 
 const createProjectMock = vi.fn().mockResolvedValue(undefined);
+const initializeProjectRepositoryMock = vi.fn().mockResolvedValue(undefined);
 
 // Kept from the latest renderBoard call so tests can rerender with the same
 // providers (e.g. simulating a projectId route-param change on a mounted board).
@@ -85,6 +86,7 @@ function renderBoard(ui: ReactNode) {
 	lastShell = {
 		daemonStatus: { state: "ready" } as ShellContextValue["daemonStatus"],
 		createProject: createProjectMock,
+		initializeProjectRepository: initializeProjectRepositoryMock,
 	};
 	return render(
 		<QueryClientProvider client={lastQueryClient}>
@@ -99,6 +101,7 @@ const columnCount = () => document.querySelectorAll("section").length;
 beforeEach(() => {
 	vi.clearAllMocks();
 	createProjectMock.mockResolvedValue(undefined);
+	initializeProjectRepositoryMock.mockResolvedValue(undefined);
 	useUiStore.setState({
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},

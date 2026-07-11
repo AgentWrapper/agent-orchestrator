@@ -8,6 +8,7 @@ import {
 	sessionIsActive,
 	sessionNeedsAttention,
 	toAgentProvider,
+	toSessionActivity,
 	toSessionStatus,
 	workerDisplayStatus,
 	workerStatusPulses,
@@ -73,6 +74,24 @@ describe("toSessionStatus", () => {
 	it("falls back to unknown for an unknown live status", () => {
 		expect(toSessionStatus("bogus")).toBe("unknown");
 		expect(toSessionStatus(undefined)).toBe("unknown");
+	});
+});
+
+describe("toSessionActivity", () => {
+	it.each(["active", "idle", "waiting_input", "blocked", "exited"] as const)(
+		"passes through the known state %s",
+		(state) => {
+			expect(toSessionActivity({ state })?.state).toBe(state);
+		},
+	);
+
+	it("falls back to unknown for an unrecognized state", () => {
+		expect(toSessionActivity({ state: "bogus" })?.state).toBe("unknown");
+	});
+
+	it("returns undefined for a missing activity", () => {
+		expect(toSessionActivity(undefined)).toBeUndefined();
+		expect(toSessionActivity(null)).toBeUndefined();
 	});
 });
 
