@@ -1707,9 +1707,21 @@ components:
       type: object
     AgentConfig:
       properties:
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        mcp:
+          $ref: '#/components/schemas/DomainMCPConfig'
         model:
           type: string
         permissions:
+          type: string
+        pluginDirs:
+          items:
+            type: string
+          type: array
+        systemPrompt:
           type: string
       type: object
     AgentInfo:
@@ -1885,6 +1897,15 @@ components:
       required:
       - state
       - lastActivityAt
+      type: object
+    DomainMCPConfig:
+      properties:
+        configs:
+          items:
+            type: string
+          type: array
+        strict:
+          type: boolean
       type: object
     DomainReviewerConfig:
       properties:

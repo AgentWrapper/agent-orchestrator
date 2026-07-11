@@ -349,7 +349,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, mergeEnv(project.Config.Env, effectiveAgentConfig(cfg.Kind, project.Config).Env)),
 	})
 	if err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -490,6 +490,23 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
+	}
+	if override.SystemPrompt != "" {
+		merged.SystemPrompt = override.SystemPrompt
+	}
+	if len(override.Env) > 0 {
+		if merged.Env == nil {
+			merged.Env = make(map[string]string, len(override.Env))
+		}
+		for k, v := range override.Env {
+			merged.Env[k] = v
+		}
+	}
+	if override.MCP != nil {
+		merged.MCP = override.MCP
+	}
+	if len(override.PluginDirs) > 0 {
+		merged.PluginDirs = override.PluginDirs
 	}
 	return merged
 }
@@ -795,7 +812,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, mergeEnv(project.Config.Env, agentConfig.Env)),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
@@ -1750,6 +1767,15 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if workspacePrompt != "" {
 		base += "\n\n" + workspacePrompt
 	}
+	// A per-role base prompt (agentConfig.systemPrompt) layers on top of the
+	// role-derived instructions so a project can hand a worker (or orchestrator)
+	// standing context beyond the built-in role. It sits before the skill pointer
+	// and the confidentiality guard so it is covered by both.
+	if project, err := m.loadProject(ctx, projectID); err == nil {
+		if up := strings.TrimSpace(effectiveAgentConfig(kind, project.Config).SystemPrompt); up != "" {
+			base += "\n\n" + up
+		}
+	}
 	return base + m.aoSkillPointer() + systemPromptGuard, nil
 }
 
@@ -1885,6 +1911,21 @@ You can open more than one pull request from this session. AO attributes a PR to
 - To stack a PR on top of another (so it merges after its parent), create the child branch from the parent branch and name it ` + "`<parent-branch>/<topic>`" + `, then target the parent branch in the PR. AO recognizes the stack from the branch relationship and will only nudge you to resolve conflicts on the bottom-most PR.
 
 Keep branch names within your session's branch namespace so AO can track every PR you open.`
+}
+
+// mergeEnv overlays roleEnv on top of projectEnv so a per-role value wins on
+// key collision, mirroring the effectiveAgentConfig merge for Env. nil inputs
+// are treated as empty. The result is always a fresh map so callers can mutate
+// it freely (spawnEnv adds AO-internal keys on top).
+func mergeEnv(projectEnv, roleEnv map[string]string) map[string]string {
+	out := make(map[string]string, len(projectEnv)+len(roleEnv))
+	for k, v := range projectEnv {
+		out[k] = v
+	}
+	for k, v := range roleEnv {
+		out[k] = v
+	}
+	return out
 }
 
 // spawnEnv builds the runtime environment: the per-project env vars first, then

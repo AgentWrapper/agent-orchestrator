@@ -75,8 +75,18 @@ type workspaceRepoDetails struct {
 
 // agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
 type agentConfig struct {
-	Model       string `json:"model,omitempty"`
-	Permissions string `json:"permissions,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	Permissions  string            `json:"permissions,omitempty"`
+	SystemPrompt string            `json:"systemPrompt,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	MCP          *mcpConfig        `json:"mcp,omitempty"`
+	PluginDirs   []string          `json:"pluginDirs,omitempty"`
+}
+
+// mcpConfig mirrors domain.MCPConfig.
+type mcpConfig struct {
+	Configs []string `json:"configs,omitempty"`
+	Strict  bool     `json:"strict,omitempty"`
 }
 
 // roleOverride mirrors domain.RoleOverride.
@@ -115,21 +125,24 @@ type setConfigRequest struct {
 }
 
 type projectSetConfigOptions struct {
-	defaultBranch     string
-	sessionPrefix     string
-	model             string
-	permission        string
-	workerAgent       string
-	orchestratorAgent string
-	env               []string
-	symlink           []string
-	postCreate        []string
-	trackerIntake     bool
-	trackerRepo       string
-	trackerAssignee   string
-	configJSON        string
-	clear             bool
-	json              bool
+	defaultBranch       string
+	sessionPrefix       string
+	model               string
+	permission          string
+	workerAgent         string
+	orchestratorAgent   string
+	workerMCPConfig     []string
+	workerStrictMCP     bool
+	workerPluginDir     []string
+	env                 []string
+	symlink             []string
+	postCreate          []string
+	trackerIntake       bool
+	trackerRepo         string
+	trackerAssignee     string
+	configJSON          string
+	clear               bool
+	json                bool
 }
 
 type projectListResult struct {
@@ -309,6 +322,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Harness override for orchestrator sessions")
+	f.StringArrayVar(&opts.workerMCPConfig, "worker-mcp-config", nil, "MCP config (JSON string or path to JSON file) passed to claude-code workers via --mcp-config (repeatable)")
+	f.BoolVar(&opts.workerStrictMCP, "worker-strict-mcp", false, "Isolate claude-code workers from every other MCP source (--strict-mcp-config)")
+	f.StringArrayVar(&opts.workerPluginDir, "worker-plugin-dir", nil, "Plugin path or http(s):// URL loaded by claude-code workers only (repeatable)")
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
@@ -356,6 +372,12 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 			Repo:     opts.trackerRepo,
 			Assignee: opts.trackerAssignee,
 		},
+	}
+	if len(opts.workerMCPConfig) > 0 || opts.workerStrictMCP {
+		cfg.Worker.AgentConfig.MCP = &mcpConfig{Configs: opts.workerMCPConfig, Strict: opts.workerStrictMCP}
+	}
+	if len(opts.workerPluginDir) > 0 {
+		cfg.Worker.AgentConfig.PluginDirs = opts.workerPluginDir
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}

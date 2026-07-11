@@ -33,6 +33,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -184,6 +185,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
 
+	appendMCPFlags(&cmd, cfg.Config.MCP)
+	appendPluginFlags(&cmd, cfg.Config.PluginDirs)
+
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
@@ -252,6 +256,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		// re-appended or a restored orchestrator loses its role.
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
+	// MCP/plugin flags are also rebuilt from flags on resume (they are not part
+	// of the transcript), so re-apply them or a restored worker loses its scoped
+	// MCP set and plugins.
+	appendMCPFlags(&cmd, cfg.Config.MCP)
+	appendPluginFlags(&cmd, cfg.Config.PluginDirs)
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
 }
@@ -431,6 +440,49 @@ func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
 	if len(disallowed) > 0 {
 		*cmd = append(*cmd, "--disallowedTools", strings.Join(disallowed, ","))
 	}
+}
+
+// appendMCPFlags emits claude-code's per-session MCP flags. Each MCPConfig
+// entry is passed to the repeatable --mcp-config as-is (a JSON string or a path
+// to a JSON file — both accepted by the CLI). Strict adds --strict-mcp-config
+// so the session ignores every other MCP source, isolating the worker. A nil
+// MCPConfig emits nothing, so an unset config inherits the global MCP set as
+// before. Strict alone (empty Configs) is valid: it means "no MCP at all".
+func appendMCPFlags(cmd *[]string, mcp *domain.MCPConfig) {
+	if mcp == nil {
+		return
+	}
+	for _, c := range mcp.Configs {
+		if c = strings.TrimSpace(c); c != "" {
+			*cmd = append(*cmd, "--mcp-config", c)
+		}
+	}
+	if mcp.Strict {
+		*cmd = append(*cmd, "--strict-mcp-config")
+	}
+}
+
+// appendPluginFlags emits --plugin-dir / --plugin-url for each entry. An
+// http(s):// entry maps to --plugin-url (a fetched zip); any other value is
+// treated as a local path and mapped to --plugin-dir. Both flags are repeatable,
+// so one is emitted per entry. Empty/whitespace entries are skipped.
+func appendPluginFlags(cmd *[]string, dirs []string) {
+	for _, d := range dirs {
+		if d = strings.TrimSpace(d); d == "" {
+			continue
+		}
+		if isPluginURL(d) {
+			*cmd = append(*cmd, "--plugin-url", d)
+		} else {
+			*cmd = append(*cmd, "--plugin-dir", d)
+		}
+	}
+}
+
+// isPluginURL reports whether s is an http(s) plugin URL rather than a local
+// path, deciding --plugin-url vs --plugin-dir.
+func isPluginURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
 // claudeBinarySpec locates the claude binary: PATH first, then the native

@@ -645,8 +645,14 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            env?: {
+                [key: string]: string;
+            };
+            mcp?: components["schemas"]["DomainMCPConfig"];
             model?: string;
             permissions?: string;
+            pluginDirs?: string[];
+            systemPrompt?: string;
         };
         AgentInfo: {
             /**
@@ -710,6 +716,10 @@ export interface components {
             /** Format: date-time */
             lastActivityAt: string;
             state: string;
+        };
+        DomainMCPConfig: {
+            configs?: string[];
+            strict?: boolean;
         };
         DomainReviewerConfig: {
             harness: string;
