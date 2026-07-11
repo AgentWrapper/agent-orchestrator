@@ -9,7 +9,9 @@ import {
 	LayoutDashboard,
 	Moon,
 	MoreVertical,
+	Pause,
 	Pencil,
+	Play,
 	Plus,
 	Search,
 	Settings,
@@ -21,11 +23,13 @@ import { type FormEvent, useEffect, useId, useRef, useState, type ReactNode } fr
 import {
 	attentionZone,
 	newestActiveOrchestrator,
+	pauseStateLabel,
 	sessionIsActive,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
+import { pauseProject, resumeProject } from "../lib/pause-fleet";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useOperatorAttentionQuery } from "../hooks/useOperatorAttentionQuery";
@@ -470,6 +474,10 @@ function ProjectItem({
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [isPausing, setIsPausing] = useState(false);
+	// Badge reflects the effective state (draining/paused, incl. fleet pause);
+	// the toggle flips this project's own bit (workspace.paused).
+	const pauseBadge = pauseStateLabel(workspace.pauseState, workspace.drainingWorkers);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
@@ -507,6 +515,19 @@ function ProjectItem({
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
+		}
+	};
+
+	const togglePause = async () => {
+		setIsPausing(true);
+		try {
+			if (workspace.paused) await resumeProject(workspace.id);
+			else await pauseProject(workspace.id);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		} catch (err) {
+			window.alert(err instanceof Error ? err.message : "Could not update project pause state");
+		} finally {
+			setIsPausing(false);
 		}
 	};
 
@@ -562,6 +583,14 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
+				{pauseBadge && (
+					<span
+						className="hidden h-4 shrink-0 place-items-center rounded bg-warning/15 px-1 text-[10px] leading-none font-medium text-warning group-data-[collapsible=icon]:hidden md:inline-flex md:items-center"
+						title={pauseBadge}
+					>
+						{pauseBadge}
+					</span>
+				)}
 				<span className="hidden h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive">
 					{sessions.length}
 				</span>
@@ -637,6 +666,10 @@ function ProjectItem({
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 							<Settings aria-hidden="true" />
 							Project settings
+						</DropdownMenuItem>
+						<DropdownMenuItem disabled={isPausing} onSelect={() => void togglePause()}>
+							{workspace.paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
+							{workspace.paused ? "Resume project" : "Pause project"}
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem

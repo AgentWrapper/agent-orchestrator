@@ -352,6 +352,24 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 	}
 }
 
+/** Observable fleet-pause lifecycle of a project, mirroring the daemon's enum. */
+export type ProjectPauseState = "running" | "draining" | "paused";
+
+/**
+ * A short badge label for a project's pause state, or undefined when running
+ * (no badge). Draining shows the live worker count still finishing.
+ */
+export function pauseStateLabel(state?: ProjectPauseState, drainingWorkers = 0): string | undefined {
+	switch (state) {
+		case "draining":
+			return `Draining (${drainingWorkers})`;
+		case "paused":
+			return "Paused";
+		default:
+			return undefined;
+	}
+}
+
 export type WorkspaceSummary = {
 	id: string;
 	name: string;
@@ -364,6 +382,12 @@ export type WorkspaceSummary = {
 		deletions: number;
 	};
 	sessions: WorkspaceSession[];
+	/** The project's own pause bit — what the per-project toggle flips. */
+	paused?: boolean;
+	/** Effective pause state (accounts for the global fleet flag and drain). */
+	pauseState?: ProjectPauseState;
+	/** Live workers still finishing while draining. */
+	drainingWorkers?: number;
 };
 
 export function orchestratorNeedsRestart(workspace: WorkspaceSummary, orchestrator?: WorkspaceSession): boolean {

@@ -4,6 +4,7 @@ import {
 	canonicalTrackerIssueId,
 	findProjectOrchestrator,
 	newestActiveOrchestrator,
+	pauseStateLabel,
 	orchestratorHealth,
 	sessionIsActive,
 	sessionNeedsAttention,
@@ -338,5 +339,17 @@ describe("attentionZone", () => {
 	it("prioritizes merge as the highest-ROI zone", () => {
 		// merge is checked before action/pending so an approved PR always surfaces.
 		expect(attentionZone(sessionWith({ status: "approved" }))).toBe("merge");
+	});
+});
+
+describe("pauseStateLabel", () => {
+	it("returns undefined for running (no badge)", () => {
+		expect(pauseStateLabel("running")).toBeUndefined();
+		expect(pauseStateLabel(undefined)).toBeUndefined();
+	});
+	it("labels paused and draining (with count)", () => {
+		expect(pauseStateLabel("paused")).toBe("Paused");
+		expect(pauseStateLabel("draining", 3)).toBe("Draining (3)");
+		expect(pauseStateLabel("draining")).toBe("Draining (0)");
 	});
 });
