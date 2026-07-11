@@ -320,6 +320,7 @@ type fakeWorkspace struct {
 	stashErr        error
 	applyErr        error
 	forceDestroyErr error
+	checkoutErr     error
 	// stashCalls counts StashUncommitted invocations.
 	stashCalls int
 	// calls records the sequence of workspace method calls for ordering assertions.
@@ -340,6 +341,16 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	}
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
+
+func (w *fakeWorkspace) CheckoutBranch(_ context.Context, info ports.WorkspaceInfo, branch string) (ports.WorkspaceInfo, bool, error) {
+	if w.checkoutErr != nil {
+		return ports.WorkspaceInfo{}, false, w.checkoutErr
+	}
+	changed := info.Branch != branch
+	info.Branch = branch
+	return info, changed, nil
+}
+
 func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.WorkspaceProjectConfig) (ports.WorkspaceProjectInfo, error) {
 	if w.projectErr != nil {
 		return ports.WorkspaceProjectInfo{}, w.projectErr

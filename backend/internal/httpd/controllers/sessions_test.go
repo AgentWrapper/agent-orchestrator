@@ -928,6 +928,10 @@ func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
 		{"not claimable", `{"pr":"142"}`, sessionsvc.ErrSessionNotClaimable, http.StatusUnprocessableEntity, "SESSION_NOT_CLAIMABLE"},
 		{"mismatch", `{"pr":"142"}`, sessionsvc.ErrProjectMismatch, http.StatusUnprocessableEntity, "PR_PROJECT_MISMATCH"},
 		{"scm", `{"pr":"142"}`, sessionsvc.ErrSCMUnavailable, http.StatusServiceUnavailable, "SCM_UNAVAILABLE"},
+		{"branch elsewhere", `{"pr":"142"}`, ports.ErrWorkspaceBranchCheckedOutElsewhere, http.StatusConflict, "BRANCH_CHECKED_OUT_ELSEWHERE"},
+		{"dirty workspace", `{"pr":"142"}`, ports.ErrWorkspaceDirty, http.StatusConflict, "WORKSPACE_DIRTY"},
+		{"branch missing", `{"pr":"142"}`, ports.ErrWorkspaceBranchNotFetched, http.StatusBadRequest, "BRANCH_NOT_FETCHED"},
+		{"bad branch", `{"pr":"142"}`, ports.ErrWorkspaceBranchInvalid, http.StatusBadRequest, "INVALID_BRANCH"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

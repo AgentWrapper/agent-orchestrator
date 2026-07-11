@@ -587,6 +587,69 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 }
 
+// CheckoutBranch switches an existing session worktree to branch.
+func (w *Workspace) CheckoutBranch(ctx context.Context, info ports.WorkspaceInfo, branch string) (ports.WorkspaceInfo, bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return ports.WorkspaceInfo{}, false, errors.New("gitworktree: branch is required")
+	}
+	if strings.TrimSpace(info.Path) == "" {
+		return ports.WorkspaceInfo{}, false, errors.New("gitworktree: workspace path is required")
+	}
+	repo, err := w.repoPathForInfo(info)
+	if err != nil {
+		return ports.WorkspaceInfo{}, false, err
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return ports.WorkspaceInfo{}, false, err
+	}
+	if err := w.validateBranch(ctx, repo, branch); err != nil {
+		return ports.WorkspaceInfo{}, false, err
+	}
+	records, err := w.listRecords(ctx, repo)
+	if err != nil {
+		return ports.WorkspaceInfo{}, false, err
+	}
+	rec, ok := findWorktree(records, path)
+	if !ok {
+		return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: workspace %q is not a registered worktree", path)
+	}
+	current := rec.Branch
+	if current == branch {
+		info.Path = path
+		info.Branch = branch
+		info.RepoPath = repo
+		return info, false, nil
+	}
+	if conflict, ok := findWorktreeByBranch(records, branch); ok && filepath.Clean(conflict.Path) != filepath.Clean(path) {
+		return ports.WorkspaceInfo{}, false, fmt.Errorf("%w: %q is checked out at %q", ErrBranchCheckedOutElsewhere, branch, conflict.Path)
+	}
+	dirty, err := w.isDirty(ctx, path)
+	if err != nil {
+		return ports.WorkspaceInfo{}, false, err
+	}
+	if dirty {
+		return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: refusing to switch %q to %q: %w", path, branch, ports.ErrWorkspaceDirty)
+	}
+	if ok, err := w.refExists(ctx, repo, "refs/heads/"+branch); err != nil {
+		return ports.WorkspaceInfo{}, false, err
+	} else if !ok {
+		if remote, err := w.refExists(ctx, repo, "refs/remotes/origin/"+branch); err != nil {
+			return ports.WorkspaceInfo{}, false, err
+		} else if !remote {
+			return ports.WorkspaceInfo{}, false, fmt.Errorf("%w: %q has no local head or remote-tracking branch - run `git fetch` then retry", ErrBranchNotFetched, branch)
+		}
+	}
+	if _, err := w.run(ctx, w.binary, switchBranchArgs(path, branch)...); err != nil {
+		return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: switch %q to branch %q: %w", path, branch, err)
+	}
+	info.Path = path
+	info.Branch = branch
+	info.RepoPath = repo
+	return info, true, nil
+}
+
 func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, bool, error) {
 	records, err := w.listRecords(ctx, repo)
 	if err != nil {

@@ -28,6 +28,7 @@ func TestCommandArgs(t *testing.T) {
 		{"rev parse", revParseVerifyArgs(repo, "origin/main"), []string{"-C", repo, "rev-parse", "--verify", "--quiet", "origin/main"}},
 		{"add existing", worktreeAddBranchArgs(repo, path, branch), []string{"-C", repo, "worktree", "add", path, branch}},
 		{"add new", worktreeAddNewBranchArgs(repo, branch, path, "origin/main"), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
+		{"switch", switchBranchArgs(path, branch), []string{"-C", path, "switch", branch}},
 		// No --force: a dirty worktree must cause `git worktree remove` to fail so
 		// the post-prune safety check surfaces the refusal instead of deleting
 		// uncommitted agent work (review item RA).
@@ -208,6 +209,82 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 	if info.Path != path || info.Branch != "ao/proj-orchestrator" {
 		t.Fatalf("info = %#v, want path %q branch ao/proj-orchestrator", info, path)
+	}
+}
+
+func TestCheckoutBranchSwitchesCleanRegisteredWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	var switched bool
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format --branch fix/pr"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + path + "\nbranch refs/heads/ao/sess\n"), nil
+		case strings.Contains(joined, "status --porcelain"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/fix/pr"):
+			return nil, nil
+		case strings.Contains(joined, "switch fix/pr"):
+			switched = true
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, changed, err := ws.CheckoutBranch(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "ao/sess"}, "fix/pr")
+	if err != nil {
+		t.Fatalf("CheckoutBranch: %v", err)
+	}
+	if !changed || !switched {
+		t.Fatalf("changed=%v switched=%v, want checkout to switch", changed, switched)
+	}
+	if info.Branch != "fix/pr" || info.Path != path || info.ProjectID != "proj" || info.SessionID != "sess" {
+		t.Fatalf("info = %+v", info)
+	}
+}
+
+func TestCheckoutBranchRefusesDirtyWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format --branch fix/pr"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + path + "\nbranch refs/heads/ao/sess\n"), nil
+		case strings.Contains(joined, "status --porcelain"):
+			return []byte(" M main.go\n"), nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	_, _, err = ws.CheckoutBranch(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "ao/sess"}, "fix/pr")
+	if !errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("CheckoutBranch error = %v, want ports.ErrWorkspaceDirty", err)
 	}
 }
 
