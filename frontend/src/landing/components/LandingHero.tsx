@@ -45,6 +45,34 @@ function StarIcon({ className = "" }: { className?: string }) {
 }
 
 const GITHUB_REPO_API_URL = "https://api.github.com/repos/AgentWrapper/agent-orchestrator";
+const RELEASE_DOWNLOAD_BASE = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download";
+
+const desktopDownloads = [
+	{ label: "macOS (Apple silicon)", href: `${RELEASE_DOWNLOAD_BASE}/agent-orchestrator-darwin-arm64.zip` },
+	{ label: "macOS (Intel)", href: `${RELEASE_DOWNLOAD_BASE}/agent-orchestrator-darwin-x64.zip` },
+	{ label: "Windows", href: `${RELEASE_DOWNLOAD_BASE}/agent-orchestrator-win32-x64.exe` },
+	{ label: "Linux", href: `${RELEASE_DOWNLOAD_BASE}/agent-orchestrator-linux-x64.AppImage` },
+];
+
+function getDownloadTarget() {
+	if (typeof navigator === "undefined") return null;
+	const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+	const portable =
+		/android|iphone|ipad|ipod|mobile|tablet/.test(platform) ||
+		(platform.includes("mac") && navigator.maxTouchPoints > 1);
+
+	if (portable) return null;
+	if (platform.includes("win")) return { label: "Download for Windows", href: desktopDownloads[2].href };
+	if (platform.includes("linux") || platform.includes("x11")) return { label: "Download for Linux", href: desktopDownloads[3].href };
+	return null;
+}
+
+function getDownloadOptions() {
+	if (typeof navigator === "undefined") return desktopDownloads;
+	const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+	const isTouchMac = platform.includes("mac") && navigator.maxTouchPoints > 1;
+	return platform.includes("mac") && !isTouchMac ? desktopDownloads.slice(0, 2) : desktopDownloads;
+}
 
 function formatCompactNumber(value: number): string {
 	if (value >= 1_000_000) {
@@ -1068,6 +1096,13 @@ function SessionDot({ zone }: { zone: string }) {
 export function LandingHero() {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [starCount, setStarCount] = useState<string | null>(null);
+	const [downloadTarget, setDownloadTarget] = useState<ReturnType<typeof getDownloadTarget>>(null);
+	const [downloadOptions, setDownloadOptions] = useState(desktopDownloads);
+
+	useEffect(() => {
+		setDownloadTarget(getDownloadTarget());
+		setDownloadOptions(getDownloadOptions());
+	}, []);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -1160,14 +1195,33 @@ export function LandingHero() {
 						</span>
 					</h1>
 					<div className="gsap-reveal mt-8 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
+					{downloadTarget ? (
 						<a
-							href="/docs/installation"
-							className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-white/12 bg-[#23221d] px-6 text-[15px] font-semibold text-[#f4f1e8] shadow-[0_10px_28px_-24px_rgba(255,255,255,0.22)] hover:border-white/18 hover:bg-[#2c2a23] hover:text-white sm:w-auto"
+							href={downloadTarget.href}
+							className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] sm:w-auto"
 						>
 							<DownloadIcon className="h-4 w-4" />
-							Install Agent Orchestrator
-							<ArrowRightIcon className="h-4 w-4 transition-transform duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1" />
+							{downloadTarget.label}
+							<ArrowRightIcon className="h-4 w-4 transition-transform duration-[450ms] group-hover:translate-x-1" />
 						</a>
+					) : (
+						<details className="group/download relative w-full sm:w-auto">
+							<summary className="hero-pressable flex h-12 cursor-pointer list-none items-center justify-center gap-2 rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-white/25 hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+								<DownloadIcon className="h-4 w-4" />
+								Desktop downloads
+								<ArrowRightIcon className="h-4 w-4 rotate-90 transition-transform group-open/download:-rotate-90" />
+							</summary>
+							<div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 overflow-hidden rounded-lg border border-[color:var(--border-strong)] bg-[color:var(--bg-elevated)] p-1.5 text-left shadow-2xl sm:min-w-[260px]">
+								<p className="px-3 py-2 text-xs leading-relaxed text-[color:var(--fg-muted)]">Choose the computer where you’ll run AO.</p>
+								{downloadOptions.map((download) => (
+									<a key={download.label} href={download.href} className="flex items-center justify-between gap-4 rounded-md px-3 py-2.5 text-sm font-medium text-[color:var(--fg)] hover:bg-white/[0.06]">
+										{download.label}
+										<DownloadIcon className="h-3.5 w-3.5 text-[color:var(--fg-muted)]" />
+									</a>
+								))}
+							</div>
+						</details>
+					)}
 						<a
 							href="https://github.com/AgentWrapper/agent-orchestrator"
 							target="_blank"
