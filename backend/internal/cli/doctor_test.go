@@ -519,6 +519,32 @@ func TestDoctorHooksLogStates(t *testing.T) {
 		}
 	})
 
+	t.Run("restart-window failures pass", func(t *testing.T) {
+		cfg := setConfigEnv(t)
+		writeHooksLogLines(t, cfg.dataDir,
+			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex-fugu user-prompt-submit: "+daemonNotRunningMessage+" — "+daemonStartHint,
+			time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339)+" session=mer-2 ao hooks claude-code session-end: "+daemonNotRunningMessage+" (stale run-file at /tmp/ao/running.json) — "+daemonStartHint,
+		)
+		c := doctorContext(t, map[string]string{"git": "/bin/git"}, gitOnly)
+		check := findDoctorCheck(t, c.runDoctor(context.Background()), "hooks-log")
+		if check.Level != doctorPass || !strings.Contains(check.Message, "2 expected restart-window") {
+			t.Fatalf("hooks-log = %+v, want PASS distinguishing expected restart-window misses", check)
+		}
+	})
+
+	t.Run("mixed restart-window and actionable failures warn", func(t *testing.T) {
+		cfg := setConfigEnv(t)
+		writeHooksLogLines(t, cfg.dataDir,
+			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex-fugu user-prompt-submit: "+daemonNotRunningMessage+" — "+daemonStartHint,
+			time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339)+" session=mer-2 ao hooks codex stop: connection refused",
+		)
+		c := doctorContext(t, map[string]string{"git": "/bin/git"}, gitOnly)
+		check := findDoctorCheck(t, c.runDoctor(context.Background()), "hooks-log")
+		if check.Level != doctorWarn || !strings.Contains(check.Message, "1 hook delivery failure") || !strings.Contains(check.Message, "ignored 1 expected restart-window") {
+			t.Fatalf("hooks-log = %+v, want WARN for actionable failure while distinguishing restart-window miss", check)
+		}
+	})
+
 	t.Run("only stale failures pass", func(t *testing.T) {
 		cfg := setConfigEnv(t)
 		writeHooksLogLines(t, cfg.dataDir,

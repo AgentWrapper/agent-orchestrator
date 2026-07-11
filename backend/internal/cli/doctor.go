@@ -455,6 +455,7 @@ func checkHooksLog(dataDir string, now time.Time) doctorCheck {
 	}
 
 	recent := 0
+	restartWindow := 0
 	latest := ""
 	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -469,16 +470,31 @@ func checkHooksLog(dataDir string, now time.Time) doctorCheck {
 		if err != nil || now.Sub(ts) > 24*time.Hour {
 			continue
 		}
+		if isExpectedHookRestartWindowMiss(line) {
+			restartWindow++
+			continue
+		}
 		recent++
 		latest = line
 	}
 	if recent == 0 {
+		if restartWindow > 0 {
+			return doctorCheck{Level: doctorPass, Section: doctorSectionCore, Name: name, Message: fmt.Sprintf("no actionable hook delivery failures in the last 24h; ignored %d expected restart-window miss(es) (%s)", restartWindow, path)}
+		}
 		return doctorCheck{Level: doctorPass, Section: doctorSectionCore, Name: name, Message: fmt.Sprintf("no hook delivery failures in the last 24h (%s)", path)}
+	}
+	message := fmt.Sprintf("%d hook delivery failure(s) in the last 24h — activity tracking may be degraded; latest: %s (full log: %s)", recent, latest, path)
+	if restartWindow > 0 {
+		message = fmt.Sprintf("%s; ignored %d expected restart-window miss(es)", message, restartWindow)
 	}
 	return doctorCheck{
 		Level: doctorWarn, Section: doctorSectionCore, Name: name,
-		Message: fmt.Sprintf("%d hook delivery failure(s) in the last 24h — activity tracking may be degraded; latest: %s (full log: %s)", recent, latest, path),
+		Message: message,
 	}
+}
+
+func isExpectedHookRestartWindowMiss(line string) bool {
+	return strings.Contains(line, daemonNotRunningMessage) && strings.Contains(line, daemonStartHint)
 }
 
 func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe) doctorCheck {

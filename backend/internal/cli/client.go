@@ -90,6 +90,11 @@ func (c *commandContext) doJSON(ctx context.Context, method, path string, body, 
 	return c.doJSONPath(ctx, method, "/api/v1/"+path, body, out)
 }
 
+const (
+	daemonNotRunningMessage = "AO daemon is not running"
+	daemonStartHint         = "start it with `ao start`"
+)
+
 func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body any) error {
 	return c.doJSONPath(ctx, http.MethodPost, path, body, nil)
 }
@@ -104,10 +109,10 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 		return err
 	}
 	if info == nil {
-		return fmt.Errorf("AO daemon is not running — start it with `ao start`")
+		return fmt.Errorf("%s — %s", daemonNotRunningMessage, daemonStartHint)
 	}
 	if !c.deps.ProcessAlive(info.PID) {
-		return fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+		return fmt.Errorf("%s (stale run-file at %s) — %s", daemonNotRunningMessage, cfg.RunFilePath, daemonStartHint)
 	}
 
 	var reader io.Reader = http.NoBody
