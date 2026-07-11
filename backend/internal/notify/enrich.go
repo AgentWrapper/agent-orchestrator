@@ -118,16 +118,20 @@ func bodyForIntent(intent Intent) string {
 		}
 		return fmt.Sprintf("%s terminated before issue %s landed; ao will dispatch a clean replacement if retry capacity remains.", sessionLabel(intent), issueLabel(intent))
 	case domain.NotificationWorkerRetryExhausted:
+		failurePoint := ""
+		if reason := strings.TrimSpace(intent.TerminalFailureReason); reason != "" {
+			failurePoint = fmt.Sprintf(" Latest failure point: %s.", reason)
+		}
 		if reason := strings.TrimSpace(intent.Reason); reason != "" {
 			if pr := strings.TrimSpace(intent.PRURL); pr != "" {
-				return fmt.Sprintf("%s terminated before issue %s landed with an orphaned PR %s; ao is suspending respawns because %s.", sessionLabel(intent), issueLabel(intent), pr, reason)
+				return fmt.Sprintf("%s terminated before issue %s landed with an orphaned PR %s; ao is suspending respawns because %s.%s", sessionLabel(intent), issueLabel(intent), pr, reason, failurePoint)
 			}
-			return fmt.Sprintf("%s terminated before issue %s landed; ao is suspending respawns because %s.", sessionLabel(intent), issueLabel(intent), reason)
+			return fmt.Sprintf("%s terminated before issue %s landed; ao is suspending respawns because %s.%s", sessionLabel(intent), issueLabel(intent), reason, failurePoint)
 		}
 		if pr := strings.TrimSpace(intent.PRURL); pr != "" {
-			return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is suspending respawns and leaving the orphaned PR %s for a human.", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit, pr)
+			return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is suspending respawns and leaving the orphaned PR %s for a human.%s", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit, pr, failurePoint)
 		}
-		return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is leaving it for a human.", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit)
+		return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is leaving it for a human.%s", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit, failurePoint)
 	case domain.NotificationModelUnreachable:
 		return fmt.Sprintf("Configured pin %s is unreachable%s.", modelDetail(intent), reasonSuffix(intent.Reason))
 	case domain.NotificationModelRecovered:

@@ -2179,6 +2179,8 @@ components:
           - terminated
           - no_signal
           type: string
+        terminalFailureReason:
+          type: string
         terminalHandleId:
           type: string
         updatedAt:

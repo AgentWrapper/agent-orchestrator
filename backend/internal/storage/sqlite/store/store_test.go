@@ -253,19 +253,21 @@ func TestSessionUpdateActivityAndTermination(t *testing.T) {
 
 	r.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: r.CreatedAt}
 	r.IsTerminated = true
+	r.TerminalFailureReason = "CI / backend test"
 	if err := s.UpdateSession(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	got, _, _ := s.GetSession(ctx, r.ID)
-	if got.Activity.State != domain.ActivityWaitingInput || !got.IsTerminated {
+	if got.Activity.State != domain.ActivityWaitingInput || !got.IsTerminated || got.TerminalFailureReason != "CI / backend test" {
 		t.Fatalf("update not persisted: %+v", got)
 	}
 
 	got.IsTerminated = false
 	got.Activity.State = domain.ActivityActive
+	got.TerminalFailureReason = ""
 	_ = s.UpdateSession(ctx, got)
 	again, _, _ := s.GetSession(ctx, r.ID)
-	if again.IsTerminated || again.Activity.State != domain.ActivityActive {
+	if again.IsTerminated || again.Activity.State != domain.ActivityActive || again.TerminalFailureReason != "" {
 		t.Fatalf("activity/termination should update, got %+v", again)
 	}
 }

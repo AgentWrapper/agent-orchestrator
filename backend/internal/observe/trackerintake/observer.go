@@ -241,42 +241,42 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		sessionsForIssue := sessionsByIssue[issueID]
+		var retry retryDecision
 		if seen[issueID] {
-			if _, _, ok := latestTerminatedWorker(sessionsForIssue); ok {
-				retry, err := o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
-				if err != nil {
-					o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
-					spawnFailed = true
-					continue
-				}
-				// The seen branch never spawns, so only surface non-spawn intents
-				// (death-when-driver-present, escalations). Emitting a respawn intent
-				// here would promise "ao is dispatching a replacement" that this branch
-				// discards. Reachable seen+dead-worker cases return a nil intent (a live
-				// worker → done); the guard defends against the "live driver" definition
-				// drifting between seenIssueIDs (any live session) and hasLiveWorker
-				// (worker sessions only).
-				if retry.intent != nil && !retry.spawn {
-					o.emitNotification(ctx, *retry.intent)
-				}
+			if _, _, ok := latestTerminatedWorker(sessionsForIssue); !ok {
+				continue
 			}
-			continue
-		}
-		retry, err := o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
-		if err != nil {
-			o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
-			spawnFailed = true
-			continue
-		}
-		if retry.intent != nil {
-			o.emitNotification(ctx, *retry.intent)
-		}
-		if retry.done {
-			seen[issueID] = true
-			continue
-		}
-		if !retry.spawn {
-			continue
+			var err error
+			retry, err = o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
+			if err != nil {
+				o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
+				spawnFailed = true
+				continue
+			}
+			if retry.intent != nil {
+				o.emitNotification(ctx, *retry.intent)
+			}
+			if retry.done || !retry.spawn {
+				continue
+			}
+		} else {
+			var err error
+			retry, err = o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
+			if err != nil {
+				o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
+				spawnFailed = true
+				continue
+			}
+			if retry.intent != nil {
+				o.emitNotification(ctx, *retry.intent)
+			}
+			if retry.done {
+				seen[issueID] = true
+				continue
+			}
+			if !retry.spawn {
+				continue
+			}
 		}
 		bypassPool := domain.IssueLabelsBypassWorkerPool(issue.Labels)
 		if !bypassPool && cfg.MaxConcurrent > 0 && liveWorkers+spawnedThisPass >= cfg.MaxConcurrent {
@@ -496,14 +496,15 @@ func workerDiedIntent(sess domain.SessionRecord, issueID domain.IssueID) ports.N
 
 func workerRetryExhaustedIntent(sess domain.SessionRecord, issueID domain.IssueID, retryCount, retryLimit int) ports.NotificationIntent {
 	return ports.NotificationIntent{
-		Type:               domain.NotificationWorkerRetryExhausted,
-		SessionID:          sess.ID,
-		ProjectID:          sess.ProjectID,
-		IssueID:            issueID,
-		CreatedAt:          sessionSortTime(sess),
-		SessionDisplayName: sess.DisplayName,
-		RetryCount:         retryCount,
-		RetryLimit:         retryLimit,
+		Type:                  domain.NotificationWorkerRetryExhausted,
+		SessionID:             sess.ID,
+		ProjectID:             sess.ProjectID,
+		IssueID:               issueID,
+		CreatedAt:             sessionSortTime(sess),
+		SessionDisplayName:    sess.DisplayName,
+		RetryCount:            retryCount,
+		RetryLimit:            retryLimit,
+		TerminalFailureReason: strings.TrimSpace(sess.TerminalFailureReason),
 	}
 }
 

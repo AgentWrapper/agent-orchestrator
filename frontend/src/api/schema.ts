@@ -806,6 +806,7 @@ export interface components {
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */
             status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "idle" | "terminated" | "no_signal";
+            terminalFailureReason?: string;
             terminalHandleId?: string;
             /** Format: date-time */
             updatedAt: string;
