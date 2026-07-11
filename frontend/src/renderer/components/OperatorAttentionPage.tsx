@@ -10,6 +10,7 @@ import { cn } from "../lib/utils";
 const kindTone: Record<string, string> = {
 	decision: "border-warning/40 bg-warning/10 text-warning",
 	pr: "border-success/40 bg-success/10 text-success",
+	worker_retry_exhausted: "border-destructive/40 bg-destructive/10 text-destructive",
 };
 
 export function OperatorAttentionPage() {
@@ -19,7 +20,7 @@ export function OperatorAttentionPage() {
 	const showLoadError = attention.isError && items.length === 0;
 
 	const openItem = (item: OperatorAttentionItem) => {
-		if (item.kind === "pr" && item.prUrl) {
+		if (item.prUrl) {
 			window.open(item.prUrl, "_blank", "noopener,noreferrer");
 			return;
 		}
@@ -101,7 +102,7 @@ function AttentionCard({ item, onOpen }: { item: OperatorAttentionItem; onOpen: 
 			</div>
 			<p className="mt-2 text-[12px] leading-5 text-muted-foreground">{item.reason}</p>
 			<div className="mt-2 flex items-center gap-1 text-[11px] font-medium text-foreground">
-				{item.kind === "pr" ? <ExternalLink className="size-3 shrink-0" aria-hidden="true" /> : null}
+				{item.prUrl ? <ExternalLink className="size-3 shrink-0" aria-hidden="true" /> : null}
 				<span className="min-w-0 truncate">{item.action}</span>
 			</div>
 		</button>
@@ -133,7 +134,7 @@ function AttentionRow({ item, onOpen }: { item: OperatorAttentionItem; onOpen: (
 					onClick={onOpen}
 					title={item.action}
 				>
-					{item.kind === "pr" ? <ExternalLink className="size-3" aria-hidden="true" /> : null}
+					{item.prUrl ? <ExternalLink className="size-3" aria-hidden="true" /> : null}
 					<span className="truncate">{item.action}</span>
 				</Button>
 			</TableCell>

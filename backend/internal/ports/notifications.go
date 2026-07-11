@@ -36,9 +36,14 @@ type NotificationIntent struct {
 	// Worker retry enrichment.
 	RetryCount int
 	RetryLimit int
-	// RespawnSuppressed means a worker death notification is informational only;
-	// intake deliberately will not start a replacement for this issue.
-	RespawnSuppressed bool
+	// AdoptsOpenPR marks a worker-death notification whose replacement will adopt
+	// the dead worker's still-open PR (claim mode) rather than start clean. It is
+	// set only when intake actually dispatches a replacement onto an orphaned open
+	// PR, so the operator message names the PR the new worker takes over. When the
+	// PR is orphaned but the retry cap is exhausted, the escalation carries the PR
+	// URL instead (see NotificationWorkerRetryExhausted) — a live driver never
+	// triggers either path (that issue is left untouched, issue #230).
+	AdoptsOpenPR bool
 
 	// Duplicate-PR enrichment (domain.NotificationDuplicatePR only). IssueRef is
 	// the tracker reference both PRs claim (e.g. "owner/repo#169"); PRURL is the

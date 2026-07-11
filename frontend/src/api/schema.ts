@@ -1037,7 +1037,7 @@ export interface components {
             deepLink: string;
             id: string;
             /** @enum {string} */
-            kind: "decision" | "pr";
+            kind: "decision" | "pr" | "worker_retry_exhausted";
             prNumber?: number;
             prTitle?: string;
             prUrl?: string;

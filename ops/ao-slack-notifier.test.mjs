@@ -537,6 +537,44 @@ describe("ao Slack notifier needs-response routing", () => {
 		assert.deepEqual(marked, ["ready-sensitive", "merged"]);
 	});
 
+	it("routes worker_retry_exhausted to the needs-response channel (issue #230)", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			notifyChannel: "C-notify",
+			needsResponseChannel: "C-needs",
+			postMessage: async (text, opts = {}) => posts.push({ text, channel: opts.channel }),
+			fetchImpl: async (url, init = {}) => {
+				if (init.method === "PATCH") {
+					marked.push(url.split("/").at(-1));
+					return response({});
+				}
+				return response({ notifications: [] });
+			},
+			logger: { info() {}, error() {}, warn() {} },
+			bootstrapMode: "post_all",
+		});
+
+		await notifier.handleNotification({
+			id: "exhausted",
+			type: "worker_retry_exhausted",
+			sessionId: "worker-dead",
+			projectId: "ao",
+			title: "worker retry cap exhausted: issue #12",
+			prUrl: "https://github.example/pr/99",
+		});
+
+		assert.equal(posts.length, 1);
+		assert.match(posts[0].text, /worker_retry_exhausted/);
+		assert.equal(posts[0].channel, "C-needs");
+		assert.deepEqual(marked, ["exhausted"]);
+	});
+
 	it("edits the original needs-response message when a session wait clears", async () => {
 		const stateFile = await tmpState();
 		const posts = [];

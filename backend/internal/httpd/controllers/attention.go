@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
@@ -27,7 +29,8 @@ type AttentionSessionService interface {
 
 // AttentionController owns canonical attention routes.
 type AttentionController struct {
-	Svc AttentionSessionService
+	Svc           AttentionSessionService
+	Notifications NotificationService
 }
 
 // Register mounts attention routes on the supplied router.
@@ -40,7 +43,7 @@ func (c *AttentionController) listOperator(w http.ResponseWriter, r *http.Reques
 		apispec.NotImplemented(w, r, "GET", "/api/v1/attention/operator")
 		return
 	}
-	items, err := deriveOperatorAttention(r.Context(), c.Svc)
+	items, err := deriveOperatorAttention(r.Context(), c.Svc, c.Notifications)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -48,7 +51,7 @@ func (c *AttentionController) listOperator(w http.ResponseWriter, r *http.Reques
 	envelope.WriteJSON(w, http.StatusOK, ListOperatorAttentionResponse{Items: items})
 }
 
-func deriveOperatorAttention(ctx context.Context, svc AttentionSessionService) ([]OperatorAttentionItem, error) {
+func deriveOperatorAttention(ctx context.Context, svc AttentionSessionService, notifications NotificationService) ([]OperatorAttentionItem, error) {
 	sessions, err := svc.List(ctx, sessionsvc.ListFilter{})
 	if err != nil {
 		return nil, err
@@ -89,6 +92,21 @@ func deriveOperatorAttention(ctx context.Context, svc AttentionSessionService) (
 			}
 		}
 	}
+	if notifications != nil {
+		unread, err := notifications.ListUnread(ctx, notificationsvc.ListFilter{Limit: notificationsvc.MaxListLimit})
+		if err != nil {
+			// Notifications add durable operator escalations, but the core waiting
+			// surface must still render live session decisions and mergeable PRs if
+			// notification storage is temporarily unavailable.
+			slog.WarnContext(ctx, "attention: notification read failed; returning session-derived operator attention only", "err", err)
+		} else {
+			for _, notification := range unread {
+				if item, ok := notificationAttentionItem(notification); ok {
+					items = appendAttentionItem(items, seen, item, false)
+				}
+			}
+		}
+	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if !items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
 			return items[i].UpdatedAt.After(items[j].UpdatedAt)
@@ -96,6 +114,41 @@ func deriveOperatorAttention(ctx context.Context, svc AttentionSessionService) (
 		return items[i].ID < items[j].ID
 	})
 	return items, nil
+}
+
+func notificationAttentionItem(notification notificationsvc.Notification) (OperatorAttentionItem, bool) {
+	if notification.Type != domain.NotificationWorkerRetryExhausted {
+		return OperatorAttentionItem{}, false
+	}
+	return OperatorAttentionItem{
+		ID:           notificationAttentionID(notification),
+		Kind:         string(notification.Type),
+		ProjectID:    notification.ProjectID,
+		SessionID:    notification.SessionID,
+		SessionTitle: firstNonEmptyString(notification.Title, notification.Body, string(notification.SessionID)),
+		Reason:       firstNonEmptyString(notification.Body, notification.Title, "Worker retry cap exhausted for this issue."),
+		Action:       "Diagnose the repeated failure, then resume or reassign the issue before respawning.",
+		DeepLink:     notificationAttentionDeepLink(notification),
+		UpdatedAt:    notification.CreatedAt,
+		PRURL:        notification.PRURL,
+	}, true
+}
+
+func notificationAttentionID(notification notificationsvc.Notification) string {
+	if notification.ID != "" {
+		return "notification:" + notification.ID + ":operator"
+	}
+	return fmt.Sprintf("notification:%s:%s:%s", notification.ProjectID, notification.SessionID, notification.Type)
+}
+
+func notificationAttentionDeepLink(notification notificationsvc.Notification) string {
+	if notification.PRURL != "" {
+		return notification.PRURL
+	}
+	if notification.ProjectID != "" && notification.SessionID != "" {
+		return "/projects/" + string(notification.ProjectID) + "/sessions/" + string(notification.SessionID)
+	}
+	return "/waiting"
 }
 
 func isAttentionNotFound(err error) bool {

@@ -93,38 +93,45 @@ func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	}
 }
 
-// An issue whose worker session has ended but whose PR is still open must not be
-// re-dispatched: the open PR (attributed to its owning session's linked issue)
-// marks the issue seen, closing the respawn duplicate-PR gap (issue #181).
-func TestPollSkipsIssueWithOpenLinkedPRAfterSessionEnded(t *testing.T) {
+// An issue whose open PR still has a *live* worker driving it must not be
+// re-dispatched: the live-driven open PR marks the issue seen, upholding the
+// duplicate-PR guard (issue #181). The dedup key is "open PR with a live driver",
+// not merely "open PR exists" (issue #230).
+func TestPollSkipsIssueWithOpenLinkedPRWithLiveDriver(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
 		}},
-		// The worker session is terminated but its row (and issue linkage) remains,
-		// and its PR is still open.
-		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true}},
+		// The worker session is still live and its PR is open — a genuine driver.
+		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", Kind: domain.KindWorker}},
 		openPRs: []domain.PullRequest{{
 			URL:       "https://github.com/acme/demo/pull/99",
 			SessionID: "demo-1",
 			Number:    99,
 		}},
+		prsBySession: map[domain.SessionID][]domain.PullRequest{
+			"demo-1": {{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-1", Number: 99}},
+		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
 		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title:     "Has an open PR already",
+		Title:     "Has an open PR with a live driver",
 		State:     domain.IssueOpen,
 		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
 
-	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 0 {
-		t.Fatalf("spawn calls = %d, want 0 (issue with an open linked PR must not be dispatched)", len(spawner.calls))
+		t.Fatalf("spawn calls = %d, want 0 (open PR with a live driver must not be dispatched)", len(spawner.calls))
+	}
+	if len(notifications.intents) != 0 {
+		t.Fatalf("notifications = %+v, want none for a live-driven open PR", notifications.intents)
 	}
 }
 
@@ -173,7 +180,117 @@ func TestPollRespawnDisabledEscalatesWithoutReplacement(t *testing.T) {
 	}
 }
 
-func TestPollNotifiesWhenDeadWorkerHasOpenPR(t *testing.T) {
+// A worker that died leaving an OPEN PR with no live driver must not orphan the
+// PR: intake respawns a replacement in claim mode (the new worker adopts the PR
+// via /address-issue resume) and emits an AdoptsOpenPR death notification naming
+// the PR (issue #230).
+func TestPollRespawnsClaimModeWhenDeadWorkerHasOrphanedOpenPR(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:           "demo-1",
+			ProjectID:    "demo",
+			IssueID:      "github:acme/demo#12",
+			Kind:         domain.KindWorker,
+			IsTerminated: true,
+			DisplayName:  "demo #12 fix-login",
+			UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+		}},
+		openPRs: []domain.PullRequest{{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-1", Number: 99, SourceBranch: "ao/demo-1/issue-12"}},
+		prsBySession: map[domain.SessionID][]domain.PullRequest{
+			"demo-1": {{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-1", Number: 99, SourceBranch: "ao/demo-1/issue-12"}},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Has an orphaned open PR",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1 (orphaned open PR must be respawned in claim mode)", len(spawner.calls))
+	}
+	if want := "/address-issue 12"; spawner.calls[0].Prompt != want {
+		t.Fatalf("prompt = %q, want exactly %q", spawner.calls[0].Prompt, want)
+	}
+	if want := "ao/demo-1/issue-12"; spawner.calls[0].Branch != want {
+		t.Fatalf("branch = %q, want existing orphaned PR source branch %q", spawner.calls[0].Branch, want)
+	}
+	if len(notifications.intents) != 1 {
+		t.Fatalf("notifications = %+v, want one worker death notification", notifications.intents)
+	}
+	got := notifications.intents[0]
+	if got.Type != domain.NotificationWorkerDiedUnfinished || got.SessionID != "demo-1" || got.IssueID != "github:acme/demo#12" {
+		t.Fatalf("notification = %+v", got)
+	}
+	if !got.AdoptsOpenPR || got.PRURL != "https://github.com/acme/demo/pull/99" {
+		t.Fatalf("notification = %+v, want AdoptsOpenPR with the orphaned PR URL", got)
+	}
+	if got.RetryCount != 0 && got.Type == domain.NotificationWorkerRetryExhausted {
+		t.Fatalf("notification = %+v, want a death (respawn) notification, not exhaustion", got)
+	}
+}
+
+func TestPollEscalatesWhenOrphanedOpenPRCannotBeAdoptedInPlace(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{
+				Workspace:     domain.WorkspaceModeInPlace,
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:           "demo-1",
+			ProjectID:    "demo",
+			IssueID:      "github:acme/demo#12",
+			Kind:         domain.KindWorker,
+			IsTerminated: true,
+			DisplayName:  "demo #12 fix-login",
+			UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+		}},
+		openPRs: []domain.PullRequest{{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-1", Number: 99, SourceBranch: "ao/demo-1/issue-12"}},
+		prsBySession: map[domain.SessionID][]domain.PullRequest{
+			"demo-1": {{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-1", Number: 99, SourceBranch: "ao/demo-1/issue-12"}},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Has an orphaned open PR",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %+v, want none when in-place mode cannot adopt an orphaned PR branch", spawner.calls)
+	}
+	if len(notifications.intents) != 1 {
+		t.Fatalf("notifications = %+v, want one blocked-respawn escalation", notifications.intents)
+	}
+	got := notifications.intents[0]
+	if got.Type != domain.NotificationWorkerRetryExhausted || got.PRURL != "https://github.com/acme/demo/pull/99" {
+		t.Fatalf("notification = %+v, want worker_retry_exhausted with orphaned PR URL", got)
+	}
+	if !strings.Contains(got.Reason, "in-place workspace mode") {
+		t.Fatalf("notification reason = %q, want in-place adoption reason", got.Reason)
+	}
+}
+
+func TestPollEscalatesWhenOrphanedOpenPRHasNoSourceBranch(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -196,7 +313,7 @@ func TestPollNotifiesWhenDeadWorkerHasOpenPR(t *testing.T) {
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
 		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Has an open PR already",
+		Title: "Has an orphaned open PR",
 		State: domain.IssueOpen,
 	}}}
 	spawner := &fakeSpawner{}
@@ -206,13 +323,73 @@ func TestPollNotifiesWhenDeadWorkerHasOpenPR(t *testing.T) {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 0 {
-		t.Fatalf("spawn calls = %+v, want none while PR is open", spawner.calls)
+		t.Fatalf("spawn calls = %+v, want none when an orphaned PR has no source branch to adopt", spawner.calls)
 	}
 	if len(notifications.intents) != 1 {
-		t.Fatalf("notifications = %+v, want worker death notification", notifications.intents)
+		t.Fatalf("notifications = %+v, want one blocked-respawn escalation", notifications.intents)
 	}
-	if got := notifications.intents[0]; got.Type != domain.NotificationWorkerDiedUnfinished || got.SessionID != "demo-1" || got.IssueID != "github:acme/demo#12" || !got.RespawnSuppressed {
-		t.Fatalf("notification = %+v", got)
+	got := notifications.intents[0]
+	if got.Type != domain.NotificationWorkerRetryExhausted || got.PRURL != "https://github.com/acme/demo/pull/99" {
+		t.Fatalf("notification = %+v, want worker_retry_exhausted with orphaned PR URL", got)
+	}
+	if !strings.Contains(got.Reason, "no recorded source branch") {
+		t.Fatalf("notification reason = %q, want missing-source-branch reason", got.Reason)
+	}
+}
+
+// Once consecutive worker deaths on one issue exceed the respawn cap, intake must
+// stop respawning and escalate loudly — even when the deaths left an open PR (the
+// case that previously went silent). The escalation carries the orphaned PR URL
+// so the human can find it (issue #230).
+func TestPollEscalatesWhenOrphanedOpenPRExceedsRetryCap(t *testing.T) {
+	issueID := domain.IssueID("github:acme/demo#12")
+	maxRetries := 1
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled: true,
+				Respawn: &domain.TrackerRespawnPolicy{MaxRetries: &maxRetries},
+			}},
+		}},
+		// Two workers died on the issue (deadCount=2 > cap=1); the latest left an
+		// open PR that no live worker drives.
+		sessions: []domain.SessionRecord{
+			{ID: "demo-1", ProjectID: "demo", IssueID: issueID, Kind: domain.KindWorker, IsTerminated: true, UpdatedAt: time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)},
+			{ID: "demo-2", ProjectID: "demo", IssueID: issueID, Kind: domain.KindWorker, IsTerminated: true, DisplayName: "demo #12 fix-login", UpdatedAt: time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)},
+		},
+		openPRs: []domain.PullRequest{{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-2", Number: 99}},
+		prsBySession: map[domain.SessionID][]domain.PullRequest{
+			"demo-2": {{URL: "https://github.com/acme/demo/pull/99", SessionID: "demo-2", Number: 99}},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Repeatedly dying with an open PR",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %+v, want none once the retry cap is exhausted", spawner.calls)
+	}
+	if len(notifications.intents) != 1 {
+		t.Fatalf("notifications = %+v, want one exhaustion escalation", notifications.intents)
+	}
+	got := notifications.intents[0]
+	if got.Type != domain.NotificationWorkerRetryExhausted || got.IssueID != issueID {
+		t.Fatalf("notification = %+v, want worker_retry_exhausted", got)
+	}
+	if got.RetryCount != 2 || got.RetryLimit != 1 {
+		t.Fatalf("notification = %+v, want RetryCount=2 RetryLimit=1", got)
+	}
+	if got.PRURL != "https://github.com/acme/demo/pull/99" {
+		t.Fatalf("notification = %+v, want the orphaned PR URL surfaced in the escalation", got)
 	}
 }
 
