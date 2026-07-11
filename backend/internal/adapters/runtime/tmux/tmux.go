@@ -241,12 +241,28 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 
 // attachCommand returns the argv to attach a terminal to the session.
 // tmux needs no per-session env block.
+//
+// -u forces tmux's client-side CLIENT_UTF8 flag on. Without it, tmux infers
+// UTF-8 capability from LC_ALL/LC_CTYPE/LANG in the attaching process's env
+// (see tmux's main()); AO's daemon is typically started without an
+// interactive shell's locale, so that inference silently fails. A non-UTF8
+// client makes tmux's tty_check_codeset (tty.c) replace any character it
+// can't map through the legacy ACS table with underscores matching the
+// glyph's display width. Box-drawing glyphs are in that ACS table so they
+// still looked fine; agent CLI status icons outside it (e.g. Claude Code's
+// spinner "✻" U+273B, its "⎿" U+23BF continuation marker) were silently
+// rewritten to "_", which is the underscore corruption reported in #2484.
+// Confirmed byte-for-byte: attaching with a stripped, locale-less env
+// reproduces "_ _ _" for those glyphs; adding -u fixes it, with no observable
+// difference for the still-correct box-drawing case. AO already treats the
+// PTY byte stream as UTF-8 end to end, so forcing the flag is always
+// correct here regardless of the daemon's own environment.
 func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	id, err := handleID(handle)
 	if err != nil {
 		return nil, err
 	}
-	return []string{r.binary, "attach-session", "-t", id}, nil
+	return []string{r.binary, "-u", "attach-session", "-t", id}, nil
 }
 
 func attachEnv(base []string) []string {
