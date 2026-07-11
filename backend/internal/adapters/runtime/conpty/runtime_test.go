@@ -594,24 +594,6 @@ func TestClientIsAlive_TrueAndFalse(t *testing.T) {
 	}
 }
 
-func TestClientIsProcessAliveUsesInnerPTYStatus(t *testing.T) {
-	f := startServe(t, 3003)
-	defer f.cancel()
-
-	if alive, err := clientIsProcessAlive(f.addr); err != nil || !alive {
-		t.Fatalf("clientIsProcessAlive(live) = (%v, %v), want (true, nil)", alive, err)
-	}
-
-	f.pty.signalExit(42)
-
-	if alive, err := clientIsAlive(f.addr); err != nil || !alive {
-		t.Fatalf("clientIsAlive(host still reachable) = (%v, %v), want (true, nil)", alive, err)
-	}
-	if alive, err := clientIsProcessAlive(f.addr); err != nil || alive {
-		t.Fatalf("clientIsProcessAlive(exited child) = (%v, %v), want (false, nil)", alive, err)
-	}
-}
-
 // TestIsAlive_RefusedIsGone_TimeoutIsTransient is the reaper-safety regression
 // test. It asserts the dead-vs-transient split that keeps a single transient
 // loopback hiccup from spuriously reaping a live idle session:

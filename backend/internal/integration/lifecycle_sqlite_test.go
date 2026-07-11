@@ -43,9 +43,6 @@ func (s *stubRuntime) IsAlive(_ context.Context, h ports.RuntimeHandle) (bool, e
 	}
 	return true, nil
 }
-func (s *stubRuntime) IsRunningCommand(context.Context, ports.RuntimeHandle, string) (bool, error) {
-	return true, nil
-}
 func (s *stubRuntime) SendMessage(_ context.Context, _ ports.RuntimeHandle, msg string) error {
 	s.sent = append(s.sent, msg)
 	return nil

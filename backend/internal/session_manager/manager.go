@@ -140,9 +140,6 @@ type runtimeController interface {
 	// IsAlive reports whether the handle's runtime session still exists. Used by
 	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
-	// IsRunningCommand reports whether the runtime is still running the launched
-	// command rather than a keep-alive shell that masks an immediate agent exit.
-	IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 	// GetOutput captures the pane's last lines. Spawn uses it to tell a pane
 	// that exists from one whose harness has actually drawn its UI, before
@@ -276,11 +273,6 @@ const (
 	// all means the harness process has written to the pty, so one line is
 	// enough to distinguish "pane exists" from "harness has started drawing".
 	paneReadyCaptureLines = 1
-	// launchCommandProbeRetryDelay gives a healthy agent a brief chance to
-	// release a transient shell child before spawn treats the pane as fallen
-	// through to the keep-alive shell.
-	launchCommandProbeRetryDelay = 200 * time.Millisecond
-	launchCommandProbeAttempts   = 3
 )
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -612,13 +604,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		m.markWorkerMixBucketDown(mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
-	}
-	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
-		_ = m.workspace.Destroy(ctx, ws)
-		m.rollbackSpawnSeedRow(ctx, id)
-		m.markWorkerMixBucketDown(mixBucket, err)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch process: %w", id, err)
 	}
 
 	// Persist the resolved mode so restore reads it back instead of recomputing
@@ -2724,38 +2709,6 @@ func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, han
 	}
 	m.awaitPaneReady(ctx, handle)
 	return m.runtime.SendMessage(ctx, handle, command)
-}
-
-func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.RuntimeHandle, command string) error {
-	m.awaitPaneReady(ctx, handle)
-	var lastErr error
-	for attempt := 1; attempt <= launchCommandProbeAttempts; attempt++ {
-		running, err := m.runtime.IsRunningCommand(ctx, handle, command)
-		if err != nil {
-			alive, aliveErr := m.runtime.IsAlive(ctx, handle)
-			if alive && aliveErr == nil {
-				m.logger.Warn("spawn: launch-process probe failed but runtime session is alive; keeping session",
-					"handle", handle.ID, "command", command, "error", err)
-				return nil
-			}
-			if aliveErr != nil {
-				return errors.Join(err, fmt.Errorf("session liveness probe: %w", aliveErr))
-			}
-			return err
-		}
-		if running {
-			return nil
-		}
-		lastErr = fmt.Errorf("%q exited before spawn completed", command)
-		if attempt < launchCommandProbeAttempts {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(launchCommandProbeRetryDelay):
-			}
-		}
-	}
-	return lastErr
 }
 
 // awaitPaneReady blocks until the pane has produced output, or the deadline
