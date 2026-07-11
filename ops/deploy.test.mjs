@@ -85,9 +85,21 @@ describe("ao self-deploy script", () => {
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(result.stdout, /frontend package metadata changed; installing dependencies with npm ci/);
 		assert.match(result.stdout, /DRY-RUN: cd .*\/frontend && npm ci/);
-		assert(
-			result.stdout.indexOf("DRY-RUN: cd ") < result.stdout.indexOf("DRY-RUN: systemctl --user restart ao-web.service"),
-			"npm ci must run before ao-web.service restart triggers the bundle build",
+		assertFrontendDependencyInstallBeforeWebRestart(result.stdout);
+	});
+
+	it("rejects output that restarts web before the frontend dependency install", () => {
+		// This guards the test assertion itself: the backend dry-run cd line must
+		// never count as evidence that frontend dependencies were installed first.
+		const stdout = [
+			"DRY-RUN: cd /repo/backend && go build -o /home/user/.local/bin/ao ./cmd/ao",
+			"DRY-RUN: systemctl --user restart ao-web.service",
+			"DRY-RUN: cd /repo/frontend && npm ci",
+		].join("\n");
+
+		assert.throws(
+			() => assertFrontendDependencyInstallBeforeWebRestart(stdout),
+			/npm ci must run before ao-web\.service restart/,
 		);
 	});
 
@@ -602,6 +614,15 @@ async function runDeployDryRun(repoDir, home, env = {}, args = []) {
 			HOME: home,
 		},
 	});
+}
+
+function assertFrontendDependencyInstallBeforeWebRestart(stdout) {
+	const frontendInstall = stdout.indexOf("/frontend && npm ci");
+	const webRestart = stdout.indexOf("DRY-RUN: systemctl --user restart ao-web.service");
+
+	assert.notEqual(frontendInstall, -1, "frontend npm ci dry-run command should be present");
+	assert.notEqual(webRestart, -1, "ao-web.service restart dry-run command should be present");
+	assert(frontendInstall < webRestart, "npm ci must run before ao-web.service restart triggers the bundle build");
 }
 
 // Runs deploy.sh for real (no AO_DEPLOY_DRY_RUN), with the host-mutating
