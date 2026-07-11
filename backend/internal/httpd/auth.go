@@ -1,7 +1,9 @@
 package httpd
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"strings"
@@ -15,16 +17,38 @@ import (
 
 const mobileAuthCookie = "ao_mobile_auth"
 
-// authState holds the current password hash for the LAN listener. Swapped
-// atomically on regenerate so an in-flight request never sees a torn value.
-type authState struct{ hash atomic.Pointer[string] }
+// authState holds the current password hash and WebView cookie token for the
+// LAN listener. Values are swapped atomically on regenerate so an in-flight
+// request never sees torn auth state.
+type authState struct{ snapshot atomic.Pointer[authSnapshot] }
 
-func (a *authState) setHash(h string) { a.hash.Store(&h) }
-func (a *authState) currentHash() string {
-	if p := a.hash.Load(); p != nil {
+type authSnapshot struct {
+	hash        string
+	cookieToken string
+}
+
+func (a *authState) setHash(h string) {
+	a.snapshot.Store(&authSnapshot{hash: h, cookieToken: newMobileAuthCookieToken(h)})
+}
+func (a *authState) current() authSnapshot {
+	if p := a.snapshot.Load(); p != nil {
 		return *p
 	}
-	return ""
+	return authSnapshot{}
+}
+func (a *authState) currentHash() string {
+	return a.current().hash
+}
+
+func newMobileAuthCookieToken(hash string) string {
+	if hash == "" {
+		return ""
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // lockout throttles password guessing per source address.
@@ -110,15 +134,20 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-func hasMobileAuthCookie(r *http.Request, hash string) bool {
-	if hash == "" {
+func hasMobileAuthCookie(r *http.Request, token string) bool {
+	if token == "" {
 		return false
 	}
 	c, err := r.Cookie(mobileAuthCookie)
 	if err != nil {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(hash)) == 1
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1
+}
+
+func hasPresentedMobileAuthCookie(r *http.Request) bool {
+	_, err := r.Cookie(mobileAuthCookie)
+	return err == nil
 }
 
 func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Handler {
@@ -130,20 +159,28 @@ func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Han
 					"too many failed attempts; try again shortly", nil)
 				return
 			}
-			hash := state.currentHash()
-			if hasMobileAuthCookie(r, hash) {
+			snapshot := state.current()
+			if hasMobileAuthCookie(r, snapshot.cookieToken) {
 				lock.reset(src)
 				next.ServeHTTP(w, r)
 				return
 			}
-			if mobilebridge.PasswordMatches(hash, bearerToken(r)) {
-				http.SetCookie(w, &http.Cookie{
-					Name:     mobileAuthCookie,
-					Value:    hash,
-					Path:     "/",
-					HttpOnly: true,
-					SameSite: http.SameSiteLaxMode,
-				})
+			bearer := bearerToken(r)
+			if bearer == "" && hasPresentedMobileAuthCookie(r) {
+				envelope.WriteAPIError(w, r, http.StatusUnauthorized, "unauthorized", "BAD_PASSWORD",
+					"missing or invalid connection password", nil)
+				return
+			}
+			if mobilebridge.PasswordMatches(snapshot.hash, bearer) {
+				if snapshot.cookieToken != "" {
+					http.SetCookie(w, &http.Cookie{
+						Name:     mobileAuthCookie,
+						Value:    snapshot.cookieToken,
+						Path:     "/",
+						HttpOnly: true,
+						SameSite: http.SameSiteStrictMode,
+					})
+				}
 				lock.reset(src)
 				next.ServeHTTP(w, r)
 				return

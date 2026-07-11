@@ -9,13 +9,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
-func newAuthUnderTest(pw string, now func() time.Time) (http.Handler, *lockout) {
+func newAuthStateUnderTest(pw string, now func() time.Time) (*authState, http.Handler, *lockout) {
 	st := &authState{}
 	h := mobilebridge.HashPassword(pw)
 	st.setHash(h)
 	lock := newLockout(5, time.Minute, now)
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	return authMiddleware(st, lock)(ok), lock
+	return st, authMiddleware(st, lock)(ok), lock
+}
+
+func newAuthUnderTest(pw string, now func() time.Time) (http.Handler, *lockout) {
+	_, h, lock := newAuthStateUnderTest(pw, now)
+	return h, lock
 }
 
 func req(auth string) *http.Request {
@@ -96,6 +101,12 @@ func TestAuthSetsCookieForFollowupWebViewRequests(t *testing.T) {
 	if len(cookies) != 1 || cookies[0].Name != mobileAuthCookie || cookies[0].Value == "" {
 		t.Fatalf("auth cookie not set: %#v", cookies)
 	}
+	if cookies[0].Value == mobilebridge.HashPassword("secret12") {
+		t.Fatal("auth cookie must not expose the password hash")
+	}
+	if cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("SameSite = %v, want Strict", cookies[0].SameSite)
+	}
 
 	followup := req("")
 	followup.AddCookie(cookies[0])
@@ -103,6 +114,63 @@ func TestAuthSetsCookieForFollowupWebViewRequests(t *testing.T) {
 	h.ServeHTTP(w, followup)
 	if w.Code != http.StatusOK {
 		t.Fatalf("cookie followup: got %d want 200", w.Code)
+	}
+}
+
+func TestAuthRotatesCookieWithPasswordHash(t *testing.T) {
+	st, h, _ := newAuthStateUnderTest("secret12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer secret12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("initial bearer request: got %d want 200", w.Code)
+	}
+	oldCookie := w.Result().Cookies()[0]
+
+	st.setHash(mobilebridge.HashPassword("newpass1"))
+
+	stale := req("")
+	stale.AddCookie(oldCookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, stale)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("stale cookie after rotate: got %d want 401", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer newpass1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("new bearer after rotate: got %d want 200", w.Code)
+	}
+	newCookie := w.Result().Cookies()[0]
+	if newCookie.Value == oldCookie.Value {
+		t.Fatal("auth cookie token did not rotate with password hash")
+	}
+}
+
+func TestAuthStaleCookieDoesNotConsumeLockout(t *testing.T) {
+	st, h, _ := newAuthStateUnderTest("secret12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer secret12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("initial bearer request: got %d want 200", w.Code)
+	}
+	oldCookie := w.Result().Cookies()[0]
+	st.setHash(mobilebridge.HashPassword("newpass1"))
+
+	for i := 0; i < 10; i++ {
+		stale := req("")
+		stale.AddCookie(oldCookie)
+		w = httptest.NewRecorder()
+		h.ServeHTTP(w, stale)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("stale cookie attempt %d: got %d want 401", i, w.Code)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer newpass1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("valid bearer after stale cookies: got %d want 200", w.Code)
 	}
 }
 
