@@ -16,6 +16,11 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 //   - session-start / user-prompt-submit → active
 //   - stop                               → idle
 //   - permission-request                 → waiting_input
+//
+// permission-request maps to waiting_input, not blocked: none of the sharing
+// adapters install the pre/post-tool-use trio, so a blocked state could never
+// be cleared before the turn ends. waiting_input still suppresses automated
+// nudges (NeedsInput) while leaving user-initiated sends deliverable.
 func StandardDeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "session-start":

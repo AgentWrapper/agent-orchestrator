@@ -19,10 +19,28 @@ const (
 // its required "startup" matcher.
 var claudeStartupMatcher = "startup"
 
-// claudeManagedHooks is the source of truth for the hooks AO installs.
+// claudeManagedHooks is the source of truth for the hooks AO installs:
+// SessionStart (under the "startup" matcher), UserPromptSubmit, the tool-use
+// trio (PreToolUse, PostToolUse, PostToolUseFailure), PermissionRequest,
+// Stop, Notification, and SessionEnd. They report normalized session metadata
+// and activity-state signals back into AO's store (see DeriveActivityState).
+// Notification and SessionEnd carry no matcher: each installs once and fires
+// for every sub-type, and the handler filters on the payload's
+// notification_type / reason field. The tool-use hooks also carry no matcher
+// (fire for every tool): their payloads carry tool_name/tool_use_id, which
+// lifecycle uses to clear a stale sticky `blocked` only when the specific
+// approved tool finishes — the daemon-side precedence rule is what makes these
+// signals safe against parallel-subagent traffic (the naive mapping without it
+// was reverted in PR #5's review). PermissionRequest fires when a permission
+// dialog appears and carries the blocking tool_name; `ao hooks` writes nothing
+// to stdout, so installing it never injects a permission decision.
 var claudeManagedHooks = []hooksjson.HookSpec{
 	{Event: "SessionStart", Matcher: &claudeStartupMatcher, Command: claudeHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: claudeHookCommandPrefix + "user-prompt-submit"},
+	{Event: "PreToolUse", Command: claudeHookCommandPrefix + "pre-tool-use"},
+	{Event: "PostToolUse", Command: claudeHookCommandPrefix + "post-tool-use"},
+	{Event: "PostToolUseFailure", Command: claudeHookCommandPrefix + "post-tool-use-failure"},
+	{Event: "PermissionRequest", Command: claudeHookCommandPrefix + "permission-request"},
 	{Event: "Stop", Command: claudeHookCommandPrefix + "stop"},
 	{Event: "Notification", Command: claudeHookCommandPrefix + "notification"},
 	{Event: "SessionEnd", Command: claudeHookCommandPrefix + "session-end"},

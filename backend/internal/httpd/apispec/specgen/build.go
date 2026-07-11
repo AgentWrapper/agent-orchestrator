@@ -760,6 +760,10 @@ func sessionOperations() []operation {
 				{http.StatusOK, controllers.SendSessionMessageResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				// Conflict: the session is terminated, or paused on a permission
+				// decision (SESSION_AWAITING_DECISION) — the guarded send refuses
+				// to paste into a pending dialog.
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
