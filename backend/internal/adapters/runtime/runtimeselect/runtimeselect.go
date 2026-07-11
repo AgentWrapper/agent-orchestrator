@@ -21,6 +21,13 @@ type Runtime interface {
 	ports.Attacher
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
+	// IsRunningCommand is the spawn-time process-health probe. Adapters use the
+	// best definitive signal their backend exposes: tmux inspects the pane's
+	// process tree (the launcher still parents the agent; the keep-alive shell
+	// left after an exit does not), and conpty reads child PTY liveness. The
+	// command argument is advisory — tmux ignores it (the process tree is
+	// authoritative); it is retained for adapters that can use argv[0].
+	IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error)
 }
 
 // Compile-time assertions: both adapters must implement the union interface.

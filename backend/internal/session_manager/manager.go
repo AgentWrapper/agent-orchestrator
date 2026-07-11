@@ -141,6 +141,9 @@ type runtimeController interface {
 	// IsAlive reports whether the handle's runtime session still exists. Used by
 	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+	// IsRunningCommand reports whether the runtime is still running the launched
+	// command rather than a keep-alive shell that masks an immediate agent exit.
+	IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 	// GetOutput captures the pane's last lines. Spawn uses it to tell a pane
 	// that exists from one whose harness has actually drawn its UI, before
@@ -212,9 +215,13 @@ type Manager struct {
 	// paneReady bounds the wait for a new pane to render before spawn types
 	// into it. New fills in the defaults; tests in this package shrink them.
 	paneReady paneReadyConfig
-	logger    *slog.Logger
-	telemetry ports.EventSink
-	spawnMu   sync.Mutex
+	// launchProbe bounds the post-launch process-health probe that rejects a
+	// spawn whose agent exited immediately. New fills in the defaults; tests
+	// shrink them.
+	launchProbe launchProbeConfig
+	logger      *slog.Logger
+	telemetry   ports.EventSink
+	spawnMu     sync.Mutex
 
 	// mixHealth is the worker-mix selection surface's candidate-health circuit
 	// breaker (GH #142): the shared policy that, when an exact selected bucket
@@ -288,7 +295,25 @@ const (
 	// all means the harness process has written to the pty, so one line is
 	// enough to distinguish "pane exists" from "harness has started drawing".
 	paneReadyCaptureLines = 1
+	// launchCommandProbeRetryDelay is the default grace between launch-process
+	// probes: it gives a healthy but slow-starting agent time to appear before
+	// spawn concludes the launch fell through to the keep-alive shell.
+	launchCommandProbeRetryDelay = 200 * time.Millisecond
+	// launchCommandProbeAttempts is the default number of launch-process probes.
+	launchCommandProbeAttempts = 3
 )
+
+// launchProbeConfig bounds the post-launch process-health probe. A slow start
+// is an infra condition, not agent death, so the probe retries over a
+// configurable grace window before rejecting a spawn; only a definitively
+// exited agent (no live pane child) is rejected. New fills in the defaults;
+// tests shrink them.
+type launchProbeConfig struct {
+	// retryDelay is the grace between probes.
+	retryDelay time.Duration
+	// attempts bounds how many times the launch process is probed.
+	attempts int
+}
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
@@ -344,6 +369,10 @@ func New(d Deps) *Manager {
 		paneReady: paneReadyConfig{
 			pollInterval: paneReadyPollInterval,
 			deadline:     paneReadyDeadline,
+		},
+		launchProbe: launchProbeConfig{
+			retryDelay: launchCommandProbeRetryDelay,
+			attempts:   launchCommandProbeAttempts,
 		},
 		logger:    d.Logger,
 		telemetry: d.Telemetry,
@@ -625,6 +654,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
+	}
+	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		_ = m.workspace.Destroy(ctx, ws)
+		m.rollbackSpawnSeedRow(ctx, id)
+		m.markWorkerMixBucketDown(ctx, mixBucket, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch process: %w", id, err)
 	}
 
 	// Persist the resolved mode so restore reads it back instead of recomputing
@@ -2727,6 +2763,53 @@ func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, han
 	}
 	m.awaitPaneReady(ctx, handle)
 	return m.runtime.SendMessage(ctx, handle, command)
+}
+
+// verifyLaunchCommandRunning rejects a spawn whose agent process exited before
+// spawn completed, while letting a healthy but slow-starting agent through.
+//
+// The two states must not be conflated: a probe *error* (an infra hiccup, or a
+// pane the runtime cannot yet inspect) is not agent death — when it happens but
+// the runtime session is still alive, the session is kept. A definitive
+// not-running verdict (the runtime confirms the launched process is gone and
+// only the keep-alive shell remains) is retried over a configurable grace
+// window before rejecting, so a slow start is not mistaken for an exit. See the
+// tmux adapter's IsRunningCommand for why comm-name matching cannot make this
+// distinction (issue #219).
+func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.RuntimeHandle, command string) error {
+	m.awaitPaneReady(ctx, handle)
+	attempts := m.launchProbe.attempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		running, err := m.runtime.IsRunningCommand(ctx, handle, command)
+		if err != nil {
+			alive, aliveErr := m.runtime.IsAlive(ctx, handle)
+			if alive && aliveErr == nil {
+				m.logger.Warn("spawn: launch-process probe failed but runtime session is alive; keeping session",
+					"handle", handle.ID, "command", command, "error", err)
+				return nil
+			}
+			if aliveErr != nil {
+				return errors.Join(err, fmt.Errorf("session liveness probe: %w", aliveErr))
+			}
+			return err
+		}
+		if running {
+			return nil
+		}
+		lastErr = fmt.Errorf("%q exited before spawn completed", command)
+		if attempt < attempts {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(m.launchProbe.retryDelay):
+			}
+		}
+	}
+	return lastErr
 }
 
 // awaitPaneReady blocks until the pane has produced output, or the deadline

@@ -40,6 +40,22 @@ func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...s
 	return out, nil
 }
 
+// -- fakeProber test seam --
+
+// fakeProber stands in for pgrepProber so IsRunningCommand tests can drive the
+// "launcher still parents a live agent child" vs "keep-alive shell, no children"
+// distinction without spawning real processes.
+type fakeProber struct {
+	hasChildren bool
+	err         error
+	pids        []int
+}
+
+func (f *fakeProber) HasChildren(_ context.Context, pid int) (bool, error) {
+	f.pids = append(f.pids, pid)
+	return f.hasChildren, f.err
+}
+
 // -- helpers --
 
 func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
@@ -47,6 +63,9 @@ func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh", ChunkSize: chunkSize})
 	r.runner = fr
 	r.enterDelay = 0 // tests must not pay the real 300ms pre-Enter pause
+	// Default to a benign prober so tests that never probe children are
+	// unaffected; IsRunningCommand tests install their own fakeProber.
+	r.prober = &fakeProber{hasChildren: true}
 	return r, fr
 }
 
@@ -91,6 +110,9 @@ func TestCommandBuilders(t *testing.T) {
 	}
 	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
+	}
+	if got, want := paneStatusArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_pid} #{pane_current_command}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("paneStatusArgs = %#v, want %#v", got, want)
 	}
 	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
@@ -456,6 +478,148 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 	}
 	if alive {
 		t.Fatal("alive = true on probe failure")
+	}
+}
+
+// TestIsRunningCommandTrueForLauncherShellWithLiveChild is the direct #219
+// regression: a healthy agent runs as a non-job-control child of the `sh -c`
+// launcher, so tmux reports "sh" as #{pane_current_command} even though the
+// agent is alive. The old naming-based guard rejected this as an immediate exit
+// and killed every real spawn. The pane's launcher pid still has a live child,
+// which is the correct "still running" signal.
+func TestIsRunningCommandTrueForLauncherShellWithLiveChild(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("4242 sh\n")}
+	fp := &fakeProber{hasChildren: true}
+	r.prober = fp
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "/usr/local/bin/claude")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false for launcher shell with a live agent child, want true (#219 false positive)")
+	}
+	if got, want := fr.calls[0].args, paneStatusArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("display-message args = %#v, want %#v", got, want)
+	}
+	if got, want := fp.pids, []int{4242}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("prober probed pids = %#v, want %#v (parsed pane_pid)", got, want)
+	}
+}
+
+// TestIsRunningCommandFalseForKeepAliveShellNoChild preserves #201's true
+// positive: an agent that exits immediately leaves buildLaunchCommand's
+// keep-alive interactive shell foreground with no children — that spawn must be
+// rejected.
+func TestIsRunningCommandFalseForKeepAliveShellNoChild(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("4242 bash\n")}
+	fp := &fakeProber{hasChildren: false}
+	r.prober = fp
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "claude")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if running {
+		t.Fatal("running = true for keep-alive shell with no children, want false")
+	}
+	if got, want := fp.pids, []int{4242}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("prober probed pids = %#v, want %#v", got, want)
+	}
+}
+
+// TestIsRunningCommandTrueForNonShellForeground short-circuits without a
+// process-tree probe: a non-shell foreground (e.g. a harness whose comm tmux
+// does surface directly) is unambiguously the agent.
+func TestIsRunningCommandTrueForNonShellForeground(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("4242 node\n")}
+	fp := &fakeProber{err: errors.New("prober must not be consulted for a non-shell foreground")}
+	r.prober = fp
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false for non-shell foreground, want true")
+	}
+	if len(fp.pids) != 0 {
+		t.Fatalf("prober consulted %d times for non-shell foreground, want 0", len(fp.pids))
+	}
+}
+
+// TestIsRunningCommandTrueWhenPanePidUnresolved: if tmux does not yield a usable
+// pid we cannot prove exit, so a session tmux still reports is kept rather than
+// killed — an infra oddity must never be read as agent death.
+func TestIsRunningCommandTrueWhenPanePidUnresolved(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("- sh\n")}
+	fp := &fakeProber{err: errors.New("prober must not be consulted without a pid")}
+	r.prober = fp
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "claude")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false when pane pid is unresolved, want true")
+	}
+	if len(fp.pids) != 0 {
+		t.Fatalf("prober consulted despite unresolved pid")
+	}
+}
+
+// TestIsRunningCommandChildProbesWhenCommandEmpty: tmux can yield a pid with an
+// empty foreground command; with no command name to shortcut on, the pane pid
+// is child-probed and the result is authoritative.
+func TestIsRunningCommandChildProbesWhenCommandEmpty(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("4242 \n")}
+	fp := &fakeProber{hasChildren: true}
+	r.prober = fp
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "claude")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true (empty command with a live child falls through to child-probe)")
+	}
+	if got, want := fp.pids, []int{4242}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("prober probed pids = %#v, want %#v", got, want)
+	}
+}
+
+// TestIsRunningCommandFalseForMissingSession: a probe against a session that has
+// already gone reports not-running without surfacing an error.
+func TestIsRunningCommandFalseForMissingSession(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("can't find session: sess-1\n")}
+	fr.err = &exec.ExitError{}
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "claude")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if running {
+		t.Fatal("running = true for a missing session, want false")
+	}
+}
+
+// TestIsRunningCommandErrorsOnProberFailure: a genuine prober failure (not the
+// "no children" exit-1 case) surfaces as an error so the session manager can
+// soften it against IsAlive instead of destroying a live session.
+func TestIsRunningCommandErrorsOnProberFailure(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("4242 sh\n")}
+	r.prober = &fakeProber{err: errors.New("pgrep: boom")}
+
+	_, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "claude")
+	if err == nil {
+		t.Fatal("IsRunningCommand: expected error on prober failure, got nil")
 	}
 }
 

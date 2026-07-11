@@ -50,6 +50,16 @@ func hasSessionArgs(id string) []string {
 	return []string{"has-session", "-t", exactSessionTarget(id)}
 }
 
+// paneStatusArgs asks tmux for the launcher pid and foreground command of the
+// session's active pane in a single call, formatted as
+// "<pane_pid> <pane_current_command>". IsRunningCommand needs both: the command
+// for the fast non-shell path, and the pid to inspect the pane's process tree
+// when the foreground is a shell. Pane-targeting syntax does not accept the
+// exact-match prefix.
+func paneStatusArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_pid} #{pane_current_command}"}
+}
+
 // exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
 // selection commands (-t) target only the session with that precise name.
 // Only kill-session and has-session support this prefix; pane-targeting

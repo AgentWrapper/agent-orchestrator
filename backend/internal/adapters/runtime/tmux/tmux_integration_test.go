@@ -171,6 +171,103 @@ func TestRuntimeIntegrationPinsWindowSizeLatest(t *testing.T) {
 	}
 }
 
+// TestRuntimeIntegrationIsRunningCommand exercises the #219 fix against real
+// tmux and a real pgrep prober (via New's default pgrepProber): a healthy
+// slow-starting agent — which runs as a non-job-control child of the `sh -c`
+// launcher and therefore surfaces "sh" as #{pane_current_command} — must read
+// as running, while an agent that exits immediately and leaves only the
+// keep-alive shell behind must read as not-running.
+func TestRuntimeIntegrationIsRunningCommand(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux unavailable")
+	}
+	if _, err := exec.LookPath("pgrep"); err != nil {
+		t.Skip("pgrep unavailable")
+	}
+
+	ctx := context.Background()
+	r := New(Options{Timeout: 5 * time.Second})
+	// Unique per-run suffix so a rerun never collides with a still-running
+	// session from a previous invocation (the launched agents are long-lived).
+	uniq := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+
+	t.Run("slow-start agent reads as running", func(t *testing.T) {
+		id := strings.ReplaceAll(t.Name(), "/", "_") + "-" + uniq
+		_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
+		t.Cleanup(func() { _ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id}) })
+
+		// Simulate a slow wrapper: sleep before exec-ing the agent. Throughout,
+		// the launched process is a live child of the launcher, so the
+		// naming-based guard (which saw "sh") would have wrongly rejected it.
+		// A bounded sleep self-terminates so a missed cleanup cannot linger.
+		h, err := r.Create(ctx, ports.RuntimeConfig{
+			SessionID:     domain.SessionID(id),
+			WorkspacePath: t.TempDir(),
+			Argv:          []string{"sh", "-c", "sleep 0.3; exec sleep 5"},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		// argv[0] is the agent's launch binary; IsRunningCommand ignores it and
+		// relies on the process tree. A healthy start must read as running the
+		// whole time — including during the pre-exec sleep window.
+		for i := 0; i < 5; i++ {
+			running, err := r.IsRunningCommand(ctx, h, "/usr/local/bin/claude")
+			if err != nil {
+				t.Fatalf("IsRunningCommand: %v", err)
+			}
+			if !running {
+				t.Fatalf("running = false for a live slow-starting agent (attempt %d), want true", i+1)
+			}
+			time.Sleep(150 * time.Millisecond)
+		}
+	})
+
+	t.Run("immediate-exit agent reads as not-running", func(t *testing.T) {
+		id := strings.ReplaceAll(t.Name(), "/", "_") + "-" + uniq
+		_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
+		t.Cleanup(func() { _ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id}) })
+
+		// The agent exits immediately; buildLaunchCommand's keep-alive shell
+		// keeps the tmux session alive but with no children.
+		h, err := r.Create(ctx, ports.RuntimeConfig{
+			SessionID:     domain.SessionID(id),
+			WorkspacePath: t.TempDir(),
+			Argv:          []string{"sh", "-c", "true"},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		// The session is alive (keep-alive shell) even though the agent exited.
+		alive, err := r.IsAlive(ctx, h)
+		if err != nil {
+			t.Fatalf("IsAlive: %v", err)
+		}
+		if !alive {
+			t.Fatal("IsAlive = false, want true (keep-alive shell keeps the session)")
+		}
+
+		// Poll: once the launcher has exec-ed into the childless keep-alive
+		// shell, IsRunningCommand must report not-running.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			running, err := r.IsRunningCommand(ctx, h, "/usr/local/bin/claude")
+			if err != nil {
+				t.Fatalf("IsRunningCommand: %v", err)
+			}
+			if !running {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("running = true for an exited agent with only the keep-alive shell, want false")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+}
+
 // waitForOutput polls GetOutput until out contains want or the deadline passes.
 func waitForOutput(t *testing.T, r *Runtime, h ports.RuntimeHandle, want string, deadline time.Duration) string {
 	t.Helper()

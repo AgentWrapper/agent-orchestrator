@@ -151,6 +151,14 @@ func clientGetOutput(addr string, lines int) (string, error) {
 // death. Mirrors ptyHostIsAlive from pty-client.ts on the alive path: host
 // reachable == alive, regardless of the inner agent's alive field.
 func clientIsAlive(addr string) (alive bool, transientErr error) {
+	return clientStatusAlive(addr, false)
+}
+
+func clientIsProcessAlive(addr string) (alive bool, transientErr error) {
+	return clientStatusAlive(addr, true)
+}
+
+func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientErr error) {
 	conn, err := dialHost(addr, isAliveTimeout)
 	if err != nil {
 		// A dial timeout is transient (the loopback hiccupped). A refused
@@ -179,9 +187,28 @@ func clientIsAlive(addr string) (alive bool, transientErr error) {
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		if msgType == MsgStatusRes {
 			var sp StatusPayload
-			ok := json.Unmarshal(payload, &sp) == nil
+			if err := json.Unmarshal(payload, &sp); err != nil {
+				// A malformed status payload is treated differently by mode: the
+				// host-reachability probe (useInnerAlive=false) reports not-alive
+				// so a wedged host is reap-eligible, whereas the process-liveness
+				// probe (useInnerAlive=true) treats it as transient (returns
+				// nothing, falling through to the read timeout) so a single bad
+				// frame never reads as agent death.
+				if useInnerAlive {
+					return
+				}
+				select {
+				case aliveC <- false:
+				default:
+				}
+				return
+			}
+			alive := true
+			if useInnerAlive {
+				alive = sp.Alive
+			}
 			select {
-			case aliveC <- ok:
+			case aliveC <- alive:
 			default:
 			}
 		}

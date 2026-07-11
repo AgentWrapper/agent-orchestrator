@@ -2,6 +2,7 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,8 +10,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -52,6 +55,7 @@ type Runtime struct {
 	chunkSize  int
 	enterDelay time.Duration
 	runner     runner
+	prober     processProber
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -67,6 +71,45 @@ func (execRunner) Run(ctx context.Context, env []string, name string, args ...st
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
 	return cmd.CombinedOutput()
+}
+
+// processProber reports whether a process still has live child processes.
+// IsRunningCommand uses it to tell the pane's `sh -c` launcher — which parents
+// the agent as a non-job-control child and so surfaces as the pane's own
+// foreground command — apart from the keep-alive interactive shell that
+// buildLaunchCommand execs *after* the agent exits (which has no children). It
+// is a seam so tests can drive both states without spawning real processes.
+type processProber interface {
+	HasChildren(ctx context.Context, pid int) (bool, error)
+}
+
+// pgrepProber answers HasChildren via `pgrep -P <pid>`, available on the Linux
+// and macOS hosts the tmux runtime supports.
+type pgrepProber struct{ timeout time.Duration }
+
+func (p pgrepProber) HasChildren(ctx context.Context, pid int) (bool, error) {
+	timeout := p.timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "pgrep", "-P", strconv.Itoa(pid)).CombinedOutput()
+	if cctx.Err() != nil {
+		return false, cctx.Err()
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		// pgrep exits 1 when there are simply no matching children: that is the
+		// definitive "agent exited, only the keep-alive shell remains" signal,
+		// not a probe failure. Any other error is a genuine probe failure the
+		// caller must not read as agent death.
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("pgrep -P %d: %w: %s", pid, err, strings.TrimSpace(string(out)))
+	}
+	return len(bytes.TrimSpace(out)) > 0, nil
 }
 
 // New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
@@ -107,6 +150,7 @@ func New(opts Options) *Runtime {
 		chunkSize:  chunkSize,
 		enterDelay: enterDelay,
 		runner:     execRunner{},
+		prober:     pgrepProber{timeout: timeout},
 	}
 }
 
@@ -207,6 +251,79 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
 	return true, nil
+}
+
+// IsRunningCommand reports whether the agent AO launched is still running in the
+// session's pane, as opposed to having exited and left buildLaunchCommand's
+// keep-alive shell behind. It is intentionally separate from IsAlive: tmux
+// sessions stay alive after the agent exits because buildLaunchCommand execs a
+// keep-alive shell for operator inspection.
+//
+// It deliberately does NOT compare #{pane_current_command} to argv[0].
+// buildLaunchCommand runs the agent as a non-job-control child of a `sh -c`
+// launcher, so the agent shares the launcher's process group and tmux reports
+// the *launcher shell* (e.g. "sh") as the pane's current command for the entire
+// life of a healthy agent — never the agent's own comm. Naming-based matching
+// therefore rejected every real claude/codex spawn as "exited before spawn
+// completed" (issue #219, which reverted the naming approach in #221). Instead:
+//   - a non-shell foreground command is the agent itself (or a child of it),
+//     so the pane is running; and
+//   - a shell foreground is ambiguous — it is either the launcher still
+//     parenting a live agent child, or the keep-alive shell left behind after
+//     the agent exited. Only the launcher still has child processes; the
+//     keep-alive interactive shell sits at a prompt with none. That process-tree
+//     signal is the definitive discriminator, unlike the comm name.
+//
+// The launch command argument is ignored: the process-tree signal is
+// authoritative and does not depend on argv[0]. It is retained for parity with
+// the runtimeselect interface and the conpty adapter.
+func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, _ string) (bool, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return false, err
+	}
+	out, err := r.run(ctx, paneStatusArgs(id)...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
+			return false, nil
+		}
+		return false, fmt.Errorf("tmux runtime: probe pane status %s: %w", id, err)
+	}
+	pid, current := parsePaneStatus(string(out))
+	// A non-shell foreground is unambiguously the launched agent (or its child).
+	if current != "" && !isShellCommand(current) {
+		return true, nil
+	}
+	// Shell foreground: distinguish the launcher (parents a live agent child)
+	// from the keep-alive shell (no children). A pane pid we cannot resolve is
+	// an infra oddity, not proof of exit — prefer keeping a session tmux still
+	// reports over killing a healthy start.
+	if pid <= 0 {
+		return true, nil
+	}
+	hasChildren, err := r.prober.HasChildren(ctx, pid)
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: probe pane children %s: %w", id, err)
+	}
+	return hasChildren, nil
+}
+
+// parsePaneStatus splits the "<pane_pid> <pane_current_command>" line tmux emits
+// for paneStatusArgs into the launcher pid and the normalised command name. A
+// pid that does not parse yields 0, which IsRunningCommand treats as unresolved.
+func parsePaneStatus(out string) (pid int, command string) {
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) == 0 {
+		return 0, ""
+	}
+	if p, err := strconv.Atoi(fields[0]); err == nil && p > 0 {
+		pid = p
+	}
+	if len(fields) > 1 {
+		command = commandName(fields[1])
+	}
+	return pid, command
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
@@ -494,6 +611,23 @@ func sortedKeys(m map[string]string) []string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func commandName(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(filepath.Base(command)), ".exe")
+}
+
+func isShellCommand(command string) bool {
+	switch commandName(command) {
+	case "sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "csh", "tcsh", "nu", "xonsh", "elvish", "pwsh", "powershell":
+		return true
+	default:
+		return false
+	}
 }
 
 // buildLaunchCommand builds the shell command string passed to `sh -c`. It
