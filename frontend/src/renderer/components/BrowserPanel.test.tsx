@@ -303,50 +303,54 @@ describe("BrowserPanel", () => {
 		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this button green.");
 	});
 
-	it("queues annotation submissions while one is being sent", async () => {
-		let resolvePost: (value: unknown) => void = () => undefined;
+	it("serializes annotations in order exactly once while status remains working", async () => {
+		let resolveFirstPost: (value: unknown) => void = () => undefined;
+		let resolveSecondPost: (value: unknown) => void = () => undefined;
 		postMock
 			.mockReturnValueOnce(
 				new Promise((resolve) => {
-					resolvePost = resolve;
+					resolveFirstPost = resolve;
+				}),
+			)
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveSecondPost = resolve;
 				}),
 			)
 			.mockResolvedValueOnce({ data: {} });
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-		const firstPayload = {
-			viewId: "42:sess-1",
-			instruction: "Make this button blue.",
-			context: {
-				url: "http://localhost:5173/",
-				tag: "button",
-				classes: [],
-				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				nearbyText: [],
-				computedStyle: {},
-			},
-		};
-		const secondPayload = {
-			...firstPayload,
-			instruction: "Make this heading shorter.",
-		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "working" }}
+			/>,
+		);
+		const instructions = ["Make this button blue.", "Make this heading shorter.", "Reduce the card padding."];
 
 		act(() => {
 			annotationSubmitListeners.forEach((listener) => {
-				listener(firstPayload);
-				listener(secondPayload);
+				instructions.forEach((instruction) => listener(annotationPayload(instruction)));
 			});
 		});
 
 		expect(postMock).toHaveBeenCalledTimes(1);
-		expect((postMock.mock.calls[0][1].body as { message: string }).message).toContain("Make this button blue.");
 		await act(async () => {
-			resolvePost({ data: {} });
+			resolveFirstPost({ data: {} });
+		});
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		expect(postMock).toHaveBeenCalledTimes(2);
+		await act(async () => {
+			resolveSecondPost({ data: {} });
 		});
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
-		expect(postMock).toHaveBeenCalledTimes(2);
-		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
+		expect(postMock).toHaveBeenCalledTimes(3);
+		expect(
+			postMock.mock.calls.map(
+				(call) => (call[1].body as { message: string }).message.match(/Change request:\n(.+)/)?.[1],
+			),
+		).toEqual(instructions);
 	});
 
 	it("preserves queued annotations while the BrowserPanelView is unmounted", async () => {
@@ -369,13 +373,16 @@ describe("BrowserPanel", () => {
 		});
 		expect(postMock).toHaveBeenCalledTimes(1);
 
+		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
+		expect(postMock).toHaveBeenCalledTimes(1);
+
 		await act(async () => {
 			resolvePost({ data: {} });
 		});
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
-
-		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
-		rerender(<PersistentBrowserPanelView currentSession={{ ...session, status: "working" }} visible={false} />);
+		expect(postMock).toHaveBeenCalledTimes(2);
+		expect((postMock.mock.calls[0][1].body as { message: string }).message).toContain("Make this button blue.");
+		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
 
 		rerender(<PersistentBrowserPanelView currentSession={session} visible />);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
