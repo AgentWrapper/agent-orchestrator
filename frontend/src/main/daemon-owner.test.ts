@@ -27,7 +27,7 @@ describe("shouldLinkOnAttach", () => {
 		expect(shouldLinkOnAttach("app", {})).toBe(true);
 	});
 
-	it('returns false for an app-owned daemon when AO_KEEP_DAEMON is "0" (off)', () => {
+	it('still links an app-owned daemon when AO_KEEP_DAEMON is "0" (off)', () => {
 		expect(shouldLinkOnAttach("app", { AO_KEEP_DAEMON: "0" })).toBe(true);
 	});
 });
