@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the ao project config drift check (#250) periodically
+
+[Timer]
+# A wiped field becomes a red check within minutes, not a multi-day limp.
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

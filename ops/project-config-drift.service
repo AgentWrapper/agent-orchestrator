@@ -1,0 +1,11 @@
+[Unit]
+Description=ao project config-as-code drift check (#250) — diff live config vs committed specs
+After=ao.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/agent-orchestrator
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Exits non-zero when any project's live config drifts from its committed spec,
+# so `systemctl --user status` and the journal surface the diverged fields.
+ExecStart=/usr/bin/node ops/project-config.mjs check --all

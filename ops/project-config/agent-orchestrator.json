@@ -1,0 +1,53 @@
+{
+	"agentConfig": {
+		"permissions": "bypass-permissions"
+	},
+	"autonomousMerge": true,
+	"defaultBranch": "main",
+	"env": {
+		"POLYPOWERS_REPO": "polymath-ventures/agent-orchestrator"
+	},
+	"orchestrator": {
+		"agent": "claude-code",
+		"agentConfig": {
+			"model": "opus"
+		}
+	},
+	"projectPrefix": "ao",
+	"trackerIntake": {
+		"enabled": true,
+		"excludeLabels": [
+			"no-ao",
+			"deferred",
+			"charter",
+			"charter-audit",
+			"human-review"
+		],
+		"maxConcurrent": 8,
+		"provider": "github"
+	},
+	"worker": {
+		"agent": "codex",
+		"agentConfig": {
+			"model": "gpt-5.5"
+		}
+	},
+	"workerMix": [
+		{
+			"agent": "codex",
+			"model": "gpt-5.5",
+			"weight": 55
+		},
+		{
+			"agent": "codex-fugu",
+			"model": "fugu-ultra",
+			"weight": 27
+		},
+		{
+			"agent": "claude-code",
+			"model": "opus",
+			"weight": 18
+		}
+	],
+	"workspace": "in-place"
+}

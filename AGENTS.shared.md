@@ -250,7 +250,25 @@ go vet ./... && go test ./...`; frontend is npm-lockfile-managed Vite under
   this repo when workers may merge after the full gate. AO reflects that into
   `POLYPOWERS_AUTOMERGE=1` inside worker sessions for compatibility with the
   skills layer; it is not a global daemon env assumption. Sessions also run with
-  `POLYPOWERS_REPO=polymath-ventures/agent-orchestrator` (project config).
+  the project's `env` (including `POLYPOWERS_REPO`). The authoritative values —
+  `autonomousMerge`, `env`, `workerMix`, `trackerIntake`, prefixes, workspace
+  mode, role overrides — are **not** duplicated in this prose; they live in the
+  committed spec `ops/project-config/agent-orchestrator.json` (see Config-as-code
+  below), which is the single source of truth.
+- **Config-as-code (project config):** each project's clean-boot config is a
+  committed spec under `ops/project-config/<project>.json` — the system's
+  clean-boot state is its specification, reconstructible from a committed source,
+  never from archaeology. The `ops/project-config.mjs` CLI wraps the existing
+  `ao` commands (no daemon change, per the vanilla rule):
+  `node ops/project-config.mjs apply <project>` restores config from the spec
+  (THE recovery path after any wipe/incident); `check [--all]` diffs live config
+  against the spec and exits non-zero on drift; `capture <project>` refreshes a
+  spec from live after an intended change. A drift is surfaced by the
+  `ops/project-config-drift.{service,timer}` scheduled compare (install per
+  `ops/project-config/README.md`), so a wiped field becomes a red check within
+  minutes instead of a multi-day limp. Pause (`paused`/`pauseState`, #161/#212)
+  is a sibling of the spec-managed config, never inside it — pausing can never
+  register as drift and the spec can never manage pause state.
 - **SDLC audit markers:** workers must leave durable, externally auditable
   markers for every lifecycle stage. The durable surfaces are GitHub issue/PR
   comments plus SHA-pinned commit status/check contexts; when the ao session/API

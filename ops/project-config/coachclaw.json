@@ -1,0 +1,42 @@
+{
+	"agentConfig": {
+		"permissions": "bypass-permissions"
+	},
+	"autonomousMerge": true,
+	"defaultBranch": "main",
+	"env": {
+		"POLYPOWERS_REPO": "polymath-ventures/coachclaw"
+	},
+	"orchestrator": {
+		"agent": "claude-code",
+		"agentConfig": {
+			"model": "opus"
+		}
+	},
+	"projectPrefix": "cc",
+	"trackerIntake": {},
+	"worker": {
+		"agent": "codex",
+		"agentConfig": {
+			"model": "gpt-5.5"
+		}
+	},
+	"workerMix": [
+		{
+			"agent": "codex",
+			"model": "gpt-5.5",
+			"weight": 55
+		},
+		{
+			"agent": "codex-fugu",
+			"model": "fugu-ultra",
+			"weight": 27
+		},
+		{
+			"agent": "claude-code",
+			"model": "opus",
+			"weight": 18
+		}
+	],
+	"workspace": "in-place"
+}
