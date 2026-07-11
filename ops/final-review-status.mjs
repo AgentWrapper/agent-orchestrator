@@ -5,6 +5,7 @@ import {
 	FINAL_REVIEW_CONTEXT,
 	assertFullSHA,
 	buildHumanMergeRequiredStatusPayload,
+	buildReviewPassedStatusPayload,
 	buildStatusPayload,
 	evaluateAutonomousMergeStatuses,
 	evaluateFinalReviewStatuses,
@@ -72,6 +73,12 @@ function postStatus(opts) {
 		reviewerFamily,
 		targetUrl: opts.target_url ?? "",
 	});
+	const reviewPassedPayload = buildReviewPassedStatusPayload({
+		sha,
+		verdict,
+		reviewerFamily,
+		targetUrl: opts.target_url ?? "",
+	});
 	if (opts.human_merge_required && verdict !== "clean") {
 		throw new Error("--human-merge-required is only valid with --verdict clean");
 	}
@@ -85,6 +92,7 @@ function postStatus(opts) {
 		: null;
 	if (mergePark) postGitHubStatus(repo, sha, mergePark);
 	postGitHubStatus(repo, sha, payload);
+	postGitHubStatus(repo, sha, reviewPassedPayload);
 
 	const result = {
 		ok: true,
@@ -100,6 +108,11 @@ function postStatus(opts) {
 			description: mergePark.description,
 		};
 	}
+	result.reviewPassed = {
+		context: reviewPassedPayload.context,
+		state: reviewPassedPayload.state,
+		description: reviewPassedPayload.description,
+	};
 	process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

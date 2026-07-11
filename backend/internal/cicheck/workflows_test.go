@@ -20,6 +20,7 @@ var mainprotectRequiredChecks = []string{
 	"format",
 	"lint",
 	"migration-version-guard",
+	"review-passed",
 	"scan",
 }
 

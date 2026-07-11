@@ -1,0 +1,72 @@
+name: review-passed
+
+# This merge-queue workflow is inert until the live `mainprotect` ruleset
+# requires the `review-passed` status check context. PR heads receive that
+# context from `ops/final-review-status.mjs set` when final review completes.
+
+on:
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+
+jobs:
+  review-passed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted gate code for merge queue
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Check merge-group final-review gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_GROUP_REF: ${{ github.event.merge_group.head_ref }}
+          MERGE_GROUP_SHA: ${{ github.event.merge_group.head_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          owner="${REPO%%/*}"
+          name="${REPO##*/}"
+          response=$(gh api graphql \
+            -f owner="$owner" \
+            -f name="$name" \
+            -f oid="$MERGE_GROUP_SHA" \
+            -f query='
+          query($owner: String!, $name: String!, $oid: GitObjectID!) {
+            repository(owner: $owner, name: $name) {
+              object(oid: $oid) {
+                ... on Commit {
+                  associatedPullRequests(first: 100) {
+                    pageInfo { hasNextPage }
+                    nodes { headRefOid number url }
+                  }
+                }
+              }
+            }
+          }')
+          if [ "$(jq -r '.data.repository.object.associatedPullRequests.pageInfo.hasNextPage // false' <<<"$response")" = "true" ]; then
+            echo "::error::Merge group has more than 100 associated pull requests; refusing to validate a truncated set"
+            exit 1
+          fi
+          mapfile -t heads < <(jq -r '.data.repository.object.associatedPullRequests.nodes[]? | select(.headRefOid != null) | .headRefOid' <<<"$response")
+          if [ "${#heads[@]}" -eq 0 ] && [ -n "${MERGE_GROUP_REF:-}" ]; then
+            mapfile -t prs < <(grep -Eo 'pr-[0-9]+' <<<"$MERGE_GROUP_REF" | cut -d- -f2 | sort -u)
+            for pr in "${prs[@]}"; do
+              heads+=("$(gh api "repos/$REPO/pulls/$pr" --jq '.head.sha')")
+            done
+          fi
+          if [ "${#heads[@]}" -eq 0 ]; then
+            echo "::error::Could not resolve pull requests associated with merge group $MERGE_GROUP_SHA ($MERGE_GROUP_REF)"
+            exit 1
+          fi
+          for sha in "${heads[@]}"; do
+            echo "Checking final-review gate for PR head $sha"
+            # The queue gate uses human mode so human-approved sensitive-path
+            # merges can proceed; autonomous enqueuers must check merge-park
+            # before queueing, and GitHub-native auto-merge must stay disabled.
+            node ops/final-review-status.mjs check --repo "$REPO" --sha "$sha" --mode human
+          done

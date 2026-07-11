@@ -1,4 +1,5 @@
 export const FINAL_REVIEW_CONTEXT = "final-review";
+export const REVIEW_PASSED_CONTEXT = "review-passed";
 export const MERGE_PARK_CONTEXT = "merge-park";
 export const CLEAN_VERDICT = "clean";
 export const PARKED_VERDICT = "parked";
@@ -61,6 +62,14 @@ export function buildStatusPayload(options) {
 	const trimmedTargetUrl = String(targetUrl ?? "").trim();
 	if (trimmedTargetUrl) payload.target_url = trimmedTargetUrl;
 	return payload;
+}
+
+export function buildReviewPassedStatusPayload(options) {
+	const payload = buildStatusPayload(options);
+	return {
+		...payload,
+		context: REVIEW_PASSED_CONTEXT,
+	};
 }
 
 export function buildHumanMergeRequiredStatusPayload({ sha, reviewerFamily, targetUrl = "" }) {

@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 
 import {
 	buildHumanMergeRequiredStatusPayload,
+	buildReviewPassedStatusPayload,
 	buildStatusPayload,
 	evaluateAutonomousMergeStatuses,
 	evaluateFinalReviewStatuses,
@@ -38,6 +39,28 @@ describe("final-review status payload", () => {
 
 	it("emits a failure commit status for an unclean parked verdict", () => {
 		assert.equal(buildStatusPayload({ sha: HEAD, verdict: "parked", reviewerFamily: "claude" }).state, "failure");
+	});
+
+	it("emits a review-passed status for branch protection", () => {
+		assert.deepEqual(
+			buildReviewPassedStatusPayload({
+				sha: HEAD,
+				verdict: "clean",
+				reviewerFamily: "codex",
+			}),
+			{
+				context: "review-passed",
+				description: `verdict=clean reviewer_family=codex head=${HEAD}`,
+				state: "success",
+			},
+		);
+	});
+
+	it("emits a failing review-passed status for parked verdicts", () => {
+		assert.equal(
+			buildReviewPassedStatusPayload({ sha: HEAD, verdict: "parked", reviewerFamily: "claude" }).state,
+			"failure",
+		);
 	});
 
 	it("emits a green review status and a separate merge park marker for clean human-gated reviews", () => {
@@ -326,6 +349,41 @@ describe("autonomous merge evaluation", () => {
 });
 
 describe("final-review status CLI validation", () => {
+	it("posts final-review and review-passed statuses for a clean review", () => {
+		const dir = mkdtempSync(join(tmpdir(), "final-review-gh-"));
+		const log = join(dir, "gh.log");
+		const gh = join(dir, "gh");
+		writeFileSync(
+			gh,
+			`#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");
+process.stdout.write("{}\\n");
+`,
+		);
+		chmodSync(gh, 0o755);
+
+		const result = spawnSync(
+			process.execPath,
+			[CLI.pathname, "set", "--repo", "owner/repo", "--sha", HEAD, "--verdict", "clean", "--reviewer-family", "codex"],
+			{
+				encoding: "utf8",
+				env: {
+					...process.env,
+					GH_LOG: log,
+					PATH: `${dir}:${process.env.PATH}`,
+				},
+			},
+		);
+
+		assert.equal(result.status, 0, result.stderr);
+		const contexts = readFileSync(log, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line).find((arg) => arg.startsWith("context=")));
+		assert.deepEqual(contexts, ["context=final-review", "context=review-passed"]);
+	});
+
 	it("posts the human merge park guard before the green final-review status", () => {
 		const dir = mkdtempSync(join(tmpdir(), "final-review-gh-"));
 		const log = join(dir, "gh.log");
@@ -371,7 +429,7 @@ process.stdout.write("{}\\n");
 			.split("\n")
 			.map((line) => JSON.parse(line));
 		const contexts = calls.map((args) => args.find((arg) => arg.startsWith("context=")));
-		assert.deepEqual(contexts, ["context=merge-park", "context=final-review"]);
+		assert.deepEqual(contexts, ["context=merge-park", "context=final-review", "context=review-passed"]);
 	});
 
 	it("rejects human merge required with an unclean review verdict before posting statuses", () => {
