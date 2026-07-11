@@ -9,6 +9,7 @@ import {
 	contentSignature,
 	describeSlackMessage,
 	digestContentKey,
+	fetchMainCI,
 	loadState,
 	notificationKey,
 	parsePollMs,
@@ -91,6 +92,20 @@ describe("ao Slack notifier notification formatting", () => {
 		);
 
 		assert.equal(msg, "🚀 *pr_merged* [ao] agent-4: Merged after parked review");
+	});
+
+	it("mentions red main CI notifications", () => {
+		const msg = describeSlackMessage(
+			{
+				type: "main_ci_red",
+				sessionId: "main",
+				projectId: "ao",
+				title: "main is red at fee462ed: go, cli-e2e",
+			},
+			"U123",
+		);
+
+		assert.equal(msg, "<@U123> 🚨 *main_ci_red* [ao] main: main is red at fee462ed: go, cli-e2e");
 	});
 
 	it("posts orchestrator replacement notifications without mentioning", () => {
@@ -188,6 +203,89 @@ describe("ao Slack notifier notification formatting", () => {
 	it("ignores raw CDC events that are not typed notifications", () => {
 		const msg = describeSlackMessage({ type: "session_updated", payload: { sessionId: "a" } }, "U123");
 		assert.equal(msg, null);
+	});
+});
+
+describe("ao Slack notifier main CI poll", () => {
+	it("fails visibly when GitHub truncates main CI check runs", async () => {
+		await assert.rejects(
+			() =>
+				fetchMainCI({
+					repo: "polymath-ventures/agent-orchestrator",
+					fetchImpl: async () =>
+						response({ total_count: 101, check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `job-${i}` })) }),
+				}),
+			/check runs truncated at 100\/101/,
+		);
+	});
+
+	it("pages and digests red main from the poll source", async () => {
+		const posts = [];
+		const notifier = new SlackNotificationNotifier({
+			stateFile: await tmpState(),
+			mentionUserId: "U123",
+			postMessage: async (text) => {
+				posts.push(text);
+				return { ts: `ts_${posts.length}` };
+			},
+			updateMessage: async () => true,
+			fetchImpl: async (url) => {
+				if (String(url).includes("/sessions")) return response({ sessions: [] });
+				return response({ notifications: [] });
+			},
+			mainCISource: async () => [
+				{
+					projectId: "ao",
+					status: "failing",
+					sha: "fee462ed3aabb",
+					failedJobs: ["go", "cli-e2e"],
+					url: "https://github.example/actions/runs/1",
+				},
+			],
+		});
+
+		const result = await notifier.pollSessionAttention();
+
+		assert.equal(result.alerted.length, 1);
+		assert.match(posts[0], /<@U123> 🚨 \*main_ci_red\*/);
+		assert(
+			posts.some((p) => /main is red at fee462ed: go, cli-e2e/.test(p) && /thing needs you/.test(p)),
+			posts,
+		);
+	});
+
+	it("caches main CI polling separately from the session attention cadence", async () => {
+		let mainPolls = 0;
+		let now = 1_000;
+		const notifier = new SlackNotificationNotifier({
+			stateFile: await tmpState(),
+			mentionUserId: "U123",
+			postMessage: async () => ({ ts: "ts" }),
+			updateMessage: async () => true,
+			fetchImpl: async () => response({ sessions: [] }),
+			mainCIPollMs: 60_000,
+			mainCISource: async () => {
+				mainPolls += 1;
+				return [
+					{
+						projectId: "ao",
+						status: "failing",
+						sha: "fee462ed3aabb",
+						failedJobs: ["go"],
+						url: "https://github.example/actions/runs/1",
+					},
+				];
+			},
+			clock: () => new Date(now),
+		});
+
+		await notifier.pollSessionAttention();
+		now += 10_000;
+		await notifier.pollSessionAttention();
+		now += 60_000;
+		await notifier.pollSessionAttention();
+
+		assert.equal(mainPolls, 2);
 	});
 });
 

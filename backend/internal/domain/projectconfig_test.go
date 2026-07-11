@@ -62,10 +62,16 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good worker workspace override", ProjectConfig{Worker: RoleOverride{Workspace: WorkspaceModeInPlace}}, false},
 		{"unknown worker workspace override", ProjectConfig{Worker: RoleOverride{Workspace: "cloud"}}, true},
 		{"unknown orchestrator workspace override", ProjectConfig{Orchestrator: RoleOverride{Workspace: "nope"}}, true},
+		{"good prime workspace override", ProjectConfig{Prime: RoleOverride{Workspace: WorkspaceModeInPlace}}, false},
+		{"unknown prime workspace override", ProjectConfig{Prime: RoleOverride{Workspace: "nope"}}, true},
+		{"good prime instructions file", ProjectConfig{Prime: RoleOverride{InstructionsFile: ".claude/prime-orchestrator-policy.md"}}, false},
+		{"prime instructions file escapes root", ProjectConfig{Prime: RoleOverride{InstructionsFile: "../prime.md"}}, true},
 		{"good orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "15m"}}, false},
 		{"negative orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "-1m"}}, true},
 		{"zero orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "0s"}}, true},
 		{"invalid orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "soon"}}, true},
+		{"good prime wake interval", ProjectConfig{Prime: RoleOverride{WakeInterval: "30m"}}, false},
+		{"negative prime wake interval", ProjectConfig{Prime: RoleOverride{WakeInterval: "-1m"}}, true},
 		{"worker wake interval unsupported", ProjectConfig{Worker: RoleOverride{WakeInterval: "15m"}}, true},
 	}
 	for _, tt := range tests {
@@ -126,12 +132,22 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	if got.Orchestrator.WakeInterval != "15m" {
 		t.Fatalf("default orchestrator wake interval = %s, want 15m", got.Orchestrator.WakeInterval)
 	}
+	if got.Prime.WakeInterval != "15m" {
+		t.Fatalf("default prime wake interval = %s, want 15m", got.Prime.WakeInterval)
+	}
 	got = (ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "30m"}}).WithDefaults()
 	if got.Orchestrator.WakeInterval != "30m" {
 		t.Fatalf("explicit orchestrator wake interval = %s, want 30m", got.Orchestrator.WakeInterval)
 	}
 	if d, err := got.Orchestrator.WakeIntervalDuration(); err != nil || d != 30*time.Minute {
 		t.Fatalf("parsed orchestrator wake interval = %s, %v; want 30m", d, err)
+	}
+	got = (ProjectConfig{Prime: RoleOverride{WakeInterval: "45m"}}).WithDefaults()
+	if got.Prime.WakeInterval != "45m" {
+		t.Fatalf("explicit prime wake interval = %s, want 45m", got.Prime.WakeInterval)
+	}
+	if d, err := got.Prime.WakeIntervalDuration(); err != nil || d != 45*time.Minute {
+		t.Fatalf("parsed prime wake interval = %s, %v; want 45m", d, err)
 	}
 }
 
@@ -236,8 +252,8 @@ func TestWorkspaceModeIsKnown(t *testing.T) {
 }
 
 func TestResolveWorkspaceMode(t *testing.T) {
-	// No config at all: both kinds resolve to the worktree default, never "".
-	for _, kind := range []SessionKind{KindWorker, KindOrchestrator} {
+	// No config at all: all session kinds resolve to the worktree default, never "".
+	for _, kind := range []SessionKind{KindWorker, KindOrchestrator, KindPrime} {
 		if got := (ProjectConfig{}).ResolveWorkspaceMode(kind); got != WorkspaceModeWorktree {
 			t.Fatalf("default for %s = %q, want worktree", kind, got)
 		}
@@ -251,18 +267,25 @@ func TestResolveWorkspaceMode(t *testing.T) {
 	if got := cfg.ResolveWorkspaceMode(KindOrchestrator); got != WorkspaceModeInPlace {
 		t.Fatalf("orchestrator top-level = %q, want in-place", got)
 	}
+	if got := cfg.ResolveWorkspaceMode(KindPrime); got != WorkspaceModeInPlace {
+		t.Fatalf("prime top-level = %q, want in-place", got)
+	}
 
 	// The role override wins over the top-level default, per kind.
 	cfg = ProjectConfig{
 		Workspace:    WorkspaceModeInPlace,
 		Worker:       RoleOverride{Workspace: WorkspaceModeWorktree},
 		Orchestrator: RoleOverride{Workspace: WorkspaceModeInPlace},
+		Prime:        RoleOverride{Workspace: WorkspaceModeWorktree},
 	}
 	if got := cfg.ResolveWorkspaceMode(KindWorker); got != WorkspaceModeWorktree {
 		t.Fatalf("worker override = %q, want worktree", got)
 	}
 	if got := cfg.ResolveWorkspaceMode(KindOrchestrator); got != WorkspaceModeInPlace {
 		t.Fatalf("orchestrator override = %q, want in-place", got)
+	}
+	if got := cfg.ResolveWorkspaceMode(KindPrime); got != WorkspaceModeWorktree {
+		t.Fatalf("prime override = %q, want worktree", got)
 	}
 
 	// An empty role override defers to the top-level value, not the built-in

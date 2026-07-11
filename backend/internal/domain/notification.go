@@ -38,12 +38,14 @@ const (
 	// NotificationModelRecovered means a previously unreachable model pin probed
 	// successfully again.
 	NotificationModelRecovered NotificationType = "model_recovered"
+	// NotificationMainCIRed means the repository default branch CI is failing.
+	NotificationMainCIRed NotificationType = "main_ci_red"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR, NotificationWorkerDiedUnfinished, NotificationWorkerRetryExhausted, NotificationModelUnreachable, NotificationModelRecovered:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR, NotificationWorkerDiedUnfinished, NotificationWorkerRetryExhausted, NotificationModelUnreachable, NotificationModelRecovered, NotificationMainCIRed:
 		return true
 	default:
 		return false

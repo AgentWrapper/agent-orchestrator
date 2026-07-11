@@ -31,6 +31,27 @@ describe("what-needs-me terminal view (acceptance #3)", () => {
 		assert.doesNotMatch(out, /\bb\b —/);
 	});
 
+	it("puts red main CI first in the inventory", () => {
+		const out = renderTerminal(
+			{
+				mainCI: [
+					{
+						projectId: "ao",
+						status: "failing",
+						sha: "fee462ed3aabb",
+						failedJobs: ["go", "cli-e2e"],
+						url: "https://github.example/actions/runs/1",
+					},
+				],
+				sessions: [{ id: "a", projectId: "ao", activity: { state: "waiting_input" } }],
+			},
+			{ now },
+		);
+		assert.match(out, /2 things need your attention/);
+		assert.match(out, /main_ci_red/);
+		assert(out.indexOf("main_ci_red") < out.indexOf("a — needs_input"), out);
+	});
+
 	it("uses singular phrasing for one item", () => {
 		const out = renderTerminal(
 			{ sessions: [{ id: "a", projectId: "ao", activity: { state: "waiting_input" } }] },

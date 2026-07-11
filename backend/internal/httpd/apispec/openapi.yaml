@@ -2893,6 +2893,7 @@ components:
           - worker_retry_exhausted
           - model_unreachable
           - model_recovered
+          - main_ci_red
           type: string
       required:
       - id
@@ -3082,6 +3083,8 @@ components:
           items:
             type: string
           type: array
+        prime:
+          $ref: '#/components/schemas/RoleOverride'
         projectPrefix:
           type: string
         reviewers:
@@ -3776,6 +3779,7 @@ components:
           enum:
           - worker
           - orchestrator
+          - prime
           type: string
         model:
           description: Model override for this session only.

@@ -287,57 +287,68 @@ func TestNotificationStore_CheckConstraintRejectsInvalidStatus(t *testing.T) {
 	}
 }
 
-// A ready_to_merge notification for a new head must insert a distinct unread row
+// A ready_to_merge/main_ci_red notification for a new head must insert a distinct unread row
 // even when an unread row for the same (session, type, pr, sensitive) tuple
 // already exists — head_sha is part of the dedupe key (issue #190).
 func TestNotificationStore_DifferentHeadSHADoesNotDedupe(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	seedProject(t, s, "mer")
-	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	now := time.Now().UTC().Truncate(time.Second)
-	first := domain.NotificationRecord{
-		ID:        "ntf_1",
-		SessionID: sess.ID,
-		ProjectID: sess.ProjectID,
-		PRURL:     "https://github.com/o/r/pull/1",
-		Type:      domain.NotificationReadyToMerge,
-		Title:     "PR #1 is ready to merge",
-		HeadSHA:   "sha-1",
-		Status:    domain.NotificationUnread,
-		CreatedAt: now,
-	}
-	if _, inserted, err := s.CreateNotification(ctx, first); err != nil || !inserted {
-		t.Fatalf("CreateNotification first inserted=%v err=%v", inserted, err)
-	}
+	for _, tc := range []struct {
+		name string
+		typ  domain.NotificationType
+		pr   string
+	}{
+		{name: "ready to merge", typ: domain.NotificationReadyToMerge, pr: "https://github.com/o/r/pull/1"},
+		{name: "main ci red", typ: domain.NotificationMainCIRed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			seedProject(t, s, "mer")
+			sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			now := time.Now().UTC().Truncate(time.Second)
+			first := domain.NotificationRecord{
+				ID:        "ntf_1",
+				SessionID: sess.ID,
+				ProjectID: sess.ProjectID,
+				PRURL:     tc.pr,
+				Type:      tc.typ,
+				Title:     "notification",
+				HeadSHA:   "sha-1",
+				Status:    domain.NotificationUnread,
+				CreatedAt: now,
+			}
+			if _, inserted, err := s.CreateNotification(ctx, first); err != nil || !inserted {
+				t.Fatalf("CreateNotification first inserted=%v err=%v", inserted, err)
+			}
 
-	// Same tuple, same head: deduped.
-	sameHead := first
-	sameHead.ID = "ntf_2"
-	sameHead.CreatedAt = now.Add(time.Minute)
-	if _, inserted, err := s.CreateNotification(ctx, sameHead); err != nil {
-		t.Fatalf("CreateNotification sameHead err=%v", err)
-	} else if inserted {
-		t.Fatal("same-head duplicate should be deduped, got inserted=true")
-	}
+			// Same tuple, same head: deduped.
+			sameHead := first
+			sameHead.ID = "ntf_2"
+			sameHead.CreatedAt = now.Add(time.Minute)
+			if _, inserted, err := s.CreateNotification(ctx, sameHead); err != nil {
+				t.Fatalf("CreateNotification sameHead err=%v", err)
+			} else if inserted {
+				t.Fatal("same-head duplicate should be deduped, got inserted=true")
+			}
 
-	// New head: distinct row.
-	newHead := first
-	newHead.ID = "ntf_3"
-	newHead.HeadSHA = "sha-2"
-	newHead.CreatedAt = now.Add(2 * time.Minute)
-	if _, inserted, err := s.CreateNotification(ctx, newHead); err != nil || !inserted {
-		t.Fatalf("CreateNotification newHead inserted=%v err=%v", inserted, err)
-	}
+			// New head: distinct row.
+			newHead := first
+			newHead.ID = "ntf_3"
+			newHead.HeadSHA = "sha-2"
+			newHead.CreatedAt = now.Add(2 * time.Minute)
+			if _, inserted, err := s.CreateNotification(ctx, newHead); err != nil || !inserted {
+				t.Fatalf("CreateNotification newHead inserted=%v err=%v", inserted, err)
+			}
 
-	rows, err := s.ListUnreadNotifications(ctx, 10)
-	if err != nil {
-		t.Fatalf("ListUnreadNotifications: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want 2 (one per distinct head)", len(rows))
+			rows, err := s.ListUnreadNotifications(ctx, 10)
+			if err != nil {
+				t.Fatalf("ListUnreadNotifications: %v", err)
+			}
+			if len(rows) != 2 {
+				t.Fatalf("rows = %d, want 2 (one per distinct head)", len(rows))
+			}
+		})
 	}
 }

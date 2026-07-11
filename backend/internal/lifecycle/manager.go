@@ -265,19 +265,23 @@ func nextPendingDecision(s ports.ActivitySignal) *domain.PendingDecision {
 func shouldEmitNeedsInputNotification(prev, next domain.SessionRecord) bool {
 	switch next.Activity.State {
 	case domain.ActivityWaitingInput:
-		// Orchestrator wake cycles normally end at an empty prompt again; that
+		// Daemon-role wake cycles normally end at an empty prompt again; that
 		// healthy idle cadence must not page the operator every turn.
-		return next.Kind != domain.KindOrchestrator && !prev.Activity.State.NeedsInput()
+		return !isDaemonRole(next.Kind) && !prev.Activity.State.NeedsInput()
 	case domain.ActivityBlocked:
 		if !prev.Activity.State.NeedsInput() {
 			return true
 		}
-		// An orchestrator's prior waiting_input may have been intentionally
+		// A daemon role's prior waiting_input may have been intentionally
 		// suppressed, so a later decision block is its first real page.
-		return next.Kind == domain.KindOrchestrator && prev.Activity.State == domain.ActivityWaitingInput
+		return isDaemonRole(next.Kind) && prev.Activity.State == domain.ActivityWaitingInput
 	default:
 		return false
 	}
+}
+
+func isDaemonRole(kind domain.SessionKind) bool {
+	return kind == domain.KindOrchestrator || kind == domain.KindPrime
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending

@@ -30,6 +30,7 @@ export const ATTENTION_KINDS = new Set([
 	"orchestrator_dead", // a dead/errored orchestrator
 	"daemon_unhealthy", // the daemon health probe is failing
 	"no_signal", // a session whose activity hook went silent (stuck/dead)
+	"main_ci_red", // main-branch CI is failing and merges/deploys are frozen
 ]);
 
 // Informational kinds we forward but never @mention.
@@ -42,6 +43,7 @@ const ICONS = {
 	orchestrator_dead: "💀",
 	daemon_unhealthy: "❤️‍🩹",
 	no_signal: "🛰️",
+	main_ci_red: "🚨",
 	ready_to_merge: "🟢",
 	pr_merged: "🚀",
 	pr_closed_unmerged: "🗑️",
@@ -71,11 +73,14 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 	if (!raw || typeof raw !== "object") return null;
 	const outerType = raw.type ?? raw.event ?? "";
 	const n = raw.notification ?? raw.payload ?? raw ?? {};
-	const sessionId = n.sessionId ?? n.session ?? raw.sessionId ?? "";
 	const projectId = n.projectId ?? n.project ?? raw.projectId ?? "";
 	const title = n.title ?? n.message ?? "";
 	const url = n.url ?? n.prUrl ?? "";
 	const rawKind = n.kind ?? n.type ?? outerType;
+	const sessionId =
+		rawKind === "main_ci_red"
+			? (n.sessionId ?? n.session ?? raw.sessionId ?? "main")
+			: (n.sessionId ?? n.session ?? raw.sessionId ?? "");
 
 	// A park anywhere in the payload text is an attention/blocked signal even
 	// when the daemon labels the envelope generically (queue_update, etc.).
@@ -282,6 +287,27 @@ export function attentionFromSession(s) {
 	};
 }
 
+export function attentionFromMainCI(main) {
+	if (!main || typeof main !== "object") return null;
+	if (main.status !== "failing" && main.state !== "failing") return null;
+	const sha = String(main.sha ?? main.headSha ?? "").slice(0, 8);
+	const failedJobs = Array.isArray(main.failedJobs) ? main.failedJobs.map(String).filter(Boolean) : [];
+	const jobs = failedJobs.length ? failedJobs.join(", ") : "unknown jobs";
+	return {
+		kind: "main_ci_red",
+		sessionId: "main",
+		projectId: String(main.projectId ?? ""),
+		title: `main is red at ${sha || "unknown"}: ${jobs}`,
+		url: String(main.url ?? main.htmlUrl ?? ""),
+		attention: true,
+	};
+}
+
+export function attentionFromMainCIRecords(records = []) {
+	const list = Array.isArray(records) ? records : [];
+	return list.map((r) => attentionFromMainCI(r)).filter(Boolean);
+}
+
 function attentionTitle(kind, s) {
 	if (kind === "needs_input") return "waiting for input";
 	if (kind === "blocked") return "blocked / stuck";
@@ -300,7 +326,7 @@ function sessionUrl(s) {
 // set of attention records (dropping non-attention sessions).
 export function attentionFromSessions(payload) {
 	const list = Array.isArray(payload) ? payload : (payload?.sessions ?? payload?.data ?? []);
-	const out = [];
+	const out = attentionFromMainCIRecords(payload?.mainCI ?? payload?.mainCi ?? []);
 	for (const s of list) {
 		const rec = attentionFromSession(s);
 		if (rec) out.push(rec);

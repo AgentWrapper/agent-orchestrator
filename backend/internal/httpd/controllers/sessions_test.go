@@ -350,6 +350,15 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("spawned displayName = %q, want %q", spawned.Session.DisplayName, "my worker")
 	}
 
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","kind":"prime","harness":"codex"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST prime session = %d, want 201; body=%s", status, body)
+	}
+	mustJSON(t, body, &spawned)
+	if spawned.Session.ID != "ao-2" || spawned.Session.Kind != string(domain.KindPrime) {
+		t.Fatalf("spawned prime = %#v, want prime kind preserved", spawned.Session)
+	}
+
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-2", "")
 	if status != http.StatusOK {
 		t.Fatalf("GET session = %d, want 200; body=%s", status, body)

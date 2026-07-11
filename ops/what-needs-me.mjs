@@ -9,6 +9,7 @@
 import { fileURLToPath } from "node:url";
 
 import { attentionFromSessions } from "./attention-core.mjs";
+import { fetchMainCI } from "./ao-slack-notifier.mjs";
 
 // renderTerminal builds the plain-text "what needs me" view (pure/testable).
 export function renderTerminal(sessionsPayload, { now = new Date() } = {}) {
@@ -53,6 +54,11 @@ async function main() {
 	} catch (e) {
 		console.error(`what-needs-me: cannot reach the ao daemon on :${port} — ${e.message}`);
 		process.exit(2);
+	}
+	try {
+		payload = { ...payload, mainCI: await fetchMainCI() };
+	} catch (e) {
+		console.error(`what-needs-me: main CI status unavailable — ${e.message}`);
 	}
 	console.log(renderTerminal(payload));
 }

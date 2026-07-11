@@ -177,7 +177,7 @@ type OperatorAttentionItem struct {
 type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
-	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator,prime"`
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,codex-fugu,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
@@ -603,7 +603,7 @@ type NotificationResponse struct {
 	SessionID    string             `json:"sessionId"`
 	ProjectID    string             `json:"projectId"`
 	PRURL        string             `json:"prUrl"`
-	Type         string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,orchestrator_replaced,orchestrator_replacement_capped,duplicate_pr,worker_died_unfinished,worker_retry_exhausted,model_unreachable,model_recovered"`
+	Type         string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,orchestrator_replaced,orchestrator_replacement_capped,duplicate_pr,worker_died_unfinished,worker_retry_exhausted,model_unreachable,model_recovered,main_ci_red"`
 	Title        string             `json:"title"`
 	Body         string             `json:"body"`
 	Sensitive    bool               `json:"sensitive"`

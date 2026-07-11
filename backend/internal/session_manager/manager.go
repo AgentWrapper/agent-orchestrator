@@ -784,10 +784,14 @@ func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg
 }
 
 func roleConfigName(kind domain.SessionKind) string {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return "orchestrator"
+	case domain.KindPrime:
+		return "prime"
+	default:
+		return "worker"
 	}
-	return "worker"
 }
 
 // effectiveAgentConfig resolves the agent config for a spawn of the given
@@ -969,10 +973,18 @@ func formatBucketKey(key domain.BucketKey) string {
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return cfg.Orchestrator
+	case domain.KindPrime:
+		return cfg.Prime
+	default:
+		return cfg.Worker
 	}
-	return cfg.Worker
+}
+
+func isDaemonRole(kind domain.SessionKind) bool {
+	return kind == domain.KindOrchestrator || kind == domain.KindPrime
 }
 
 // sessionPrefix returns the display prefix for a project: the explicit
@@ -985,10 +997,10 @@ func sessionPrefix(project domain.ProjectRecord) string {
 }
 
 // branchSessionPrefix returns the prefix used by default branch naming.
-// Orchestrators use the stable project-derived prefix so changing the display
-// projectPrefix cannot rename their canonical branch.
+// Orchestrators and prime use stable project-derived prefixes so changing the
+// display projectPrefix cannot rename their canonical branches.
 func branchSessionPrefix(project domain.ProjectRecord, kind domain.SessionKind) string {
-	if kind == domain.KindOrchestrator {
+	if isDaemonRole(kind) {
 		return domain.DefaultProjectPrefix(project.ID)
 	}
 	return sessionPrefix(project)
@@ -1307,7 +1319,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	// Carry the resolved mode forward unchanged so a restored session keeps the
 	// workspace mode it was spawned with, never re-derived from current config.
 	persistedPrompt := meta.Prompt
-	if persistedPrompt == "" && rec.Kind == domain.KindOrchestrator {
+	if persistedPrompt == "" && isDaemonRole(rec.Kind) {
 		persistedPrompt = restorePrompt
 	}
 	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceMode: mode, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: meta.AgentSessionID, Prompt: persistedPrompt, Model: meta.Model, IntakePoolBypass: meta.IntakePoolBypass}
@@ -1430,8 +1442,8 @@ func (m *Manager) switchAgentArgv(ctx context.Context, id domain.SessionID, proj
 		launch.argv, launch.prompt, launch.delivery, err = restoreArgvDetailed(ctx, agent, id, projectID, workspacePath, resumeMeta, systemPrompt, cfg, kind)
 	} else {
 		prompt := meta.Prompt
-		if prompt == "" && kind == domain.KindOrchestrator {
-			prompt = orchestratorKickoffPrompt(projectID)
+		if prompt == "" && isDaemonRole(kind) {
+			prompt = roleKickoffPrompt(kind, projectID)
 		}
 		launch.argv, err = agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 			SessionID:     string(id),
@@ -1502,7 +1514,7 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 	// the same workspace, so dropping the mode here would let a later restore read
 	// the zero value as worktree and relocate an in-place session (a rug-pull).
 	persistedPrompt := meta.Prompt
-	if persistedPrompt == "" && rec.Kind == domain.KindOrchestrator {
+	if persistedPrompt == "" && isDaemonRole(rec.Kind) {
 		persistedPrompt = launch.prompt
 	}
 	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: meta.WorkspacePath, Branch: meta.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Prompt: persistedPrompt, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
@@ -1535,9 +1547,9 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	// Mirror the restore launch guard, but only for a FRESH launch: a resumed
 	// harness has a native session to continue, so it needs no saved prompt. A
 	// fresh terminated WORKER with no prompt has nothing to launch from and
-	// would blank-relaunch, which Restore deliberately refuses. Orchestrators
-	// get a daemon-owned kickoff prompt when no saved prompt exists.
-	if !resume && meta.Prompt == "" && rec.Kind != domain.KindOrchestrator {
+	// would blank-relaunch, which Restore deliberately refuses. Daemon role
+	// sessions get a daemon-owned kickoff prompt when no saved prompt exists.
+	if !resume && meta.Prompt == "" && !isDaemonRole(rec.Kind) {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotResumable)
 	}
 	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
@@ -1586,7 +1598,7 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 	// managed root can restore to a different path, and a stale one would break
 	// later terminal/workspace/cleanup operations.
 	persistedPrompt := meta.Prompt
-	if persistedPrompt == "" && rec.Kind == domain.KindOrchestrator {
+	if persistedPrompt == "" && isDaemonRole(rec.Kind) {
 		persistedPrompt = launch.prompt
 	}
 	switched := domain.SessionMetadata{RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, WorkspacePath: ws.Path, Branch: ws.Branch, WorkspaceMode: sessionWorkspaceMode(meta), AgentSessionID: resumeAgentSessionID, Prompt: persistedPrompt, Model: switchModel, IntakePoolBypass: meta.IntakePoolBypass, LaunchedHarnesses: launched, AgentSessionIDs: agentSessionIDs}
@@ -1781,8 +1793,8 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	ws := workspaceInfo(rec)
 	ref, err := m.workspace.StashUncommitted(ctx, ws)
 	if err != nil {
-		if rec.Kind == domain.KindOrchestrator && errors.Is(err, os.ErrNotExist) {
-			return m.reensureMissingOrchestrator(ctx, rec)
+		if isDaemonRole(rec.Kind) && errors.Is(err, os.ErrNotExist) {
+			return m.reensureMissingDaemonRole(ctx, rec)
 		}
 		// Could not capture work: do NOT write a restore marker or tear down the
 		// worktree (that would risk losing un-preserved work). Mark terminated so
@@ -1814,8 +1826,8 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	return nil
 }
 
-func (m *Manager) reensureMissingOrchestrator(ctx context.Context, rec domain.SessionRecord) error {
-	m.logger.Warn("reconcile: orchestrator worktree missing; re-ensuring instead of terminating permanently", "sessionID", rec.ID)
+func (m *Manager) reensureMissingDaemonRole(ctx context.Context, rec domain.SessionRecord) error {
+	m.logger.Warn("reconcile: daemon role worktree missing; re-ensuring instead of terminating permanently", "sessionID", rec.ID, "kind", rec.Kind)
 	row := domain.SessionWorktreeRecord{
 		SessionID:    rec.ID,
 		RepoName:     domain.RootWorkspaceRepoName,
@@ -1823,16 +1835,16 @@ func (m *Manager) reensureMissingOrchestrator(ctx context.Context, rec domain.Se
 		WorktreePath: rec.Metadata.WorkspacePath,
 	}
 	if err := m.store.UpsertSessionWorktree(ctx, row); err != nil {
-		return fmt.Errorf("reconcile %s: upsert missing-orchestrator marker: %w", rec.ID, err)
+		return fmt.Errorf("reconcile %s: upsert missing daemon role marker: %w", rec.ID, err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
-		return fmt.Errorf("reconcile %s: mark missing orchestrator terminated: %w", rec.ID, err)
+		return fmt.Errorf("reconcile %s: mark missing daemon role terminated: %w", rec.ID, err)
 	}
 	if _, err := m.Restore(ctx, rec.ID); err != nil {
-		return fmt.Errorf("reconcile %s: reensure missing orchestrator: %w", rec.ID, err)
+		return fmt.Errorf("reconcile %s: reensure missing daemon role: %w", rec.ID, err)
 	}
 	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-		m.logger.Error("reconcile: delete consumed missing-orchestrator marker failed", "sessionID", rec.ID, "error", err)
+		m.logger.Error("reconcile: delete consumed missing daemon role marker failed", "sessionID", rec.ID, "error", err)
 	}
 	return nil
 }
@@ -2420,8 +2432,8 @@ func (m *Manager) WakeIdle(ctx context.Context, id domain.SessionID, message str
 		m.logger.Info("wake suppressed", "sessionID", id, "outcome", sessionguard.SuppressedNotFound.String())
 		return false, nil
 	}
-	if rec.Kind != domain.KindOrchestrator {
-		m.logger.Info("wake suppressed", "sessionID", id, "outcome", "suppressed_not_orchestrator", "kind", rec.Kind)
+	if !isDaemonRole(rec.Kind) {
+		m.logger.Info("wake suppressed", "sessionID", id, "outcome", "suppressed_not_daemon_role", "kind", rec.Kind)
 		return false, nil
 	}
 	outcome, err := m.guard.WakeIdle(ctx, id, message)
@@ -2799,6 +2811,9 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix s
 	if kind == domain.KindOrchestrator {
 		return "ao/" + prefix + "-orchestrator"
 	}
+	if kind == domain.KindPrime {
+		return "ao/" + prefix + "-prime"
+	}
 	// A fresh, unique branch per worker session: gitworktree can't add a worktree
 	// on a branch already checked out elsewhere (e.g. main). Put the root work
 	// branch under a session namespace so sibling PR branches such as
@@ -2817,6 +2832,9 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	if cfg.Kind == domain.KindOrchestrator && strings.TrimSpace(cfg.Prompt) == "" {
 		return orchestratorKickoffPrompt(cfg.ProjectID)
 	}
+	if cfg.Kind == domain.KindPrime && strings.TrimSpace(cfg.Prompt) == "" {
+		return primeKickoffPrompt()
+	}
 	return cfg.Prompt
 }
 
@@ -2833,6 +2851,16 @@ func launchTitle(project domain.ProjectRecord, cfg ports.SpawnConfig) string {
 			name = string(cfg.ProjectID)
 		}
 		return orchestratorDisplayName(name, maxSessionDisplayNameRunes)
+	}
+	if cfg.Kind == domain.KindPrime {
+		name := normalizeDisplayName(project.DisplayName)
+		if name == "" {
+			name = normalizeDisplayName(project.ID)
+		}
+		if name == "" {
+			name = string(cfg.ProjectID)
+		}
+		return roleDisplayName(name, " Prime", maxSessionDisplayNameRunes)
 	}
 	if cfg.Kind == domain.KindWorker {
 		return workerDisplayName(project, cfg.IssueID, cfg.IssueTitle)
@@ -2897,7 +2925,10 @@ func slugifyTitle(title string) string {
 }
 
 func orchestratorDisplayName(projectName string, limit int) string {
-	const suffix = " Orchestrator"
+	return roleDisplayName(projectName, " Orchestrator", limit)
+}
+
+func roleDisplayName(projectName, suffix string, limit int) string {
 	projectName = normalizeDisplayName(projectName)
 	if projectName == "" {
 		return ""
@@ -2976,6 +3007,8 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	switch kind {
 	case domain.KindOrchestrator:
 		base = orchestratorPrompt(projectID)
+	case domain.KindPrime:
+		base = primePrompt()
 	case domain.KindWorker:
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
 		if err != nil {
@@ -3198,6 +3231,29 @@ Use workers for focused implementation tasks, track their progress, synthesize t
 
 func orchestratorKickoffPrompt(project domain.ProjectID) string {
 	return fmt.Sprintf("You are the project orchestrator for %s. Read your standing policy for this repo, then begin your supervision loop.", project)
+}
+
+func primePrompt() string {
+	return `## Prime orchestrator role
+
+You are the prime orchestrator for the AO fleet; the factory is your product. Every project, project orchestrator, worker pool, daemon loop, and ops service is part of the system you supervise.
+
+Your outputs are tickets, recommendations, and escalations: file tickets and escalations, not code changes. Do not implement, merge, or command workers directly as routine behavior; work through project orchestrators and the issue tracker.
+
+Use AO's live surfaces as ground truth, including project/session APIs, notifications, and ` + "`/api/v1/metrics`" + `. Judge fleet health from evidence: throughput, cost/usage, resource pressure, zombie counts, stuck sessions, repeated degradation, and recurring failure patterns.
+
+When a project needs attention, nudge its project orchestrator. When the factory needs to change, file an ao issue so the ao project orchestrator can dispatch normal SDLC work. Product-shaped observations become operator alerts, not product tickets.`
+}
+
+func primeKickoffPrompt() string {
+	return "Read your standing prime policy, inspect the current fleet state and metrics, then begin your fleet supervision loop."
+}
+
+func roleKickoffPrompt(kind domain.SessionKind, project domain.ProjectID) string {
+	if kind == domain.KindPrime {
+		return primeKickoffPrompt()
+	}
+	return orchestratorKickoffPrompt(project)
 }
 
 func workerOrchestratorPrompt(orchestratorID domain.SessionID) string {
@@ -3598,20 +3654,20 @@ func restoreArgvDetailed(ctx context.Context, agent ports.Agent, id domain.Sessi
 		return nil, "", restoreKickoffNone, fmt.Errorf("restore command: %w", err)
 	}
 	if ok {
-		if kind == domain.KindOrchestrator {
-			return cmd, orchestratorKickoffPrompt(projectID), restoreKickoffForceAfterStart, nil
+		if isDaemonRole(kind) {
+			return cmd, roleKickoffPrompt(kind, projectID), restoreKickoffForceAfterStart, nil
 		}
 		return cmd, "", restoreKickoffNone, nil
 	}
-	// Adapter cannot resume. A saved prompt is replayed fresh. An orchestrator is
-	// relaunched with a daemon-owned kickoff prompt. A promptless WORKER has no
-	// task and no session id to restore from: do not blank-relaunch it.
-	if meta.Prompt == "" && kind != domain.KindOrchestrator {
+	// Adapter cannot resume. A saved prompt is replayed fresh. Daemon role
+	// sessions are relaunched with daemon-owned kickoff prompts. A promptless
+	// worker has no task and no session id to restore from: do not blank-relaunch it.
+	if meta.Prompt == "" && !isDaemonRole(kind) {
 		return nil, "", restoreKickoffNone, ErrNotResumable
 	}
 	prompt := meta.Prompt
-	if prompt == "" && kind == domain.KindOrchestrator {
-		prompt = orchestratorKickoffPrompt(projectID)
+	if prompt == "" && isDaemonRole(kind) {
+		prompt = roleKickoffPrompt(kind, projectID)
 	}
 	launchCfg := ports.LaunchConfig{
 		SessionID:     string(id),

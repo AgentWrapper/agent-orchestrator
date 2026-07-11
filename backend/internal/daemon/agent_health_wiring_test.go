@@ -43,6 +43,7 @@ func TestConfiguredHarnessesUnionsCoreDefaultAndProjects(t *testing.T) {
 			"proj-a": {
 				Worker:       domain.RoleOverride{Harness: domain.HarnessCodex},
 				Orchestrator: domain.RoleOverride{Harness: domain.HarnessOpenCode},
+				Prime:        domain.RoleOverride{Harness: domain.HarnessAider},
 				WorkerMix: domain.WorkerMix{
 					{Harness: domain.HarnessGrok},
 					{Harness: domain.HarnessDroid},
@@ -63,7 +64,7 @@ func TestConfiguredHarnessesUnionsCoreDefaultAndProjects(t *testing.T) {
 		}
 	}
 	// Project-referenced harnesses present.
-	for _, want := range []string{"opencode", "grok", "droid", "amp"} {
+	for _, want := range []string{"opencode", "aider", "grok", "droid", "amp"} {
 		if !contains(got, want) {
 			t.Errorf("configured harness %q missing from %v", want, got)
 		}

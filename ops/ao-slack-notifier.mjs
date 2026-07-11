@@ -11,6 +11,7 @@
 //   AO_PORT (default 3001)
 //   AO_SLACK_NOTIFIER_STATE           -> persisted dedup cursor
 //   AO_SESSION_ATTENTION_POLL_MS      -> session attention poll period (0 disables)
+//   AO_MAIN_CI_POLL_MS                -> main-branch CI poll/cache period (default 60s)
 //   AO_AGENT_HEALTH_POLL_MS           -> agent-health poll period (0 disables)
 //   AO_AGENT_HEALTH_NOTIFIER_STATE    -> persisted per-harness health cursor
 //
@@ -85,6 +86,7 @@ const RECONNECT_MS = Number(process.env.AO_SLACK_NOTIFIER_RECONNECT_MS || 10_000
 const DEDUPE_COOLDOWN_MS = Number(process.env.AO_SLACK_NOTIFIER_DEDUPE_COOLDOWN_MS || 60 * 60 * 1000);
 const BOOTSTRAP_MODE = process.env.AO_SLACK_NOTIFIER_BOOTSTRAP_MODE || "attention_only";
 const SESSION_ATTENTION_POLL_MS = parsePollMs(process.env.AO_SESSION_ATTENTION_POLL_MS, 10_000);
+const MAIN_CI_POLL_MS = parsePollMs(process.env.AO_MAIN_CI_POLL_MS, 60_000);
 
 if (isMain() && !(TOKEN && (NOTIFY_CHANNEL || NEEDS_RESPONSE_CHANNEL)) && !WEBHOOK) {
 	console.error(
@@ -138,8 +140,9 @@ const INTERESTING = new Set([
 	"duplicate_pr",
 	"worker_died_unfinished",
 	"worker_retry_exhausted",
+	"main_ci_red",
 ]);
-const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal"]);
+const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal", "main_ci_red"]);
 const ICONS = {
 	needs_input: "🖐️",
 	ready_to_merge: "🟢",
@@ -151,6 +154,7 @@ const ICONS = {
 	duplicate_pr: "♊",
 	worker_died_unfinished: "🧯",
 	worker_retry_exhausted: "🚨",
+	main_ci_red: "🚨",
 };
 
 export function digestContentKey(records) {
@@ -167,6 +171,50 @@ export function parsePollMs(raw, fallback) {
 	if (!Number.isFinite(n) || n < 0) return fallback;
 	if (n === 0) return 0;
 	return Math.max(1_000, n);
+}
+
+export async function fetchMainCI({
+	repo = process.env.AO_MAIN_CI_REPO || process.env.POLYPOWERS_REPO || process.env.AO_PROJECT_REPO || "",
+	projectId = process.env.AO_MAIN_CI_PROJECT_ID || process.env.AO_PROJECT_ID || "ao",
+	ref = process.env.AO_MAIN_CI_REF || "main",
+	fetchImpl = globalThis.fetch,
+	token = process.env.AO_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "",
+} = {}) {
+	repo = String(repo || "").trim();
+	if (!repo) return [];
+	const headers = { accept: "application/vnd.github+json" };
+	if (token) headers.authorization = `Bearer ${token}`;
+	const res = await fetchImpl(
+		`https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`,
+		{
+			headers,
+		},
+	);
+	if (!res.ok) throw new Error(`main CI: HTTP ${res.status}`);
+	const payload = await res.json();
+	const runs = Array.isArray(payload.check_runs) ? payload.check_runs : [];
+	if (runs.length === 0) return [];
+	if (Number(payload.total_count || 0) > runs.length) {
+		throw new Error(`main CI: check runs truncated at ${runs.length}/${payload.total_count}`);
+	}
+	// The notifier pages only on hard-red conclusions. Deploy verification is
+	// stricter and blocks on action_required/pending states because mutation must
+	// fail closed when main is not known green.
+	const bad = new Set(["failure", "cancelled", "timed_out"]);
+	const failed = runs.filter(
+		(r) => String(r.status || "").toLowerCase() === "completed" && bad.has(String(r.conclusion || "").toLowerCase()),
+	);
+	if (failed.length === 0) return [];
+	const sha = String(failed[0]?.head_sha || runs[0]?.head_sha || ref);
+	return [
+		{
+			projectId,
+			status: "failing",
+			sha,
+			failedJobs: failed.map((r) => r.name || "unknown"),
+			url: failed[0]?.html_url || `https://github.com/${repo}/actions`,
+		},
+	];
 }
 
 function sleep(ms, signal) {
@@ -224,6 +272,7 @@ function isMentionableNotification(n) {
 		n.type === "orchestrator_replacement_capped" ||
 		n.type === "duplicate_pr" ||
 		n.type === "worker_retry_exhausted" ||
+		n.type === "main_ci_red" ||
 		(n.type === "ready_to_merge" && n.sensitive)
 	);
 }
@@ -232,6 +281,7 @@ function isNeedsResponseNotification(n) {
 	return (
 		n.type === "needs_input" ||
 		n.type === "orchestrator_replacement_capped" ||
+		n.type === "main_ci_red" ||
 		(n.type === "ready_to_merge" && n.sensitive)
 	);
 }
@@ -430,6 +480,8 @@ export class SlackNotificationNotifier {
 		pageLimit = 100,
 		sessionPollMs = SESSION_ATTENTION_POLL_MS,
 		dedupeCooldownMs = DEDUPE_COOLDOWN_MS,
+		mainCISource = null,
+		mainCIPollMs = MAIN_CI_POLL_MS,
 	} = {}) {
 		this.baseUrl = baseUrl.replace(/\/$/, "");
 		this.stateFile = stateFile;
@@ -449,6 +501,9 @@ export class SlackNotificationNotifier {
 		this.pageLimit = pageLimit;
 		this.sessionPollMs = parsePollMs(sessionPollMs, SESSION_ATTENTION_POLL_MS);
 		this.dedupeCooldownMs = Number.isFinite(dedupeCooldownMs) && dedupeCooldownMs > 0 ? dedupeCooldownMs : 0;
+		this.mainCISource = mainCISource;
+		this.mainCIPollMs = parsePollMs(mainCIPollMs, MAIN_CI_POLL_MS);
+		this.mainCICache = { checkedAt: Number.NEGATIVE_INFINITY, records: [] };
 		this.consecutiveErrors = 0;
 		this.consecutiveSessionPollErrors = 0;
 		this.streamUnhealthyPaged = false;
@@ -719,6 +774,18 @@ export class SlackNotificationNotifier {
 		}
 
 		const current = attentionFromSessions(payload);
+		if (this.mainCISource && this.mainCIPollMs > 0) {
+			try {
+				const now = this.clock().getTime();
+				if (now - this.mainCICache.checkedAt >= this.mainCIPollMs) {
+					this.mainCICache = { checkedAt: now, records: await this.mainCISource() };
+				}
+				const mainCI = this.mainCICache.records;
+				current.unshift(...attentionFromSessions({ mainCI }));
+			} catch (e) {
+				this.logger.error?.("ao-slack-notifier: main CI poll failed:", e.message);
+			}
+		}
 		const hadAttentionDigest = (this.state.lastDigestKey ?? "") !== "";
 		if (current.length === 0 && (this.state.attentionTracker.pending().length > 0 || hadAttentionDigest)) {
 			this.emptySessionPolls += 1;
@@ -849,7 +916,11 @@ export class SlackNotificationNotifier {
 }
 
 if (isMain()) {
-	const notifier = new SlackNotificationNotifier();
+	const mainCIRepo = process.env.AO_MAIN_CI_REPO || process.env.POLYPOWERS_REPO || process.env.AO_PROJECT_REPO || "";
+	const notifier = new SlackNotificationNotifier({
+		mainCISource: mainCIRepo ? () => fetchMainCI({ repo: mainCIRepo }) : null,
+		mainCIPollMs: MAIN_CI_POLL_MS,
+	});
 	const controller = new AbortController();
 	process.once("SIGINT", () => controller.abort());
 	process.once("SIGTERM", () => controller.abort());

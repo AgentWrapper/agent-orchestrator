@@ -1120,7 +1120,7 @@ export interface components {
             target: components["schemas"]["NotificationTarget"];
             title: string;
             /** @enum {string} */
-            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "orchestrator_replaced" | "orchestrator_replacement_capped" | "duplicate_pr" | "worker_died_unfinished" | "worker_retry_exhausted" | "model_unreachable" | "model_recovered";
+            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "orchestrator_replaced" | "orchestrator_replacement_capped" | "duplicate_pr" | "worker_died_unfinished" | "worker_retry_exhausted" | "model_unreachable" | "model_recovered" | "main_ci_red";
         };
         NotificationTarget: {
             /** @enum {string} */
@@ -1189,6 +1189,7 @@ export interface components {
             };
             orchestrator?: components["schemas"]["RoleOverride"];
             postCreate?: string[];
+            prime?: components["schemas"]["RoleOverride"];
             projectPrefix?: string;
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
@@ -1443,7 +1444,7 @@ export interface components {
             harness?: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             issueId?: string;
             /** @enum {string} */
-            kind?: "worker" | "orchestrator";
+            kind?: "worker" | "orchestrator" | "prime";
             /** @description Model override for this session only. */
             model?: string;
             projectId: string;

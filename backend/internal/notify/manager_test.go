@@ -95,6 +95,46 @@ func TestManagerNotifyAcceptsOrchestratorReplacementWithoutPR(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyPrimeReplacementUsesPrimeBody(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationOrchestratorReplaced,
+		SessionID:          "ao-prime",
+		ProjectID:          "ao",
+		SessionKind:        domain.KindPrime,
+		SessionDisplayName: "ao Prime",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if got := st.rows[0]; got.Body != "AO replaced an unresponsive prime orchestrator." {
+		t.Fatalf("body = %q, want prime replacement copy", got.Body)
+	}
+}
+
+func TestManagerNotifyPrimeReplacementCappedUsesPrimeBody(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationOrchestratorReplacementCapped,
+		SessionID:          "ao-prime",
+		ProjectID:          "ao",
+		SessionKind:        domain.KindPrime,
+		SessionDisplayName: "ao Prime",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if got := st.rows[0]; got.Body != "AO stopped replacing the prime orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline." {
+		t.Fatalf("body = %q, want prime replacement cap copy", got.Body)
+	}
+}
+
 func TestManagerNotifyWorkerDiedUnfinished(t *testing.T) {
 	st := &fakeStore{}
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
@@ -162,6 +202,34 @@ func TestManagerNotifyWorkerRetryExhausted(t *testing.T) {
 	}
 	if got.Body != "demo #12 fix-login terminated after 3 attempts for issue #12; retry cap is 2, so ao is leaving it for a human." {
 		t.Fatalf("body = %q", got.Body)
+	}
+}
+
+func TestManagerNotifyMainCIRed(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_main_red" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:         domain.NotificationMainCIRed,
+		SessionID:    "main",
+		ProjectID:    "ao",
+		Repo:         "polymath-ventures/agent-orchestrator",
+		HeadSHA:      "fee462ed3aabb",
+		ChangedPaths: []string{"go", "cli-e2e"},
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := st.rows[0]
+	if got.Title != "main is red at fee462ed: go, cli-e2e" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	if got.Body != "Main-branch CI failed for polymath-ventures/agent-orchestrator at fee462ed. Merge is frozen until main is green; only fix PRs should merge." {
+		t.Fatalf("body = %q", got.Body)
+	}
+	if got.Type != domain.NotificationMainCIRed || got.HeadSHA != "fee462ed3aabb" {
+		t.Fatalf("record = %+v", got)
 	}
 }
 

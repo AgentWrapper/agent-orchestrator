@@ -824,6 +824,93 @@ func TestSpawnOrchestratorReplacementVerificationFailureReturnsSessionAndEmitsWa
 	}
 }
 
+func TestSpawnPrimeNoCleanReturnsNewestActivePrimeGlobally(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["ao-prime-old"] = domain.SessionRecord{
+		ID:        "ao-prime-old",
+		ProjectID: "ao",
+		Kind:      domain.KindPrime,
+		CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	st.sessions["mer-prime-new"] = domain.SessionRecord{
+		ID:        "mer-prime-new",
+		ProjectID: "mer",
+		Kind:      domain.KindPrime,
+		CreatedAt: time.Unix(200, 0).UTC(),
+	}
+	st.sessions["ao-prime-dead"] = domain.SessionRecord{
+		ID:           "ao-prime-dead",
+		ProjectID:    "ao",
+		Kind:         domain.KindPrime,
+		IsTerminated: true,
+		CreatedAt:    time.Unix(300, 0).UTC(),
+	}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnPrime(context.Background(), "ao", false)
+	if err != nil {
+		t.Fatalf("SpawnPrime: %v", err)
+	}
+	if got.ID != "mer-prime-new" {
+		t.Fatalf("returned id = %q, want newest active global prime", got.ID)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be called when an active prime already exists")
+	}
+}
+
+func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}
+	st.sessions["mer-prime"] = domain.SessionRecord{ID: "mer-prime", ProjectID: "mer", Kind: domain.KindPrime}
+	st.sessions["ao-worker"] = domain.SessionRecord{ID: "ao-worker", ProjectID: "ao", Kind: domain.KindWorker}
+	st.sessions["dead-prime"] = domain.SessionRecord{ID: "dead-prime", ProjectID: "ao", Kind: domain.KindPrime, IsTerminated: true}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnPrime(context.Background(), "ao", true)
+	if err != nil {
+		t.Fatalf("SpawnPrime: %v", err)
+	}
+	if got.Kind != domain.KindPrime || got.ProjectID != "ao" {
+		t.Fatalf("spawned prime = %+v, want prime hosted under ao", got.SessionRecord)
+	}
+	if fc.gotCfg.Kind != domain.KindPrime || fc.gotCfg.ProjectID != "ao" {
+		t.Fatalf("spawn config = %+v, want prime under ao", fc.gotCfg)
+	}
+	if len(fc.retired) != 2 {
+		t.Fatalf("retired = %v, want two active primes", fc.retired)
+	}
+	if len(fc.sent) != 2 {
+		t.Fatalf("retire notices = %v, want two active primes notified", fc.sent)
+	}
+	if !fc.spawned || fc.killsAtSpawn != 2 {
+		t.Fatalf("spawn must run after both retirements: spawned=%v retirementsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+	}
+}
+
+func TestSpawnPrimeUnknownHostProjectReturns404(t *testing.T) {
+	st := newFakeStore()
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnPrime(context.Background(), "ghost", false)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
+		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be invoked for an unknown prime host project")
+	}
+}
+
 func replacementVerificationWarning(events []ports.TelemetryEvent) (ports.TelemetryEvent, bool) {
 	for _, ev := range events {
 		if ev.Name == "ao.orchestrator.replacement_verification_failed" && ev.Level == ports.TelemetryLevelWarn {
@@ -908,6 +995,22 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRRejectsDaemonRoleSessions(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{}})
+
+	for _, id := range []domain.SessionID{"mer-orch", "ao-prime"} {
+		t.Run(string(id), func(t *testing.T) {
+			_, err := svc.ClaimPR(context.Background(), id, "7", ClaimPROptions{})
+			if !errors.Is(err, ErrSessionNotClaimable) {
+				t.Fatalf("err = %v, want ErrSessionNotClaimable", err)
+			}
+		})
 	}
 }
 

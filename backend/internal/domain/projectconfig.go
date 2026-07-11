@@ -72,9 +72,11 @@ type ProjectConfig struct {
 
 	// AgentConfig is the default agent config for the project.
 	AgentConfig AgentConfig `json:"agentConfig,omitempty"`
-	// Worker and Orchestrator are role-specific harness/agent-config overrides.
+	// Worker, Orchestrator, and Prime are role-specific harness/agent-config
+	// overrides.
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
+	Prime        RoleOverride `json:"prime,omitempty"`
 
 	// WorkerMix, when non-empty, distributes worker spawns across weighted
 	// agent/model buckets instead of always using Worker.Harness. It drives any
@@ -137,6 +139,8 @@ func (c ProjectConfig) ResolveWorkspaceMode(kind SessionKind) WorkspaceMode {
 		ro = c.Worker
 	case KindOrchestrator:
 		ro = c.Orchestrator
+	case KindPrime:
+		ro = c.Prime
 	}
 	if ro.Workspace.IsKnown() {
 		return ro.Workspace
@@ -198,6 +202,9 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	if c.Orchestrator.WakeInterval == "" {
 		c.Orchestrator.WakeInterval = defaultOrchestratorWakeIntervalConfig
 	}
+	if c.Prime.WakeInterval == "" {
+		c.Prime.WakeInterval = defaultOrchestratorWakeIntervalConfig
+	}
 	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	return c
 }
@@ -242,7 +249,7 @@ func (c ProjectConfig) Validate() error {
 	if c.Workspace != "" && !c.Workspace.IsKnown() {
 		return fmt.Errorf("workspace: unknown mode %q", c.Workspace)
 	}
-	for role, ro := range map[string]RoleOverride{"worker": c.Worker, "orchestrator": c.Orchestrator} {
+	for role, ro := range map[string]RoleOverride{"worker": c.Worker, "orchestrator": c.Orchestrator, "prime": c.Prime} {
 		if ro.Harness != "" && !ro.Harness.IsKnown() {
 			return fmt.Errorf("%s.agent: unknown harness %q", role, ro.Harness)
 		}
@@ -261,6 +268,9 @@ func (c ProjectConfig) Validate() error {
 	}
 	if _, err := c.Orchestrator.WakeIntervalDuration(); err != nil {
 		return fmt.Errorf("orchestrator.wakeInterval: %w", err)
+	}
+	if _, err := c.Prime.WakeIntervalDuration(); err != nil {
+		return fmt.Errorf("prime.wakeInterval: %w", err)
 	}
 	for _, s := range c.Symlinks {
 		if err := validateRepoRelative(s); err != nil {

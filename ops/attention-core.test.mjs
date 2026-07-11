@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import {
 	AttentionTracker,
+	attentionFromMainCI,
+	attentionFromMainCIRecords,
 	normalizeEvent,
 	renderAlert,
 	renderDigest,
@@ -84,6 +86,27 @@ describe("normalizeEvent", () => {
 			notification: { sessionId: "agent-4", projectId: "ao", title: "merged" },
 		});
 		assert.equal(rec.attention, false);
+	});
+
+	it("normalizes a red main notification as needs-response attention", () => {
+		const rec = normalizeEvent({
+			type: "main_ci_red",
+			notification: {
+				projectId: "ao",
+				title: "main is red at fee462ed: go, cli-e2e",
+				sha: "fee462ed",
+				failedJobs: ["go", "cli-e2e"],
+				url: "https://github.example/actions/runs/1",
+			},
+		});
+		assert.deepEqual(rec, {
+			kind: "main_ci_red",
+			sessionId: "main",
+			projectId: "ao",
+			title: "main is red at fee462ed: go, cli-e2e",
+			url: "https://github.example/actions/runs/1",
+			attention: true,
+		});
 	});
 
 	it("returns null for uninteresting events", () => {
@@ -297,6 +320,31 @@ describe("attentionFromSession — poll-based current state (acceptance #1, #3)"
 	it("accepts a bare array payload too", () => {
 		const recs = attentionFromSessions([{ id: "a", projectId: "ao", activity: { state: "waiting_input" } }]);
 		assert.equal(recs.length, 1);
+	});
+});
+
+describe("attentionFromMainCI — project-level red-main inventory", () => {
+	it("maps a failing main branch into a needs-response record", () => {
+		const rec = attentionFromMainCI({
+			projectId: "ao",
+			sha: "fee462ed3aabb",
+			status: "failing",
+			failedJobs: ["go", "cli-e2e"],
+			url: "https://github.example/actions/runs/1",
+		});
+		assert.deepEqual(rec, {
+			kind: "main_ci_red",
+			sessionId: "main",
+			projectId: "ao",
+			title: "main is red at fee462ed: go, cli-e2e",
+			url: "https://github.example/actions/runs/1",
+			attention: true,
+		});
+	});
+
+	it("ignores non-failing main branch records", () => {
+		assert.equal(attentionFromMainCI({ projectId: "ao", status: "passing", sha: "abc" }), null);
+		assert.deepEqual(attentionFromMainCIRecords([{ status: "pending" }, { status: "passing" }]), []);
 	});
 });
 

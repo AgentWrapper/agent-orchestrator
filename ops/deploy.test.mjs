@@ -278,6 +278,88 @@ describe("ao self-deploy script", () => {
 		assert.equal(web.webHits(), 0, "an unconfigured web URL must not be probed at all");
 		await assert.doesNotReject(access(fixture.stateFile));
 	});
+
+	it("refuses to deploy a commit whose main CI failed", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				check_runs: [
+					{ name: "go", status: "completed", conclusion: "failure" },
+					{ name: "cli-e2e", status: "completed", conclusion: "timed_out" },
+				],
+			}),
+		);
+		const web = await startFakeWeb();
+
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "red main CI must fail the deploy");
+		assert.match(result.stderr, /Refusing to deploy .* main CI is failure: go, cli-e2e/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "deploy must stop before service restarts");
+		await assert.rejects(access(fixture.stateFile), "failed deploy must not record the deployed ref");
+	});
+
+	it("refuses to deploy when GitHub returns no main CI check runs yet", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(fixture.ghStatusFile, JSON.stringify({ check_runs: [] }));
+		const web = await startFakeWeb();
+
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "empty check-runs must fail closed");
+		assert.match(result.stderr, /main CI is not green \(unknown: no check runs\)/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "deploy must stop before service restarts");
+	});
+
+	it("treats action_required main CI as pending instead of failed", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({ check_runs: [{ name: "manual gate", status: "completed", conclusion: "action_required" }] }),
+		);
+		const web = await startFakeWeb();
+
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "manual action should still block deploy until green");
+		assert.match(result.stderr, /main CI is not green \(pending: manual gate\)/);
+	});
+
+	it("refuses to deploy when GitHub truncates main CI check runs", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(
+			fixture.ghStatusFile,
+			JSON.stringify({
+				total_count: 101,
+				check_runs: Array.from({ length: 100 }, (_, i) => ({
+					name: `job-${i}`,
+					status: "completed",
+					conclusion: "success",
+				})),
+			}),
+		);
+		const web = await startFakeWeb();
+
+		const result = await runDeployLive(fixture, web, {
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
+		});
+
+		assert.notEqual(result.code, 0, "truncated check-runs must fail closed");
+		assert.match(result.stderr, /main CI is not green \(unknown: check runs truncated at 100\/101\)/);
+	});
 });
 
 async function makeGitFixture() {
@@ -307,11 +389,13 @@ async function makeGitFixture() {
 
 	const stubBin = path.join(home, "stub-bin");
 	const systemctlLog = path.join(home, "systemctl.log");
+	const ghStatusFile = path.join(home, "gh-status.json");
 	const stateDir = path.join(home, "deploy-state");
 	const stateFile = path.join(stateDir, "agent-orchestrator.last-deployed");
+	await writeFile(ghStatusFile, JSON.stringify({ state: "success", failedJobs: [] }));
 	await makeStubBin(stubBin);
 
-	return { dir, home, stubBin, systemctlLog, stateDir, stateFile };
+	return { dir, home, stubBin, systemctlLog, ghStatusFile, stateDir, stateFile };
 }
 
 // Stubs for the host-mutating commands deploy.sh shells out to. `curl` is
@@ -341,6 +425,13 @@ while (( $# > 0 )); do
   esac
 done
 if [[ -n "\${out}" ]]; then printf 'rebuilt ao\\n' > "\${out}"; chmod +x "\${out}"; fi
+`,
+		gh: `#!/usr/bin/env bash
+if [[ "$1" = "api" ]]; then
+  cat "\${GH_STATUS_FILE}"
+  exit 0
+fi
+exit 1
 `,
 	};
 
@@ -467,9 +558,11 @@ async function runDeployLive(fixture, web, env = {}) {
 			PATH: `${fixture.stubBin}${path.delimiter}${process.env.PATH}`,
 			HOME: fixture.home,
 			SYSTEMCTL_LOG: fixture.systemctlLog,
+			GH_STATUS_FILE: fixture.ghStatusFile,
 			AO_PORT: String(web.apiPort),
 			AO_DEPLOY_DRY_RUN: "0",
 			AO_DEPLOY_REPO_ROOT: fixture.dir,
+			AO_DEPLOY_GITHUB_REPO: "polymath-ventures/agent-orchestrator",
 			AO_DEPLOY_STATE_DIR: fixture.stateDir,
 			AO_DEPLOY_STATE_FILE: fixture.stateFile,
 			AO_DEPLOY_WAIT_SECONDS: "15",

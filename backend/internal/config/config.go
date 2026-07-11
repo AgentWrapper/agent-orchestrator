@@ -141,6 +141,9 @@ type Config struct {
 	// ModelRevalidationInterval is the period of the configured model-pin
 	// reachability monitor. Zero disables scheduled model probing.
 	ModelRevalidationInterval time.Duration
+	// PrimeProjectID is the project that hosts the optional global prime
+	// orchestrator. Empty disables the prime supervisor.
+	PrimeProjectID string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -170,6 +173,7 @@ func (c Config) Addr() string {
 //	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_AGENT_HEALTH_INTERVAL agent-health probe period (Go duration >= 0, 0 disables, default 5m)
 //	AO_MODEL_REVALIDATION_INTERVAL model-pin probe period (Go duration >= 0, 0 disables, default 24h)
+//	AO_PRIME_PROJECT_ID optional project id that hosts the global prime orchestrator (default disabled)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -251,6 +255,10 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.ModelRevalidationInterval = d
+	}
+
+	if raw := strings.TrimSpace(os.Getenv("AO_PRIME_PROJECT_ID")); raw != "" {
+		cfg.PrimeProjectID = raw
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {

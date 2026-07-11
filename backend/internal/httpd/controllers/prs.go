@@ -67,6 +67,8 @@ func writePRError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PR_NOT_FOUND", "Unknown PR", nil)
 	case errors.Is(err, prsvc.ErrPRNotMergeable):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "PR_NOT_MERGEABLE", "PR is not mergeable", nil)
+	case errors.Is(err, prsvc.ErrMainCIRed):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "MAIN_CI_RED", "Main branch CI is red; merge is frozen except for fix PRs", nil)
 	case errors.Is(err, prsvc.ErrPRPreconditions):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PRECONDITIONS_UNMET", "PR merge preconditions are not met", nil)
 	case errors.Is(err, prsvc.ErrNothingToResolve):

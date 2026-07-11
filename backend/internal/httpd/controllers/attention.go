@@ -68,6 +68,11 @@ func deriveOperatorAttention(ctx context.Context, svc AttentionSessionService) (
 				items = appendAttentionItem(items, seen, decisionAttentionItem(sess, decision), true)
 			}
 		}
+		if !sess.IsTerminated && sess.Status == domain.StatusNoSignal {
+			if item, ok := noSignalAttentionItem(sess); ok {
+				items = appendAttentionItem(items, seen, item, true)
+			}
+		}
 		if !sessionHasOpenPR(sess) {
 			continue
 		}
@@ -129,6 +134,33 @@ func attentionItemSupersedes(next OperatorAttentionItem, nextLive bool, current 
 		return nextLive
 	}
 	return next.UpdatedAt.After(current.UpdatedAt)
+}
+
+func noSignalAttentionItem(sess domain.Session) (OperatorAttentionItem, bool) {
+	var kind, reason, action string
+	switch sess.Kind {
+	case domain.KindPrime:
+		kind = "prime_dead"
+		reason = "Prime orchestrator has no live process signal."
+		action = "Inspect the prime supervisor and restart or replace it if needed."
+	case domain.KindOrchestrator:
+		kind = "orchestrator_dead"
+		reason = "Project orchestrator has no live process signal."
+		action = "Inspect the project orchestrator and restart or replace it if needed."
+	default:
+		return OperatorAttentionItem{}, false
+	}
+	return OperatorAttentionItem{
+		ID:           "session:" + string(sess.ID) + ":no_signal",
+		Kind:         kind,
+		ProjectID:    sess.ProjectID,
+		SessionID:    sess.ID,
+		SessionTitle: sessionAttentionTitle(sess),
+		Reason:       reason,
+		Action:       action,
+		DeepLink:     sessionDeepLink(sess),
+		UpdatedAt:    sess.UpdatedAt,
+	}, true
 }
 
 func decisionAttentionItem(sess domain.Session, decision domain.PendingDecision) OperatorAttentionItem {

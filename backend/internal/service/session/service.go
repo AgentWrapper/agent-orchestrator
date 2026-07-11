@@ -18,6 +18,7 @@ import (
 )
 
 var errOrchestratorReplacementVerification = errors.New("orchestrator replacement verification failed")
+var errPrimeReplacementVerification = errors.New("prime replacement verification failed")
 
 // Store is the read-only persistence surface needed to assemble controller-facing session read models.
 type Store interface {
@@ -116,6 +117,7 @@ type Service struct {
 	telemetry           ports.EventSink
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
+	primeLock           sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -349,7 +351,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return domain.Session{}, err
 		}
 		for _, orch := range existing {
-			_ = s.sendRetireNotice(ctx, orch.ID)
+			_ = s.sendRetireNotice(ctx, orch.ID, orchestratorRetireNotice)
 			if err := s.manager.RetireForReplacement(ctx, orch.ID); err != nil {
 				return domain.Session{}, toAPIError(err)
 			}
@@ -376,11 +378,71 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 
 const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over on the canonical branch."
 
-func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) error {
-	if err := s.manager.Send(ctx, id, orchestratorRetireNotice); err != nil {
+const primeRetireNotice = "AO is replacing the prime orchestrator. Stop supervising new fleet work now; a fresh prime will take over on the canonical branch."
+
+func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID, notice string) error {
+	if err := s.manager.Send(ctx, id, notice); err != nil {
 		return fmt.Errorf("send retire notice to %s: %w", id, err)
 	}
 	return nil
+}
+
+// SpawnPrime spawns the optional global prime orchestrator under its configured
+// host project. Unlike project orchestrators, prime is a fleet-wide singleton:
+// clean=false returns any active prime in the store, and clean=true retires all
+// active primes before creating the replacement under projectID.
+func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	s.primeLock.Lock()
+	defer s.primeLock.Unlock()
+
+	project, err := s.requireProject(ctx, projectID)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	existing, err := s.activePrimeSessions(ctx)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if clean {
+		for _, prime := range existing {
+			_ = s.sendRetireNotice(ctx, prime.ID, primeRetireNotice)
+			if err := s.manager.RetireForReplacement(ctx, prime.ID); err != nil {
+				return domain.Session{}, toAPIError(err)
+			}
+		}
+	} else if len(existing) > 0 {
+		return newestSession(existing), nil
+	}
+	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime})
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if err := verifyPrimeReplacement(project, sess); err != nil {
+		s.emitOrchestratorReplacementVerificationFailed(project, sess, err)
+	}
+	return sess, nil
+}
+
+func (s *Service) activePrimeSessions(ctx context.Context) ([]domain.Session, error) {
+	if s.store == nil {
+		return nil, nil
+	}
+	records, err := s.store.ListAllSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Session, 0, 1)
+	for _, rec := range records {
+		if rec.Kind != domain.KindPrime || rec.IsTerminated {
+			continue
+		}
+		sess, err := s.toSession(ctx, rec)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, nil
 }
 
 func (s *Service) emitOrchestratorReplacementVerificationFailed(project domain.ProjectRecord, sess domain.Session, err error) {
@@ -429,6 +491,23 @@ func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Ses
 	expectedBranch := "ao/" + domain.DefaultProjectPrefix(project.ID) + "-orchestrator"
 	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
 		return fmt.Errorf("%w: new session %s uses branch %q, want %q", errOrchestratorReplacementVerification, sess.ID, sess.Metadata.Branch, expectedBranch)
+	}
+	return nil
+}
+
+func verifyPrimeReplacement(project domain.ProjectRecord, sess domain.Session) error {
+	if sess.IsTerminated {
+		return fmt.Errorf("%w: new session %s is terminated", errPrimeReplacementVerification, sess.ID)
+	}
+	if sess.Kind != domain.KindPrime {
+		return fmt.Errorf("%w: new session %s has kind %q", errPrimeReplacementVerification, sess.ID, sess.Kind)
+	}
+	if expected := project.Config.Prime.Harness; expected != "" && sess.Harness != expected {
+		return fmt.Errorf("%w: new session %s uses harness %q, want %q", errPrimeReplacementVerification, sess.ID, sess.Harness, expected)
+	}
+	expectedBranch := "ao/" + domain.DefaultProjectPrefix(project.ID) + "-prime"
+	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
+		return fmt.Errorf("%w: new session %s uses branch %q, want %q", errPrimeReplacementVerification, sess.ID, sess.Metadata.Branch, expectedBranch)
 	}
 	return nil
 }
@@ -748,6 +827,10 @@ func toAPIError(err error) error {
 	case errors.Is(err, errOrchestratorReplacementVerification):
 		return apierr.Conflict("ORCHESTRATOR_REPLACEMENT_VERIFICATION_FAILED",
 			"Orchestrator replacement spawned but did not match verification expectations. Inspect the spawned session and replace it manually if needed. Verification detail: "+err.Error(),
+			map[string]any{"verificationDetail": err.Error()})
+	case errors.Is(err, errPrimeReplacementVerification):
+		return apierr.Conflict("PRIME_REPLACEMENT_VERIFICATION_FAILED",
+			"Prime replacement spawned but did not match verification expectations. Inspect the spawned session and replace it manually if needed. Verification detail: "+err.Error(),
 			map[string]any{"verificationDetail": err.Error()})
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo. Register it with `ao project add`", nil)
