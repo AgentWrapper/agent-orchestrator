@@ -18,6 +18,8 @@
 //   ready_to_merge -> plain post, or @mention when server-marked sensitive
 //   pr_merged      -> plain post
 //   pr_closed_unmerged -> plain post
+//   orchestrator_replaced -> plain post
+//   orchestrator_replacement_capped -> @mention
 //
 // It also polls GET /api/v1/sessions and @mentions on blocked, no_signal,
 // orchestrator_dead, and daemon_unhealthy conditions. A changed "what needs
@@ -119,7 +121,14 @@ async function updatePost(ts, text) {
 	return true;
 }
 
-const INTERESTING = new Set(["needs_input", "ready_to_merge", "pr_merged", "pr_closed_unmerged"]);
+const INTERESTING = new Set([
+	"needs_input",
+	"ready_to_merge",
+	"pr_merged",
+	"pr_closed_unmerged",
+	"orchestrator_replaced",
+	"orchestrator_replacement_capped",
+]);
 const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal"]);
 const ICONS = {
 	needs_input: "🖐️",
@@ -127,6 +136,8 @@ const ICONS = {
 	parked_sensitive_merge: "🛑",
 	pr_merged: "🚀",
 	pr_closed_unmerged: "🗑️",
+	orchestrator_replaced: "🔁",
+	orchestrator_replacement_capped: "🚨",
 };
 
 export function digestContentKey(records) {
@@ -193,7 +204,11 @@ function notificationLabel(n) {
 }
 
 function isMentionableNotification(n) {
-	return n.type === "needs_input" || (n.type === "ready_to_merge" && n.sensitive);
+	return (
+		n.type === "needs_input" ||
+		n.type === "orchestrator_replacement_capped" ||
+		(n.type === "ready_to_merge" && n.sensitive)
+	);
 }
 
 export function notificationKey(raw) {

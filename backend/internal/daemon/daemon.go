@@ -200,7 +200,7 @@ func Run() error {
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
-	orchestratorSupervisorDone := startOrchestratorSupervisor(ctx, projectSvc, sessionSvc, orchestratorSupervisorInterval, log)
+	orchestratorSupervisorDone := startOrchestratorSupervisor(ctx, projectSvc, sessionSvc, notificationWriter, orchestratorSupervisorInterval, log)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

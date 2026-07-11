@@ -570,7 +570,7 @@ type NotificationResponse struct {
 	SessionID    string             `json:"sessionId"`
 	ProjectID    string             `json:"projectId"`
 	PRURL        string             `json:"prUrl"`
-	Type         string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
+	Type         string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,orchestrator_replaced,orchestrator_replacement_capped"`
 	Title        string             `json:"title"`
 	Body         string             `json:"body"`
 	Sensitive    bool               `json:"sensitive"`

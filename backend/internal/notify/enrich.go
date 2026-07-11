@@ -22,7 +22,7 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 	if !intent.Type.Valid() {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationType
 	}
-	if intent.Type != domain.NotificationNeedsInput && rec.PRURL == "" {
+	if notificationRequiresPR(intent.Type) && rec.PRURL == "" {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationRecord
 	}
 	rec.Title = titleForIntent(intent)
@@ -31,6 +31,15 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 		return domain.NotificationRecord{}, err
 	}
 	return rec, nil
+}
+
+func notificationRequiresPR(t domain.NotificationType) bool {
+	switch t {
+	case domain.NotificationNeedsInput, domain.NotificationOrchestratorReplaced, domain.NotificationOrchestratorReplacementCapped:
+		return false
+	default:
+		return true
+	}
 }
 
 func titleForIntent(intent Intent) string {
@@ -43,6 +52,10 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s was merged", prLabel(intent))
 	case domain.NotificationPRClosedUnmerged:
 		return fmt.Sprintf("%s was closed without merging", prLabel(intent))
+	case domain.NotificationOrchestratorReplaced:
+		return fmt.Sprintf("%s was replaced", sessionLabel(intent))
+	case domain.NotificationOrchestratorReplacementCapped:
+		return fmt.Sprintf("%s replacement paused", sessionLabel(intent))
 	default:
 		return "Notification"
 	}
@@ -67,6 +80,10 @@ func bodyForIntent(intent Intent) string {
 			return fmt.Sprintf("%s was closed without merging.", title)
 		}
 		return "The pull request was closed without merging."
+	case domain.NotificationOrchestratorReplaced:
+		return "AO replaced an unresponsive project orchestrator."
+	case domain.NotificationOrchestratorReplacementCapped:
+		return "AO stopped replacing this project orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline."
 	default:
 		return ""
 	}

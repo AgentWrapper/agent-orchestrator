@@ -93,6 +93,34 @@ describe("ao Slack notifier notification formatting", () => {
 		assert.equal(msg, "🚀 *pr_merged* [ao] agent-4: Merged after parked review");
 	});
 
+	it("posts orchestrator replacement notifications without mentioning", () => {
+		const msg = describeSlackMessage(
+			{
+				type: "orchestrator_replaced",
+				sessionId: "mer-orch-2",
+				projectId: "mer",
+				title: "mer orchestrator was replaced",
+			},
+			"U123",
+		);
+
+		assert.equal(msg, "🔁 *orchestrator_replaced* [mer] mer-orch-2: mer orchestrator was replaced");
+	});
+
+	it("mentions capped orchestrator replacement notifications", () => {
+		const msg = describeSlackMessage(
+			{
+				type: "orchestrator_replacement_capped",
+				sessionId: "mer-orch",
+				projectId: "mer",
+				title: "mer-orch replacement paused",
+			},
+			"U123",
+		);
+
+		assert.equal(msg, "<@U123> 🚨 *orchestrator_replacement_capped* [mer] mer-orch: mer-orch replacement paused");
+	});
+
 	it("accepts the SSE envelope shape from older tests", () => {
 		const msg = describeSlackMessage(
 			{

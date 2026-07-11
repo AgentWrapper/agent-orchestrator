@@ -7,12 +7,16 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
 const (
-	orchestratorSupervisorInterval     = 30 * time.Second
-	orchestratorMaxUnansweredWakeSends = 3
+	orchestratorSupervisorInterval            = 30 * time.Second
+	orchestratorMaxUnansweredWakeSends        = 3
+	orchestratorUnhealthyReplacementThreshold = 5 * time.Minute
+	orchestratorReplacementWindow             = time.Hour
+	orchestratorMaxReplacementsPerWindow      = 3
 )
 
 type orchestratorProjectLister interface {
@@ -25,7 +29,8 @@ type orchestratorEnsurer interface {
 }
 
 type orchestratorWakeTracker struct {
-	projects map[domain.ProjectID]orchestratorWakeState
+	projects     map[domain.ProjectID]orchestratorWakeState
+	replacements map[domain.ProjectID]orchestratorReplacementState
 }
 
 type orchestratorWakeState struct {
@@ -35,11 +40,19 @@ type orchestratorWakeState struct {
 	warned         bool
 }
 
-func newOrchestratorWakeTracker() *orchestratorWakeTracker {
-	return &orchestratorWakeTracker{projects: make(map[domain.ProjectID]orchestratorWakeState)}
+type orchestratorReplacementState struct {
+	attempts       []time.Time
+	cappedNotified bool
 }
 
-func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, interval time.Duration, log *slog.Logger) <-chan struct{} {
+func newOrchestratorWakeTracker() *orchestratorWakeTracker {
+	return &orchestratorWakeTracker{
+		projects:     make(map[domain.ProjectID]orchestratorWakeState),
+		replacements: make(map[domain.ProjectID]orchestratorReplacementState),
+	}
+}
+
+func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, interval time.Duration, log *slog.Logger) <-chan struct{} {
 	done := make(chan struct{})
 	if log == nil {
 		log = slog.Default()
@@ -50,7 +63,7 @@ func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProje
 	wakes := newOrchestratorWakeTracker()
 	go func() {
 		defer close(done)
-		ensureOrchestrators(ctx, projects, sessions, wakes, time.Now().UTC(), log)
+		ensureOrchestrators(ctx, projects, sessions, notifier, wakes, time.Now().UTC(), log)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -58,14 +71,14 @@ func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProje
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				ensureOrchestrators(ctx, projects, sessions, wakes, time.Now().UTC(), log)
+				ensureOrchestrators(ctx, projects, sessions, notifier, wakes, time.Now().UTC(), log)
 			}
 		}
 	}()
 	return done
 }
 
-func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger) {
+func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger) {
 	summaries, err := projects.List(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -89,6 +102,28 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 				return
 			}
 			log.Warn("orchestrator-supervisor: ensure orchestrator failed", "project", project.ID, "err", err)
+			continue
+		}
+		if replace, reason := shouldReplaceUnhealthyOrchestrator(orchestrator, now); replace {
+			allowed, cappedNow, count := wakes.reserveReplacement(project.ID, now)
+			if !allowed {
+				if cappedNow {
+					emitOrchestratorSupervisorNotification(ctx, notifier, domain.NotificationOrchestratorReplacementCapped, project.ID, orchestrator, now, log)
+					log.Warn("orchestrator-supervisor: replacement limit reached; leaving unhealthy orchestrator for human intervention", "project", project.ID, "session", orchestrator.ID, "reason", reason, "replacement_attempts", count)
+				}
+				continue
+			}
+			replacement, err := sessions.SpawnOrchestrator(ctx, project.ID, true)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Warn("orchestrator-supervisor: replace unhealthy orchestrator failed", "project", project.ID, "session", orchestrator.ID, "reason", reason, "err", err)
+				continue
+			}
+			delete(wakes.projects, project.ID)
+			emitOrchestratorSupervisorNotification(ctx, notifier, domain.NotificationOrchestratorReplaced, project.ID, replacement, now, log)
+			log.Warn("orchestrator-supervisor: replaced unhealthy orchestrator", "project", project.ID, "old_session", orchestrator.ID, "new_session", replacement.ID, "reason", reason)
 			continue
 		}
 		interval, err := project.Config.WithDefaults().Orchestrator.WakeIntervalDuration()
@@ -119,6 +154,11 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 	for projectID := range wakes.projects {
 		if _, ok := seen[projectID]; !ok {
 			delete(wakes.projects, projectID)
+		}
+	}
+	for projectID := range wakes.replacements {
+		if _, ok := seen[projectID]; !ok {
+			delete(wakes.replacements, projectID)
 		}
 	}
 }
@@ -174,6 +214,88 @@ func shouldWakeOrchestrator(projectID domain.ProjectID, session domain.Session, 
 		return false
 	}
 	return true
+}
+
+func shouldReplaceUnhealthyOrchestrator(session domain.Session, now time.Time) (bool, string) {
+	if session.ID == "" || session.IsTerminated || session.Kind != domain.KindOrchestrator {
+		return false, ""
+	}
+	if session.Activity.State == domain.ActivityBlocked {
+		return false, ""
+	}
+	switch {
+	case session.Status == domain.StatusNoSignal:
+		if activityOlderThan(session, now, orchestratorUnhealthyReplacementThreshold) {
+			return true, "no_signal"
+		}
+	case session.Activity.State == domain.ActivityExited:
+		if activityOlderThan(session, now, orchestratorUnhealthyReplacementThreshold) {
+			return true, "agent_exited"
+		}
+	}
+	return false, ""
+}
+
+func activityOlderThan(session domain.Session, now time.Time, threshold time.Duration) bool {
+	if threshold <= 0 {
+		return false
+	}
+	at := session.Activity.LastActivityAt
+	if at.IsZero() {
+		at = session.UpdatedAt
+	}
+	if at.IsZero() {
+		at = session.CreatedAt
+	}
+	if at.IsZero() {
+		return false
+	}
+	return now.Sub(at) > threshold
+}
+
+func (w *orchestratorWakeTracker) reserveReplacement(projectID domain.ProjectID, now time.Time) (bool, bool, int) {
+	if w.replacements == nil {
+		w.replacements = make(map[domain.ProjectID]orchestratorReplacementState)
+	}
+	state := w.replacements[projectID]
+	cutoff := now.Add(-orchestratorReplacementWindow)
+	kept := state.attempts[:0]
+	for _, attempt := range state.attempts {
+		if attempt.After(cutoff) {
+			kept = append(kept, attempt)
+		}
+	}
+	state.attempts = kept
+	if len(state.attempts) < orchestratorMaxReplacementsPerWindow {
+		// Count attempts before spawning so repeated replacement failures cap
+		// themselves instead of crash-looping the supervisor.
+		state.attempts = append(state.attempts, now)
+		state.cappedNotified = false
+		w.replacements[projectID] = state
+		return true, false, len(state.attempts)
+	}
+	cappedNow := !state.cappedNotified
+	state.cappedNotified = true
+	w.replacements[projectID] = state
+	return false, cappedNow, len(state.attempts)
+}
+
+func emitOrchestratorSupervisorNotification(ctx context.Context, notifier notificationSink, typ domain.NotificationType, projectID domain.ProjectID, session domain.Session, now time.Time, log *slog.Logger) {
+	if notifier == nil || session.ID == "" {
+		return
+	}
+	if err := notifier.Notify(ctx, ports.NotificationIntent{
+		Type:               typ,
+		SessionID:          session.ID,
+		ProjectID:          projectID,
+		CreatedAt:          now,
+		SessionDisplayName: session.DisplayName,
+	}); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		log.Warn("orchestrator-supervisor: notification failed", "project", projectID, "session", session.ID, "type", typ, "err", err)
+	}
 }
 
 func orchestratorWakeMessage(projectID domain.ProjectID) string {

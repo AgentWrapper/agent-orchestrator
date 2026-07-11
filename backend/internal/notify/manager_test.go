@@ -75,6 +75,25 @@ func TestManagerNotifyCarriesSensitivePRMetadata(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyAcceptsOrchestratorReplacementWithoutPR(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationOrchestratorReplaced,
+		SessionID:          "mer-orch-2",
+		ProjectID:          "mer",
+		SessionDisplayName: "mer orchestrator",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if got := st.rows[0]; got.PRURL != "" || got.Title != "mer orchestrator was replaced" || got.Body == "" {
+		t.Fatalf("stored notification = %+v, want session-targeted replacement without PR URL", got)
+	}
+}
+
 func TestManagerNotifyDuplicateDoesNotPublish(t *testing.T) {
 	st := &fakeStore{duplicate: true}
 	hub := NewHub()

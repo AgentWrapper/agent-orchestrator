@@ -17,12 +17,16 @@ const (
 	NotificationPRMerged NotificationType = "pr_merged"
 	// NotificationPRClosedUnmerged means a tracked PR closed without merging.
 	NotificationPRClosedUnmerged NotificationType = "pr_closed_unmerged"
+	// NotificationOrchestratorReplaced means AO replaced an unresponsive project orchestrator.
+	NotificationOrchestratorReplaced NotificationType = "orchestrator_replaced"
+	// NotificationOrchestratorReplacementCapped means AO stopped replacing an unhealthy orchestrator after hitting its replacement limit.
+	NotificationOrchestratorReplacementCapped NotificationType = "orchestrator_replacement_capped"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped:
 		return true
 	default:
 		return false

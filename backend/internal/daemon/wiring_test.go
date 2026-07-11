@@ -499,24 +499,55 @@ func (f fakeOrchestratorProjectLister) List(context.Context) ([]projectsvc.Summa
 }
 
 type fakeOrchestratorEnsurer struct {
-	mu       sync.Mutex
-	calls    []domain.ProjectID
-	sessions []domain.Session
-	sends    []sentMessage
-	spawnErr error
-	send     bool
-	sendErr  error
+	mu           sync.Mutex
+	calls        []domain.ProjectID
+	cleanCalls   []domain.ProjectID
+	sessions     []domain.Session
+	replaced     []domain.Session
+	replStatus   domain.SessionStatus
+	replActivity domain.Activity
+	spawnErr     error
+	send         bool
+	sendErr      error
+	sends        []sentMessage
 }
 
 func (f *fakeOrchestratorEnsurer) SpawnOrchestrator(_ context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	if clean {
-		return domain.Session{}, errors.New("supervisor must use clean=false")
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, projectID)
+	if clean {
+		f.cleanCalls = append(f.cleanCalls, projectID)
+	} else {
+		f.calls = append(f.calls, projectID)
+	}
 	if f.spawnErr != nil {
 		return domain.Session{}, f.spawnErr
+	}
+	if clean {
+		for i := range f.sessions {
+			if f.sessions[i].ProjectID == projectID && f.sessions[i].Kind == domain.KindOrchestrator && !f.sessions[i].IsTerminated {
+				f.sessions[i].IsTerminated = true
+				f.sessions[i].Activity.State = domain.ActivityExited
+			}
+		}
+		next := domain.Session{
+			SessionRecord: domain.SessionRecord{
+				ID:        domain.SessionID(string(projectID) + "-orch-replacement"),
+				ProjectID: projectID,
+				Kind:      domain.KindOrchestrator,
+				Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+			},
+			Status: domain.StatusIdle,
+		}
+		if f.replActivity.State != "" {
+			next.Activity = f.replActivity
+		}
+		if f.replStatus != "" {
+			next.Status = f.replStatus
+		}
+		f.sessions = append(f.sessions, next)
+		f.replaced = append(f.replaced, next)
+		return next, nil
 	}
 	for _, sess := range f.sessions {
 		if sess.ProjectID == projectID && sess.Kind == domain.KindOrchestrator && !sess.IsTerminated {
@@ -550,6 +581,19 @@ func (f *fakeOrchestratorEnsurer) seen(projectID domain.ProjectID) bool {
 	return false
 }
 
+type fakeOrchestratorNotifier struct {
+	mu      sync.Mutex
+	intents []ports.NotificationIntent
+	err     error
+}
+
+func (f *fakeOrchestratorNotifier) Notify(_ context.Context, intent ports.NotificationIntent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.intents = append(f.intents, intent)
+	return f.err
+}
+
 type sentMessage struct {
 	id      domain.SessionID
 	message string
@@ -561,7 +605,7 @@ func TestStartOrchestratorSupervisorEnsuresEveryProject(t *testing.T) {
 
 	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}, {ID: "ao"}}}
 	ensurer := &fakeOrchestratorEnsurer{}
-	done := startOrchestratorSupervisor(ctx, projects, ensurer, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	done := startOrchestratorSupervisor(ctx, projects, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -584,7 +628,7 @@ func TestEnsureOrchestratorsSuppressesCanceledContextWarnings(t *testing.T) {
 
 	var logBuf strings.Builder
 	projects := fakeOrchestratorProjectLister{err: context.Canceled}
-	ensureOrchestrators(ctx, projects, &fakeOrchestratorEnsurer{}, newOrchestratorWakeTracker(), time.Now(), slog.New(slog.NewTextHandler(&logBuf, nil)))
+	ensureOrchestrators(ctx, projects, &fakeOrchestratorEnsurer{}, nil, newOrchestratorWakeTracker(), time.Now(), slog.New(slog.NewTextHandler(&logBuf, nil)))
 
 	if got := logBuf.String(); got != "" {
 		t.Fatalf("canceled supervisor should not warn, got log %q", got)
@@ -613,7 +657,7 @@ func TestEnsureOrchestratorsWakesIdleWaitingOrchestrator(t *testing.T) {
 		},
 	}}}
 
-	ensureOrchestrators(context.Background(), projects, sessions, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 1 {
 		t.Fatalf("sends = %#v, want one wake", sessions.sends)
@@ -645,7 +689,7 @@ func TestEnsureOrchestratorsWakesIdleOrchestrator(t *testing.T) {
 		},
 	}}}
 
-	ensureOrchestrators(context.Background(), projects, sessions, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 1 {
 		t.Fatalf("sends = %#v, want one wake", sessions.sends)
@@ -669,7 +713,7 @@ func TestEnsureOrchestratorsDoesNotWakeHooklessHarness(t *testing.T) {
 		},
 	}}}
 
-	ensureOrchestrators(context.Background(), projects, sessions, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 0 {
 		t.Fatalf("hookless orchestrator must not be woken, sends=%#v", sessions.sends)
@@ -692,7 +736,7 @@ func TestEnsureOrchestratorsDoesNotWakeBeforeFirstSignal(t *testing.T) {
 		},
 	}}}
 
-	ensureOrchestrators(context.Background(), projects, sessions, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 0 {
 		t.Fatalf("sends = %#v, want no wake before first observed activity signal", sessions.sends)
@@ -716,10 +760,111 @@ func TestEnsureOrchestratorsDoesNotWakeBlockedOrchestrator(t *testing.T) {
 		},
 	}}}
 
-	ensureOrchestrators(context.Background(), projects, sessions, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 0 {
 		t.Fatalf("blocked orchestrator must not be woken, sends=%#v", sessions.sends)
+	}
+	if len(sessions.cleanCalls) != 0 {
+		t.Fatalf("blocked orchestrator must not be replaced, cleanCalls=%#v", sessions.cleanCalls)
+	}
+}
+
+func TestEnsureOrchestratorsReplacesStaleNoSignalOrchestrator(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
+	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:        "mer-orch",
+			ProjectID: "mer",
+			Kind:      domain.KindOrchestrator,
+			Harness:   domain.HarnessCodex,
+			Activity: domain.Activity{
+				State:          domain.ActivityIdle,
+				LastActivityAt: now.Add(-orchestratorUnhealthyReplacementThreshold - time.Minute),
+			},
+		},
+		Status: domain.StatusNoSignal,
+	}}}
+	notifier := &fakeOrchestratorNotifier{}
+
+	ensureOrchestrators(context.Background(), projects, sessions, notifier, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if len(sessions.cleanCalls) != 1 || sessions.cleanCalls[0] != "mer" {
+		t.Fatalf("clean replacements = %#v, want one for mer", sessions.cleanCalls)
+	}
+	if len(sessions.sends) != 0 {
+		t.Fatalf("replaced no_signal orchestrator should not also receive wake, sends=%#v", sessions.sends)
+	}
+	if len(notifier.intents) != 1 {
+		t.Fatalf("notifications = %#v, want one replacement notification", notifier.intents)
+	}
+	if got := notifier.intents[0]; got.Type != domain.NotificationOrchestratorReplaced || got.SessionID != "mer-orch-replacement" || got.ProjectID != "mer" {
+		t.Fatalf("notification = %#v, want orchestrator replacement for new session", got)
+	}
+}
+
+func TestEnsureOrchestratorsReplacesExitedOrchestratorRow(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
+	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:        "mer-orch",
+			ProjectID: "mer",
+			Kind:      domain.KindOrchestrator,
+			Harness:   domain.HarnessCodex,
+			Activity: domain.Activity{
+				State:          domain.ActivityExited,
+				LastActivityAt: now.Add(-orchestratorUnhealthyReplacementThreshold - time.Minute),
+			},
+		},
+		Status: domain.StatusIdle,
+	}}}
+
+	ensureOrchestrators(context.Background(), projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if len(sessions.cleanCalls) != 1 || sessions.cleanCalls[0] != "mer" {
+		t.Fatalf("clean replacements = %#v, want exited orchestrator replaced", sessions.cleanCalls)
+	}
+}
+
+func TestEnsureOrchestratorsCapsReplacementStormAndNotifies(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
+	staleActivity := domain.Activity{
+		State:          domain.ActivityIdle,
+		LastActivityAt: now.Add(-orchestratorUnhealthyReplacementThreshold - time.Minute),
+	}
+	sessions := &fakeOrchestratorEnsurer{
+		replStatus:   domain.StatusNoSignal,
+		replActivity: staleActivity,
+		sessions: []domain.Session{{
+			SessionRecord: domain.SessionRecord{
+				ID:        "mer-orch",
+				ProjectID: "mer",
+				Kind:      domain.KindOrchestrator,
+				Harness:   domain.HarnessCodex,
+				Activity:  staleActivity,
+			},
+			Status: domain.StatusNoSignal,
+		}},
+	}
+	notifier := &fakeOrchestratorNotifier{}
+	tracker := newOrchestratorWakeTracker()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	for i := 0; i < orchestratorMaxReplacementsPerWindow+2; i++ {
+		ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now.Add(time.Duration(i)*time.Minute), log)
+	}
+
+	if len(sessions.cleanCalls) != orchestratorMaxReplacementsPerWindow {
+		t.Fatalf("clean replacements = %d, want cap %d", len(sessions.cleanCalls), orchestratorMaxReplacementsPerWindow)
+	}
+	if len(notifier.intents) != orchestratorMaxReplacementsPerWindow+1 {
+		t.Fatalf("notifications = %#v, want one per replacement plus one cap alert", notifier.intents)
+	}
+	if got := notifier.intents[len(notifier.intents)-1]; got.Type != domain.NotificationOrchestratorReplacementCapped {
+		t.Fatalf("last notification = %#v, want replacement cap alert", got)
 	}
 }
 
@@ -744,9 +889,9 @@ func TestEnsureOrchestratorsThrottlesRepeatedWake(t *testing.T) {
 	}
 	wakes := newOrchestratorWakeTracker()
 
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 2 {
 		t.Fatalf("sends = %#v, want initial wake and post-interval wake", sessions.sends)
@@ -774,7 +919,7 @@ func TestEnsureOrchestratorsDoesNotThrottleSuppressedWake(t *testing.T) {
 	}
 	wakes := newOrchestratorWakeTracker()
 
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if !wakes.projects["mer"].lastWake.IsZero() {
 		t.Fatalf("suppressed wake stamped lastWake = %s, want zero", wakes.projects["mer"].lastWake)
@@ -802,8 +947,8 @@ func TestEnsureOrchestratorsThrottlesFailedWakeAttempt(t *testing.T) {
 	}
 	wakes := newOrchestratorWakeTracker()
 
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 1 {
 		t.Fatalf("sends = %#v, want failed wake attempt throttled", sessions.sends)
@@ -835,7 +980,7 @@ func TestEnsureOrchestratorsFailedWakeDoesNotConsumeUnansweredCap(t *testing.T) 
 	wakes := newOrchestratorWakeTracker()
 
 	for i := 0; i < orchestratorMaxUnansweredWakeSends+1; i++ {
-		ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(time.Duration(i)*16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+		ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(time.Duration(i)*16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}
 
 	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends+1 {
@@ -847,7 +992,7 @@ func TestEnsureOrchestratorsFailedWakeDoesNotConsumeUnansweredCap(t *testing.T) 
 
 	sessions.sendErr = nil
 	sessions.send = true
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(time.Duration(orchestratorMaxUnansweredWakeSends+1)*16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(time.Duration(orchestratorMaxUnansweredWakeSends+1)*16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends+2 {
 		t.Fatalf("recovered wake attempts = %#v, want delivered wake after failures", sessions.sends)
@@ -878,15 +1023,15 @@ func TestEnsureOrchestratorsFailedWakePreservesDeliveredWakeCap(t *testing.T) {
 	}
 	wakes := newOrchestratorWakeTracker()
 
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	sessions.sendErr = errors.New("pane write failed")
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(32*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(32*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	sessions.sendErr = nil
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(48*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(64*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(48*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(64*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends+1 {
 		t.Fatalf("wake attempts = %#v, want two delivered, one failed, one delivered, then cap", sessions.sends)
@@ -920,7 +1065,7 @@ func TestEnsureOrchestratorsStopsAfterUnansweredWakeLimit(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(&logBuf, nil))
 
 	for i := 0; i < orchestratorMaxUnansweredWakeSends+2; i++ {
-		ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(time.Duration(i)*16*time.Minute), log)
+		ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(time.Duration(i)*16*time.Minute), log)
 	}
 
 	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends {
@@ -947,7 +1092,7 @@ func TestEnsureOrchestratorsPrunesStaleWakeMemo(t *testing.T) {
 	wakes := newOrchestratorWakeTracker()
 	wakes.projects["stale-project"] = orchestratorWakeState{lastWake: now}
 
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if _, ok := wakes.projects["stale-project"]; ok {
 		t.Fatalf("stale wake memo was not pruned: %#v", wakes.projects)
@@ -961,7 +1106,7 @@ func TestEnsureOrchestratorsKeepsWakeMemoOnEnsureError(t *testing.T) {
 	wakes := newOrchestratorWakeTracker()
 	wakes.projects["mer"] = orchestratorWakeState{lastWake: now}
 
-	ensureOrchestrators(context.Background(), projects, sessions, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if wakes.projects["mer"].lastWake.IsZero() {
 		t.Fatal("wake memo for project with transient ensure error was pruned")
