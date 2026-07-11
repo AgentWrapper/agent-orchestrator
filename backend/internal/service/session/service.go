@@ -36,6 +36,7 @@ type Store interface {
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+	GetFleetPaused(ctx context.Context) (bool, error)
 }
 
 // ListFilter captures API-facing session list query filters.
@@ -172,6 +173,9 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.Session{}, err
 	}
+	if err := s.guardPaused(ctx, project, cfg); err != nil {
+		return domain.Session{}, err
+	}
 	if issueID, ok := trackerintake.CanonicalIssueIDFromRef(project, cfg.IssueID); ok {
 		cfg.IssueID = issueID
 	} else if cfg.Kind == domain.KindWorker && strings.TrimSpace(string(cfg.IssueID)) == "" {
@@ -224,6 +228,39 @@ func (s *Service) resolveIssueTitle(ctx context.Context, project domain.ProjectR
 		return ""
 	}
 	return strings.TrimSpace(title)
+}
+
+// guardPaused rejects a worker spawn when the project (or the whole fleet) is
+// paused, unless the caller sets Force (`ao spawn --force`). Pause means "start
+// no new work": it gates worker spawns only. Orchestrator lifecycle during a
+// pause is governed by the orchestrator supervisor, not this guard, so an
+// orchestrator spawn is never blocked here. A nil store (bare test service)
+// can't be paused, so the guard is a no-op there.
+func (s *Service) guardPaused(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig) error {
+	if cfg.Force || cfg.Kind == domain.KindOrchestrator || s.store == nil {
+		return nil
+	}
+	scope := ""
+	switch {
+	case project.Paused:
+		scope = "project"
+	default:
+		fleetPaused, err := s.store.GetFleetPaused(ctx)
+		if err != nil {
+			return fmt.Errorf("get fleet paused: %w", err)
+		}
+		if fleetPaused {
+			scope = "fleet"
+		}
+	}
+	if scope == "" {
+		return nil
+	}
+	return apierr.Conflict(
+		"PROJECT_PAUSED",
+		fmt.Sprintf("Fleet pause is active (%s scope): new sessions for project %s are blocked. Resume it, or pass --force to override.", scope, project.ID),
+		map[string]any{"projectId": project.ID, "scope": scope},
+	)
 }
 
 // requireProject verifies the project is registered before any spawn write
@@ -512,6 +549,21 @@ func verifyPrimeReplacement(project domain.ProjectRecord, sess domain.Session) e
 	return nil
 }
 
+// ActiveOrchestrator returns the newest live orchestrator for a project, if one
+// exists, without spawning. The orchestrator supervisor uses it to message a
+// paused project's orchestrator without creating a fresh one.
+func (s *Service) ActiveOrchestrator(ctx context.Context, project domain.ProjectID) (domain.Session, bool, error) {
+	active := true
+	list, err := s.List(ctx, ListFilter{ProjectID: project, Active: &active, OrchestratorOnly: true})
+	if err != nil {
+		return domain.Session{}, false, err
+	}
+	if len(list) == 0 {
+		return domain.Session{}, false, nil
+	}
+	return newestSession(list), true, nil
+}
+
 func newestSession(sessions []domain.Session) domain.Session {
 	newest := sessions[0]
 	for _, sess := range sessions[1:] {
@@ -713,6 +765,40 @@ func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		out.Skipped = append(out.Skipped, CleanupSkipped{SessionID: skip.SessionID, Reason: skip.Reason})
 	}
 	return out, nil
+}
+
+// HardDrain immediately terminates a paused project's live worker sessions (the
+// `--hard` pause path), returning the count terminated. Orchestrators are left
+// running unless includeOrchestrators is set (the `--hard --all` fleet path).
+// Termination goes through Kill, so no zombie tmux is left behind.
+func (s *Service) HardDrain(ctx context.Context, project domain.ProjectID, includeOrchestrators bool) (int, error) {
+	recs, err := s.listRecords(ctx, project)
+	if err != nil {
+		return 0, err
+	}
+	killed := 0
+	// Best-effort: `--hard` is the emergency stop for a runaway/rogue fleet, so a
+	// single failed Kill must not strand every later session. Terminate all
+	// eligible sessions, collect failures, and return the count plus a joined
+	// error (nil when every kill succeeded).
+	var errs []error
+	for _, rec := range recs {
+		if rec.IsTerminated {
+			continue
+		}
+		if rec.Kind == domain.KindOrchestrator && !includeOrchestrators {
+			continue
+		}
+		ok, err := s.Kill(ctx, rec.ID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("kill %s: %w", rec.ID, err))
+			continue
+		}
+		if ok {
+			killed++
+		}
+	}
+	return killed, errors.Join(errs...)
 }
 
 // TeardownProject stops every live session in a project, then asks the session

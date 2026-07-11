@@ -31,6 +31,8 @@ type fakeStore struct {
 	threads  map[string][]domain.PullRequestReviewThread
 	comments map[string][]domain.PullRequestComment
 	num      int
+	// fleetPaused is the daemon-global pause flag GetFleetPaused reports.
+	fleetPaused bool
 }
 
 func newFakeStore() *fakeStore {
@@ -144,6 +146,10 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 	return p, ok, nil
 }
 
+func (f *fakeStore) GetFleetPaused(_ context.Context) (bool, error) {
+	return f.fleetPaused, nil
+}
+
 func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
@@ -213,13 +219,16 @@ type fakeCommander struct {
 	cleanupProjects []domain.ProjectID
 	switched        int
 	killErr         error
-	retireErr       error
-	sendErr         error
-	cleanupErr      error
-	spawnErr        error
-	spawnRecord     domain.SessionRecord
-	spawned         bool
-	killsAtSpawn    int
+	// killFailIDs makes Kill fail for specific sessions only (nil = none), so a
+	// test can exercise best-effort termination past a single failure.
+	killFailIDs  map[domain.SessionID]bool
+	retireErr    error
+	sendErr      error
+	cleanupErr   error
+	spawnErr     error
+	spawnRecord  domain.SessionRecord
+	spawned      bool
+	killsAtSpawn int
 	// gotCfg is the config the service handed down, where the semantic-name
 	// inputs (IssueID, IssueTitle, DisplayName) have to arrive.
 	gotCfg           ports.SpawnConfig
@@ -252,6 +261,9 @@ func (f *fakeCommander) SetIssue(_ context.Context, id domain.SessionID, issueID
 	return domain.SessionRecord{ID: id, ProjectID: "demo", Kind: domain.KindWorker, IssueID: issueID, DisplayName: "demo #170 spawn-linkage"}, nil
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
+	if f.killFailIDs[id] {
+		return false, fmt.Errorf("kill %s failed", id)
+	}
 	if f.killErr != nil {
 		return false, f.killErr
 	}

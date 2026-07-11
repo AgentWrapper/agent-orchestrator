@@ -47,25 +47,31 @@ type addProjectRequest struct {
 }
 
 type projectSummary struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
-	ProjectPrefix string `json:"projectPrefix"`
-	SessionPrefix string `json:"sessionPrefix"`
-	ResolveError  string `json:"resolveError,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Kind            string `json:"kind"`
+	ProjectPrefix   string `json:"projectPrefix"`
+	SessionPrefix   string `json:"sessionPrefix"`
+	ResolveError    string `json:"resolveError,omitempty"`
+	Paused          bool   `json:"paused"`
+	PauseState      string `json:"pauseState"`
+	DrainingWorkers int    `json:"drainingWorkers,omitempty"`
 }
 
 type projectDetails struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	Kind           string                 `json:"kind"`
-	Path           string                 `json:"path"`
-	Repo           string                 `json:"repo"`
-	DefaultBranch  string                 `json:"defaultBranch"`
-	Agent          string                 `json:"agent,omitempty"`
-	Config         *projectConfig         `json:"config,omitempty"`
-	WorkspaceRepos []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
-	ResolveError   string                 `json:"resolveError,omitempty"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Kind            string                 `json:"kind"`
+	Path            string                 `json:"path"`
+	Repo            string                 `json:"repo"`
+	DefaultBranch   string                 `json:"defaultBranch"`
+	Agent           string                 `json:"agent,omitempty"`
+	Config          *projectConfig         `json:"config,omitempty"`
+	WorkspaceRepos  []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
+	ResolveError    string                 `json:"resolveError,omitempty"`
+	Paused          bool                   `json:"paused"`
+	PauseState      string                 `json:"pauseState"`
+	DrainingWorkers int                    `json:"drainingWorkers,omitempty"`
 }
 
 type workspaceRepoDetails struct {
@@ -706,7 +712,7 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 	}
 
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ID\tNAME\tKIND\tPROJECT PREFIX\tSTATUS"); err != nil {
+	if _, err := fmt.Fprintln(tw, "ID\tNAME\tKIND\tPROJECT PREFIX\tSTATE\tSTATUS"); err != nil {
 		return err
 	}
 	for _, p := range projects {
@@ -722,11 +728,25 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 		if prefix == "" {
 			prefix = p.SessionPrefix
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, kind, prefix, status); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, kind, prefix, formatPauseState(p.PauseState, p.DrainingWorkers), status); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
+}
+
+// formatPauseState renders the observable pause state for CLI display, showing
+// the live worker count while draining. An empty state (older daemon) falls
+// back to "running".
+func formatPauseState(state string, drainingWorkers int) string {
+	switch state {
+	case "", "running":
+		return "running"
+	case "draining":
+		return fmt.Sprintf("draining (%d)", drainingWorkers)
+	default:
+		return state
+	}
 }
 
 func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
@@ -745,6 +765,7 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		{label: "repo", value: p.Repo},
 		{label: "default branch", value: p.DefaultBranch},
 		{label: "agent", value: p.Agent},
+		{label: "pause state", value: formatPauseState(p.PauseState, p.DrainingWorkers)},
 		{label: "config", value: formatProjectConfig(p.Config)},
 		{label: "resolve error", value: p.ResolveError},
 	}

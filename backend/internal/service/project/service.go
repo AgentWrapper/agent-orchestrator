@@ -43,12 +43,28 @@ type Manager interface {
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
+
+	// SetProjectPaused flips a project's independent pause bit and returns the
+	// updated read-model. Pausing leaves config untouched. When hard is set on a
+	// pause, the project's live workers are terminated immediately.
+	SetProjectPaused(ctx context.Context, id domain.ProjectID, paused, hard bool) (Project, error)
+
+	// FleetPaused reports the daemon-global fleet-pause flag.
+	FleetPaused(ctx context.Context) (bool, error)
+
+	// SetFleetPaused flips the daemon-global fleet-pause flag. When hard is set
+	// on a pause, every project's workers and orchestrators are terminated now.
+	SetFleetPaused(ctx context.Context, paused, hard bool) error
 }
 
 // SessionOps is the narrow session-service surface the project use-cases need:
-// stop live project sessions during project removal.
+// stop live project sessions during project removal, and immediately terminate
+// workers on a --hard pause.
 type SessionOps interface {
 	TeardownProject(ctx context.Context, project domain.ProjectID) error
+	// HardDrain terminates a project's live workers now (the --hard pause path),
+	// including orchestrators when includeOrchestrators is set. Returns the count.
+	HardDrain(ctx context.Context, project domain.ProjectID, includeOrchestrators bool) (int, error)
 }
 
 // ModelValidator optionally performs provider/account reachability checks for
@@ -124,9 +140,19 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	if err != nil {
 		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load projects")
 	}
+	fleetPaused, err := m.store.GetFleetPaused(ctx)
+	if err != nil {
+		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load fleet pause state")
+	}
+	sessions, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load sessions")
+	}
+	live := liveWorkersByProject(sessions)
 	out := make([]Summary, 0, len(projects))
 	for _, row := range projects {
 		prefix := resolveProjectPrefix(row)
+		state, draining := computePauseState(row.Paused, fleetPaused, live[row.ID])
 		out = append(out, Summary{
 			ID:                domain.ProjectID(row.ID),
 			Name:              displayName(row),
@@ -136,6 +162,9 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			SessionPrefix:     prefix,
 			OrchestratorAgent: row.Config.Orchestrator.Harness,
 			Config:            row.Config.WithDefaults(),
+			Paused:            row.Paused,
+			PauseState:        state,
+			DrainingWorkers:   draining,
 		})
 	}
 	return out, nil
@@ -153,7 +182,7 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	if !ok || !row.ArchivedAt.IsZero() {
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
-	p := m.projectFromRow(row)
+	p := m.withPauseState(ctx, row, m.projectFromRow(row))
 	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
 		if err != nil {
@@ -686,9 +715,51 @@ func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
 		Agent:         string(m.defaultHarness),
+		Paused:        row.Paused,
+		// Default to running; callers that have session context (Get, pause /
+		// resume) overwrite this with the drain-aware state via withPauseState.
+		PauseState: PauseStateRunning,
 	}
 	p.Config = projectConfigPtr(row.Config)
 	return p
+}
+
+// withPauseState fills a project detail's effective pause state from the
+// daemon-global flag and live worker counts. Load failures are non-fatal (they
+// never fail the whole read), but the project's own pause bit is authoritative
+// on its own — so a degraded read still reflects `row.Paused` rather than
+// defaulting a genuinely-paused project to "running".
+func (m *Service) withPauseState(ctx context.Context, row domain.ProjectRecord, p Project) Project {
+	fleetPaused, err := m.store.GetFleetPaused(ctx)
+	if err != nil {
+		// Fleet flag unknown; still surface the project's own pause bit (drain
+		// count unknown → 0). A project paused only by the fleet flag can't be
+		// recovered here, but a project-paused one must never read as running.
+		p.PauseState, p.DrainingWorkers = computePauseState(row.Paused, false, 0)
+		return p
+	}
+	sessions, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		// Live-worker count unavailable; reflect the effective pause bit with a
+		// best-effort drain count of 0 instead of the running default.
+		p.PauseState, p.DrainingWorkers = computePauseState(row.Paused, fleetPaused, 0)
+		return p
+	}
+	p.PauseState, p.DrainingWorkers = computePauseState(row.Paused, fleetPaused, liveWorkersByProject(sessions)[row.ID])
+	return p
+}
+
+// liveWorkersByProject counts non-terminated, cap-consuming worker sessions per
+// project id — the workers a paused project is waiting to drain.
+func liveWorkersByProject(sessions []domain.SessionRecord) map[string]int {
+	counts := make(map[string]int)
+	for _, sess := range sessions {
+		if sess.IsTerminated || sess.Kind != domain.KindWorker || sess.Metadata.IntakePoolBypass {
+			continue
+		}
+		counts[string(sess.ProjectID)]++
+	}
+	return counts
 }
 
 func projectConfigPtr(projectConfig domain.ProjectConfig) *domain.ProjectConfig {

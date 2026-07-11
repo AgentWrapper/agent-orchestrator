@@ -224,6 +224,72 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/fleet:
+    get:
+      operationId: getFleet
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersFleetStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Report the daemon-global fleet-pause flag
+      tags:
+      - projects
+  /api/v1/fleet/pause:
+    post:
+      operationId: pauseFleet
+      parameters:
+      - description: Terminate live workers immediately instead of draining (with
+          the fleet endpoint, orchestrators too).
+        in: query
+        name: hard
+        schema:
+          description: Terminate live workers immediately instead of draining (with
+            the fleet endpoint, orchestrators too).
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersFleetStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Pause the whole fleet (a distinct global flag; new projects start paused)
+      tags:
+      - projects
+  /api/v1/fleet/resume:
+    post:
+      operationId: resumeFleet
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersFleetStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Resume the whole fleet
+      tags:
+      - projects
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -830,6 +896,80 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Replace a project's per-project config
+      tags:
+      - projects
+  /api/v1/projects/{id}/pause:
+    post:
+      operationId: pauseProject
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      - description: Terminate live workers immediately instead of draining (with
+          the fleet endpoint, orchestrators too).
+        in: query
+        name: hard
+        schema:
+          description: Terminate live workers immediately instead of draining (with
+            the fleet endpoint, orchestrators too).
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Pause a project (stop dispatching new work); leaves config untouched
+      tags:
+      - projects
+  /api/v1/projects/{id}/resume:
+    post:
+      operationId: resumeProject
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Resume a paused project; restores the prior behavior with config unchanged
       tags:
       - projects
   /api/v1/projects/{id}/worker-capacity:
@@ -2236,6 +2376,13 @@ components:
       - sessionId
       - reason
       type: object
+    ControllersFleetStatusResponse:
+      properties:
+        paused:
+          type: boolean
+      required:
+      - paused
+      type: object
     ControllersSessionPRFinalReviewSummary:
       properties:
         githubReviewId:
@@ -2309,6 +2456,8 @@ components:
           - idle
           - terminated
           - no_signal
+          type: string
+        terminalFailureReason:
           type: string
         terminalHandleId:
           type: string
@@ -3044,6 +3193,8 @@ components:
           $ref: '#/components/schemas/ProjectConfig'
         defaultBranch:
           type: string
+        drainingWorkers:
+          type: integer
         id:
           type: string
         kind:
@@ -3052,6 +3203,10 @@ components:
           type: string
         path:
           type: string
+        pauseState:
+          type: string
+        paused:
+          type: boolean
         repo:
           type: string
         workspaceRepos:
@@ -3065,6 +3220,8 @@ components:
       - path
       - repo
       - defaultBranch
+      - paused
+      - pauseState
       type: object
     ProjectConfig:
       properties:
@@ -3137,6 +3294,8 @@ components:
       type: object
     ProjectSummary:
       properties:
+        drainingWorkers:
+          type: integer
         id:
           type: string
         kind:
@@ -3147,6 +3306,10 @@ components:
           type: string
         path:
           type: string
+        pauseState:
+          type: string
+        paused:
+          type: boolean
         projectPrefix:
           type: string
         resolveError:
@@ -3160,6 +3323,8 @@ components:
       - kind
       - projectPrefix
       - sessionPrefix
+      - paused
+      - pauseState
       type: object
     RemoveProjectResult:
       properties:
@@ -3747,6 +3912,9 @@ components:
         displayName:
           maxLength: 20
           type: string
+        force:
+          description: Override the fleet-pause guard to spawn on a paused project.
+          type: boolean
         harness:
           enum:
           - claude-code

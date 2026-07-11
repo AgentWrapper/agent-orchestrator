@@ -39,6 +39,14 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: (e: unknown, fb = "Request failed") =>
 		e instanceof Error ? e.message : ((e as { message?: string })?.message ?? fb),
 }));
+// FleetPauseSection (rendered by GlobalSettingsForm) has its own fleet-status
+// query; stub its helpers so these Updates/Migration-focused tests don't couple
+// to it.
+vi.mock("../lib/pause-fleet", () => ({
+	getFleetPaused: vi.fn().mockResolvedValue(false),
+	pauseFleet: vi.fn(),
+	resumeFleet: vi.fn(),
+}));
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: { getVersion },

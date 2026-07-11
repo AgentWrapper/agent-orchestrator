@@ -206,6 +206,29 @@ func TestManagerNotifyWorkerRetryExhausted(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyWorkerRetryExhaustedIncludesFailurePoint(t *testing.T) {
+	st := &fakeStore{}
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:                  domain.NotificationWorkerRetryExhausted,
+		SessionID:             "demo-3",
+		ProjectID:             "demo",
+		SessionDisplayName:    "demo #12 fix-login",
+		IssueID:               "github:acme/demo#12",
+		RetryCount:            3,
+		RetryLimit:            2,
+		TerminalFailureReason: "CI / backend test",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := st.rows[0]
+	if got.Body != "demo #12 fix-login terminated after 3 attempts for issue #12; retry cap is 2, so ao is leaving it for a human. Latest failure point: CI / backend test." {
+		t.Fatalf("body = %q", got.Body)
+	}
+}
+
 func TestManagerNotifyMainCIRed(t *testing.T) {
 	st := &fakeStore{}
 	now := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC)

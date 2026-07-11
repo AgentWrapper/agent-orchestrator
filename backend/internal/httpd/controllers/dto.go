@@ -33,6 +33,18 @@ type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
 }
 
+// HardPauseParam is the optional ?hard query parameter on the pause endpoints:
+// terminate live workers immediately instead of draining them.
+type HardPauseParam struct {
+	Hard bool `query:"hard,omitempty" description:"Terminate live workers immediately instead of draining (with the fleet endpoint, orchestrators too)."`
+}
+
+// FleetStatusResponse is the body of GET /api/v1/fleet and the fleet
+// pause/resume endpoints: the daemon-global pause flag.
+type FleetStatusResponse struct {
+	Paused bool `json:"paused"`
+}
+
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`
@@ -186,6 +198,9 @@ type SpawnSessionRequest struct {
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
+	// Force overrides the fleet-pause admission guard so a deliberate manual
+	// spawn (`ao spawn --force`) can start a worker on a paused project.
+	Force bool `json:"force,omitempty" description:"Override the fleet-pause guard to spawn on a paused project."`
 }
 
 // SessionResponse is the { session } body shared by session create/get.

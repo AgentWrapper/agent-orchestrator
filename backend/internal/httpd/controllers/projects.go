@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -43,7 +44,14 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects/{id}", c.get)
 	r.Get("/projects/{id}/worker-capacity", c.workerCapacity)
 	r.Put("/projects/{id}/config", c.setConfig)
+	r.Post("/projects/{id}/pause", c.pause)
+	r.Post("/projects/{id}/resume", c.resume)
 	r.Delete("/projects/{id}", c.remove)
+	// Daemon-global fleet pause switch. Grouped here because it shares the
+	// project Manager; it is a distinct flag, not a fan-out over projects.
+	r.Get("/fleet", c.fleetStatus)
+	r.Post("/fleet/pause", c.fleetPause)
+	r.Post("/fleet/resume", c.fleetResume)
 }
 
 func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +157,70 @@ func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
+}
+
+func (c *ProjectsController) pause(w http.ResponseWriter, r *http.Request) {
+	c.setPaused(w, r, true, "POST", "/api/v1/projects/{id}/pause")
+}
+
+func (c *ProjectsController) resume(w http.ResponseWriter, r *http.Request) {
+	c.setPaused(w, r, false, "POST", "/api/v1/projects/{id}/resume")
+}
+
+func (c *ProjectsController) setPaused(w http.ResponseWriter, r *http.Request, paused bool, method, route string) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, method, route)
+		return
+	}
+	p, err := c.Mgr.SetProjectPaused(r.Context(), projectID(r), paused, paused && hardParam(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
+}
+
+// hardParam reports whether the request asked for a hard pause (immediate
+// worker termination) via the boolean ?hard query parameter. It accepts the
+// standard Go boolean encodings (true/1/t/T/TRUE/…) that the generated
+// OpenAPI/TS boolean type implies, so a client sending ?hard=1 is honored;
+// an absent or unparseable value is treated as a soft (drain) pause.
+func hardParam(r *http.Request) bool {
+	v, err := strconv.ParseBool(r.URL.Query().Get("hard"))
+	return err == nil && v
+}
+
+func (c *ProjectsController) fleetStatus(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/fleet")
+		return
+	}
+	paused, err := c.Mgr.FleetPaused(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, FleetStatusResponse{Paused: paused})
+}
+
+func (c *ProjectsController) fleetPause(w http.ResponseWriter, r *http.Request) {
+	c.setFleetPaused(w, r, true, "/api/v1/fleet/pause")
+}
+
+func (c *ProjectsController) fleetResume(w http.ResponseWriter, r *http.Request) {
+	c.setFleetPaused(w, r, false, "/api/v1/fleet/resume")
+}
+
+func (c *ProjectsController) setFleetPaused(w http.ResponseWriter, r *http.Request, paused bool, route string) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "POST", route)
+		return
+	}
+	if err := c.Mgr.SetFleetPaused(r.Context(), paused, paused && hardParam(r)); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, FleetStatusResponse{Paused: paused})
 }
 
 func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {

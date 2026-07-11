@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/drain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
@@ -143,6 +144,9 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, trackerAdapter, notificationWriter, log)
+	// Fleet-pause drain sweep: terminates paused projects' workers as they reach
+	// a terminal/idle state, via the session service's clean Kill path.
+	drainDone := drain.New(store, sessionSvc, drain.Config{Telemetry: telemetrySink, Logger: log}).Start(ctx)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 	agentSvc := agentsvc.New()
 	go func() {
@@ -271,6 +275,7 @@ func Run() error {
 	stop()
 	<-orchestratorSupervisorDone
 	<-primeSupervisorDone
+	<-drainDone
 	<-previewDone
 	<-agentHealthDone
 	<-modelHealthDone

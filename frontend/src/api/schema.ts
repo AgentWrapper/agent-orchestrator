@@ -123,6 +123,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fleet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report the daemon-global fleet-pause flag */
+        get: operations["getFleet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fleet/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause the whole fleet (a distinct global flag; new projects start paused) */
+        post: operations["pauseFleet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fleet/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume the whole fleet */
+        post: operations["resumeFleet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import": {
         parameters: {
             query?: never;
@@ -376,6 +427,40 @@ export interface paths {
         /** Replace a project's per-project config */
         put: operations["setProjectConfig"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause a project (stop dispatching new work); leaves config untouched */
+        post: operations["pauseProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume a paused project; restores the prior behavior with config unchanged */
+        post: operations["resumeProject"];
         delete?: never;
         options?: never;
         head?: never;
@@ -863,6 +948,9 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        ControllersFleetStatusResponse: {
+            paused: boolean;
+        };
         ControllersSessionPRFinalReviewSummary: {
             githubReviewId?: string;
             reviewBody?: string;
@@ -891,6 +979,7 @@ export interface components {
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */
             status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "idle" | "terminated" | "no_signal";
+            terminalFailureReason?: string;
             terminalHandleId?: string;
             /** Format: date-time */
             updatedAt: string;
@@ -1173,10 +1262,13 @@ export interface components {
             agent?: string;
             config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
+            drainingWorkers?: number;
             id: string;
             kind: string;
             name: string;
             path: string;
+            pauseState: string;
+            paused: boolean;
             repo: string;
             workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
         };
@@ -1210,11 +1302,14 @@ export interface components {
             project: components["schemas"]["Project"];
         };
         ProjectSummary: {
+            drainingWorkers?: number;
             id: string;
             kind: string;
             name: string;
             orchestratorAgent?: string;
             path: string;
+            pauseState: string;
+            paused: boolean;
             projectPrefix: string;
             resolveError?: string;
             sessionPrefix: string;
@@ -1440,6 +1535,8 @@ export interface components {
         SpawnSessionRequest: {
             branch?: string;
             displayName?: string;
+            /** @description Override the fleet-pause guard to spawn on a paused project. */
+            force?: boolean;
             /** @enum {string} */
             harness?: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             issueId?: string;
@@ -1861,6 +1958,96 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getFleet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersFleetStatusResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    pauseFleet: {
+        parameters: {
+            query?: {
+                /** @description Terminate live workers immediately instead of draining (with the fleet endpoint, orchestrators too). */
+                hard?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersFleetStatusResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resumeFleet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersFleetStatusResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2685,6 +2872,91 @@ export interface operations {
             };
             /** @description Request Entity Too Large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    pauseProject: {
+        parameters: {
+            query?: {
+                /** @description Terminate live workers immediately instead of draining (with the fleet endpoint, orchestrators too). */
+                hard?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resumeProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

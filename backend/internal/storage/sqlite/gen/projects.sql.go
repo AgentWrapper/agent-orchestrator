@@ -31,7 +31,7 @@ func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) 
 }
 
 const findProjectByPath = `-- name: FindProjectByPath :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind, paused
 FROM projects WHERE path = ? AND archived_at IS NULL
 `
 
@@ -47,12 +47,13 @@ func (q *Queries) FindProjectByPath(ctx context.Context, path string) (Project, 
 		&i.ArchivedAt,
 		&i.Config,
 		&i.Kind,
+		&i.Paused,
 	)
 	return i, err
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind, paused
 FROM projects WHERE id = ?
 `
 
@@ -68,12 +69,13 @@ func (q *Queries) GetProject(ctx context.Context, id domain.ProjectID) (Project,
 		&i.ArchivedAt,
 		&i.Config,
 		&i.Kind,
+		&i.Paused,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind, paused
 FROM projects WHERE archived_at IS NULL ORDER BY id
 `
 
@@ -95,6 +97,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.ArchivedAt,
 			&i.Config,
 			&i.Kind,
+			&i.Paused,
 		); err != nil {
 			return nil, err
 		}
@@ -107,6 +110,23 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const setProjectPaused = `-- name: SetProjectPaused :execrows
+UPDATE projects SET paused = ? WHERE id = ?
+`
+
+type SetProjectPausedParams struct {
+	Paused bool
+	ID     domain.ProjectID
+}
+
+func (q *Queries) SetProjectPaused(ctx context.Context, arg SetProjectPausedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setProjectPaused, arg.Paused, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertProject = `-- name: UpsertProject :exec
@@ -132,6 +152,8 @@ type UpsertProjectParams struct {
 	Kind          string
 }
 
+// Note: `paused` is intentionally omitted. Pause state is independent of config
+// and is mutated only by SetProjectPaused; a config save must never touch it.
 func (q *Queries) UpsertProject(ctx context.Context, arg UpsertProjectParams) error {
 	_, err := q.db.ExecContext(ctx, upsertProject,
 		arg.ID,

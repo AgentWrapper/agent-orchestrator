@@ -34,8 +34,9 @@ type NotificationIntent struct {
 	// notifier so they can dedupe on it too.
 	HeadSHA string
 	// Worker retry enrichment.
-	RetryCount int
-	RetryLimit int
+	RetryCount            int
+	RetryLimit            int
+	TerminalFailureReason string
 	// AdoptsOpenPR marks a worker-death notification whose replacement will adopt
 	// the dead worker's still-open PR (claim mode) rather than start clean. It is
 	// set only when intake actually dispatches a replacement onto an orphaned open

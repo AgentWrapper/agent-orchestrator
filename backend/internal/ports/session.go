@@ -26,6 +26,9 @@ type SpawnConfig struct {
 	// IntakePoolBypass marks tracker-intake workers that should not consume the
 	// normal per-project intake pool/cap.
 	IntakePoolBypass bool
+	// Force overrides the fleet-pause admission guard so a deliberate manual
+	// spawn (`ao spawn --force`) can start a worker on a paused project.
+	Force bool
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).
 	DisplayName string

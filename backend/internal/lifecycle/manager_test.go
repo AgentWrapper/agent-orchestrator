@@ -103,6 +103,9 @@ func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
 	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("want terminated/exited, got %+v", got)
 	}
+	if got.TerminalFailureReason != "runtime probe reported dead" {
+		t.Fatalf("TerminalFailureReason = %q, want runtime death reason", got.TerminalFailureReason)
+	}
 }
 
 // A session mid agent-switch has no live runtime by design; the reaper's "dead"
@@ -206,9 +209,13 @@ func TestActivitySignal_UpdatesPendingDecisionOnRepeatedBlockedState(t *testing.
 func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{
-		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
-		FirstSignalAt: time.Now(),
-		Metadata:      domain.SessionMetadata{RuntimeHandleID: "old", AgentSessionID: "old-native", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+		ID:                    "mer-1",
+		ProjectID:             "mer",
+		Harness:               domain.HarnessClaudeCode,
+		IsTerminated:          true,
+		TerminalFailureReason: "runtime probe reported dead",
+		FirstSignalAt:         time.Now(),
+		Metadata:              domain.SessionMetadata{RuntimeHandleID: "old", AgentSessionID: "old-native", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
 	}
 	// A relaunch may restore to a different worktree path/branch; MarkSwitched
 	// must persist them (not keep the stale ones).
@@ -252,6 +259,9 @@ func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
 	if !got.FirstSignalAt.IsZero() {
 		t.Fatal("FirstSignalAt should reset so the new agent re-proves its hooks")
 	}
+	if got.IsTerminated || got.TerminalFailureReason != "" {
+		t.Fatalf("switch should revive session and clear terminal reason, got terminated=%v reason=%q", got.IsTerminated, got.TerminalFailureReason)
+	}
 }
 
 func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
@@ -280,6 +290,9 @@ func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("current harness exit during suppression window was ignored: %+v", got)
+	}
+	if got := st.sessions["mer-1"]; got.TerminalFailureReason != "" {
+		t.Fatalf("TerminalFailureReason = %q, want no reason for clean activity exit", got.TerminalFailureReason)
 	}
 
 	st.sessions["mer-2"] = domain.SessionRecord{
@@ -419,9 +432,10 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:           "mer-1",
-		ProjectID:    "mer",
-		IsTerminated: true,
+		ID:                    "mer-1",
+		ProjectID:             "mer",
+		IsTerminated:          true,
+		TerminalFailureReason: "runtime probe reported dead",
 		Metadata: domain.SessionMetadata{
 			Model:             "spawn-model",
 			PreviewURL:        "http://localhost:5173/",
@@ -446,6 +460,9 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if got.IsTerminated || got.Activity.State != domain.ActivityIdle || got.Metadata.RuntimeHandleID != "h1" {
 		t.Fatalf("spawn metadata wrong: %+v", got)
+	}
+	if got.TerminalFailureReason != "" {
+		t.Fatalf("TerminalFailureReason = %q, want cleared on spawn", got.TerminalFailureReason)
 	}
 	if got.Metadata.Model != "restore-model" {
 		t.Fatalf("model = %q, want restore-model", got.Metadata.Model)

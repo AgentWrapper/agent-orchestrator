@@ -180,6 +180,119 @@ func TestPollRespawnDisabledEscalatesWithoutReplacement(t *testing.T) {
 	}
 }
 
+func TestPollRespawnsWhenOnlyNonWorkerSessionIsAttachedToIssue(t *testing.T) {
+	issueID := domain.IssueID("github:acme/demo#12")
+	maxRetries := 2
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled: true,
+				Respawn: &domain.TrackerRespawnPolicy{MaxRetries: &maxRetries},
+			}},
+		}},
+		sessions: []domain.SessionRecord{
+			{
+				ID:           "demo-worker-1",
+				ProjectID:    "demo",
+				IssueID:      issueID,
+				Kind:         domain.KindWorker,
+				DisplayName:  "demo #12 fix-login",
+				IsTerminated: true,
+				Activity:     domain.Activity{State: domain.ActivityExited},
+				UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+			},
+			{
+				ID:        "demo-orchestrator",
+				ProjectID: "demo",
+				IssueID:   issueID,
+				Kind:      domain.KindOrchestrator,
+			},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Fix login",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %+v, want replacement worker despite attached orchestrator", spawner.calls)
+	}
+	if spawner.calls[0].IssueID != issueID || spawner.calls[0].Kind != domain.KindWorker {
+		t.Fatalf("spawn call = %+v, want worker for %s", spawner.calls[0], issueID)
+	}
+	if len(notifications.intents) != 1 || notifications.intents[0].Type != domain.NotificationWorkerDiedUnfinished {
+		t.Fatalf("notifications = %+v, want worker death notification before respawn", notifications.intents)
+	}
+}
+
+func TestPollDoesNotRespawnWhenLiveWorkerAlreadyReplacedDeadWorker(t *testing.T) {
+	issueID := domain.IssueID("github:acme/demo#12")
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		}},
+		sessions: []domain.SessionRecord{
+			{
+				ID:           "demo-worker-1",
+				ProjectID:    "demo",
+				IssueID:      issueID,
+				Kind:         domain.KindWorker,
+				IsTerminated: true,
+				Activity:     domain.Activity{State: domain.ActivityExited},
+				UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+			},
+			{
+				ID:        "demo-worker-2",
+				ProjectID: "demo",
+				IssueID:   issueID,
+				Kind:      domain.KindWorker,
+				Activity:  domain.Activity{State: domain.ActivityActive},
+				UpdatedAt: time.Date(2026, 7, 10, 11, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Fix login",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %+v, want none while a live worker is already attached", spawner.calls)
+	}
+	if len(notifications.intents) != 0 {
+		t.Fatalf("notifications = %+v, want none while live replacement is running", notifications.intents)
+	}
+}
+
+func TestWorkerRetryExhaustedIntentCarriesTerminalFailureReason(t *testing.T) {
+	intent := workerRetryExhaustedIntent(domain.SessionRecord{
+		ID:                    "demo-3",
+		ProjectID:             "demo",
+		DisplayName:           "demo #12 fix-login",
+		TerminalFailureReason: "CI / backend test",
+	}, "github:acme/demo#12", 3, 2)
+
+	if intent.TerminalFailureReason != "CI / backend test" {
+		t.Fatalf("TerminalFailureReason = %q, want failure point", intent.TerminalFailureReason)
+	}
+}
+
 // A worker that died leaving an OPEN PR with no live driver must not orphan the
 // PR: intake respawns a replacement in claim mode (the new worker adopts the PR
 // via /address-issue resume) and emits an AdoptsOpenPR death notification naming
@@ -850,6 +963,7 @@ type fakeStore struct {
 	openPRs      []domain.PullRequest
 	openPRsErr   error
 	prsBySession map[domain.SessionID][]domain.PullRequest
+	fleetPaused  bool
 }
 
 func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
@@ -866,6 +980,10 @@ func (f *fakeStore) ListOpenPRs(context.Context) ([]domain.PullRequest, error) {
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error) {
 	return append([]domain.PullRequest(nil), f.prsBySession[sessionID]...), nil
+}
+
+func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
+	return f.fleetPaused, nil
 }
 
 type fakeNotificationSink struct {

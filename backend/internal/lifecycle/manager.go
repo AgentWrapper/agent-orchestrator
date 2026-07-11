@@ -145,6 +145,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		}
 		next := cur
 		next.IsTerminated = true
+		next.TerminalFailureReason = runtimeTerminalFailureReason(f)
 		next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
 		// Reaper-driven death (crash/SIGKILL) never fires a session-end hook,
 		// so this is the last chance to release the session's tool-flight
@@ -217,6 +218,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	if s.State == domain.ActivityExited {
 		next.IsTerminated = true
+		next.TerminalFailureReason = ""
 	}
 	next.UpdatedAt = now
 	if err := m.store.UpdateSession(ctx, next); err != nil {
@@ -525,6 +527,7 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	}
 	now := m.clock()
 	rec.IsTerminated = false
+	rec.TerminalFailureReason = ""
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
 	// a relaunch with broken hooks degrades to no_signal instead of inheriting
@@ -617,6 +620,7 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	m.switchExitSuppressUntil[id] = now.Add(switchExitSignalSuppressTime)
 	rec.Harness = harness
 	rec.IsTerminated = false
+	rec.TerminalFailureReason = ""
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	rec.FirstSignalAt = time.Time{}
 	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
@@ -669,6 +673,13 @@ func staleRuntimeTokenSignal(rec domain.SessionRecord, s ports.ActivitySignal) b
 	}
 	signalToken := strings.TrimSpace(s.RuntimeToken)
 	return signalToken == "" || signalToken != currentToken
+}
+
+func runtimeTerminalFailureReason(f ports.RuntimeFacts) string {
+	if f.Probe == ports.ProbeDead {
+		return "runtime probe reported dead"
+	}
+	return ""
 }
 
 // sameActivity reports whether two activity signals describe the same state.
