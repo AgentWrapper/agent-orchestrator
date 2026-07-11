@@ -935,6 +935,7 @@ export interface components {
             changedPaths: string[];
             /** Format: date-time */
             createdAt: string;
+            headSha: string;
             id: string;
             prUrl: string;
             projectId: string;

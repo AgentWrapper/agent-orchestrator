@@ -632,8 +632,12 @@ func TestSCMObserverMultiPREndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetPRLastNudgeSignature child: %v", err)
 		}
-		if childSig != "" {
-			t.Fatalf("stacked child must not record a nudge signature: %q", childSig)
+		// The child may carry an unrelated persisted signature (e.g. a
+		// ready_to_merge notification dedupe key shares this column), but it must
+		// never record a merge-conflict rebase-nudge signature — that would prove
+		// it was nudged rather than suppressed at the reaction layer.
+		if strings.Contains(childSig, "merge-conflict:"+childURL) {
+			t.Fatalf("stacked child must not record a merge-conflict nudge signature: %q", childSig)
 		}
 	})
 }

@@ -575,6 +575,7 @@ type NotificationResponse struct {
 	Body         string             `json:"body"`
 	Sensitive    bool               `json:"sensitive"`
 	ChangedPaths []string           `json:"changedPaths"`
+	HeadSHA      string             `json:"headSha"`
 	Status       string             `json:"status" enum:"unread,read"`
 	CreatedAt    time.Time          `json:"createdAt"`
 	Target       NotificationTarget `json:"target"`

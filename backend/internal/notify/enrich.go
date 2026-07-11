@@ -17,6 +17,7 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 		CreatedAt:    intent.CreatedAt,
 		Sensitive:    intent.Sensitive,
 		ChangedPaths: append([]string(nil), intent.ChangedPaths...),
+		HeadSHA:      strings.TrimSpace(intent.HeadSHA),
 	}
 	if !intent.Type.Valid() {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationType

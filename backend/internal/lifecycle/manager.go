@@ -470,12 +470,19 @@ func (m *Manager) emitTelemetry(ctx context.Context, ev ports.TelemetryEvent) {
 }
 
 func (m *Manager) emitNotification(ctx context.Context, intent *ports.NotificationIntent) {
-	if intent == nil || m.notifications == nil {
-		return
-	}
-	if err := m.notifications.Notify(ctx, *intent); err != nil {
+	if err := m.emitNotificationErr(ctx, intent); err != nil {
 		slog.Default().Warn("lifecycle: notification failed", "session", intent.SessionID, "type", intent.Type, "err", err)
 	}
+}
+
+// emitNotificationErr publishes the notification and returns the sink error so
+// callers that gate persisted dedupe state on a successful write can react to a
+// failed write instead of recording a never-delivered notification as sent.
+func (m *Manager) emitNotificationErr(ctx context.Context, intent *ports.NotificationIntent) error {
+	if intent == nil || m.notifications == nil {
+		return nil
+	}
+	return m.notifications.Notify(ctx, *intent)
 }
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.

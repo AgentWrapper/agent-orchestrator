@@ -40,6 +40,7 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		Body:         rec.Body,
 		Sensitive:    rec.Sensitive,
 		ChangedPaths: encodeNotificationPaths(rec.ChangedPaths),
+		HeadSha:      rec.HeadSHA,
 		Status:       rec.Status,
 		CreatedAt:    rec.CreatedAt,
 	})
@@ -96,6 +97,7 @@ func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.No
 		Type:      rec.Type,
 		PRURL:     rec.PRURL,
 		Sensitive: rec.Sensitive,
+		HeadSha:   rec.HeadSHA,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NotificationRecord{}, false, nil
@@ -122,6 +124,7 @@ func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 		Body:         row.Body,
 		Sensitive:    row.Sensitive,
 		ChangedPaths: decodeNotificationPaths(row.ChangedPaths),
+		HeadSHA:      row.HeadSha,
 		Status:       row.Status,
 		CreatedAt:    row.CreatedAt,
 	}

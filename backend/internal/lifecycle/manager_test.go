@@ -1593,3 +1593,238 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 		t.Fatalf("waiting-input session emitted ready notification: %+v", sink.intents)
 	}
 }
+
+func readyObs(url, headSHA string) ports.SCMObservation {
+	return ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: url, Number: 1, HeadSHA: headSHA},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+}
+
+// A stable ready-to-merge PR observed repeatedly emits exactly one notification
+// (issue #190): re-observations of the same (type, head SHA, sensitive) signature
+// must not re-notify.
+func TestSCMObservation_ReadyToMergeEmitsOncePerSignature(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+	obs := readyObs("https://github.com/o/r/pull/1", "sha-1")
+	for i := 0; i < 5; i++ {
+		if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1 (dedupe on unchanged signature)", len(sink.intents))
+	}
+}
+
+// A new head SHA is a real state change and must re-notify.
+func TestSCMObservation_ReadyToMergeReNotifiesOnNewHead(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplySCMObservation(ctx, "mer-1", readyObs("https://github.com/o/r/pull/1", "sha-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", readyObs("https://github.com/o/r/pull/1", "sha-2")); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 2 {
+		t.Fatalf("intents = %d, want 2 (new head SHA re-notifies)", len(sink.intents))
+	}
+}
+
+// The dedupe signature is persisted (pr.last_nudge_signature), so a fresh
+// Manager — modeling a daemon restart — does not re-fire the same ready state.
+func TestSCMObservation_ReadyToMergeDedupeSurvivesRestart(t *testing.T) {
+	st := newFakeStore()
+	obs := readyObs("https://github.com/o/r/pull/1", "sha-1")
+
+	sink1 := &fakeNotificationSink{}
+	m1 := New(st, nil, WithNotificationSink(sink1))
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m1.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink1.intents) != 1 {
+		t.Fatalf("pre-restart intents = %d, want 1", len(sink1.intents))
+	}
+
+	// New Manager over the same store: the persisted signature must suppress the
+	// re-derived notification on the first post-restart poll.
+	sink2 := &fakeNotificationSink{}
+	m2 := New(st, nil, WithNotificationSink(sink2))
+	if err := m2.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink2.intents) != 0 {
+		t.Fatalf("post-restart intents = %d, want 0 (persisted dedupe)", len(sink2.intents))
+	}
+}
+
+// A sensitive-flag flip is part of the signature and must re-notify (the
+// operator escalation changes from a plain post to an @mention).
+func TestSCMObservation_ReadyToMergeReNotifiesOnSensitiveChange(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+
+	plain := readyObs("https://github.com/o/r/pull/1", "sha-1")
+	if err := m.ApplySCMObservation(ctx, "mer-1", plain); err != nil {
+		t.Fatal(err)
+	}
+	sensitive := readyObs("https://github.com/o/r/pull/1", "sha-1")
+	sensitive.PR.ChangedPaths = []string{"backend/internal/lifecycle/reactions.go"}
+	if err := m.ApplySCMObservation(ctx, "mer-1", sensitive); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 2 {
+		t.Fatalf("intents = %d, want 2 (sensitive flip re-notifies)", len(sink.intents))
+	}
+	if !sink.intents[1].Sensitive {
+		t.Fatalf("second intent should be sensitive, got %+v", sink.intents[1])
+	}
+}
+
+// A ready PR that goes unready (CI red) and later ready again on the SAME head
+// must re-notify: the non-ready observation clears the persisted signature so
+// the return-to-ready is a fresh transition, not a suppressed duplicate (#190
+// review finding 1b).
+func TestSCMObservation_ReadyToMergeReNotifiesAfterUnreadyOnSameHead(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+	url := "https://github.com/o/r/pull/1"
+
+	if err := m.ApplySCMObservation(ctx, "mer-1", readyObs(url, "sha-1")); err != nil {
+		t.Fatal(err)
+	}
+	// CI flips red on the same head: no notification, and the signature is cleared.
+	unready := readyObs(url, "sha-1")
+	unready.CI = ports.SCMCIObservation{Summary: string(domain.CIFailing)}
+	if err := m.ApplySCMObservation(ctx, "mer-1", unready); err != nil {
+		t.Fatal(err)
+	}
+	// CI goes green again on the same head: this is a real re-transition to ready.
+	if err := m.ApplySCMObservation(ctx, "mer-1", readyObs(url, "sha-1")); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 2 {
+		t.Fatalf("intents = %d, want 2 (unready then re-ready on same head re-notifies)", len(sink.intents))
+	}
+}
+
+// A persist failure must not swallow the notification (it is emitted first) and
+// must not permanently suppress future notifications: because the persist failed
+// the signature is not durably recorded, so a fresh Manager (restart) re-fires
+// rather than silently dropping the state (#190 review finding 1a).
+func TestSCMObservation_PersistFailureStillEmitsAndDoesNotPermanentlySuppress(t *testing.T) {
+	st := newFakeStore()
+	st.signatureWriteErr = errors.New("boom")
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+	obs := readyObs("https://github.com/o/r/pull/1", "sha-1")
+
+	// The emit happens before the persist write, so the error surfaces but the
+	// notification was already produced.
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err == nil {
+		t.Fatal("want persist error to surface")
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1 (emit before persist)", len(sink.intents))
+	}
+
+	// Restart: the failed persist left nothing durable, so the re-derived ready
+	// state fires again rather than being lost forever.
+	st.signatureWriteErr = nil
+	sink2 := &fakeNotificationSink{}
+	m2 := New(st, nil, WithNotificationSink(sink2))
+	if err := m2.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink2.intents) != 1 {
+		t.Fatalf("post-restart intents = %d, want 1 (persist failure not permanently suppressing)", len(sink2.intents))
+	}
+}
+
+// A failed notification-sink write must NOT record the dedupe signature: the
+// notification never reached storage, so a later observation of the same state
+// must re-attempt it rather than treating it as delivered (#190 review cycle 2,
+// finding 1a).
+func TestSCMObservation_EmitFailureDoesNotRecordSignature(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{err: errors.New("sink down")}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+	obs := readyObs("https://github.com/o/r/pull/1", "sha-1")
+
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err == nil {
+		t.Fatal("want emit error to surface")
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(sink.intents))
+	}
+	if st.signatureWrites != 0 {
+		t.Fatalf("signature persisted despite emit failure: writes=%d", st.signatureWrites)
+	}
+
+	// Sink recovers: the same state must re-emit because nothing was recorded.
+	sink.err = nil
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 2 {
+		t.Fatalf("attempts = %d, want 2 (retry after sink recovery)", len(sink.intents))
+	}
+	if st.signatureWrites != 1 {
+		t.Fatalf("signature writes = %d, want 1 (persisted only after successful emit)", st.signatureWrites)
+	}
+}
+
+// forgetNotificationSignature must not drop the in-memory entry when the durable
+// deletion fails: otherwise a later non-ready poll would short-circuit on a
+// missing key and leave the stale signature on disk to suppress a legitimate
+// return-to-ready after a restart (#190 review cycle 2, finding 1b).
+func TestSCMObservation_ForgetSignaturePersistFailureRestoresEntry(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+	url := "https://github.com/o/r/pull/1"
+
+	// Establish a ready signature.
+	if err := m.ApplySCMObservation(ctx, "mer-1", readyObs(url, "sha-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	// CI red on the same head with a failing persist: the durable deletion fails.
+	st.signatureWriteErr = errors.New("boom")
+	unready := readyObs(url, "sha-1")
+	unready.CI = ports.SCMCIObservation{Summary: string(domain.CIFailing)}
+	if err := m.ApplySCMObservation(ctx, "mer-1", unready); err == nil {
+		t.Fatal("want persist error to surface")
+	}
+
+	// Persist recovers; a second non-ready poll must retry the durable deletion
+	// (the in-memory entry was restored, so it is not short-circuited).
+	st.signatureWriteErr = nil
+	if err := m.ApplySCMObservation(ctx, "mer-1", unready); err != nil {
+		t.Fatal(err)
+	}
+	sig, err := st.GetPRLastNudgeSignature(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sig, "notify:"+url) {
+		t.Fatalf("stale notify signature still persisted after retry: %q", sig)
+	}
+}

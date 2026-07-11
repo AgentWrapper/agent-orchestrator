@@ -33,6 +33,7 @@ type Notification struct {
 	CreatedAt    time.Time
 	Sensitive    bool
 	ChangedPaths string
+	HeadSha      string
 }
 
 type PR struct {

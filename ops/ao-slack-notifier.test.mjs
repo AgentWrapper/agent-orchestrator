@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 
 import {
 	SlackNotificationNotifier,
+	contentSignature,
 	describeSlackMessage,
 	digestContentKey,
 	loadState,
@@ -831,5 +832,219 @@ describe("ao Slack notifier session attention polling", () => {
 		assert.equal(parsePollMs(10, 10_000), 1_000);
 		assert.equal(parsePollMs(0, 10_000), 0);
 		assert.equal(parsePollMs(-1, 10_000), 10_000);
+	});
+});
+
+describe("ao Slack notifier content cooldown dedupe (issue #190)", () => {
+	function stubFetch(pagesRef, marked) {
+		return async (url, init = {}) => {
+			if (init.method === "PATCH") {
+				marked.push(url.split("/").at(-1));
+				return response({});
+			}
+			return response({ notifications: pagesRef.next.shift() ?? [] });
+		};
+	}
+
+	it("computes a content signature that ignores id and createdAt", () => {
+		const a = contentSignature({
+			id: "ntf_1",
+			type: "ready_to_merge",
+			sessionId: "s",
+			projectId: "ao",
+			prUrl: "https://gh/pr/1",
+			createdAt: "2026-07-10T00:00:00Z",
+		});
+		const b = contentSignature({
+			id: "ntf_2",
+			type: "ready_to_merge",
+			sessionId: "s",
+			projectId: "ao",
+			prUrl: "https://gh/pr/1",
+			createdAt: "2026-07-10T05:00:00Z",
+		});
+		assert.equal(a, b);
+	});
+
+	it("suppresses a duplicate-content notification within the cooldown but still marks it read", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		const pagesRef = { next: [] };
+		let now = 1_000_000;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			dedupeCooldownMs: 60 * 60 * 1000,
+			clock: () => new Date(now),
+			postMessage: async (text) => posts.push(text),
+			fetchImpl: stubFetch(pagesRef, marked),
+			logger: { info() {}, error() {} },
+			bootstrapMode: "post_all",
+		});
+
+		const first = {
+			id: "ntf_1",
+			type: "ready_to_merge",
+			sessionId: "s",
+			projectId: "ao",
+			title: "PR #7 ready",
+			prUrl: "https://gh/pr/7",
+			createdAt: "2026-07-10T00:00:00Z",
+		};
+		const dup = { ...first, id: "ntf_2", createdAt: "2026-07-10T00:10:00Z" };
+
+		assert.equal(await notifier.handleNotification(first), true);
+		now += 10 * 60 * 1000; // 10 min later, within the 60-min cooldown
+		await notifier.handleNotification(dup);
+
+		assert.equal(posts.length, 1, "only the first content post reaches Slack");
+		assert.deepEqual(marked, ["ntf_1", "ntf_2"], "both rows are still marked read");
+	});
+
+	it("re-posts after the cooldown elapses", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		const pagesRef = { next: [] };
+		let now = 1_000_000;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			dedupeCooldownMs: 60 * 60 * 1000,
+			clock: () => new Date(now),
+			postMessage: async (text) => posts.push(text),
+			fetchImpl: stubFetch(pagesRef, marked),
+			logger: { info() {}, error() {} },
+			bootstrapMode: "post_all",
+		});
+
+		const base = {
+			type: "ready_to_merge",
+			sessionId: "s",
+			projectId: "ao",
+			title: "PR #7 ready",
+			prUrl: "https://gh/pr/7",
+		};
+		await notifier.handleNotification({ ...base, id: "ntf_1" });
+		now += 61 * 60 * 1000; // past the cooldown
+		await notifier.handleNotification({ ...base, id: "ntf_2" });
+
+		assert.equal(posts.length, 2, "a post after the cooldown fires again");
+	});
+
+	it("persists posted signatures across a restart", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		let now = 1_000_000;
+		const first = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			dedupeCooldownMs: 60 * 60 * 1000,
+			clock: () => new Date(now),
+			postMessage: async (text) => posts.push(text),
+			fetchImpl: stubFetch({ next: [] }, marked),
+			logger: { info() {}, error() {} },
+			bootstrapMode: "post_all",
+		});
+		const base = { type: "pr_merged", sessionId: "s", projectId: "ao", title: "merged", prUrl: "https://gh/pr/9" };
+		await first.handleNotification({ ...base, id: "ntf_1" });
+		assert.equal(posts.length, 1);
+
+		// Restart: a fresh notifier loads the persisted signatures and suppresses
+		// the re-derived identical notification within the cooldown.
+		const restarted = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			dedupeCooldownMs: 60 * 60 * 1000,
+			clock: () => new Date(now + 5 * 60 * 1000),
+			postMessage: async (text) => posts.push(text),
+			fetchImpl: stubFetch({ next: [] }, marked),
+			logger: { info() {}, error() {} },
+			bootstrapMode: "post_all",
+		});
+		await restarted.handleNotification({ ...base, id: "ntf_2" });
+		assert.equal(posts.length, 1, "restart does not re-post the same content within cooldown");
+	});
+
+	it("disables the cooldown when set to 0", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			dedupeCooldownMs: 0,
+			postMessage: async (text) => posts.push(text),
+			fetchImpl: stubFetch({ next: [] }, marked),
+			logger: { info() {}, error() {} },
+			bootstrapMode: "post_all",
+		});
+		const base = { type: "ready_to_merge", sessionId: "s", projectId: "ao", title: "ready", prUrl: "https://gh/pr/1" };
+		await notifier.handleNotification({ ...base, id: "ntf_1" });
+		await notifier.handleNotification({ ...base, id: "ntf_2" });
+		assert.equal(posts.length, 2, "cooldown disabled posts every distinct row");
+	});
+});
+
+describe("ao Slack notifier head-SHA aware cooldown (issue #190)", () => {
+	function stubFetch(marked) {
+		return async (url, init = {}) => {
+			if (init.method === "PATCH") {
+				marked.push(url.split("/").at(-1));
+				return response({});
+			}
+			return response({ notifications: [] });
+		};
+	}
+
+	it("includes the head SHA in the content signature", () => {
+		const a = contentSignature({
+			type: "ready_to_merge",
+			sessionId: "s",
+			projectId: "ao",
+			prUrl: "https://gh/pr/1",
+			headSha: "sha-1",
+		});
+		const b = contentSignature({
+			type: "ready_to_merge",
+			sessionId: "s",
+			projectId: "ao",
+			prUrl: "https://gh/pr/1",
+			headSha: "sha-2",
+		});
+		assert.notEqual(a, b);
+	});
+
+	it("re-posts a ready_to_merge for a new head within the cooldown", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const marked = [];
+		let now = 1_000_000;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			dedupeCooldownMs: 60 * 60 * 1000,
+			clock: () => new Date(now),
+			postMessage: async (text) => posts.push(text),
+			fetchImpl: stubFetch(marked),
+			logger: { info() {}, error() {} },
+			bootstrapMode: "post_all",
+		});
+		const base = { type: "ready_to_merge", sessionId: "s", projectId: "ao", title: "ready", prUrl: "https://gh/pr/1" };
+		await notifier.handleNotification({ ...base, id: "ntf_1", headSha: "sha-1" });
+		now += 5 * 60 * 1000; // within cooldown
+		await notifier.handleNotification({ ...base, id: "ntf_2", headSha: "sha-2" }); // new head
+
+		assert.equal(posts.length, 2, "a new head re-notifies even inside the cooldown");
 	});
 });

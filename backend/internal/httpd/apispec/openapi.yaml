@@ -2548,6 +2548,8 @@ components:
         createdAt:
           format: date-time
           type: string
+        headSha:
+          type: string
         id:
           type: string
         prUrl:
@@ -2584,6 +2586,7 @@ components:
       - body
       - sensitive
       - changedPaths
+      - headSha
       - status
       - createdAt
       - target

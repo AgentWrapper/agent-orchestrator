@@ -197,6 +197,7 @@ func notificationResponse(n notificationsvc.Notification) NotificationResponse {
 		Body:         n.Body,
 		Sensitive:    n.Sensitive,
 		ChangedPaths: append([]string(nil), n.ChangedPaths...),
+		HeadSHA:      n.HeadSHA,
 		Status:       string(n.Status),
 		CreatedAt:    n.CreatedAt,
 		Target: NotificationTarget{
@@ -218,6 +219,7 @@ func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationR
 		Body:         rec.Body,
 		Sensitive:    rec.Sensitive,
 		ChangedPaths: append([]string(nil), rec.ChangedPaths...),
+		HeadSHA:      rec.HeadSHA,
 		Status:       string(rec.Status),
 		CreatedAt:    rec.CreatedAt,
 		Target:       notificationTargetFromRecord(rec),

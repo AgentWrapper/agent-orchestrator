@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -334,8 +335,124 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if err != nil {
 		return err
 	}
-	m.emitNotification(ctx, intent)
+	prURL := firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL)
+	if intent == nil {
+		// No notification this observation. If the PR is still open, forget any
+		// persisted notify signature so a later transition back into a
+		// notifiable state (e.g. CI red -> green on the same head) re-notifies
+		// instead of being suppressed as an unchanged signature. Merged/closed
+		// keep their signature so terminal posts stay deduped.
+		if prURL != "" && !o.PR.Merged && !o.PR.Closed {
+			return m.forgetNotificationSignature(ctx, prURL)
+		}
+		return nil
+	}
+	// A PR-derived notification is only actionable on a state transition. The
+	// observer re-derives the same PR facts on every poll (and re-derives the
+	// whole current fleet after a daemon restart), so emitting on every
+	// observation floods the operator with duplicate ready_to_merge/pr_merged
+	// posts (issue #190). Gate emission on a persisted per-PR signature —
+	// (type, head SHA, sensitive-flag) — reusing the pr.last_nudge_signature
+	// row so the dedup survives a restart, exactly like the agent-nudge lanes.
+	return m.emitPRNotificationOnce(ctx, intent, scmNotificationHeadSHA(o))
+}
+
+// scmNotificationHeadSHA is the head commit the notification signature pins to.
+// A new push (new head) is a real state change that must re-notify; a
+// re-observation of the same head is not.
+func scmNotificationHeadSHA(o ports.SCMObservation) string {
+	return firstSCMNonEmpty(o.PR.HeadSHA, o.CI.HeadSHA)
+}
+
+// emitPRNotificationOnce emits the PR-derived notification only when its
+// signature differs from the last one persisted for the PR, then records and
+// persists the new signature under a dedicated "notify:<url>" key in
+// pr.last_nudge_signature so the emit-once decision survives a daemon restart.
+//
+// The ordering is deliberate and fail-open: the emit happens while react.mu is
+// held (so a concurrent observation cannot double-emit the same signature) and
+// BEFORE the dedupe state is touched. The signature is recorded ONLY after the
+// notification sink accepted the write — a failed emit leaves no dedupe entry,
+// so the state is re-attempted on the next observation and after a restart
+// instead of being permanently suppressed as delivered. A persist failure after
+// a successful emit still surfaces upward; its worst case is one extra
+// notification after a restart, matching the agent-nudge lanes.
+func (m *Manager) emitPRNotificationOnce(ctx context.Context, intent *ports.NotificationIntent, headSHA string) error {
+	if intent == nil {
+		return nil
+	}
+	prURL := strings.TrimSpace(intent.PRURL)
+	if prURL == "" {
+		// No PR URL means no per-PR persistence row to dedupe against; every
+		// such notification fires. (There are none today — every PR-derived
+		// type carries a URL.)
+		return m.emitNotificationErr(ctx, intent)
+	}
+	key := "notify:" + prURL
+	sig := notificationSignature(intent, headSHA)
+
+	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+	if !m.react.loaded[prURL] {
+		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
+			return err
+		}
+		m.react.loaded[prURL] = true
+	}
+	if m.react.seen[key] == sig {
+		return nil
+	}
+	// Only record the signature once the sink actually accepted the write; a
+	// failed emit must NOT be treated as delivered (it would suppress the real
+	// notification forever, including after a restart).
+	if err := m.emitNotificationErr(ctx, intent); err != nil {
+		return err
+	}
+	m.react.seen[key] = sig
+	return m.persistPRSignaturesLocked(ctx, prURL)
+}
+
+// forgetNotificationSignature drops the persisted notify-dedupe entry for a PR
+// so the next notifiable transition re-fires. Called when an open PR is
+// observed in a non-notifiable state (e.g. CI failing), which is itself a state
+// change away from "ready" and must reset the emit-once gate.
+func (m *Manager) forgetNotificationSignature(ctx context.Context, prURL string) error {
+	key := "notify:" + prURL
+	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+	if !m.react.loaded[prURL] {
+		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
+			return err
+		}
+		m.react.loaded[prURL] = true
+	}
+	prev, ok := m.react.seen[key]
+	if !ok {
+		return nil
+	}
+	delete(m.react.seen, key)
+	// Keep the in-memory map consistent with the durable row: if the persist
+	// fails, restore the entry so a later non-ready poll retries the durable
+	// deletion instead of short-circuiting on a missing key (which would leave
+	// the stale signature on disk to be reloaded after a restart and suppress a
+	// legitimate return-to-ready).
+	if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
+		m.react.seen[key] = prev
+		return err
+	}
 	return nil
+}
+
+// notificationSignature fingerprints the operator-visible facts of a PR-derived
+// notification: its type, the head commit it was derived from, and the
+// sensitive-merge flag. Two notifications with the same signature describe the
+// same state and must not re-notify.
+func notificationSignature(intent *ports.NotificationIntent, headSHA string) string {
+	return strings.Join([]string{
+		string(intent.Type),
+		headSHA,
+		strconv.FormatBool(intent.Sensitive),
+	}, "\x00")
 }
 
 func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {
@@ -368,6 +485,7 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 		Provider:           o.Provider,
 		Repo:               o.Repo,
 		ChangedPaths:       append([]string(nil), o.PR.ChangedPaths...),
+		HeadSHA:            scmNotificationHeadSHA(o),
 	}
 	if o.PR.Merged {
 		base.Type = domain.NotificationPRMerged

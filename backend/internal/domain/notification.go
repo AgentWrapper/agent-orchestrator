@@ -60,6 +60,7 @@ type NotificationRecord struct {
 	Body         string
 	Sensitive    bool
 	ChangedPaths []string
+	HeadSHA      string
 	Status       NotificationStatus
 	CreatedAt    time.Time
 }

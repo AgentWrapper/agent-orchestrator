@@ -26,4 +26,9 @@ type NotificationIntent struct {
 	Repo               string
 	Sensitive          bool
 	ChangedPaths       []string
+	// HeadSHA is the PR head commit the notification was derived from. It is
+	// part of the operator-visible signature (a new push is a real state
+	// change) and is surfaced to downstream consumers such as the Slack
+	// notifier so they can dedupe on it too.
+	HeadSHA string
 }

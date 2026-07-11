@@ -68,6 +68,13 @@ const STATE_FILE = process.env.AO_SLACK_NOTIFIER_STATE || "/home/orchestrator/.a
 const SEEN_LIMIT = Number(process.env.AO_SLACK_NOTIFIER_SEEN_LIMIT || 2_000);
 const HEARTBEAT_MS = Number(process.env.AO_SLACK_NOTIFIER_HEARTBEAT_MS || 15 * 60 * 1000);
 const RECONNECT_MS = Number(process.env.AO_SLACK_NOTIFIER_RECONNECT_MS || 10_000);
+// Belt-and-suspenders content dedupe (issue #190): even if the daemon emits a
+// fresh notification row for an unchanged PR state, suppress a Slack post whose
+// (session, type, pr, sensitive) signature matches the last one we posted
+// within this window. The lifecycle emitter is the primary, head-SHA-aware
+// dedupe; this coarse cooldown only guards against re-fires the emitter missed
+// (e.g. a pre-fix daemon, a replay, or a bug). 0 disables it.
+const DEDUPE_COOLDOWN_MS = Number(process.env.AO_SLACK_NOTIFIER_DEDUPE_COOLDOWN_MS || 60 * 60 * 1000);
 const BOOTSTRAP_MODE = process.env.AO_SLACK_NOTIFIER_BOOTSTRAP_MODE || "attention_only";
 const SESSION_ATTENTION_POLL_MS = parsePollMs(process.env.AO_SESSION_ATTENTION_POLL_MS, 10_000);
 
@@ -175,6 +182,7 @@ export function normalizeNotification(raw) {
 			: Array.isArray(raw.changedPaths)
 				? raw.changedPaths
 				: [],
+		headSha: n.headSha ?? n.head_sha ?? raw.headSha ?? raw.head_sha ?? "",
 		createdAt: n.createdAt ?? raw.createdAt ?? "",
 	};
 }
@@ -192,6 +200,19 @@ export function notificationKey(raw) {
 	const n = normalizeNotification(raw);
 	if (!n) return null;
 	return n.id || `${n.type}|${n.projectId}|${n.sessionId}|${n.createdAt}|${n.title}|${n.prUrl}`;
+}
+
+// contentSignature ignores the per-row id and createdAt (which change on every
+// re-emission of the same underlying state) and fingerprints only the facts the
+// operator actually sees: session, type, PR, and the sensitive flag. Two
+// notifications with the same content signature describe the same state, so the
+// cooldown suppresses the second post regardless of a fresh id/timestamp.
+export function contentSignature(raw) {
+	const n = normalizeNotification(raw);
+	if (!n) return null;
+	// head SHA is part of the signature: a new push (new head) is a real state
+	// change that must re-notify even inside the cooldown window (issue #190).
+	return `${n.type}|${n.projectId}|${n.sessionId}|${n.prUrl}|${n.sensitive ? "1" : "0"}|${n.headSha ?? ""}`;
 }
 
 export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
@@ -246,6 +267,7 @@ export function loadState(file = STATE_FILE) {
 			attentionTracker: AttentionTracker.deserialize(raw.attentionTracker ?? { open: [] }),
 			lastDigestKey: raw.lastDigestKey ?? null,
 			digestTs: raw.digestTs ?? null,
+			postedSignatures: normalizePostedSignatures(raw.postedSignatures),
 		};
 	} catch {
 		return {
@@ -256,8 +278,22 @@ export function loadState(file = STATE_FILE) {
 			attentionTracker: new AttentionTracker(),
 			lastDigestKey: null,
 			digestTs: null,
+			postedSignatures: {},
 		};
 	}
+}
+
+// normalizePostedSignatures coerces the persisted {signature: epochMs} map back
+// into a plain object of finite numbers, dropping any corrupt entries so a bad
+// state file degrades to "no cooldown recorded" rather than crashing the loop.
+function normalizePostedSignatures(raw) {
+	const out = {};
+	if (!raw || typeof raw !== "object") return out;
+	for (const [sig, ts] of Object.entries(raw)) {
+		const n = Number(ts);
+		if (Number.isFinite(n)) out[sig] = n;
+	}
+	return out;
 }
 
 export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
@@ -274,6 +310,7 @@ export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
 				attentionTracker: state.attentionTracker ? JSON.parse(state.attentionTracker.serialize()) : { open: [] },
 				lastDigestKey: state.lastDigestKey ?? null,
 				digestTs: state.digestTs ?? null,
+				postedSignatures: state.postedSignatures ?? {},
 			}),
 			"utf8",
 		);
@@ -299,6 +336,7 @@ export class SlackNotificationNotifier {
 		bootstrapMode = BOOTSTRAP_MODE,
 		pageLimit = 100,
 		sessionPollMs = SESSION_ATTENTION_POLL_MS,
+		dedupeCooldownMs = DEDUPE_COOLDOWN_MS,
 	} = {}) {
 		this.baseUrl = baseUrl.replace(/\/$/, "");
 		this.stateFile = stateFile;
@@ -315,6 +353,7 @@ export class SlackNotificationNotifier {
 		this.bootstrapMode = bootstrapMode;
 		this.pageLimit = pageLimit;
 		this.sessionPollMs = parsePollMs(sessionPollMs, SESSION_ATTENTION_POLL_MS);
+		this.dedupeCooldownMs = Number.isFinite(dedupeCooldownMs) && dedupeCooldownMs > 0 ? dedupeCooldownMs : 0;
 		this.consecutiveErrors = 0;
 		this.consecutiveSessionPollErrors = 0;
 		this.streamUnhealthyPaged = false;
@@ -323,6 +362,7 @@ export class SlackNotificationNotifier {
 		this.state.attentionTracker ??= new AttentionTracker();
 		this.state.lastDigestKey ??= null;
 		this.state.digestTs ??= null;
+		this.state.postedSignatures ??= {};
 	}
 
 	async catchUpUnread() {
@@ -373,15 +413,54 @@ export class SlackNotificationNotifier {
 		const n = normalizeNotification(raw);
 		if (!key || !n) return false;
 		if (!this.state.seen.has(key)) {
-			const msg = shouldPost ? describeSlackMessage(raw, this.mentionUserId) : null;
-			if (shouldPost && !msg) return false;
-			if (msg) await this.postMessage(msg);
+			const suppressed = shouldPost && this.suppressedByCooldown(raw);
+			const msg = shouldPost && !suppressed ? describeSlackMessage(raw, this.mentionUserId) : null;
+			if (shouldPost && !suppressed && !msg) return false;
+			if (msg) {
+				await this.postMessage(msg);
+				this.recordPostedSignature(raw);
+			} else if (suppressed) {
+				// A matching post is still within the cooldown: swallow the Slack
+				// message but keep advancing seen + the server-side read cursor so
+				// the row is not re-paged forever (issue #190 belt-and-suspenders).
+				this.logger.info?.(
+					`ao-slack-notifier: suppressed duplicate ${n.type} for ${n.sessionId || n.prUrl} within cooldown`,
+				);
+			}
 		}
 		this.state.seen.add(key);
 		this.pruneSeen();
 		saveState(this.stateFile, this.state, this.seenLimit, this.logger);
 		await this.markRead(n.id);
 		return !this.state.seen.has(key) || shouldPost;
+	}
+
+	// suppressedByCooldown reports whether an identical-content notification was
+	// posted within the configured cooldown window. Only the content signature
+	// (session/type/pr/sensitive) is compared, so a re-emitted row for unchanged
+	// state is suppressed even though its id/createdAt differ.
+	suppressedByCooldown(raw) {
+		if (this.dedupeCooldownMs <= 0) return false;
+		const sig = contentSignature(raw);
+		if (!sig) return false;
+		const last = this.state.postedSignatures?.[sig];
+		if (last == null) return false;
+		return this.clock().getTime() - last < this.dedupeCooldownMs;
+	}
+
+	// recordPostedSignature stamps the just-posted content signature with the
+	// current time and prunes signatures older than the cooldown so the map does
+	// not grow without bound.
+	recordPostedSignature(raw) {
+		if (this.dedupeCooldownMs <= 0) return;
+		const sig = contentSignature(raw);
+		if (!sig) return;
+		const now = this.clock().getTime();
+		this.state.postedSignatures ??= {};
+		this.state.postedSignatures[sig] = now;
+		for (const [key, ts] of Object.entries(this.state.postedSignatures)) {
+			if (now - ts >= this.dedupeCooldownMs) delete this.state.postedSignatures[key];
+		}
 	}
 
 	async handleNotification(raw) {
