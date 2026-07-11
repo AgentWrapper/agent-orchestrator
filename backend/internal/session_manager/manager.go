@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/providersettings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 )
@@ -349,7 +350,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env, agentConfig.Model),
 	})
 	if err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -811,7 +812,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env, agentConfig.Model),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
@@ -1906,8 +1907,11 @@ Keep branch names within your session's branch namespace so AO can track every P
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+4)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, baseEnv, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(baseEnv)+len(projectEnv)+4)
+	for k, v := range baseEnv {
+		env[k] = v
+	}
 	for k, v := range projectEnv {
 		env[k] = v
 	}
@@ -1925,8 +1929,8 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // command, which fails every callback and silently kills activity tracking).
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
-func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string, model string) map[string]string {
+	env := spawnEnv(id, project, issue, m.dataDir, m.providerEnv(model), projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
@@ -1935,6 +1939,16 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
+}
+
+func (m *Manager) providerEnv(model string) map[string]string {
+	state, err := providersettings.Load(providersettings.Path(m.dataDir))
+	if err != nil {
+		m.logger.Warn("provider settings unavailable; continuing without app-wide provider credentials",
+			"model", model, "error", err)
+		return nil
+	}
+	return providersettings.ClaudeEnvForModel(model, state)
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon
