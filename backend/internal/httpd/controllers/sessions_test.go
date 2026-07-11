@@ -20,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
@@ -30,6 +31,8 @@ type fakeSessionService struct {
 	prSummaries     map[domain.SessionID][]sessionsvc.PRSummary
 	prSummaryErrs   map[domain.SessionID]error
 	prSummaryCalls  map[domain.SessionID]int
+	notifications   []notificationsvc.Notification
+	notificationErr error
 	sent            string
 	decision        domain.PendingDecision
 	decisionOK      bool
@@ -65,6 +68,24 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+func (f *fakeSessionService) ListUnread(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
+	if f.notificationErr != nil {
+		return nil, f.notificationErr
+	}
+	if filter.Limit > 0 && len(f.notifications) > filter.Limit {
+		return f.notifications[:filter.Limit], nil
+	}
+	return f.notifications, nil
+}
+
+func (f *fakeSessionService) MarkRead(_ context.Context, _ string) (notificationsvc.Notification, bool, error) {
+	return notificationsvc.Notification{}, false, nil
+}
+
+func (f *fakeSessionService) MarkAllRead(context.Context) ([]notificationsvc.Notification, error) {
+	return nil, nil
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
@@ -285,7 +306,7 @@ func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{}))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Sessions: svc, Notifications: svc}, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
 	return srv
 }

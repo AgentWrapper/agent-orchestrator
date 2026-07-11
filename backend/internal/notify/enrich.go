@@ -61,6 +61,9 @@ func titleForIntent(intent Intent) string {
 	case domain.NotificationWorkerDiedUnfinished:
 		return fmt.Sprintf("worker died with unfinished work: issue %s", issueLabel(intent))
 	case domain.NotificationWorkerRetryExhausted:
+		if strings.TrimSpace(intent.Reason) != "" {
+			return fmt.Sprintf("worker respawn blocked: issue %s", issueLabel(intent))
+		}
 		return fmt.Sprintf("worker retry cap exhausted: issue %s", issueLabel(intent))
 	case domain.NotificationModelUnreachable:
 		return fmt.Sprintf("%s model unreachable", modelLabel(intent))
@@ -107,11 +110,23 @@ func bodyForIntent(intent Intent) string {
 	case domain.NotificationDuplicatePR:
 		return duplicatePRBody(intent)
 	case domain.NotificationWorkerDiedUnfinished:
-		if intent.RespawnSuppressed {
-			return fmt.Sprintf("%s terminated before issue %s landed, but an open PR already exists; ao will not start a duplicate replacement.", sessionLabel(intent), issueLabel(intent))
+		if intent.AdoptsOpenPR {
+			if pr := strings.TrimSpace(intent.PRURL); pr != "" {
+				return fmt.Sprintf("%s terminated before issue %s landed with an open PR; ao is dispatching a replacement to adopt %s.", sessionLabel(intent), issueLabel(intent), pr)
+			}
+			return fmt.Sprintf("%s terminated before issue %s landed with an open PR; ao is dispatching a replacement to adopt it.", sessionLabel(intent), issueLabel(intent))
 		}
 		return fmt.Sprintf("%s terminated before issue %s landed; ao will dispatch a clean replacement if retry capacity remains.", sessionLabel(intent), issueLabel(intent))
 	case domain.NotificationWorkerRetryExhausted:
+		if reason := strings.TrimSpace(intent.Reason); reason != "" {
+			if pr := strings.TrimSpace(intent.PRURL); pr != "" {
+				return fmt.Sprintf("%s terminated before issue %s landed with an orphaned PR %s; ao is suspending respawns because %s.", sessionLabel(intent), issueLabel(intent), pr, reason)
+			}
+			return fmt.Sprintf("%s terminated before issue %s landed; ao is suspending respawns because %s.", sessionLabel(intent), issueLabel(intent), reason)
+		}
+		if pr := strings.TrimSpace(intent.PRURL); pr != "" {
+			return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is suspending respawns and leaving the orphaned PR %s for a human.", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit, pr)
+		}
 		return fmt.Sprintf("%s terminated after %d attempts for issue %s; retry cap is %d, so ao is leaving it for a human.", sessionLabel(intent), intent.RetryCount, issueLabel(intent), intent.RetryLimit)
 	case domain.NotificationModelUnreachable:
 		return fmt.Sprintf("Configured pin %s is unreachable%s.", modelDetail(intent), reasonSuffix(intent.Reason))

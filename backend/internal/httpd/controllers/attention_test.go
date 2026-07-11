@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
@@ -78,6 +80,28 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	svc.decisions = map[domain.SessionID]domain.PendingDecision{
 		"perm-1": {Kind: domain.DecisionKindPermission, Question: "Allow command?"},
 		"ask-1":  {Kind: domain.DecisionKindQuestion, Question: "Use strategy A or B?", Options: []string{"A", "B"}},
+	}
+	svc.notifications = []notificationsvc.Notification{
+		{NotificationRecord: domain.NotificationRecord{
+			ID:        "n-exhausted",
+			SessionID: "dead-worker",
+			ProjectID: "ao",
+			PRURL:     "https://github.com/aoagents/agent-orchestrator/pull/230",
+			Type:      domain.NotificationWorkerRetryExhausted,
+			Title:     "worker retry cap exhausted: issue #230",
+			Body:      "dead-worker exhausted retries for issue #230; respawns are suspended.",
+			Status:    domain.NotificationUnread,
+			CreatedAt: now.Add(2 * time.Minute),
+		}},
+		{NotificationRecord: domain.NotificationRecord{
+			ID:        "n-routine-death",
+			SessionID: "dead-routine",
+			ProjectID: "ao",
+			Type:      domain.NotificationWorkerDiedUnfinished,
+			Title:     "worker died; replacement queued",
+			Status:    domain.NotificationUnread,
+			CreatedAt: now.Add(3 * time.Minute),
+		}},
 	}
 	svc.prSummaries = map[domain.SessionID][]sessionsvc.PRSummary{
 		"merge-1": {{
@@ -173,7 +197,9 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 			SessionID string `json:"sessionId"`
 			Reason    string `json:"reason"`
 			Action    string `json:"action"`
+			DeepLink  string `json:"deepLink"`
 			PRNumber  int    `json:"prNumber"`
+			PRURL     string `json:"prUrl"`
 		} `json:"items"`
 	}
 	mustJSON(t, body, &resp)
@@ -195,7 +221,8 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	pr224 := "pr:https://github.com/aoagents/agent-orchestrator/pull/224:merge"
 	pr226 := "pr:https://github.com/aoagents/agent-orchestrator/pull/226:merge"
 	otherPR224 := "pr:https://github.com/acme/other/pull/224:merge"
-	for _, want := range []string{"session:perm-1:decision", "session:ask-1:decision", "session:orch-dead:no_signal", "session:prime-dead:no_signal", pr224, pr226, otherPR224} {
+	retryExhausted := "notification:n-exhausted:operator"
+	for _, want := range []string{"session:perm-1:decision", "session:ask-1:decision", "session:orch-dead:no_signal", "session:prime-dead:no_signal", pr224, pr226, otherPR224, retryExhausted} {
 		if got[want] == 0 {
 			t.Fatalf("missing %s in %#v; body=%s", want, got, body)
 		}
@@ -212,7 +239,23 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	if byID["session:prime-dead:no_signal"].Action != "Inspect the prime supervisor and restart or replace it if needed." {
 		t.Fatalf("prime no-signal action = %q", byID["session:prime-dead:no_signal"].Action)
 	}
-	for _, excluded := range []string{"session:ci-1", "session:review-1", "session:draft-1", "session:worker-no-signal:no_signal", "pr:https://github.com/aoagents/agent-orchestrator/pull/225:merge", "pr:https://github.com/aoagents/agent-orchestrator/pull/227:merge"} {
+	var exhaustedItem struct {
+		Kind     string
+		PRURL    string
+		DeepLink string
+	}
+	for _, item := range resp.Items {
+		if item.ID == retryExhausted {
+			exhaustedItem.Kind = item.Kind
+			exhaustedItem.PRURL = item.PRURL
+			exhaustedItem.DeepLink = item.DeepLink
+			break
+		}
+	}
+	if exhaustedItem.Kind != "worker_retry_exhausted" || exhaustedItem.PRURL != "https://github.com/aoagents/agent-orchestrator/pull/230" || exhaustedItem.DeepLink != "https://github.com/aoagents/agent-orchestrator/pull/230" {
+		t.Fatalf("retry exhausted attention item = %+v", exhaustedItem)
+	}
+	for _, excluded := range []string{"session:ci-1", "session:review-1", "session:draft-1", "session:worker-no-signal:no_signal", "pr:https://github.com/aoagents/agent-orchestrator/pull/225:merge", "pr:https://github.com/aoagents/agent-orchestrator/pull/227:merge", "notification:n-routine-death:operator"} {
 		if got[excluded] > 0 {
 			t.Fatalf("excluded %s present in %#v; body=%s", excluded, got, body)
 		}
@@ -268,6 +311,33 @@ func TestAttentionAPI_ListOperatorWaitingSkipsSessionsDeletedDuringDerive(t *tes
 	}
 	mustJSON(t, body, &resp)
 	if len(resp.Items) != 1 || resp.Items[0].ID != "pr:https://github.com/aoagents/agent-orchestrator/pull/224:merge" {
+		t.Fatalf("items = %#v; body=%s", resp.Items, body)
+	}
+}
+
+func TestAttentionAPI_ListOperatorWaitingSurvivesNotificationReadFailure(t *testing.T) {
+	now := time.Date(2026, 7, 11, 3, 20, 0, 0, time.UTC)
+	svc := newFakeSessionService()
+	svc.sessions = map[domain.SessionID]domain.Session{
+		"perm-1": sessionForAttention("perm-1", "ao", domain.StatusNeedsInput, now),
+	}
+	svc.decisions = map[domain.SessionID]domain.PendingDecision{
+		"perm-1": {Kind: domain.DecisionKindPermission, Question: "Allow command?"},
+	}
+	svc.notificationErr = errors.New("sqlite busy")
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/attention/operator", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	mustJSON(t, body, &resp)
+	if len(resp.Items) != 1 || resp.Items[0].ID != "session:perm-1:decision" {
 		t.Fatalf("items = %#v; body=%s", resp.Items, body)
 	}
 }

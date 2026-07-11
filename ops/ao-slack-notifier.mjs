@@ -21,9 +21,9 @@
 //   pr_merged      -> plain post
 //   pr_closed_unmerged -> plain post
 //   orchestrator_replaced -> plain post
-//   orchestrator_replacement_capped -> @mention
+//   orchestrator_replacement_capped -> @mention (needs-response)
 //   worker_died_unfinished -> plain post
-//   worker_retry_exhausted -> @mention
+//   worker_retry_exhausted -> @mention (needs-response)
 //   duplicate_pr -> @mention
 //
 // It also polls GET /api/v1/sessions and @mentions on blocked, no_signal,
@@ -282,6 +282,10 @@ function isNeedsResponseNotification(n) {
 		n.type === "needs_input" ||
 		n.type === "orchestrator_replacement_capped" ||
 		n.type === "main_ci_red" ||
+		// Consecutive worker deaths exhausted the respawn cap (issue #230): respawns
+		// are suspended and a human must intervene, so track it in the needs-response
+		// channel until resolved rather than letting a one-shot @mention scroll away.
+		n.type === "worker_retry_exhausted" ||
 		(n.type === "ready_to_merge" && n.sensitive)
 	);
 }

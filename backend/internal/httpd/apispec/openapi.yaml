@@ -2943,6 +2943,7 @@ components:
           enum:
           - decision
           - pr
+          - worker_retry_exhausted
           type: string
         prNumber:
           type: integer

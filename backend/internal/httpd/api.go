@@ -78,7 +78,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Svc:      deps.Sessions,
 			Activity: deps.Activity,
 		},
-		attention:     &controllers.AttentionController{Svc: deps.Sessions},
+		attention:     &controllers.AttentionController{Svc: deps.Sessions, Notifications: deps.Notifications},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
