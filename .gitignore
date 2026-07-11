@@ -31,6 +31,13 @@ session-events.jsonl.*
 # Agent Orchestrator local session state
 .ao/
 
+# Local agent tool payloads provisioned by sx/nickify. Repo-owned agent
+# instructions live under agent-instructions/ and generated root files only.
+.agents/
+.opencode/
+.claude/skills/
+.claude/settings.json
+
 # AO reviewer scratch output. The reviewer agent runs inside the worker's
 # worktree; its review writeup must never be committed onto the worker branch.
 /review.md

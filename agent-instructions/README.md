@@ -20,3 +20,16 @@ Layout (assembled in this order by `scripts/polyscribe.sh`):
   tooling on provisioned accounts; `npm run agents:system` fails on a bare
   checkout with `missing .../agent-instructions/system` — that's expected, not
   a bug. The other two scripts work on any checkout.
+
+## Local agent tool payloads
+
+The repo does not own root-level tool payload directories such as `.agents/`,
+`.opencode/`, `.claude/skills/`, or `.claude/settings.json`. Provisioned
+developer/agent accounts may receive those files from sx/nickify or local
+tooling, and this repo ignores them so copied skills from another project do not
+become unreviewed agent-orchestrator source.
+
+If one of those local payloads contains stale foreign-repo instructions, refresh
+the account provisioning or delete the local payload and let sx/nickify recreate
+it. Repo guidance belongs in this directory and the generated root instruction
+files listed above.
