@@ -127,6 +127,56 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 	}
 }
 
+// TestActivity_SignalOnlySeedsFirstSignalWithoutChangingState covers the
+// no_signal-after-restart regression (#2604): Claude Code's SessionStart hook
+// fires on every launch (fresh spawn and `--resume` alike) but carries no
+// activity reading, so it reports domain.ActivitySignalOnly. That must stamp
+// FirstSignalAt (proving the hook pipeline is wired) without touching
+// Activity.State — a session idle at restart time must not be forced through
+// a state write it never actually reported.
+func TestActivity_SignalOnlySeedsFirstSignalWithoutChangingState(t *testing.T) {
+	m, st, _ := newManager()
+	seeded := domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}}
+	st.sessions["mer-1"] = seeded
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivitySignalOnly, Event: "session-start"}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.FirstSignalAt.IsZero() {
+		t.Fatal("signal-only must seed FirstSignalAt")
+	}
+	if got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("signal-only must not change Activity.State, got %+v", got.Activity)
+	}
+}
+
+// TestActivity_SignalOnlyDoesNotStompLaterState guards the ordering hazard a
+// dedicated sentinel state exists to avoid: hook delivery is best-effort, so a
+// SessionStart callback can race behind (or resolve after) an already-arrived
+// real activity signal. A late signal-only must never revert Activity.State
+// back to the spawn-seeded idle.
+func TestActivity_SignalOnlyDoesNotStompLaterState(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}}
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit"}); err != nil {
+		t.Fatal(err)
+	}
+	firstSignalAt := st.sessions["mer-1"].FirstSignalAt
+	if firstSignalAt.IsZero() {
+		t.Fatal("the real signal must seed FirstSignalAt")
+	}
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivitySignalOnly, Event: "session-start"}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Activity.State != domain.ActivityActive {
+		t.Fatalf("late signal-only must not overwrite a real state, got %+v", got.Activity)
+	}
+	if got.FirstSignalAt != firstSignalAt {
+		t.Fatal("a late signal-only must not touch an already-seeded FirstSignalAt")
+	}
+}
+
 func TestActivity_MissingSessionReturnsNotFound(t *testing.T) {
 	m, _, _ := newManager()
 	err := m.ApplyActivitySignal(ctx, "missing-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput})

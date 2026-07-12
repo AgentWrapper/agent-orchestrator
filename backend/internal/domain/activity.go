@@ -14,6 +14,14 @@ const (
 	ActivityExited       ActivityState = "exited"
 )
 
+// ActivitySignalOnly is a wire-only marker, never a real persisted
+// Activity.State: it lets a hook that fires on every launch (fresh spawn and
+// resume alike), but carries no activity reading of its own, prove the hook
+// pipeline is reachable without asserting how busy the agent is. Lifecycle
+// intercepts it before it ever reaches Activity.State — see
+// Manager.ApplyActivitySignal.
+const ActivitySignalOnly ActivityState = "signal_only"
+
 // IsSticky reports whether an activity state must NOT be aged/demoted by the
 // passage of time (a paused agent is still paused until a new signal says so).
 func (a ActivityState) IsSticky() bool {

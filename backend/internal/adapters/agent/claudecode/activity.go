@@ -8,9 +8,9 @@ import (
 
 // DeriveActivityState maps a Claude Code hook event (and its native stdin
 // payload) onto an AO activity state. The bool is false when the event carries
-// no activity signal — e.g. SessionStart (metadata only, v1), a Notification
-// type we don't track, or a SessionEnd reason that doesn't actually end the AO
-// session — in which case the caller reports nothing.
+// no activity signal — e.g. a Notification type we don't track, or a
+// SessionEnd reason that doesn't actually end the AO session — in which case
+// the caller reports nothing.
 //
 // event is the AO hook sub-command name installed in claudeManagedHooks
 // ("user-prompt-submit", "stop", "notification", "session-end", ...), NOT the
@@ -18,6 +18,16 @@ import (
 // installs and what they mean live in one place.
 func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bool) {
 	switch event {
+	case "session-start":
+		// Fires on every launch — a fresh spawn AND a `claude --resume` alike —
+		// before anything else, but carries no reading of how busy the agent
+		// is. Reported as ActivitySignalOnly rather than dropped: lifecycle
+		// treats it purely as proof the hook pipeline reached the daemon,
+		// distinct from an actual activity state (see domain.ActivitySignalOnly).
+		// Without this, a resumed session that stays idle after relaunch has
+		// no way to ever prove it's alive, since resume itself fires no
+		// activity-bearing hook of its own.
+		return domain.ActivitySignalOnly, true
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
 	case "stop":

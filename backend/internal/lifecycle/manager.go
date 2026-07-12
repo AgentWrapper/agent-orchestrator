@@ -130,6 +130,26 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
+	if s.State == domain.ActivitySignalOnly {
+		// Proof the hook pipeline is reachable, not an activity reading:
+		// stamp FirstSignalAt if this is the first signal since spawn/restore,
+		// but never touch Activity.State — an out-of-order or racing "real"
+		// state must not be stomped back to idle by a late-arriving
+		// session-start.
+		if !rec.FirstSignalAt.IsZero() {
+			m.mu.Unlock()
+			return nil
+		}
+		next := rec
+		next.FirstSignalAt = timeOr(s.Timestamp, now)
+		next.UpdatedAt = now
+		if err := m.store.UpdateSession(ctx, next); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		m.mu.Unlock()
+		return nil
+	}
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
 	next := rec

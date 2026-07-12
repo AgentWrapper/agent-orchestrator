@@ -27,7 +27,7 @@ func TestDeriveActivityState(t *testing.T) {
 		{"session-end absent reason -> exited", "session-end", `{}`, domain.ActivityExited, true},
 		{"session-end clear -> no signal", "session-end", `{"reason":"clear"}`, "", false},
 		{"session-end resume -> no signal", "session-end", `{"reason":"resume"}`, "", false},
-		{"session-start -> no signal", "session-start", `{}`, "", false},
+		{"session-start -> signal only", "session-start", `{}`, domain.ActivitySignalOnly, true},
 		{"unknown event -> no signal", "frobnicate", `{}`, "", false},
 	}
 	for _, tt := range tests {
