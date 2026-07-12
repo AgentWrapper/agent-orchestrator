@@ -125,24 +125,24 @@ type setConfigRequest struct {
 }
 
 type projectSetConfigOptions struct {
-	defaultBranch       string
-	sessionPrefix       string
-	model               string
-	permission          string
-	workerAgent         string
-	orchestratorAgent   string
-	workerMCPConfig     []string
-	workerStrictMCP     bool
-	workerPluginDir     []string
-	env                 []string
-	symlink             []string
-	postCreate          []string
-	trackerIntake       bool
-	trackerRepo         string
-	trackerAssignee     string
-	configJSON          string
-	clear               bool
-	json                bool
+	defaultBranch     string
+	sessionPrefix     string
+	model             string
+	permission        string
+	workerAgent       string
+	orchestratorAgent string
+	workerMCPConfig   []string
+	workerStrictMCP   bool
+	workerPluginDir   []string
+	env               []string
+	symlink           []string
+	postCreate        []string
+	trackerIntake     bool
+	trackerRepo       string
+	trackerAssignee   string
+	configJSON        string
+	clear             bool
+	json              bool
 }
 
 type projectListResult struct {
