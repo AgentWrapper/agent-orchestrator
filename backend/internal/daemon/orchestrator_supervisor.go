@@ -15,7 +15,6 @@ import (
 
 const (
 	orchestratorSupervisorInterval            = 30 * time.Second
-	orchestratorMaxUnansweredWakeSends        = 3
 	orchestratorUnhealthyReplacementThreshold = 5 * time.Minute
 	orchestratorReplacementWindow             = time.Hour
 	orchestratorMaxReplacementsPerWindow      = 3
@@ -73,7 +72,7 @@ func newOrchestratorWakeTracker() *orchestratorWakeTracker {
 	}
 }
 
-func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, interval time.Duration, log *slog.Logger) <-chan struct{} {
+func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, interval time.Duration, log *slog.Logger, resets *projectWakeResetQueue) <-chan struct{} {
 	done := make(chan struct{})
 	if log == nil {
 		log = slog.Default()
@@ -82,6 +81,10 @@ func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProje
 		interval = orchestratorSupervisorInterval
 	}
 	wakes := newOrchestratorWakeTracker()
+	var resetNotify <-chan struct{}
+	if resets != nil {
+		resetNotify = resets.notify
+	}
 	go func() {
 		defer close(done)
 		ensureOrchestrators(ctx, projects, sessions, notifier, wakes, time.Now().UTC(), log)
@@ -91,6 +94,11 @@ func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProje
 			select {
 			case <-ctx.Done():
 				return
+			case <-resetNotify:
+				projectIDs := resets.drain()
+				if len(projectIDs) > 0 {
+					ensureSelectedOrchestrators(ctx, projects, sessions, notifier, wakes, time.Now().UTC(), log, projectIDs)
+				}
 			case <-ticker.C:
 				ensureOrchestrators(ctx, projects, sessions, notifier, wakes, time.Now().UTC(), log)
 			}
@@ -99,7 +107,7 @@ func startOrchestratorSupervisor(ctx context.Context, projects orchestratorProje
 	return done
 }
 
-func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, interval time.Duration, log *slog.Logger) <-chan struct{} {
+func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, interval time.Duration, log *slog.Logger, resets *primeWakeResetQueue) <-chan struct{} {
 	done := make(chan struct{})
 	if log == nil {
 		log = slog.Default()
@@ -113,6 +121,10 @@ func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects orche
 		interval = orchestratorSupervisorInterval
 	}
 	wakes := newOrchestratorWakeTracker()
+	var resetNotify <-chan struct{}
+	if resets != nil {
+		resetNotify = resets.notify
+	}
 	go func() {
 		defer close(done)
 		ensurePrime(ctx, primeProjectID, projects, sessions, notifier, wakes, time.Now().UTC(), log)
@@ -122,6 +134,10 @@ func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects orche
 			select {
 			case <-ctx.Done():
 				return
+			case <-resetNotify:
+				if resets.drain() {
+					ensurePrimeReset(ctx, primeProjectID, projects, sessions, notifier, wakes, time.Now().UTC(), log)
+				}
 			case <-ticker.C:
 				ensurePrime(ctx, primeProjectID, projects, sessions, notifier, wakes, time.Now().UTC(), log)
 			}
@@ -131,6 +147,14 @@ func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects orche
 }
 
 func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger) {
+	ensureOrchestratorsFiltered(ctx, projects, sessions, notifier, wakes, now, log, nil, true, false)
+}
+
+func ensureSelectedOrchestrators(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger, selected map[domain.ProjectID]struct{}) {
+	ensureOrchestratorsFiltered(ctx, projects, sessions, notifier, wakes, now, log, selected, false, true)
+}
+
+func ensureOrchestratorsFiltered(ctx context.Context, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger, selected map[domain.ProjectID]struct{}, pruneMissing, resetDriven bool) {
 	summaries, err := projects.List(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -148,6 +172,11 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 			continue
 		}
 		seen[project.ID] = struct{}{}
+		if selected != nil {
+			if _, ok := selected[project.ID]; !ok {
+				continue
+			}
+		}
 		// Respect the pause bit: for a paused (or still-draining) project, do
 		// not spawn a fresh orchestrator or nudge an existing one for new work.
 		// An existing orchestrator is kept running (to supervise the drain) but
@@ -196,6 +225,9 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 			log.Warn("orchestrator-supervisor: ensure orchestrator failed", "project", project.ID, "err", err)
 			continue
 		}
+		if resetDriven {
+			wakes.resetWakeBackoff(project.ID)
+		}
 		if replace, reason := shouldReplaceUnhealthyOrchestrator(orchestrator, now); replace {
 			allowed, cappedNow, count, nextAllowedAt := wakes.reserveReplacement(project.ID, now)
 			if !allowed {
@@ -218,12 +250,12 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 			log.Warn("orchestrator-supervisor: replaced unhealthy orchestrator", "project", project.ID, "old_session", orchestrator.ID, "new_session", replacement.ID, "reason", reason)
 			continue
 		}
-		interval, err := project.Config.WithDefaults().Orchestrator.WakeIntervalDuration()
+		policy, err := project.Config.WithDefaults().Orchestrator.WakeBackoffPolicy()
 		if err != nil {
-			log.Warn("orchestrator-supervisor: invalid wake interval; using default", "project", project.ID, "err", err)
-			interval = domain.DefaultOrchestratorWakeInterval
+			log.Warn("orchestrator-supervisor: invalid wake backoff; using default", "project", project.ID, "err", err)
+			policy = domain.WakeBackoffPolicy{Enabled: true, Base: domain.DefaultOrchestratorWakeInterval, Max: domain.DefaultWakeBackoffMaxInterval}
 		}
-		if shouldWakeOrchestrator(project.ID, orchestrator, interval, wakes, now) {
+		if shouldWakeOrchestrator(project.ID, orchestrator, policy, wakes, now) {
 			sent, err := sessions.WakeIdle(ctx, orchestrator.ID, orchestratorWakeMessage(project.ID))
 			if err != nil {
 				if ctx.Err() != nil {
@@ -235,32 +267,42 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 			}
 			if sent {
 				state := wakes.recordWake(project.ID, orchestrator, now)
-				if state.unanswered >= orchestratorMaxUnansweredWakeSends && !state.warned {
+				if shouldWarnWakeBackoffMax(policy, state) {
 					state.warned = true
 					wakes.projects[project.ID] = state
-					log.Warn("orchestrator-supervisor: wake retry limit reached; waiting for activity before sending more wakes", "project", project.ID, "session", orchestrator.ID, "unanswered_wakes", state.unanswered)
+					log.Warn("orchestrator-supervisor: wake backoff reached max; waiting for activity between capped wakes", "project", project.ID, "session", orchestrator.ID, "unanswered_wakes", state.unanswered, "max_interval", policy.Max)
 				}
 			}
 		}
 	}
-	for projectID := range wakes.projects {
-		if _, ok := seen[projectID]; !ok {
-			delete(wakes.projects, projectID)
+	if pruneMissing {
+		for projectID := range wakes.projects {
+			if _, ok := seen[projectID]; !ok {
+				delete(wakes.projects, projectID)
+			}
 		}
-	}
-	for projectID := range wakes.replacements {
-		if _, ok := seen[projectID]; !ok {
-			delete(wakes.replacements, projectID)
+		for projectID := range wakes.replacements {
+			if _, ok := seen[projectID]; !ok {
+				delete(wakes.replacements, projectID)
+			}
 		}
-	}
-	for projectID := range wakes.pausedNotified {
-		if _, ok := seen[projectID]; !ok {
-			delete(wakes.pausedNotified, projectID)
+		for projectID := range wakes.pausedNotified {
+			if _, ok := seen[projectID]; !ok {
+				delete(wakes.pausedNotified, projectID)
+			}
 		}
 	}
 }
 
 func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger) {
+	ensurePrimeWithReset(ctx, primeProjectID, projects, sessions, notifier, wakes, now, log, false)
+}
+
+func ensurePrimeReset(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger) {
+	ensurePrimeWithReset(ctx, primeProjectID, projects, sessions, notifier, wakes, now, log, true)
+}
+
+func ensurePrimeWithReset(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, sessions orchestratorEnsurer, notifier notificationSink, wakes *orchestratorWakeTracker, now time.Time, log *slog.Logger, resetDriven bool) {
 	if primeProjectID == "" {
 		return
 	}
@@ -312,7 +354,7 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 			}
 		}
 	}
-	wakeInterval := primeWakeInterval(primeProjectID, projectConfig, log)
+	wakePolicy := primeWakeBackoffPolicy(primeProjectID, projectConfig, log)
 	prime, err := sessions.SpawnPrime(ctx, primeProjectID, false)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -320,6 +362,9 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 		}
 		log.Warn("prime-supervisor: ensure prime failed", "project", primeProjectID, "err", err)
 		return
+	}
+	if resetDriven {
+		wakes.resetWakeBackoff(primeProjectID)
 	}
 	if replace, reason := shouldReplaceUnhealthyPrime(prime, now); replace {
 		allowed, cappedNow, count, nextAllowedAt := wakes.reserveReplacement(primeProjectID, now)
@@ -343,7 +388,7 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 		log.Warn("prime-supervisor: replaced unhealthy prime", "project", primeProjectID, "old_session", prime.ID, "new_session", replacement.ID, "reason", reason)
 		return
 	}
-	if shouldWakePrime(primeProjectID, prime, wakeInterval, wakes, now) {
+	if shouldWakePrime(primeProjectID, prime, wakePolicy, wakes, now) {
 		sent, err := sessions.WakeIdle(ctx, prime.ID, primeWakeMessage())
 		if err != nil {
 			if ctx.Err() != nil {
@@ -355,10 +400,10 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 		}
 		if sent {
 			state := wakes.recordWake(primeProjectID, prime, now)
-			if state.unanswered >= orchestratorMaxUnansweredWakeSends && !state.warned {
+			if shouldWarnWakeBackoffMax(wakePolicy, state) {
 				state.warned = true
 				wakes.projects[primeProjectID] = state
-				log.Warn("prime-supervisor: wake retry limit reached; waiting for activity before sending more wakes", "project", primeProjectID, "session", prime.ID, "unanswered_wakes", state.unanswered)
+				log.Warn("prime-supervisor: wake backoff reached max; waiting for activity between capped wakes", "project", primeProjectID, "session", prime.ID, "unanswered_wakes", state.unanswered, "max_interval", wakePolicy.Max)
 			}
 		}
 	}
@@ -385,13 +430,13 @@ func primeProjectSummary(ctx context.Context, primeProjectID domain.ProjectID, p
 	return projectsvc.Summary{}, false
 }
 
-func primeWakeInterval(primeProjectID domain.ProjectID, projectConfig domain.ProjectConfig, log *slog.Logger) time.Duration {
-	interval, err := projectConfig.Prime.WakeIntervalDuration()
+func primeWakeBackoffPolicy(primeProjectID domain.ProjectID, projectConfig domain.ProjectConfig, log *slog.Logger) domain.WakeBackoffPolicy {
+	policy, err := projectConfig.Prime.WakeBackoffPolicy()
 	if err != nil {
-		log.Warn("prime-supervisor: invalid wake interval; using default", "project", primeProjectID, "err", err)
-		return domain.DefaultOrchestratorWakeInterval
+		log.Warn("prime-supervisor: invalid wake backoff; using default", "project", primeProjectID, "err", err)
+		return domain.WakeBackoffPolicy{Enabled: true, Base: domain.DefaultOrchestratorWakeInterval, Max: domain.DefaultWakeBackoffMaxInterval}
 	}
-	return interval
+	return policy
 }
 
 func (w *orchestratorWakeTracker) recordWakeAttempt(projectID domain.ProjectID, session domain.Session, now time.Time) orchestratorWakeState {
@@ -413,15 +458,22 @@ func (w *orchestratorWakeTracker) recordWake(projectID domain.ProjectID, session
 	return state
 }
 
-func shouldWakeOrchestrator(projectID domain.ProjectID, session domain.Session, interval time.Duration, wakes *orchestratorWakeTracker, now time.Time) bool {
-	return shouldWakeDaemonRole(projectID, session, domain.KindOrchestrator, interval, wakes, now)
+func (w *orchestratorWakeTracker) resetWakeBackoff(projectID domain.ProjectID) {
+	state := w.projects[projectID]
+	state.unanswered = 0
+	state.warned = false
+	w.projects[projectID] = state
 }
 
-func shouldWakePrime(projectID domain.ProjectID, session domain.Session, interval time.Duration, wakes *orchestratorWakeTracker, now time.Time) bool {
-	return shouldWakeDaemonRole(projectID, session, domain.KindPrime, interval, wakes, now)
+func shouldWakeOrchestrator(projectID domain.ProjectID, session domain.Session, policy domain.WakeBackoffPolicy, wakes *orchestratorWakeTracker, now time.Time) bool {
+	return shouldWakeDaemonRole(projectID, session, domain.KindOrchestrator, policy, wakes, now)
 }
 
-func shouldWakeDaemonRole(projectID domain.ProjectID, session domain.Session, kind domain.SessionKind, interval time.Duration, wakes *orchestratorWakeTracker, now time.Time) bool {
+func shouldWakePrime(projectID domain.ProjectID, session domain.Session, policy domain.WakeBackoffPolicy, wakes *orchestratorWakeTracker, now time.Time) bool {
+	return shouldWakeDaemonRole(projectID, session, domain.KindPrime, policy, wakes, now)
+}
+
+func shouldWakeDaemonRole(projectID domain.ProjectID, session domain.Session, kind domain.SessionKind, policy domain.WakeBackoffPolicy, wakes *orchestratorWakeTracker, now time.Time) bool {
 	if session.ID == "" || session.IsTerminated || session.Kind != kind {
 		return false
 	}
@@ -434,10 +486,7 @@ func shouldWakeDaemonRole(projectID domain.ProjectID, session domain.Session, ki
 	if session.FirstSignalAt.IsZero() {
 		return false
 	}
-	if interval <= 0 {
-		return false
-	}
-	if session.Activity.LastActivityAt.IsZero() || now.Sub(session.Activity.LastActivityAt) <= interval {
+	if policy.Base <= 0 {
 		return false
 	}
 	state := wakes.projects[projectID]
@@ -446,13 +495,42 @@ func shouldWakeDaemonRole(projectID domain.ProjectID, session domain.Session, ki
 		state.warned = false
 		wakes.projects[projectID] = state
 	}
-	if state.unanswered >= orchestratorMaxUnansweredWakeSends {
+	interval := wakeBackoffInterval(policy, state.unanswered)
+	if session.Activity.LastActivityAt.IsZero() || now.Sub(session.Activity.LastActivityAt) < interval {
 		return false
 	}
-	if !state.lastWake.IsZero() && now.Sub(state.lastWake) <= interval {
+	if !state.lastWake.IsZero() && now.Sub(state.lastWake) < interval {
 		return false
 	}
 	return true
+}
+
+func wakeBackoffInterval(policy domain.WakeBackoffPolicy, unanswered int) time.Duration {
+	if policy.Base <= 0 {
+		return 0
+	}
+	if !policy.Enabled || unanswered <= 0 {
+		return policy.Base
+	}
+	maxInterval := policy.Max
+	if maxInterval <= 0 {
+		maxInterval = policy.Base
+	}
+	interval := policy.Base
+	for i := 0; i < unanswered; i++ {
+		if interval >= maxInterval/2 {
+			return maxInterval
+		}
+		interval *= 2
+	}
+	if interval > maxInterval {
+		return maxInterval
+	}
+	return interval
+}
+
+func shouldWarnWakeBackoffMax(policy domain.WakeBackoffPolicy, state orchestratorWakeState) bool {
+	return policy.Enabled && policy.Max > 0 && state.unanswered > 0 && !state.warned && wakeBackoffInterval(policy, state.unanswered) >= policy.Max
 }
 
 func shouldReplaceUnhealthyOrchestrator(session domain.Session, now time.Time) (bool, string) {

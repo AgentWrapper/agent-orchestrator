@@ -1370,6 +1370,7 @@ export interface components {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
             instructionsFile?: string;
+            wakeBackoff?: components["schemas"]["WakeBackoffConfig"];
             /** @description Orchestrator and prime roles only. Positive Go duration string such as 15m; empty uses the daemon default. */
             wakeInterval?: string;
             /** @enum {string} */
@@ -1616,6 +1617,14 @@ export interface components {
             revision?: string;
             time?: string;
             version: string;
+        };
+        WakeBackoffConfig: {
+            /** @description Positive Go duration for the reset/base wake interval. Empty inherits wakeInterval. */
+            base?: string;
+            /** @description When false, keep fixed-interval wake behavior at the base interval instead of exponential idle backoff. Defaults to true. */
+            enabled?: null | boolean;
+            /** @description Positive Go duration cap for exponential idle wake backoff. Empty uses the daemon default. */
+            max?: string;
         };
         WorkerCapacity: {
             activeWorkers: number;

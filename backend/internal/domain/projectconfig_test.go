@@ -70,9 +70,16 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"negative orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "-1m"}}, true},
 		{"zero orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "0s"}}, true},
 		{"invalid orchestrator wake interval", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "soon"}}, true},
+		{"good orchestrator wake backoff", ProjectConfig{Orchestrator: RoleOverride{WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(true), Base: "10m", Max: "1h"}}}, false},
+		{"disabled orchestrator wake backoff", ProjectConfig{Orchestrator: RoleOverride{WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(false)}}}, false},
+		{"negative orchestrator wake backoff base", ProjectConfig{Orchestrator: RoleOverride{WakeBackoff: &WakeBackoffConfig{Base: "-1m"}}}, true},
+		{"zero orchestrator wake backoff max", ProjectConfig{Orchestrator: RoleOverride{WakeBackoff: &WakeBackoffConfig{Max: "0s"}}}, true},
+		{"orchestrator wake backoff max below base", ProjectConfig{Orchestrator: RoleOverride{WakeBackoff: &WakeBackoffConfig{Base: "30m", Max: "15m"}}}, true},
 		{"good prime wake interval", ProjectConfig{Prime: RoleOverride{WakeInterval: "30m"}}, false},
 		{"negative prime wake interval", ProjectConfig{Prime: RoleOverride{WakeInterval: "-1m"}}, true},
+		{"good prime wake backoff", ProjectConfig{Prime: RoleOverride{WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(true), Base: "15m", Max: "1h"}}}, false},
 		{"worker wake interval unsupported", ProjectConfig{Worker: RoleOverride{WakeInterval: "15m"}}, true},
+		{"worker wake backoff unsupported", ProjectConfig{Worker: RoleOverride{WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(true)}}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,6 +156,36 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	if d, err := got.Prime.WakeIntervalDuration(); err != nil || d != 45*time.Minute {
 		t.Fatalf("parsed prime wake interval = %s, %v; want 45m", d, err)
 	}
+}
+
+func TestRoleOverrideWakeBackoffPolicy(t *testing.T) {
+	got, err := (RoleOverride{WakeInterval: "15m"}).WakeBackoffPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled || got.Base != 15*time.Minute || got.Max != time.Hour {
+		t.Fatalf("default wake backoff policy = %#v, want enabled base=15m max=1h", got)
+	}
+
+	got, err = (RoleOverride{WakeInterval: "15m", WakeBackoff: &WakeBackoffConfig{Base: "10m", Max: "40m"}}).WakeBackoffPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled || got.Base != 10*time.Minute || got.Max != 40*time.Minute {
+		t.Fatalf("explicit wake backoff policy = %#v, want enabled base=10m max=40m", got)
+	}
+
+	got, err = (RoleOverride{WakeInterval: "15m", WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(false), Max: "1h"}}).WakeBackoffPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled || got.Base != 15*time.Minute || got.Max != time.Hour {
+		t.Fatalf("disabled wake backoff policy = %#v, want disabled base=15m max=1h", got)
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func TestProjectConfigProjectPrefixAlias(t *testing.T) {

@@ -104,9 +104,17 @@ type roleOverride struct {
 	// Workspace mirrors domain.RoleOverride.Workspace so a --config-json payload
 	// round-trips the per-role workspace mode through to the daemon instead of
 	// silently dropping it.
-	Workspace        string `json:"workspace,omitempty"`
-	InstructionsFile string `json:"instructionsFile,omitempty"`
-	WakeInterval     string `json:"wakeInterval,omitempty"`
+	Workspace        string             `json:"workspace,omitempty"`
+	InstructionsFile string             `json:"instructionsFile,omitempty"`
+	WakeInterval     string             `json:"wakeInterval,omitempty"`
+	WakeBackoff      *wakeBackoffConfig `json:"wakeBackoff,omitempty"`
+}
+
+// wakeBackoffConfig mirrors domain.WakeBackoffConfig for JSON round-trips.
+type wakeBackoffConfig struct {
+	Enabled *bool  `json:"enabled,omitempty"`
+	Base    string `json:"base,omitempty"`
+	Max     string `json:"max,omitempty"`
 }
 
 // workerMixEntry mirrors domain.WorkerMixEntry so a --config-json payload

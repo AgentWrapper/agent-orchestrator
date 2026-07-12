@@ -10,7 +10,7 @@
 - Wake eligibility requires a harness with AO activity hooks and at least one observed activity signal. Spawn and restore kickoff delivery is handled by the prompt-delivery path; the periodic wake loop does not paste into panes whose state is only the seeded launch default.
 - Sessions in `blocked` are never auto-woken.
 - Wake nudges use a dedicated guarded idle-wake path that re-reads session state immediately before sending and permits only `waiting_input` or `idle`; `blocked`, terminated, and already-active races are suppressed.
-- A per-daemon wake memo prevents repeated 30-second wake attempts when a wake send fails or does not produce a fresh activity hook, caps delivered-but-unanswered wake sends at three, and emits a warning before waiting for fresh activity.
+- A per-daemon wake memo prevents repeated 30-second wake attempts when a wake send fails or does not produce a fresh activity hook. Delivered-but-unanswered wakes now use `wakeBackoff` exponential intervals (`enabled`, `base`, `max`) capped by config; relevant reset events only collapse the interval after the daemon role has recorded activity, and idle sessions are not suspended or killed.
 
 ## Implementation Plan
 
@@ -33,7 +33,7 @@
    - Continue ensuring one orchestrator per project as today.
    - After ensure, send a wake nudge to eligible waiting or idle orchestrators only.
    - Route wake sends through `Manager.WakeIdle` / `sessionguard.WakeIdle` so blocked-session safety remains centralized while the waiting-input orchestrator wake is an explicit exception to generic automated nudges.
-   - Confirm a sent wake using the same safe Enter-confirmation loop as user sends, stamp delivered or failed wake sends in the supervisor loop to throttle repeated attempts until the configured interval elapses again, leave guard-suppressed wakes unstamped, and stop after three delivered-but-unanswered wake sends until fresh activity arrives.
+   - Confirm a sent wake using the same safe Enter-confirmation loop as user sends, stamp delivered or failed wake sends in the supervisor loop to throttle repeated attempts until the configured interval elapses again, leave guard-suppressed wakes unstamped, and back off delivered-but-unanswered wakes exponentially until fresh activity or an activity-backed reset event returns the session to the base interval.
 
 5. Tests and gates
    - Add unit tests for kickoff on spawn, kickoff on restore and switch, wake after idle threshold, no wake before the first observed signal, no wake while blocked, repeated wake throttling and cap, guarded idle wake behavior, and project wake interval defaults/validation.

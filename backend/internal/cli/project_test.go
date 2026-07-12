@@ -98,7 +98,7 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
-			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"prime":{"agent":"claude-code","instructionsFile":".claude/prime-orchestrator-policy.md","wakeInterval":"20m"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md","wakeBackoff":{"enabled":true,"base":"15m","max":"1h"}},"prime":{"agent":"claude-code","instructionsFile":".claude/prime-orchestrator-policy.md","wakeInterval":"20m","wakeBackoff":{"enabled":true,"base":"20m","max":"1h"}},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
 			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
 		default:
@@ -136,6 +136,14 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 		got.Config.AgentConfig.Permissions != "auto" ||
 		got.Config.Worker.Agent != "codex" ||
 		got.Config.Orchestrator.InstructionsFile != ".claude/orchestrator.md" ||
+		got.Config.Orchestrator.WakeBackoff == nil ||
+		got.Config.Orchestrator.WakeBackoff.Base != "15m" ||
+		got.Config.Orchestrator.WakeBackoff.Max != "1h" ||
+		got.Config.Prime.Agent != "claude-code" ||
+		got.Config.Prime.InstructionsFile != ".claude/prime-orchestrator-policy.md" ||
+		got.Config.Prime.WakeInterval != "20m" ||
+		got.Config.Prime.WakeBackoff == nil ||
+		got.Config.Prime.WakeBackoff.Base != "20m" ||
 		len(got.Config.WorkerMix) != 2 ||
 		!got.Config.TrackerIntake.Enabled ||
 		got.Config.TrackerIntake.Provider != "github" ||
@@ -158,6 +166,10 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 		prime["instructionsFile"] != ".claude/prime-orchestrator-policy.md" ||
 		prime["wakeInterval"] != "20m" {
 		t.Fatalf("prime config = %#v, want stored prime preserved", prime)
+	}
+	wakeBackoff, ok := prime["wakeBackoff"].(map[string]any)
+	if !ok || wakeBackoff["base"] != "20m" || wakeBackoff["max"] != "1h" {
+		t.Fatalf("prime wakeBackoff = %#v, want stored wake backoff preserved", prime["wakeBackoff"])
 	}
 }
 
@@ -439,14 +451,14 @@ func TestProjectSetConfig_RoleInstructionsFileFlags(t *testing.T) {
 	}
 }
 
-func TestProjectSetConfig_OrchestratorWakeIntervalJSON(t *testing.T) {
+func TestProjectSetConfig_DaemonRoleWakeJSON(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
 	writeRunFileFor(t, cfg, srv)
 
 	_, errOut, err := executeCLI(t, Deps{
 		ProcessAlive: func(int) bool { return true },
-	}, "project", "set-config", "demo", "--config-json", `{"orchestrator":{"wakeInterval":"30m"}}`)
+	}, "project", "set-config", "demo", "--config-json", `{"orchestrator":{"wakeInterval":"30m","wakeBackoff":{"enabled":true,"base":"30m","max":"1h"}},"prime":{"agent":"codex","wakeBackoff":{"enabled":false,"base":"45m","max":"2h"}}}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
@@ -456,6 +468,12 @@ func TestProjectSetConfig_OrchestratorWakeIntervalJSON(t *testing.T) {
 	}
 	if got.Config.Orchestrator.WakeInterval != "30m" {
 		t.Fatalf("orchestrator wakeInterval = %q, want 30m", got.Config.Orchestrator.WakeInterval)
+	}
+	if got.Config.Orchestrator.WakeBackoff == nil || got.Config.Orchestrator.WakeBackoff.Base != "30m" || got.Config.Orchestrator.WakeBackoff.Max != "1h" {
+		t.Fatalf("orchestrator wakeBackoff = %#v, want base=30m max=1h", got.Config.Orchestrator.WakeBackoff)
+	}
+	if got.Config.Prime.Agent != "codex" || got.Config.Prime.WakeBackoff == nil || got.Config.Prime.WakeBackoff.Enabled == nil || *got.Config.Prime.WakeBackoff.Enabled || got.Config.Prime.WakeBackoff.Base != "45m" || got.Config.Prime.WakeBackoff.Max != "2h" {
+		t.Fatalf("prime wake config = %#v, want disabled base=45m max=2h", got.Config.Prime)
 	}
 }
 

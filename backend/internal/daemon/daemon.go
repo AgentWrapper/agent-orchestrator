@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -113,6 +114,17 @@ func Run() error {
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	projectWakeResets := newProjectWakeResetQueue()
+	primeProjectID := domain.ProjectID(strings.TrimSpace(cfg.PrimeProjectID))
+	var primeWakeResets *primeWakeResetQueue
+	if primeProjectID != "" {
+		primeWakeResets = newPrimeWakeResetQueue()
+	}
+	wakeResetNotifier := wakeResetNotificationSink{
+		inner:         notificationWriter,
+		projectResets: projectWakeResets,
+		primeResets:   primeWakeResets,
+	}
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -123,7 +135,7 @@ func Run() error {
 	// uses the same adapter for reads. A nil provider (no token) simply disables
 	// both the observer and the auto-comment; detection/notification still work.
 	scmProvider := buildSCMProvider(log)
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, scmCommenter(scmProvider), log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, wakeResetNotifier, telemetrySink, scmCommenter(scmProvider), log)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, scmProvider, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
@@ -143,7 +155,7 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, trackerAdapter, notificationWriter, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, trackerAdapter, wakeResetNotifier, log)
 	// Fleet-pause drain sweep: terminates paused projects' workers as they reach
 	// a terminal/idle state, via the session service's clean Kill path.
 	drainDone := drain.New(store, sessionSvc, drain.Config{Telemetry: telemetrySink, Logger: log}).Start(ctx)
@@ -169,7 +181,7 @@ func Run() error {
 	// harness for install+auth readiness and tracks transitions so operators can
 	// be alerted when a login expires. Async + bounded — never gates readiness.
 	agentHealth, agentHealthDone := startAgentHealth(ctx, agentHealthConfig{Interval: cfg.AgentHealthInterval, DefaultAgent: cfg.Agent}, agentSvc, projectSvc, log)
-	modelHealth, modelHealthDone := startModelHealth(ctx, modelHealthConfig{Interval: cfg.ModelRevalidationInterval}, agentSvc, projectSvc, notificationWriter, log)
+	modelHealth, modelHealthDone := startModelHealth(ctx, modelHealthConfig{Interval: cfg.ModelRevalidationInterval}, agentSvc, projectSvc, wakeResetNotifier, log)
 
 	// Resource metrics observer: coarse-tick sampling of host load/memory/disk,
 	// per-session cgroup-scope memory, per-project session/zombie counts, and
@@ -246,8 +258,8 @@ func Run() error {
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
-	orchestratorSupervisorDone := startOrchestratorSupervisor(ctx, projectSvc, sessionSvc, notificationWriter, orchestratorSupervisorInterval, log)
-	primeSupervisorDone := startPrimeSupervisor(ctx, cfg, projectSvc, sessionSvc, notificationWriter, orchestratorSupervisorInterval, log)
+	orchestratorSupervisorDone := startOrchestratorSupervisor(ctx, projectSvc, sessionSvc, notificationWriter, orchestratorSupervisorInterval, log, projectWakeResets)
+	primeSupervisorDone := startPrimeSupervisor(ctx, cfg, projectSvc, sessionSvc, notificationWriter, orchestratorSupervisorInterval, log, primeWakeResets)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

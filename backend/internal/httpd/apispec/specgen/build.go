@@ -143,6 +143,7 @@ var schemaNames = map[string]string{
 	"DomainTrackerIntakeConfig": "TrackerIntakeConfig",
 	"DomainAgentConfig":         "AgentConfig",
 	"DomainRoleOverride":        "RoleOverride",
+	"DomainWakeBackoffConfig":   "WakeBackoffConfig",
 	"DomainWorkerMix":           "WorkerMix",
 	"DomainWorkerMixEntry":      "WorkerMixEntry",
 	// httpd/controllers (wire envelopes)

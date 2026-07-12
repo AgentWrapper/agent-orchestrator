@@ -11,6 +11,11 @@
 		"agent": "claude-code",
 		"agentConfig": {
 			"model": "opus"
+		},
+		"wakeBackoff": {
+			"base": "15m",
+			"enabled": true,
+			"max": "1h"
 		}
 	},
 	"prime": {
@@ -18,7 +23,12 @@
 		"agentConfig": {
 			"model": "opus"
 		},
-		"instructionsFile": ".claude/prime-orchestrator-policy.md"
+		"instructionsFile": ".claude/prime-orchestrator-policy.md",
+		"wakeBackoff": {
+			"base": "15m",
+			"enabled": true,
+			"max": "1h"
+		}
 	},
 	"projectPrefix": "ao",
 	"trackerIntake": {

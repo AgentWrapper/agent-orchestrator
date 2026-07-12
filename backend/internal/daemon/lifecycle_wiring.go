@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
@@ -26,6 +27,105 @@ import (
 
 type notificationSink interface {
 	Notify(context.Context, ports.NotificationIntent) error
+}
+
+type wakeResetNotificationSink struct {
+	inner         notificationSink
+	projectResets *projectWakeResetQueue
+	primeResets   *primeWakeResetQueue
+}
+
+func (s wakeResetNotificationSink) Notify(ctx context.Context, intent ports.NotificationIntent) error {
+	if s.inner == nil {
+		return nil
+	}
+	if err := s.inner.Notify(ctx, intent); err != nil {
+		return err
+	}
+	if intent.ProjectID == "" {
+		return nil
+	}
+	if s.projectResets != nil {
+		s.projectResets.enqueue(intent.ProjectID)
+	}
+	if s.primeResets != nil {
+		s.primeResets.enqueue()
+	}
+	return nil
+}
+
+type projectWakeResetQueue struct {
+	mu      sync.Mutex
+	pending map[domain.ProjectID]struct{}
+	notify  chan struct{}
+}
+
+func newProjectWakeResetQueue() *projectWakeResetQueue {
+	return &projectWakeResetQueue{
+		pending: make(map[domain.ProjectID]struct{}),
+		notify:  make(chan struct{}, 1),
+	}
+}
+
+func (q *projectWakeResetQueue) enqueue(projectID domain.ProjectID) {
+	if q == nil || projectID == "" {
+		return
+	}
+	q.mu.Lock()
+	q.pending[projectID] = struct{}{}
+	q.mu.Unlock()
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (q *projectWakeResetQueue) drain() map[domain.ProjectID]struct{} {
+	if q == nil {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.pending) == 0 {
+		return nil
+	}
+	pending := q.pending
+	q.pending = make(map[domain.ProjectID]struct{})
+	return pending
+}
+
+type primeWakeResetQueue struct {
+	mu      sync.Mutex
+	pending bool
+	notify  chan struct{}
+}
+
+func newPrimeWakeResetQueue() *primeWakeResetQueue {
+	return &primeWakeResetQueue{notify: make(chan struct{}, 1)}
+}
+
+func (q *primeWakeResetQueue) enqueue() {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.pending = true
+	q.mu.Unlock()
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (q *primeWakeResetQueue) drain() bool {
+	if q == nil {
+		return false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	pending := q.pending
+	q.pending = false
+	return pending
 }
 
 // lifecycleStack owns the runtime reaper goroutine started with the lifecycle

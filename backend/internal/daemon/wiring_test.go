@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -743,6 +744,16 @@ func (f *fakeOrchestratorEnsurer) seen(projectID domain.ProjectID) bool {
 	return false
 }
 
+func countProjectCalls(calls []domain.ProjectID, projectID domain.ProjectID) int {
+	count := 0
+	for _, got := range calls {
+		if got == projectID {
+			count++
+		}
+	}
+	return count
+}
+
 type fakeOrchestratorNotifier struct {
 	mu      sync.Mutex
 	intents []ports.NotificationIntent
@@ -756,9 +767,119 @@ func (f *fakeOrchestratorNotifier) Notify(_ context.Context, intent ports.Notifi
 	return f.err
 }
 
+func TestWakeResetNotificationSinkSignalsAfterSuccessfulNotify(t *testing.T) {
+	inner := &fakeOrchestratorNotifier{}
+	projectResets := newProjectWakeResetQueue()
+	primeResets := newPrimeWakeResetQueue()
+	sink := wakeResetNotificationSink{inner: inner, projectResets: projectResets, primeResets: primeResets}
+
+	if err := sink.Notify(context.Background(), ports.NotificationIntent{ProjectID: "mer"}); err != nil {
+		t.Fatal(err)
+	}
+	pendingProjects := projectResets.drain()
+	if _, ok := pendingProjects["mer"]; !ok {
+		t.Fatal("project reset was not signaled")
+	}
+	if !primeResets.drain() {
+		t.Fatal("prime reset was not signaled")
+	}
+	if len(inner.intents) != 1 {
+		t.Fatalf("inner notifications = %d, want 1", len(inner.intents))
+	}
+}
+
+func TestWakeResetNotificationSinkCoalescesWithoutDroppingProjects(t *testing.T) {
+	inner := &fakeOrchestratorNotifier{}
+	projectResets := newProjectWakeResetQueue()
+	primeResets := newPrimeWakeResetQueue()
+	sink := wakeResetNotificationSink{inner: inner, projectResets: projectResets, primeResets: primeResets}
+
+	for i := 0; i < 100; i++ {
+		projectID := domain.ProjectID(fmt.Sprintf("project-%d", i))
+		if err := sink.Notify(context.Background(), ports.NotificationIntent{ProjectID: projectID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pendingProjects := projectResets.drain()
+	if len(pendingProjects) != 100 {
+		t.Fatalf("pending project resets = %d, want 100", len(pendingProjects))
+	}
+	if !primeResets.drain() {
+		t.Fatal("prime reset was not coalesced")
+	}
+	select {
+	case <-projectResets.notify:
+	default:
+		t.Fatal("project reset notification was not signaled")
+	}
+	select {
+	case <-projectResets.notify:
+		t.Fatal("project reset notification should coalesce to one signal")
+	default:
+	}
+}
+
+func TestWakeResetNotificationSinkSignalsPrimeForAnyProjectNotification(t *testing.T) {
+	inner := &fakeOrchestratorNotifier{}
+	primeResets := newPrimeWakeResetQueue()
+	sink := wakeResetNotificationSink{inner: inner, projectResets: newProjectWakeResetQueue(), primeResets: primeResets}
+
+	if err := sink.Notify(context.Background(), ports.NotificationIntent{ProjectID: "mer"}); err != nil {
+		t.Fatal(err)
+	}
+	if !primeResets.drain() {
+		t.Fatal("prime reset was not signaled for non-prime project notification")
+	}
+	if err := sink.Notify(context.Background(), ports.NotificationIntent{ProjectID: "ao"}); err != nil {
+		t.Fatal(err)
+	}
+	if !primeResets.drain() {
+		t.Fatal("prime reset was not signaled for prime project notification")
+	}
+}
+
+func TestWakeResetNotificationSinkIgnoresProjectlessNotifications(t *testing.T) {
+	inner := &fakeOrchestratorNotifier{}
+	projectResets := newProjectWakeResetQueue()
+	primeResets := newPrimeWakeResetQueue()
+	sink := wakeResetNotificationSink{inner: inner, projectResets: projectResets, primeResets: primeResets}
+
+	if err := sink.Notify(context.Background(), ports.NotificationIntent{}); err != nil {
+		t.Fatal(err)
+	}
+	if pendingProjects := projectResets.drain(); len(pendingProjects) != 0 {
+		t.Fatalf("unexpected project reset for projectless notification: %#v", pendingProjects)
+	}
+	if primeResets.drain() {
+		t.Fatal("unexpected prime reset for projectless notification")
+	}
+}
+
+func TestWakeResetNotificationSinkDoesNotSignalAfterFailedNotify(t *testing.T) {
+	inner := &fakeOrchestratorNotifier{err: errors.New("write failed")}
+	projectResets := newProjectWakeResetQueue()
+	primeResets := newPrimeWakeResetQueue()
+	sink := wakeResetNotificationSink{inner: inner, projectResets: projectResets, primeResets: primeResets}
+
+	if err := sink.Notify(context.Background(), ports.NotificationIntent{ProjectID: "mer"}); err == nil {
+		t.Fatal("want notify error")
+	}
+	if pendingProjects := projectResets.drain(); len(pendingProjects) != 0 {
+		t.Fatalf("unexpected project reset after failed notify: %#v", pendingProjects)
+	}
+	if primeResets.drain() {
+		t.Fatal("unexpected prime reset after failed notify")
+	}
+}
+
 type sentMessage struct {
 	id      domain.SessionID
 	message string
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func TestStartOrchestratorSupervisorEnsuresEveryProject(t *testing.T) {
@@ -767,7 +888,7 @@ func TestStartOrchestratorSupervisorEnsuresEveryProject(t *testing.T) {
 
 	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}, {ID: "ao"}}}
 	ensurer := &fakeOrchestratorEnsurer{}
-	done := startOrchestratorSupervisor(ctx, projects, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	done := startOrchestratorSupervisor(ctx, projects, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -779,6 +900,171 @@ func TestStartOrchestratorSupervisorEnsuresEveryProject(t *testing.T) {
 		select {
 		case <-deadline:
 			t.Fatalf("supervisor did not ensure both projects, calls=%v", ensurer.calls)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestStartOrchestratorSupervisorResetHonorsWakeFloor(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	now := time.Now().UTC()
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer", Config: domain.ProjectConfig{
+		Orchestrator: domain.RoleOverride{WakeBackoff: &domain.WakeBackoffConfig{Base: "15m", Max: "1h"}},
+	}}}}
+	ensurer := &fakeOrchestratorEnsurer{send: true, sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:            "mer-orch",
+			ProjectID:     "mer",
+			Kind:          domain.KindOrchestrator,
+			Harness:       domain.HarnessClaudeCode,
+			FirstSignalAt: now.Add(-2 * time.Hour),
+			Activity: domain.Activity{
+				State:          domain.ActivityWaitingInput,
+				LastActivityAt: now.Add(-1 * time.Hour),
+			},
+		},
+	}}}
+	resets := newProjectWakeResetQueue()
+	done := startOrchestratorSupervisor(ctx, projects, ensurer, nil, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)), resets)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		ensurer.mu.Lock()
+		count := len(ensurer.sends)
+		ensurer.mu.Unlock()
+		if count == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("initial supervisor wake did not arrive, sends=%#v", ensurer.sends)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	resets.enqueue("mer")
+	time.Sleep(100 * time.Millisecond)
+	ensurer.mu.Lock()
+	count := len(ensurer.sends)
+	ensurer.mu.Unlock()
+	cancel()
+	<-done
+	if count != 1 {
+		t.Fatalf("reset bypassed wake floor, sends=%#v", ensurer.sends)
+	}
+}
+
+func TestStartOrchestratorSupervisorAcceptedResetHonorsWakeFloor(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	now := time.Now().UTC()
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer", Config: domain.ProjectConfig{
+		Orchestrator: domain.RoleOverride{WakeBackoff: &domain.WakeBackoffConfig{Base: "15m", Max: "1h"}},
+	}}}}
+	ensurer := &fakeOrchestratorEnsurer{send: true, sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:            "mer-orch",
+			ProjectID:     "mer",
+			Kind:          domain.KindOrchestrator,
+			Harness:       domain.HarnessClaudeCode,
+			FirstSignalAt: now.Add(-2 * time.Hour),
+			Activity: domain.Activity{
+				State:          domain.ActivityWaitingInput,
+				LastActivityAt: now,
+			},
+		},
+	}}}
+	resets := newProjectWakeResetQueue()
+	done := startOrchestratorSupervisor(ctx, projects, ensurer, nil, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)), resets)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		ensurer.mu.Lock()
+		callCount := len(ensurer.calls)
+		sendCount := len(ensurer.sends)
+		ensurer.mu.Unlock()
+		if callCount >= 1 {
+			if sendCount != 0 {
+				t.Fatalf("initial ensure sent wake despite fresh activity: sends=%#v", ensurer.sends)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("initial supervisor ensure did not run, calls=%#v", ensurer.calls)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	resets.enqueue("mer")
+	deadline = time.After(2 * time.Second)
+	for {
+		ensurer.mu.Lock()
+		callCount := len(ensurer.calls)
+		sendCount := len(ensurer.sends)
+		ensurer.mu.Unlock()
+		if callCount >= 2 {
+			if sendCount != 0 {
+				t.Fatalf("accepted reset bypassed wake floor, sends=%#v", ensurer.sends)
+			}
+			cancel()
+			<-done
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("reset-driven ensure did not run, calls=%#v sends=%#v", ensurer.calls, ensurer.sends)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestStartOrchestratorSupervisorResetEnsuresOnlyAffectedProject(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}, {ID: "ao"}}}
+	ensurer := &fakeOrchestratorEnsurer{}
+	resets := newProjectWakeResetQueue()
+	done := startOrchestratorSupervisor(ctx, projects, ensurer, nil, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)), resets)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		ensurer.mu.Lock()
+		merCalls := countProjectCalls(ensurer.calls, "mer")
+		aoCalls := countProjectCalls(ensurer.calls, "ao")
+		ensurer.mu.Unlock()
+		if merCalls == 1 && aoCalls == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("initial supervisor ensure did not run, calls=%#v", ensurer.calls)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	resets.enqueue("ao")
+	deadline = time.After(2 * time.Second)
+	for {
+		ensurer.mu.Lock()
+		merCalls := countProjectCalls(ensurer.calls, "mer")
+		aoCalls := countProjectCalls(ensurer.calls, "ao")
+		ensurer.mu.Unlock()
+		if aoCalls == 2 {
+			cancel()
+			<-done
+			if merCalls != 1 {
+				t.Fatalf("reset ensure touched unrelated project: calls=%#v", ensurer.calls)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("reset supervisor ensure did not run for ao, calls=%#v", ensurer.calls)
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
@@ -1242,7 +1528,9 @@ func TestEnsureOrchestratorsFreshReplacementDoesNotResetStormWindow(t *testing.T
 
 func TestEnsureOrchestratorsThrottlesRepeatedWake(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer", Config: domain.ProjectConfig{
+		Orchestrator: domain.RoleOverride{WakeBackoff: &domain.WakeBackoffConfig{Enabled: boolPtr(false)}},
+	}}}}
 	sessions := &fakeOrchestratorEnsurer{
 		send: true,
 		sessions: []domain.Session{{
@@ -1330,7 +1618,7 @@ func TestEnsureOrchestratorsThrottlesFailedWakeAttempt(t *testing.T) {
 	}
 }
 
-func TestEnsureOrchestratorsFailedWakeDoesNotConsumeUnansweredCap(t *testing.T) {
+func TestEnsureOrchestratorsFailedWakeDoesNotConsumeBackoff(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
 	sessions := &fakeOrchestratorEnsurer{
@@ -1351,12 +1639,13 @@ func TestEnsureOrchestratorsFailedWakeDoesNotConsumeUnansweredCap(t *testing.T) 
 	}
 	wakes := newOrchestratorWakeTracker()
 
-	for i := 0; i < orchestratorMaxUnansweredWakeSends+1; i++ {
+	const failedAttempts = 4
+	for i := 0; i < failedAttempts; i++ {
 		ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(time.Duration(i)*16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}
 
-	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends+1 {
-		t.Fatalf("failed wake attempts = %#v, want attempts to continue past unanswered-send cap", sessions.sends)
+	if len(sessions.sends) != failedAttempts {
+		t.Fatalf("failed wake attempts = %#v, want attempts to continue without growing backoff", sessions.sends)
 	}
 	if got := wakes.projects["mer"].unanswered; got != 0 {
 		t.Fatalf("failed wake unanswered count = %d, want 0", got)
@@ -1364,9 +1653,9 @@ func TestEnsureOrchestratorsFailedWakeDoesNotConsumeUnansweredCap(t *testing.T) 
 
 	sessions.sendErr = nil
 	sessions.send = true
-	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(time.Duration(orchestratorMaxUnansweredWakeSends+1)*16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(failedAttempts*16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends+2 {
+	if len(sessions.sends) != failedAttempts+1 {
 		t.Fatalf("recovered wake attempts = %#v, want delivered wake after failures", sessions.sends)
 	}
 	if got := wakes.projects["mer"].unanswered; got != 1 {
@@ -1374,9 +1663,11 @@ func TestEnsureOrchestratorsFailedWakeDoesNotConsumeUnansweredCap(t *testing.T) 
 	}
 }
 
-func TestEnsureOrchestratorsFailedWakePreservesDeliveredWakeCap(t *testing.T) {
+func TestEnsureOrchestratorsBacksOffDeliveredNoOpWakes(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer", Config: domain.ProjectConfig{
+		Orchestrator: domain.RoleOverride{WakeBackoff: &domain.WakeBackoffConfig{Base: "15m", Max: "1h"}},
+	}}}}
 	sessions := &fakeOrchestratorEnsurer{
 		send: true,
 		sessions: []domain.Session{{
@@ -1397,25 +1688,24 @@ func TestEnsureOrchestratorsFailedWakePreservesDeliveredWakeCap(t *testing.T) {
 
 	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(30*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(31*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(90*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(91*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	sessions.sendErr = errors.New("pane write failed")
-	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(32*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	sessions.sendErr = nil
-	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(48*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(64*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends+1 {
-		t.Fatalf("wake attempts = %#v, want two delivered, one failed, one delivered, then cap", sessions.sends)
+	if len(sessions.sends) != 3 {
+		t.Fatalf("wake attempts = %#v, want wakes at t=0, t=31m, t=91m after 15m->30m->60m backoff", sessions.sends)
 	}
-	if got := wakes.projects["mer"].unanswered; got != orchestratorMaxUnansweredWakeSends {
-		t.Fatalf("delivered wake unanswered count = %d, want cap %d", got, orchestratorMaxUnansweredWakeSends)
+	if got := wakes.projects["mer"].unanswered; got != 3 {
+		t.Fatalf("delivered wake unanswered count = %d, want 3", got)
 	}
 }
 
-func TestEnsureOrchestratorsStopsAfterUnansweredWakeLimit(t *testing.T) {
+func TestEnsureOrchestratorsBackoffResetsAfterActivity(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer", Config: domain.ProjectConfig{
+		Orchestrator: domain.RoleOverride{WakeBackoff: &domain.WakeBackoffConfig{Base: "15m", Max: "1h"}},
+	}}}}
 	sessions := &fakeOrchestratorEnsurer{
 		send: true,
 		sessions: []domain.Session{{
@@ -1433,18 +1723,130 @@ func TestEnsureOrchestratorsStopsAfterUnansweredWakeLimit(t *testing.T) {
 		}},
 	}
 	wakes := newOrchestratorWakeTracker()
-	var logBuf strings.Builder
-	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	for i := 0; i < orchestratorMaxUnansweredWakeSends+2; i++ {
-		ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(time.Duration(i)*16*time.Minute), log)
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, log)
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(31*time.Minute), log)
+
+	sessions.sessions[0].Activity.LastActivityAt = now.Add(40 * time.Minute)
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(50*time.Minute), log)
+	if len(sessions.sends) != 2 {
+		t.Fatalf("sends = %#v, want no wake before reset base interval elapses", sessions.sends)
+	}
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(56*time.Minute), log)
+	if len(sessions.sends) != 3 {
+		t.Fatalf("sends = %#v, want wake after reset base interval", sessions.sends)
+	}
+	if got := wakes.projects["mer"].unanswered; got != 1 {
+		t.Fatalf("reset unanswered = %d, want 1 after post-activity wake", got)
+	}
+}
+
+func TestWakeBackoffResetClearsUnansweredWakeBackoff(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	wakes := newOrchestratorWakeTracker()
+	wakes.projects["mer"] = orchestratorWakeState{
+		lastWake:       now,
+		lastActivityAt: now.Add(-time.Hour),
+		unanswered:     3,
+		warned:         true,
 	}
 
-	if len(sessions.sends) != orchestratorMaxUnansweredWakeSends {
-		t.Fatalf("sends = %#v, want capped at %d unanswered wakes", sessions.sends, orchestratorMaxUnansweredWakeSends)
+	wakes.resetWakeBackoff("mer")
+	got := wakes.projects["mer"]
+	if got.unanswered != 0 || got.warned {
+		t.Fatalf("reset state = %#v, want unanswered cleared and warning reset", got)
 	}
-	if got := logBuf.String(); !strings.Contains(got, "wake retry limit reached") {
-		t.Fatalf("log = %q, want retry-limit warning", got)
+	if !got.lastWake.Equal(now) || !got.lastActivityAt.Equal(now.Add(-time.Hour)) {
+		t.Fatalf("reset changed timing floors: %#v", got)
+	}
+}
+
+func TestWakeBackoffResetCollapsesMaxIntervalToBase(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	policy := domain.WakeBackoffPolicy{Enabled: true, Base: 15 * time.Minute, Max: time.Hour}
+	wakes := newOrchestratorWakeTracker()
+	wakes.projects["mer"] = orchestratorWakeState{
+		lastWake:       now.Add(-45 * time.Minute),
+		lastActivityAt: now.Add(-20 * time.Minute),
+		unanswered:     3,
+		warned:         true,
+	}
+	session := domain.Session{SessionRecord: domain.SessionRecord{
+		ID:            "mer-orch",
+		ProjectID:     "mer",
+		Kind:          domain.KindOrchestrator,
+		Harness:       domain.HarnessClaudeCode,
+		FirstSignalAt: now.Add(-2 * time.Hour),
+		Activity: domain.Activity{
+			State:          domain.ActivityWaitingInput,
+			LastActivityAt: now.Add(-20 * time.Minute),
+		},
+	}}
+
+	if shouldWakeOrchestrator("mer", session, policy, wakes, now) {
+		t.Fatal("pre-reset max backoff allowed wake before max interval elapsed")
+	}
+	wakes.resetWakeBackoff("mer")
+	if !shouldWakeOrchestrator("mer", session, policy, wakes, now) {
+		t.Fatal("reset did not collapse backoff to the base interval")
+	}
+}
+
+func TestWakeBackoffResetClearsAfterActivity(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	wakes := newOrchestratorWakeTracker()
+	session := domain.Session{SessionRecord: domain.SessionRecord{
+		Activity: domain.Activity{
+			State:          domain.ActivityWaitingInput,
+			LastActivityAt: now.Add(-time.Hour),
+		},
+	}}
+	wakes.recordWake("mer", session, now)
+	session.Activity.LastActivityAt = now.Add(time.Minute)
+	wakes.projects["mer"] = orchestratorWakeState{
+		lastWake:       wakes.projects["mer"].lastWake,
+		lastActivityAt: wakes.projects["mer"].lastActivityAt,
+		unanswered:     wakes.projects["mer"].unanswered,
+		warned:         true,
+	}
+
+	wakes.resetWakeBackoff("mer")
+	got := wakes.projects["mer"]
+	if got.unanswered != 0 || got.warned {
+		t.Fatalf("reset state = %#v, want unanswered cleared and warning reset", got)
+	}
+}
+
+func TestEnsureOrchestratorsDisabledBackoffUsesFixedInterval(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer", Config: domain.ProjectConfig{
+		Orchestrator: domain.RoleOverride{WakeInterval: "15m", WakeBackoff: &domain.WakeBackoffConfig{Enabled: boolPtr(false)}},
+	}}}}
+	sessions := &fakeOrchestratorEnsurer{
+		send: true,
+		sessions: []domain.Session{{
+			SessionRecord: domain.SessionRecord{
+				ID:            "mer-orch",
+				ProjectID:     "mer",
+				Kind:          domain.KindOrchestrator,
+				Harness:       domain.HarnessClaudeCode,
+				FirstSignalAt: now.Add(-2 * time.Hour),
+				Activity: domain.Activity{
+					State:          domain.ActivityWaitingInput,
+					LastActivityAt: now.Add(-1 * time.Hour),
+				},
+			},
+		}},
+	}
+	wakes := newOrchestratorWakeTracker()
+
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(16*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensureOrchestrators(context.Background(), projects, sessions, nil, wakes, now.Add(32*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if len(sessions.sends) != 3 {
+		t.Fatalf("sends = %#v, want fixed-interval wakes when backoff disabled", sessions.sends)
 	}
 }
 
@@ -1490,7 +1892,7 @@ func TestStartPrimeSupervisorDisabledWhenNoProjectConfigured(t *testing.T) {
 	defer cancel()
 
 	ensurer := &fakeOrchestratorEnsurer{}
-	done := startPrimeSupervisor(ctx, config.Config{}, fakeOrchestratorProjectLister{}, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	done := startPrimeSupervisor(ctx, config.Config{}, fakeOrchestratorProjectLister{}, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
 	select {
 	case <-done:
@@ -1507,7 +1909,7 @@ func TestStartPrimeSupervisorEnsuresConfiguredPrimeProject(t *testing.T) {
 	defer cancel()
 
 	ensurer := &fakeOrchestratorEnsurer{}
-	done := startPrimeSupervisor(ctx, config.Config{PrimeProjectID: "ao"}, fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	done := startPrimeSupervisor(ctx, config.Config{PrimeProjectID: "ao"}, fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -1524,6 +1926,57 @@ func TestStartPrimeSupervisorEnsuresConfiguredPrimeProject(t *testing.T) {
 			t.Fatalf("prime supervisor did not ensure configured project, calls=%v", ensurer.primeCalls)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestStartPrimeSupervisorResetHonorsWakeFloor(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	now := time.Now().UTC()
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{
+		Prime: domain.RoleOverride{Harness: domain.HarnessCodex, WakeBackoff: &domain.WakeBackoffConfig{Base: "15m", Max: "1h"}},
+	}}}}
+	ensurer := &fakeOrchestratorEnsurer{send: true, sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:            "ao-prime",
+			ProjectID:     "ao",
+			Kind:          domain.KindPrime,
+			Harness:       domain.HarnessCodex,
+			FirstSignalAt: now.Add(-2 * time.Hour),
+			Activity: domain.Activity{
+				State:          domain.ActivityWaitingInput,
+				LastActivityAt: now.Add(-1 * time.Hour),
+			},
+		},
+	}}}
+	resets := newPrimeWakeResetQueue()
+	done := startPrimeSupervisor(ctx, config.Config{PrimeProjectID: "ao"}, projects, ensurer, nil, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)), resets)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		ensurer.mu.Lock()
+		count := len(ensurer.sends)
+		ensurer.mu.Unlock()
+		if count == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("initial prime wake did not arrive, sends=%#v", ensurer.sends)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	resets.enqueue()
+	time.Sleep(100 * time.Millisecond)
+	ensurer.mu.Lock()
+	count := len(ensurer.sends)
+	ensurer.mu.Unlock()
+	cancel()
+	<-done
+	if count != 1 {
+		t.Fatalf("prime reset bypassed wake floor, sends=%#v", ensurer.sends)
 	}
 }
 

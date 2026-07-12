@@ -3477,6 +3477,8 @@ components:
           $ref: '#/components/schemas/AgentConfig'
         instructionsFile:
           type: string
+        wakeBackoff:
+          $ref: '#/components/schemas/WakeBackoffConfig'
         wakeInterval:
           description: Orchestrator and prime roles only. Positive Go duration string
             such as 15m; empty uses the daemon default.
@@ -4109,6 +4111,23 @@ components:
       required:
       - version
       - modified
+      type: object
+    WakeBackoffConfig:
+      properties:
+        base:
+          description: Positive Go duration for the reset/base wake interval. Empty
+            inherits wakeInterval.
+          type: string
+        enabled:
+          description: When false, keep fixed-interval wake behavior at the base interval
+            instead of exponential idle backoff. Defaults to true.
+          type:
+          - "null"
+          - boolean
+        max:
+          description: Positive Go duration cap for exponential idle wake backoff.
+            Empty uses the daemon default.
+          type: string
       type: object
     WorkerCapacity:
       properties:
