@@ -279,8 +279,12 @@ func TestPollDoesNotEmitAdoptionNotificationWhenRespawnAdmissionFails(t *testing
 	if spawner.calls[0].Branch != "ao/demo-1/root" {
 		t.Fatalf("replacement branch = %q, want orphan PR branch", spawner.calls[0].Branch)
 	}
-	if len(notifications.intents) != 0 {
-		t.Fatalf("notifications = %+v, want no adoption dispatch claim because replacement did not start", notifications.intents)
+	if len(notifications.intents) != 1 {
+		t.Fatalf("notifications = %+v, want orphan PR death alert without adoption dispatch claim", notifications.intents)
+	}
+	got := notifications.intents[0]
+	if got.AdoptsOpenPR || got.PRURL != "https://github.com/acme/demo/pull/99" {
+		t.Fatalf("notification = %+v, want orphan PR URL without AdoptsOpenPR", got)
 	}
 }
 
@@ -919,6 +923,44 @@ func TestPollDefersWithoutBackoffWhenSpawnHitsConcurrencyCap(t *testing.T) {
 	}
 	if len(tracker.repos) != 2 {
 		t.Fatalf("tracker calls after second poll = %d, want 2 (cap collision must not enter failure backoff)", len(tracker.repos))
+	}
+}
+
+func TestPollDefersWithoutBackoffWhenWorkerMixBucketDown(t *testing.T) {
+	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"},
+		Title: "first",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#1": apierr.Conflict("WORKER_MIX_BUCKET_DOWN", "session: worker mix bucket is down", nil),
+	}}
+	observer := New(singleResolver(tracker), store, spawner, Config{
+		Clock:          func() time.Time { return now },
+		FailureBackoff: time.Hour,
+		Logger:         discardLogger(),
+	})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1 bucket-down deferral", len(spawner.calls))
+	}
+	if len(tracker.repos) != 1 {
+		t.Fatalf("tracker calls after first poll = %d, want 1", len(tracker.repos))
+	}
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll() error = %v", err)
+	}
+	if len(tracker.repos) != 2 {
+		t.Fatalf("tracker calls after second poll = %d, want 2 (bucket down must not enter failure backoff)", len(tracker.repos))
 	}
 }
 

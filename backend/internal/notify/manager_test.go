@@ -181,6 +181,27 @@ func TestManagerNotifyWorkerDiedUnfinishedAdoptsOpenPR(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyWorkerDiedUnfinishedOrphanPRNotYetAdopting(t *testing.T) {
+	st := &fakeStore{}
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationWorkerDiedUnfinished,
+		SessionID:          "demo-1",
+		ProjectID:          "demo",
+		SessionDisplayName: "demo #12 fix-login",
+		IssueID:            "github:acme/demo#12",
+		PRURL:              "https://github.com/acme/demo/pull/99",
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := st.rows[0]
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed with an orphaned PR https://github.com/acme/demo/pull/99; ao will dispatch a clean replacement if retry capacity remains." {
+		t.Fatalf("body = %q", got.Body)
+	}
+}
+
 func TestManagerNotifyWorkerRetryExhausted(t *testing.T) {
 	st := &fakeStore{}
 	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})

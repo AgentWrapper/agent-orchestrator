@@ -926,6 +926,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap):
 		return apierr.Conflict("WORKER_CONCURRENCY_CAP", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrWorkerMixBucketDown):
+		return apierr.Conflict("WORKER_MIX_BUCKET_DOWN", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrModelHarnessMismatch):
 		return apierr.Invalid("MODEL_HARNESS_MISMATCH", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrBranchNotAllowedInPlace):

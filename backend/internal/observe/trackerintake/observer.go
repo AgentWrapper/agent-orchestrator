@@ -282,6 +282,9 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		}
 		bypassPool := domain.IssueLabelsBypassWorkerPool(issue.Labels)
 		if normalPoolFull && !bypassPool {
+			if postSpawnIntent != nil {
+				o.emitNotification(ctx, observationOnlyIntent(*postSpawnIntent))
+			}
 			o.logger.Debug("tracker intake: normal worker pool already full, deferring issue", "project", project.ID, "issue", issueID)
 			continue
 		}
@@ -298,12 +301,18 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			spawnCfg.Harness = harness
 		}
 		if _, err := o.spawner.Spawn(ctx, spawnCfg); err != nil {
-			if isWorkerConcurrencyCap(err) {
-				o.logger.Debug("tracker intake: spawn reached concurrency cap, deferring normal-pool issues", "project", project.ID, "issue", issueID, "err", err)
-				if !bypassPool {
+			if isWorkerDeferral(err) {
+				if postSpawnIntent != nil {
+					o.emitNotification(ctx, observationOnlyIntent(*postSpawnIntent))
+				}
+				o.logger.Debug("tracker intake: spawn deferred by session allocator", "project", project.ID, "issue", issueID, "err", err)
+				if isWorkerConcurrencyCap(err) && !bypassPool {
 					normalPoolFull = true
 				}
 				continue
+			}
+			if postSpawnIntent != nil {
+				o.emitNotification(ctx, observationOnlyIntent(*postSpawnIntent))
 			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
 			spawnFailed = true
@@ -317,9 +326,23 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 	return spawnFailed
 }
 
+func isWorkerDeferral(err error) bool {
+	return isWorkerConcurrencyCap(err) || isWorkerMixBucketDown(err)
+}
+
 func isWorkerConcurrencyCap(err error) bool {
 	var apiError *apierr.Error
 	return errors.As(err, &apiError) && apiError.Code == "WORKER_CONCURRENCY_CAP"
+}
+
+func isWorkerMixBucketDown(err error) bool {
+	var apiError *apierr.Error
+	return errors.As(err, &apiError) && apiError.Code == "WORKER_MIX_BUCKET_DOWN"
+}
+
+func observationOnlyIntent(intent ports.NotificationIntent) ports.NotificationIntent {
+	intent.AdoptsOpenPR = false
+	return intent
 }
 
 type retryDecision struct {

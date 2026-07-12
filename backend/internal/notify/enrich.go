@@ -116,6 +116,9 @@ func bodyForIntent(intent Intent) string {
 			}
 			return fmt.Sprintf("%s terminated before issue %s landed with an open PR; ao is dispatching a replacement to adopt it.", sessionLabel(intent), issueLabel(intent))
 		}
+		if pr := strings.TrimSpace(intent.PRURL); pr != "" {
+			return fmt.Sprintf("%s terminated before issue %s landed with an orphaned PR %s; ao will dispatch a clean replacement if retry capacity remains.", sessionLabel(intent), issueLabel(intent), pr)
+		}
 		return fmt.Sprintf("%s terminated before issue %s landed; ao will dispatch a clean replacement if retry capacity remains.", sessionLabel(intent), issueLabel(intent))
 	case domain.NotificationWorkerRetryExhausted:
 		failurePoint := ""

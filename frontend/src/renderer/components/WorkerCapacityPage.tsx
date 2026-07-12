@@ -21,8 +21,21 @@ const HEALTH_META: Record<string, { label: string; variant: BadgeVariant; iconCl
 	unknown: { label: "Unknown", variant: "neutral", iconClass: "text-muted-foreground" },
 };
 
+const BUCKET_BLOCKED_META: Record<string, { label: string; variant: BadgeVariant }> = {
+	harness_auth: { label: "Harness down", variant: "warning" },
+	model: { label: "Model down", variant: "warning" },
+	launch_failure: { label: "Launch failed", variant: "error" },
+};
+
 function healthMeta(health: string) {
 	return HEALTH_META[health] ?? HEALTH_META.unknown;
+}
+
+function bucketHealthMeta(bucket: WorkerCapacityBucket) {
+	if (bucket.down && bucket.blockedBy) {
+		return BUCKET_BLOCKED_META[bucket.blockedBy] ?? { label: "Down", variant: "warning" as const };
+	}
+	return healthMeta(bucket.health);
 }
 
 function stateMeta(state: WorkerCapacity["state"]) {
@@ -182,7 +195,7 @@ function BucketTable({ buckets }: { buckets: WorkerCapacityBucket[] }) {
 			</TableHeader>
 			<TableBody>
 				{buckets.map((bucket) => {
-					const meta = healthMeta(bucket.health);
+					const meta = bucketHealthMeta(bucket);
 					return (
 						<TableRow key={`${bucket.agent}:${bucket.model ?? ""}`}>
 							<TableCell className="max-w-0 px-3">
@@ -192,7 +205,10 @@ function BucketTable({ buckets }: { buckets: WorkerCapacityBucket[] }) {
 							<TableCell>{bucket.realizedPercent.toFixed(1)}%</TableCell>
 							<TableCell>{bucket.activeWorkers}</TableCell>
 							<TableCell>
-								<Badge variant={meta.variant}>{meta.label}</Badge>
+								<div className="flex max-w-[220px] flex-col gap-1">
+									<Badge variant={meta.variant}>{meta.label}</Badge>
+									{bucket.reason ? <span className="truncate text-[11px] text-muted-foreground">{bucket.reason}</span> : null}
+								</div>
 							</TableCell>
 							<TableCell className="text-right font-mono text-[11px] text-muted-foreground">
 								{formatNumber(bucket.downCapacityShare)}

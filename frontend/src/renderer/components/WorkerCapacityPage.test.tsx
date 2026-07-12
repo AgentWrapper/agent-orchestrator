@@ -75,6 +75,7 @@ describe("WorkerCapacityPage", () => {
 							realizedPercent: 33.3,
 							health: "unauthorized",
 							down: true,
+							blockedBy: "harness_auth",
 							downCapacityShare: 3,
 							reason: "not authenticated",
 							remedy: "run `claude`",
@@ -101,7 +102,8 @@ describe("WorkerCapacityPage", () => {
 		expect(await screen.findByText("Degraded")).toBeInTheDocument();
 		expect(screen.getByText("claude-code · claude-opus-4-8")).toBeInTheDocument();
 		expect(screen.getByText("33.3%")).toBeInTheDocument();
-		expect(screen.getByText("not authenticated")).toBeInTheDocument();
+		expect(screen.getByText("Harness down")).toBeInTheDocument();
+		expect(screen.getAllByText("not authenticated")).toHaveLength(2);
 		expect(screen.getByText("run `claude`")).toBeInTheDocument();
 
 		const allocation = screen.getByRole("heading", { name: "Allocation" }).closest("section");
