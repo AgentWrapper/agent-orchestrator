@@ -488,17 +488,26 @@ export default function TerminalScreen() {
 	const [restoring, setRestoring] = useState(false);
 	// In-app browser: shows the static preview file the agent generated (an
 	// index.html). We poll the daemon's on-demand detector while the terminal is
-	// open and AUTO-OPEN a WebView overlay the first time one appears. The user can
-	// close it and keep prompting; we won't re-pop the same file (autoOpenedRef
-	// remembers what we've already surfaced).
+	// open, but we deliberately DO NOT auto-open the overlay: the detector falls back
+	// to any previewable file (e.g. a repo's README.md), so auto-popping would steal
+	// the screen with an unbuilt/blank page. Instead the globe button lights up with a
+	// green dot when the agent has produced something to view (any previewable file
+	// except the repo README); the user taps it to open.
 	const [browserOpen, setBrowserOpen] = useState(false);
 	const [preview, setPreview] = useState<{ entry: string; url: string } | null>(null);
 	const previewWebRef = useRef<WebView>(null);
-	const autoOpenedRef = useRef<string | null>(null);
 
 	const { sessions, orchestrators, restore } = useApp();
 	const known = sessions.find((s) => s.id === id) ?? orchestrators.find((o) => o.id === id) ?? null;
 	const dead = notFound || (known ? isTerminalStatus(known.status) : false);
+	// What counts as a live preview: any file the daemon surfaces (an .html build, or
+	// a generated doc like plan.md / a report) EXCEPT a repo's README, which the
+	// detector's markdown fallback always matches on a fresh checkout. Filtering the
+	// README out keeps the globe's green dot meaningful — it means "there's something
+	// the agent produced to view", not just "this repo has a README".
+	const previewBase = (preview?.entry ?? "").split("/").pop() ?? "";
+	const isReadme = /^readme\.(md|markdown)$/i.test(previewBase);
+	const hasPreview = !!preview && !isReadme;
 
 	// Neither platform shrinks the layout for the keyboard: iOS never has, and on
 	// Android edge-to-edge (edgeToEdgeEnabled) defeats windowSoftInputMode=adjustResize
@@ -598,10 +607,10 @@ export default function TerminalScreen() {
 		};
 	}, [id]);
 
-	// Poll for a generated preview (index.html) and auto-open it the first time it
-	// appears. Detection is on-demand server-side, so we re-check on an interval;
-	// once we've auto-opened a given URL we never force it open again, so closing
-	// the browser to keep prompting sticks. Manual reopen via the globe still works.
+	// Poll the daemon's on-demand preview detector while the terminal is open, just
+	// to keep `preview` current for the globe button. We never auto-open the overlay
+	// (see the note by the state above): the detector's markdown fallback matches a
+	// repo README, so auto-popping would surface a blank/unbuilt page.
 	useEffect(() => {
 		if (!cfg || !isConfigured(cfg)) return;
 		let cancelled = false;
@@ -611,10 +620,6 @@ export default function TerminalScreen() {
 				const p = await getPreview(cfg, id);
 				if (cancelled) return;
 				setPreview(p);
-				if (p && autoOpenedRef.current !== p.url) {
-					autoOpenedRef.current = p.url;
-					setBrowserOpen(true);
-				}
 			} catch {
 				/* transient - keep polling */
 			}
@@ -726,18 +731,19 @@ export default function TerminalScreen() {
 	}, [msg, cfg, id]);
 
 	// Toggle the in-app browser. The poll above keeps `preview` current, so a tap
-	// just shows/hides the overlay. If nothing's been generated yet, explain that.
+	// just shows/hides the overlay. A bare README (the detector's markdown fallback)
+	// reports "no preview yet" instead of surfacing an unbuilt repo doc.
 	const toggleBrowser = useCallback(() => {
 		if (browserOpen) {
 			setBrowserOpen(false);
 			return;
 		}
-		if (!preview) {
-			setBanner("No preview yet - waiting for the agent to write an index.html...");
+		if (!hasPreview) {
+			setBanner("No preview yet - waiting for the agent to generate a page or document...");
 			return;
 		}
 		setBrowserOpen(true);
-	}, [browserOpen, preview]);
+	}, [browserOpen, hasPreview]);
 
 	const confirmKill = useCallback(() => {
 		const doKill = async () => {
@@ -864,22 +870,25 @@ export default function TerminalScreen() {
 						{size.cols}x{size.rows}
 					</Text>
 				)}
-				{/* In-app browser toggle - shows the agent's generated preview file.
-				    Brighter when one is available; auto-opens on first detection. */}
+				{/* In-app browser toggle - shows a page or doc the agent generated. Goes
+				    green with a dot when one is available; tap to open (we never
+				    auto-open, so a bare README can't pop a blank page). */}
 				<Pressable
 					hitSlop={8}
 					onPress={toggleBrowser}
 					style={({ pressed }) => [
 						styles.browserBtn,
 						browserOpen && styles.browserBtnActive,
+						hasPreview && !browserOpen && styles.browserBtnReady,
 						pressed && { opacity: 0.6 },
 					]}
 				>
 					<Feather
 						name="globe"
 						size={13}
-						color={browserOpen ? theme.blue : preview ? theme.textPrimary : theme.textSecondary}
+						color={browserOpen ? theme.blue : hasPreview ? theme.green : theme.textSecondary}
 					/>
+					{hasPreview && !browserOpen && <View style={styles.browserReadyDot} />}
 				</Pressable>
 				{dead ? (
 					<Pressable
@@ -1105,6 +1114,20 @@ const styles = StyleSheet.create({
 		marginLeft: 12,
 	},
 	browserBtnActive: { backgroundColor: theme.tintBlue, borderColor: theme.blue },
+	// A live web preview: tint the pill green so the globe reads as "ready to open".
+	browserBtnReady: { backgroundColor: theme.tintGreen, borderColor: theme.green },
+	// Small green badge on the globe when a real preview is available.
+	browserReadyDot: {
+		position: "absolute",
+		top: -2,
+		right: -2,
+		width: 8,
+		height: 8,
+		borderRadius: 4,
+		backgroundColor: theme.green,
+		borderWidth: 1,
+		borderColor: theme.bgSurface,
+	},
 	browserOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.bgBase },
 	browserBar: {
 		flexDirection: "row",
