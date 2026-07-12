@@ -621,6 +621,71 @@ func TestPoll_DiscoversCrossForkPRFromUpstreamRemote(t *testing.T) {
 	}
 }
 
+// When the project's registered origin is itself the upstream base (the usual
+// AO project-add flow) and the session pushes its branch to a separate 'fork'
+// remote configured in the checkout, the PR opened against origin has its head
+// in the fork, not the origin. This must still be attributed to the owning
+// session (issue #2609): scanning origin's own open-PR list must consider
+// every other checkout remote, not just origin itself, as a headRepo
+// candidate.
+func TestPoll_DiscoversCrossForkPRPushedToForkRemote(t *testing.T) {
+	dir := t.TempDir()
+	mustGit(t, "init", dir)
+	mustGit(t, "-C", dir, "remote", "add", "origin", "https://github.com/o/r.git")
+	mustGit(t, "-C", dir, "remote", "add", "fork", "https://github.com/contributor/r.git")
+
+	fork := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "contributor", Name: "r", Repo: "contributor/r"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "ao/p-1/root"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: dir, RepoOriginURL: "https://github.com/o/r.git"}},
+		prs:      map[domain.SessionID][]domain.PullRequest{},
+		checks:   map[string][]domain.PullRequestCheck{},
+	}
+	forkObs := ports.SCMObservation{
+		Fetched: true, Provider: "github", Host: "github.com", Repo: "o/r",
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1, State: "open", SourceBranch: "ao/p-1/feat", HeadRepo: "contributor/r", TargetBranch: "main", HeadSHA: "sha1", Title: "PR"},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: "sha1"},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewNone)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable), Mergeable: true},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "origin"}, prKey(fork, 0): {ETag: "fork"}},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(testRepo, 0): {{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "ao/p-1/feat", HeadRepo: "contributor/r", TargetBranch: "main", HeadSHA: "sha1"}},
+		},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): forkObs},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected cross-fork PR write")
+	}
+	got := store.writes[0].pr
+	if got.SessionID != "p-1" {
+		t.Fatalf("session id = %q, want p-1", got.SessionID)
+	}
+	if got.Repo != "o/r" {
+		t.Fatalf("pr repo = %q, want o/r (project origin)", got.Repo)
+	}
+	if got.SourceBranch != "ao/p-1/feat" {
+		t.Fatalf("source branch = %q, want ao/p-1/feat", got.SourceBranch)
+	}
+	fetched := false
+	for _, batch := range provider.fetchBatches {
+		for _, ref := range batch {
+			if ref.Repo.Repo == "o/r" && ref.Number == 1 {
+				fetched = true
+			}
+		}
+	}
+	if !fetched {
+		t.Fatalf("cross-fork PR must be refreshed against origin, batches=%#v", provider.fetchBatches)
+	}
+}
+
 // A PR on a scanned upstream remote whose head lives in some third-party fork
 // (not this project's origin) must never be attributed, even though its branch
 // name matches a session. Scanning extra remotes stays safe.

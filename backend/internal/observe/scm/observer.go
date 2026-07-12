@@ -193,11 +193,17 @@ type subject struct {
 
 // sessionRepo pairs a live session with a repo to scan and its branch for
 // per-repo branch-prefix discovery of new (including stacked) pull requests.
-// A session is scanned against its push origin plus every other remote in the
-// project checkout, so repo is the repo whose open-PR list is listed while
-// headRepo is the repo the session's head branch actually lives in (the push
-// origin). For same-repo PRs repo == headRepo; for a cross-fork PR (fork head,
-// upstream base) repo is the upstream base and headRepo is the fork origin.
+// repo is the repo whose open-PR list is scanned; headRepo is a candidate for
+// the repo the session's head branch actually lives in (the push remote).
+// Since the actual push remote isn't tracked per-session, discoverSubjects
+// pairs each scanned remote with every remote in the project checkout
+// (including itself) as a headRepo candidate. For same-repo PRs repo ==
+// headRepo; for a cross-fork PR (e.g. project origin is the upstream repo,
+// session pushes to a separate fork remote) repo is the upstream base being
+// scanned and headRepo is the fork the branch actually lives in.
+// candidatesForHeadRepo strictly matches a candidate's headRepo against the
+// PR's actual GitHub head repo, so pairing extra combinations only enables
+// correct attribution and can never misattribute a stranger's PR.
 type sessionRepo struct {
 	session  domain.SessionRecord
 	repo     ports.SCMRepo
@@ -471,8 +477,21 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 			o.logger.Debug("scm observer: project has no supported SCM origin", "project", proj.ID, "origin", proj.RepoOriginURL)
 			continue
 		}
-		for _, repo := range scanRepos[sess.ProjectID] {
-			sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: origin, branch: branch})
+		projRepos := scanRepos[sess.ProjectID]
+		for _, repo := range projRepos {
+			// The push remote for this session's branch is not tracked
+			// per-session, so pair this scanned repo's open-PR list against
+			// every remote in the checkout as a headRepo candidate (including
+			// itself). candidatesForHeadRepo below strictly matches against
+			// the PR's actual GitHub head repo, and matchSession additionally
+			// requires a branch-prefix match, so over-generating candidates
+			// here cannot misattribute a stranger's PR -- it only allows a
+			// genuine cross-fork PR (e.g. project origin is the upstream repo,
+			// session pushes to a separate 'fork' remote) to be attributed
+			// correctly instead of being silently dropped.
+			for _, head := range projRepos {
+				sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: head, branch: branch})
+			}
 		}
 		prs, err := o.store.ListPRsBySession(ctx, sess.ID)
 		if err != nil {
@@ -495,11 +514,11 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 }
 
 // resolveScanRepos returns the deduped set of repos whose open-PR lists should be
-// scanned to attribute PRs to this project's sessions: the push origin plus every
-// other GitHub remote configured in the project checkout (upstreams, mirrors).
-// Attribution still requires a PR's head branch to live in the origin, so scanning
-// extra remotes only surfaces cross-fork PRs (fork head, upstream base) and can
-// never misattribute a stranger's PR.
+// scanned to attribute PRs to this project's sessions: the project origin plus
+// every other GitHub remote configured in the project checkout (upstreams,
+// mirrors, fork remotes used to push branches). Attribution still requires a
+// PR's head branch to live in one of these same remotes (see sessionRepo), so
+// scanning extra remotes can never misattribute a stranger's PR.
 //
 // ponytail: remotes are read once per project per process (memoized by the
 // caller); a remote added after the daemon started is picked up on restart. Move
