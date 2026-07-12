@@ -116,10 +116,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	// Capacity fits binary + up to two permission flags + --resume + sessionID.
-	cmd = make([]string, 0, 5)
+	cmd = make([]string, 0, 3)
 	cmd = append(cmd, binary)
-	appendPermissionFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
