@@ -91,14 +91,18 @@ function parseThemeBlock(css: string): Map<string, string> {
 	return parseCssCustomProperties(css.slice(start, end));
 }
 
+function collapseCssWhitespace(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
+}
+
 describe("design-system.generated.css", () => {
 	const css = readFileSync(GENERATED_CSS, "utf8");
 	const { dark: darkVars, light: lightVars } = parseRootTokenVars(css);
 	const { dark: darkCss, light: lightCss } = splitThemeBlocks(css);
 	const themeVars = parseThemeBlock(css);
 
-	it("matches the generator output", () => {
-		expect(css).toBe(buildDesignSystemCss());
+	it("matches the generator output", async () => {
+		expect(css).toBe(await buildDesignSystemCss());
 	});
 
 	it("declares every expected dark :root custom property", () => {
@@ -222,10 +226,11 @@ describe("design-system.generated.css", () => {
 	});
 
 	it("emits every tailwind utility and keyframe", () => {
+		const normalizedCss = collapseCssWhitespace(css);
 		for (const utility of tailwindUtilities) {
 			expect(css).toContain(`@utility ${utility.name} {`);
 			for (const rule of utility.rules) {
-				expect(css).toContain(rule);
+				expect(normalizedCss).toContain(collapseCssWhitespace(rule));
 			}
 		}
 		expect(css).toContain("opacity: var(--animation-status-pulse-min-opacity);");

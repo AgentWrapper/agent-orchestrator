@@ -5,6 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as prettier from "prettier";
 import { kebab, layoutCssVarName } from "./css-utils";
 import {
 	breakpoint,
@@ -32,6 +33,9 @@ import {
 } from "./primitives";
 import { bridgeAlias, fontAlias, tailwindThemeSections } from "./tailwind-bridge";
 import { tailwindUtilities } from "./utilities";
+
+const stylesDir = dirname(fileURLToPath(import.meta.url));
+const GENERATED_OUTPUT_CSS = resolve(stylesDir, "design-system.generated.css");
 
 const GENERATED_HEADER = `/*
  * AUTO-GENERATED — do not edit.
@@ -349,8 +353,8 @@ export function buildUtilitiesCss(): string {
 	return lines.join("\n");
 }
 
-/** Returns the full CSS bundle written to `design-system.generated.css`. */
-export function buildDesignSystemCss(): string {
+/** Returns the raw CSS bundle before Prettier formatting. */
+function buildDesignSystemCssRaw(): string {
 	return [
 		GENERATED_HEADER,
 		stripGeneratedHeader(buildTokensCss()),
@@ -359,10 +363,23 @@ export function buildDesignSystemCss(): string {
 	].join("\n");
 }
 
+/** Returns the full CSS bundle written to `design-system.generated.css`. */
+export async function buildDesignSystemCss(): Promise<string> {
+	const options = await prettier.resolveConfig(GENERATED_OUTPUT_CSS);
+	return prettier.format(buildDesignSystemCssRaw(), {
+		...options,
+		filepath: GENERATED_OUTPUT_CSS,
+	});
+}
+
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 if (resolve(process.argv[1] ?? "") === resolve(__filename)) {
-	const stylesDir = __dirname;
-	writeFileSync(resolve(stylesDir, "design-system.generated.css"), buildDesignSystemCss(), "utf8");
+	void (async () => {
+		const output = await buildDesignSystemCss();
+		writeFileSync(GENERATED_OUTPUT_CSS, output, "utf8");
+	})().catch((error: unknown) => {
+		console.error(error);
+		process.exit(1);
+	});
 }
