@@ -31,6 +31,8 @@ type UseBrowserViewOptions = {
 export type BrowserViewModel = {
 	viewId: string;
 	navState: BrowserNavState;
+	mirrorUrl: string;
+	mirrorStream: MediaStream | null;
 	slotRef: (node: HTMLDivElement | null) => void;
 	navigate: (url: string) => Promise<void>;
 	goBack: () => Promise<void>;
@@ -52,6 +54,8 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 };
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
+
+const OPEN_MODAL_SELECTOR = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]';
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -83,6 +87,8 @@ export function useBrowserView({
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
+	const [mirrorUrl, setMirrorUrl] = useState("");
+	const [mirrorStream, setMirrorStream] = useState<MediaStream | null>(null);
 	const [annotationMode, setAnnotationModeState] = useState(false);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
@@ -93,6 +99,10 @@ export function useBrowserView({
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
 	const hasUrlRef = useRef(false);
+	const modalOpenRef = useRef(false);
+	const mirrorTokenRef = useRef(0);
+	const mirrorTimerRef = useRef<number | null>(null);
+	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 
 	useEffect(() => {
@@ -122,6 +132,14 @@ export function useBrowserView({
 			return;
 		}
 		const rect = visibleSlotRect(node);
+		if (modalOpenRef.current) {
+			if (rect.width > 0 && rect.height > 0) {
+				window.ao?.browser.setBounds({ viewId: id, rect, visible: true, parked: true });
+			} else {
+				sendHiddenBounds(id);
+			}
+			return;
+		}
 		const payload = {
 			viewId: id,
 			rect,
@@ -237,6 +255,93 @@ export function useBrowserView({
 		}
 	}, [active, navState.url, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
 
+	const stopMirrorStream = useCallback(() => {
+		mirrorStreamRef.current?.getTracks().forEach((track) => track.stop());
+		mirrorStreamRef.current = null;
+		setMirrorStream(null);
+	}, []);
+
+	const runMirror = useCallback(
+		(id: string) => {
+			const token = ++mirrorTokenRef.current;
+			const live = () => mirrorTokenRef.current === token && modalOpenRef.current && viewIdRef.current === id;
+			const streamMirror = async (): Promise<boolean> => {
+				if (!navigator.mediaDevices?.getDisplayMedia) return false;
+				const granted = await window.ao?.browser.requestMirror?.(id).catch(() => false);
+				if (!granted || !live()) return false;
+				const stream = await navigator.mediaDevices.getDisplayMedia({ audio: false, video: true });
+				if (!live()) {
+					stream.getTracks().forEach((track) => track.stop());
+					return true;
+				}
+				stopMirrorStream();
+				mirrorStreamRef.current = stream;
+				setMirrorStream(stream);
+				return true;
+			};
+			const frameMirror = async () => {
+				while (live()) {
+					const pending = window.ao?.browser.capture?.(id) ?? Promise.resolve("");
+					const frame = await pending.catch(() => "");
+					if (!live()) return;
+					if (frame) setMirrorUrl(frame);
+					await new Promise((resolve) => {
+						window.setTimeout(resolve, 66);
+					});
+				}
+			};
+			const tick = async () => {
+				const streamed = await streamMirror().catch(() => false);
+				if (streamed || !live()) return;
+				await frameMirror();
+			};
+			void tick();
+		},
+		[stopMirrorStream],
+	);
+
+	useEffect(() => {
+		if (!hasNativeBrowser) return;
+		const clearMirrorTimer = () => {
+			if (mirrorTimerRef.current === null) return;
+			window.clearTimeout(mirrorTimerRef.current);
+			mirrorTimerRef.current = null;
+		};
+		const update = () => {
+			const open = document.querySelector(OPEN_MODAL_SELECTOR) !== null;
+			if (open === modalOpenRef.current) return;
+			modalOpenRef.current = open;
+			if (open) {
+				clearMirrorTimer();
+				const id = viewIdRef.current;
+				if (id && activeRef.current && hasUrlRef.current) {
+					runMirror(id);
+					scheduleMeasure();
+				} else {
+					sendHiddenBounds();
+				}
+			} else {
+				mirrorTokenRef.current += 1;
+				scheduleSettleMeasure();
+				clearMirrorTimer();
+				mirrorTimerRef.current = window.setTimeout(() => {
+					mirrorTimerRef.current = null;
+					setMirrorUrl("");
+					stopMirrorStream();
+				}, 320);
+			}
+		};
+		update();
+		const observer = new MutationObserver(update);
+		observer.observe(document.body, { childList: true });
+		return () => {
+			observer.disconnect();
+			clearMirrorTimer();
+			mirrorTokenRef.current += 1;
+			stopMirrorStream();
+		};
+	}, [hasNativeBrowser, runMirror, scheduleMeasure, scheduleSettleMeasure, sendHiddenBounds, stopMirrorStream]);
+
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
 		window.addEventListener("resize", handle);
@@ -345,14 +450,19 @@ export function useBrowserView({
 			void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
 			setAnnotationModeState(false);
 		}
+		mirrorTokenRef.current += 1;
+		stopMirrorStream();
+		setMirrorUrl("");
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
-	}, [sendHiddenBounds]);
+	}, [sendHiddenBounds, stopMirrorStream]);
 
 	return {
 		viewId,
 		navState,
+		mirrorUrl,
+		mirrorStream,
 		slotRef,
 		navigate,
 		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),

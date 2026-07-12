@@ -60,6 +60,7 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
 
@@ -485,6 +486,7 @@ function ProjectItem({
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
@@ -526,22 +528,21 @@ function ProjectItem({
 		}
 	};
 
-	const removeProject = async () => {
+	const removeProject = () => {
 		setRemoveError(null);
-		const confirmed = window.confirm(
-			`Remove project ${workspace.name}? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.`,
-		);
-		if (!confirmed) return;
+		setConfirmOpen(true);
+	};
 
+	const handleConfirmRemove = async () => {
 		setIsRemoving(true);
 		try {
 			await onRemoveProject(workspace.id);
+			setConfirmOpen(false);
 			// The route for a removed project no longer resolves; fall back home.
 			if (selection.activeProjectId === workspace.id) selection.goHome();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Could not remove project";
 			setRemoveError(message);
-			window.alert(message);
 		} finally {
 			setIsRemoving(false);
 		}
@@ -651,11 +652,6 @@ function ProjectItem({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			{removeError && (
-				<span className="sr-only" role="status">
-					{removeError}
-				</span>
-			)}
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
@@ -670,6 +666,29 @@ function ProjectItem({
 					))}
 				</SidebarMenuSub>
 			)}
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={(open) => {
+					if (!isRemoving) setConfirmOpen(open);
+				}}
+				title={`Remove project`}
+				description={
+					<>
+						<p className="text-sm font-medium text-foreground">
+							This will remove <strong>{workspace.name}</strong> from AO
+						</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored
+							history on disk.
+						</p>
+					</>
+				}
+				confirmLabel={isRemoving ? "Removing…" : "Remove"}
+				destructive
+				busy={isRemoving}
+				error={removeError}
+				onConfirm={handleConfirmRemove}
+			/>
 		</SidebarMenuItem>
 	);
 }

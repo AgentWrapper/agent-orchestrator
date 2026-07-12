@@ -424,19 +424,22 @@ describe("SessionInspector reviews tab", () => {
 		expect(await screen.findByText("claude-code")).toBeInTheDocument();
 	});
 
-	it("shows eligible and up-to-date PR review rows", async () => {
+	it("shows eligible and up-to-date open PR review rows", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),
 			reviewState(4, "up_to_date", "def456"),
+			reviewState(5, "ineligible", "ghi789"),
 		]);
 
-		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
+		expect(screen.getByText("Pull requests")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
 		expect(screen.getByText("#4")).toBeInTheDocument();
+		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
@@ -466,7 +469,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
-	it("shows one shared terminal action", async () => {
+	it("cancels the running review instead of allowing rerun", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "running", "abc123"),
 			reviewState(4, "up_to_date", "def456"),
@@ -478,11 +481,29 @@ describe("SessionInspector reviews tab", () => {
 		);
 		await openReviewsTab();
 
-		await waitFor(() => expect(screen.getAllByText("Open terminal")).toHaveLength(1));
-		expect(screen.getAllByRole("button", { name: /review/i })).toHaveLength(1);
-		await userEvent.click(screen.getByRole("button", { name: /open terminal/i }));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled());
+		expect(screen.queryByRole("button", { name: /re-run review/i })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /cancel review/i }));
 
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+		await waitFor(() => {
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/cancel", {
+				params: { path: { sessionId: "sess-1" } },
+			});
+		});
+		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+	});
+
+	it("shows cancelled review runs without marking them failed", async () => {
+		mockCommonGets([], "reviewer-pane", [
+			{ ...reviewState(3, "needs_review", "abc123"), latestRun: { ...failedReview, status: "cancelled" } },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findAllByText("Cancelled")).toHaveLength(2);
+		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
 	it("shows the reviewer identity and aggregate verdict", async () => {

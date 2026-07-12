@@ -34,11 +34,12 @@ type Store interface {
 	GetReviewBySession(ctx stdctx.Context, id domain.SessionID) (domain.Review, bool, error)
 	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
 	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
-	SupersedeReviewRun(ctx stdctx.Context, id, body string) (bool, error)
 	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
+	CancelRunningReviewRunsBySession(ctx stdctx.Context, sessionID domain.SessionID, body string) (int64, error)
 	GetReviewRun(ctx stdctx.Context, id string) (domain.ReviewRun, bool, error)
 	GetReviewRunBySessionPRAndSHA(ctx stdctx.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
+	ListRunningReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
 
 // Sessions resolves the worker session under review.
@@ -147,6 +148,13 @@ type SessionReviews struct {
 	Reviews          []PRReviewState
 }
 
+// CancelResult is the review state after a reviewer pane cancellation.
+type CancelResult struct {
+	ReviewerHandleID string
+	Reviews          []PRReviewState
+	CancelledRuns    []domain.ReviewRun
+}
+
 // Trigger starts reviews for every PR on the worker session that needs review.
 // It reuses running/up-to-date runs, retries failed/current changes-requested
 // heads, and uses one reviewer pane for every new run in the batch.
@@ -210,20 +218,6 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	for _, reviewState := range reviews {
 		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
 			continue
-		}
-		if reviewState.LatestRun != nil && reviewState.LatestRun.Status != domain.ReviewRunFailed && reviewState.LatestRun.Status != domain.ReviewRunRunning && reviewState.LatestRun.Verdict == domain.VerdictNone {
-			superseded, err := e.store.SupersedeReviewRun(ctx, reviewState.LatestRun.ID, "superseded by a new review trigger")
-			if err != nil {
-				return TriggerResult{}, err
-			}
-			if !superseded {
-				if latest, ok, err := e.store.GetReviewRun(ctx, reviewState.LatestRun.ID); err != nil {
-					return TriggerResult{}, err
-				} else if ok {
-					reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, latest)
-					continue
-				}
-			}
 		}
 		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
 			return TriggerResult{}, err
@@ -372,6 +366,54 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 		return SessionReviews{}, err
 	}
 	return SessionReviews{ReviewerHandleID: handle, Runs: runs, Reviews: Plan(prs, runs)}, nil
+}
+
+// Cancel interrupts the live reviewer pane for a worker and marks running
+// review runs as cancelled so they no longer block a fresh trigger.
+func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelResult, error) {
+	if workerID == "" {
+		return CancelResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	review, ok, err := e.store.GetReviewBySession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	if !ok || review.ReviewerHandleID == "" {
+		return CancelResult{}, fmt.Errorf("%w: reviewer for worker session %q", ErrNotFound, workerID)
+	}
+	running, err := e.store.ListRunningReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	if err := e.launcher.Cancel(ctx, review.ReviewerHandleID, review.Harness); err != nil {
+		alive, aliveErr := e.launcher.Alive(ctx, review.ReviewerHandleID)
+		if aliveErr != nil {
+			return CancelResult{}, err
+		}
+		if alive {
+			return CancelResult{}, err
+		}
+	}
+	if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, "cancelled by user"); err != nil {
+		return CancelResult{}, err
+	}
+	cancelled := make([]domain.ReviewRun, 0, len(running))
+	for _, run := range running {
+		run.Status = domain.ReviewRunCancelled
+		run.Verdict = domain.VerdictNone
+		run.Body = "cancelled by user"
+		run.GithubReviewID = ""
+		cancelled = append(cancelled, run)
+	}
+	prs, err := e.prs.ListPRsBySession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a configured

@@ -42,6 +42,7 @@ const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: 
 	active: { label: "Working", tone: "var(--color-working)", breathe: true },
 	idle: { label: "Idle", tone: "var(--color-text-muted)", breathe: false },
 	waiting_input: { label: "Input Needed", tone: "var(--color-warning)", breathe: false },
+	blocked: { label: "Awaiting Decision", tone: "var(--color-warning)", breathe: false },
 	exited: { label: "Exited", tone: "var(--color-text-muted)", breathe: false },
 	unknown: { label: "Unknown", tone: "var(--color-text-muted)", breathe: false },
 };
@@ -81,6 +82,7 @@ export function ShellTopbar() {
 	// route slug. "agent-orchestrator" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
+	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
@@ -168,7 +170,7 @@ export function ShellTopbar() {
 						</div>
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : isProjectBoardRoute ? null : (
+				) : isProjectBoardRoute || (isMac && isRootBoardRoute) ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>

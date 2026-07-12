@@ -67,7 +67,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	});
 	const browserAnnotationQueue = useBrowserAnnotationQueue({
 		sessionId: session?.id,
-		sessionStatus: session?.status,
 		navUrl: browserView.navState.url,
 	});
 

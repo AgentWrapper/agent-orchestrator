@@ -184,8 +184,6 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	mockParams.projectId = undefined;
-	vi.spyOn(window, "confirm").mockReturnValue(true);
-	vi.spyOn(window, "alert").mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -193,28 +191,53 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-	it("confirms project removal before calling the remove handler", async () => {
+	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();
 
 		await user.click(screen.getByLabelText("Project actions for Project One"));
 		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
 
-		expect(window.confirm).toHaveBeenCalledWith(
-			"Remove project Project One? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.",
-		);
+		// The ConfirmDialog renders via Radix Portal — find it by role
+		const dialog = await screen.findByRole("dialog", { name: "Remove project" });
+		expect(dialog).toBeInTheDocument();
+		expect(dialog).toHaveTextContent("Project One");
+
+		await user.click(screen.getByRole("button", { name: "Remove" }));
 		await waitFor(() => expect(onRemoveProject).toHaveBeenCalledTimes(1));
 	});
 
-	it("does not remove the project when confirmation is cancelled", async () => {
-		vi.mocked(window.confirm).mockReturnValue(false);
+	it("does not remove the project when cancellation is clicked in the ConfirmDialog", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();
 
 		await user.click(screen.getByLabelText("Project actions for Project One"));
 		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
 
+		await screen.findByRole("dialog", { name: "Remove project" });
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+		// Dialog should close and the handler must not have fired
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove project" })).not.toBeInTheDocument());
 		expect(onRemoveProject).not.toHaveBeenCalled();
+	});
+
+	it("shows an error message inside the ConfirmDialog when removal fails", async () => {
+		const user = userEvent.setup();
+		const onRemoveProject = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("Failed to remove project")) as RemoveProjectHandler;
+		renderSidebar({ onRemoveProject });
+
+		await user.click(screen.getByLabelText("Project actions for Project One"));
+		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+		await screen.findByRole("dialog", { name: "Remove project" });
+		await user.click(screen.getByRole("button", { name: "Remove" }));
+
+		// The error text renders inside the dialog — find it by its destructive color class
+		expect(await screen.findByText("Failed to remove project")).toBeInTheDocument();
+		// Dialog stays open on failure so the user can retry or cancel
+		expect(screen.getByRole("dialog", { name: "Remove project" })).toBeInTheDocument();
 	});
 
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
@@ -557,6 +580,19 @@ describe("Sidebar", () => {
 				asWorkspace: false,
 			}),
 		);
+	});
+
+	it("shows the project name and context in the ConfirmDialog description", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getByLabelText("Project actions for Project One"));
+		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+
+		const dialog = await screen.findByRole("dialog", { name: "Remove project" });
+		expect(dialog).toHaveTextContent("Project One");
+		expect(dialog).toHaveTextContent("live sessions");
+		expect(dialog).toHaveTextContent("repository folder");
 	});
 
 	it("renames a session inline and persists via the daemon", async () => {

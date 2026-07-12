@@ -37,6 +37,13 @@ type TriggerReviewResponse struct {
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
 }
 
+// CancelReviewResponse is the body of cancel (200). reviews carries the
+// PR-scoped review state after running passes have been stopped.
+type CancelReviewResponse struct {
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+}
+
 // SubmitReviewItem is one review result in a batched submit request.
 type SubmitReviewItem struct {
 	RunID          string `json:"runId" description:"Review run id being completed."`
@@ -63,6 +70,7 @@ type ReviewsController struct {
 func (c *ReviewsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/reviews", c.list)
 	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
+	r.Post("/sessions/{sessionId}/reviews/cancel", c.cancel)
 	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
 }
 
@@ -104,6 +112,26 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 		reviews = []reviewcore.PRReviewState{}
 	}
 	envelope.WriteJSON(w, status, TriggerReviewResponse{
+		ReviewerHandleID: res.ReviewerHandleID,
+		Reviews:          reviews,
+	})
+}
+
+func (c *ReviewsController) cancel(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/cancel")
+		return
+	}
+	res, err := c.Svc.Cancel(r.Context(), sessionID(r))
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, CancelReviewResponse{
 		ReviewerHandleID: res.ReviewerHandleID,
 		Reviews:          reviews,
 	})

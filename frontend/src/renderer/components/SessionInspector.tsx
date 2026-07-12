@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
+import { ArrowUpRight, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -388,6 +388,7 @@ const ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string;
 	active: { label: "Working", tone: "var(--color-working)", breathe: true },
 	idle: { label: "Idle", tone: "var(--color-text-muted)", breathe: false },
 	waiting_input: { label: "Input Needed", tone: "var(--color-warning)", breathe: false },
+	blocked: { label: "Awaiting Decision", tone: "var(--color-warning)", breathe: false },
 	exited: { label: "Exited", tone: "var(--color-text-muted)", breathe: false },
 	unknown: { label: "Activity Unavailable", tone: "var(--color-text-muted)", breathe: false },
 };
@@ -500,6 +501,19 @@ function ReviewsView({
 			}
 		},
 	});
+	const cancelReview = useMutation({
+		mutationFn: async () => {
+			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to cancel review"));
+		},
+		onSuccess: () => {
+			setReviewNotice(null);
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
 
 	return (
@@ -507,10 +521,12 @@ function ReviewsView({
 			<Section title="Reviews">
 				<ReviewPanel
 					config={projectConfigQuery.data}
-					error={reviewsQuery.error ?? triggerReview.error}
+					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
 					isLoading={reviewsQuery.isLoading}
+					isCancelling={cancelReview.isPending}
 					isTriggering={triggerReview.isPending}
 					onOpenTerminal={onOpenReviewerTerminal}
+					onCancel={() => cancelReview.mutate()}
 					onTrigger={() => triggerReview.mutate()}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviewStates={reviewStates}
@@ -604,9 +620,11 @@ function ReviewPanel({
 	reviewerHandleId,
 	isLoading,
 	isTriggering,
+	isCancelling,
 	error,
 	notice,
 	onTrigger,
+	onCancel,
 	onOpenTerminal,
 }: {
 	session: WorkspaceSession;
@@ -615,9 +633,11 @@ function ReviewPanel({
 	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
+	isCancelling: boolean;
 	error: unknown;
 	notice: string | null;
 	onTrigger: () => void;
+	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
 	if (sortedPRs(session).length === 0) {
@@ -627,16 +647,26 @@ function ReviewPanel({
 		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
 	}
 
-	const latest = reviewStates.find((review) => review.latestRun)?.latestRun;
+	const openPRURLs = new Set(
+		sortedPRs(session)
+			.filter((pr) => pr.state === "open")
+			.map((pr) => pr.url),
+	);
+	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const aggregateVerdict = sessionReviewVerdict(reviewStates);
-	const runAction = reviewSessionRunAction(reviewStates, isTriggering);
+	const aggregateVerdict = sessionReviewVerdict(openReviewStates);
+	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
+	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
+	const openReviewerTerminal = () => {
+		if (!terminalEnabled) return;
+		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
+	};
 	const runDisabled =
 		isTriggering ||
-		reviewStates.length === 0 ||
-		reviewStates.some((reviewState) => reviewState.status === "running") ||
-		reviewStates.every((reviewState) => reviewState.status === "ineligible");
+		openReviewStates.length === 0 ||
+		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -668,30 +698,32 @@ function ReviewPanel({
 					</span>
 				</div>
 				<div className="flex flex-col gap-0 overflow-hidden rounded-md border border-border bg-surface-faint">
-					{reviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "p-3")}>No review state loaded yet.</p>
+					{openReviewStates.length === 0 ? (
+						<p className={cn(inspectorEmptyClass, "p-3")}>No open pull requests to review.</p>
 					) : null}
-					{reviewStates.map((reviewState) => (
+					{openReviewStates.map((reviewState) => (
 						<ReviewStateRow key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
 					))}
 				</div>
 				<div className="grid grid-cols-2 gap-2.5 pt-1 has-[:only-child]:grid-cols-1 @max-[300px]/inspector:grid-cols-1">
 					<button
-						className="inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border border-success/42 bg-success/10 px-2.5 text-xs font-semibold text-success-bright transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0"
-						disabled={runDisabled}
-						onClick={onTrigger}
+						className={cn(
+							"inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border px-2.5 text-xs font-semibold transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0",
+							reviewRunning
+								? "border-error/42 bg-error/10 text-error"
+								: "border-success/42 bg-success/10 text-success-bright",
+						)}
+						disabled={reviewRunning ? isCancelling : runDisabled}
+						onClick={reviewRunning ? onCancel : onTrigger}
 						type="button"
 					>
-						<Play aria-hidden="true" />
-						{runAction}
+						{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+						{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
 					</button>
 					<button
 						className="inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border border-border bg-raised px-2.5 text-xs font-semibold text-muted-foreground transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0"
 						disabled={!terminalEnabled}
-						onClick={() => {
-							if (!terminalEnabled) return;
-							onOpenTerminal?.({ handleId: reviewerHandleId, harness });
-						}}
+						onClick={openReviewerTerminal}
 						type="button"
 					>
 						<Terminal aria-hidden="true" />
@@ -745,6 +777,9 @@ function sessionReviewVerdict(reviewStates: PRReviewState[]): {
 	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "failed")) {
 		return { label: "Failed", tone: "danger" };
 	}
+	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "cancelled")) {
+		return { label: "Cancelled", tone: "neutral" };
+	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested")) {
 		return { label: "Changes requested", tone: "danger" };
 	}
@@ -761,6 +796,9 @@ function reviewVerdict(reviewState: PRReviewState): {
 } {
 	if (reviewState.latestRun?.status === "failed") {
 		return { label: "Failed", tone: "danger" };
+	}
+	if (reviewState.latestRun?.status === "cancelled") {
+		return { label: "Cancelled", tone: "neutral" };
 	}
 	switch (reviewState.status) {
 		case "running":

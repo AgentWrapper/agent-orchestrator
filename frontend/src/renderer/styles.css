@@ -1248,6 +1248,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: #8bdc75;
 }
 
+.reviewer-card__action--danger {
+	border-color: color-mix(in srgb, var(--red) 42%, transparent);
+	background: color-mix(in srgb, var(--red) 10%, transparent);
+	color: var(--red);
+}
+
 .reviewer-card__action--wide {
 	width: 100%;
 }
@@ -1382,6 +1388,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 :root[data-theme="light"] .reviewer-card__action--primary {
 	color: var(--green);
+}
+
+:root[data-theme="light"] .reviewer-card__action--danger {
+	color: var(--red);
 }
 
 .inspector-empty--center {

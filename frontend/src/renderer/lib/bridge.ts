@@ -94,6 +94,8 @@ export const aoBridge: AoBridge =
 				isLoading: false,
 			}),
 			destroy: () => undefined,
+			capture: async () => "",
+			requestMirror: async () => false,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,

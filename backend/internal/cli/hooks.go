@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -34,9 +35,41 @@ const (
 
 // setActivityAPIRequest mirrors the daemon's SetActivityRequest body for
 // POST /api/v1/sessions/{id}/activity. The CLI keeps its own copy so it need
-// not import httpd.
+// not import httpd. Event carries the AO hook sub-command that produced the
+// state; ToolName/ToolUseID are the tool-use correlation facts lifted from the
+// native payload when present. All three are optional: an old daemon decodes
+// the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State string `json:"state"`
+	State     string `json:"state"`
+	Event     string `json:"event,omitempty"`
+	ToolName  string `json:"toolName,omitempty"`
+	ToolUseID string `json:"toolUseId,omitempty"`
+}
+
+// maxActivityMetaLen caps the correlation fields lifted from a native hook
+// payload before they go on the wire — they are ids/names, anything longer is
+// garbage and gets dropped rather than truncated (a truncated id would never
+// match its pre/post counterpart).
+const maxActivityMetaLen = 256
+
+// activityMeta extracts the tool-use correlation facts from a native hook
+// payload. The field names are shared vocabulary across agent CLIs that emit
+// them (claude-code's PreToolUse/PostToolUse/PostToolUseFailure and
+// PermissionRequest payloads); adapters whose payloads lack them yield empty
+// strings and the signal degrades to today's state-only form.
+func activityMeta(payload []byte) (toolName, toolUseID string) {
+	var p struct {
+		ToolName  string `json:"tool_name"`
+		ToolUseID string `json:"tool_use_id"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	if len(p.ToolName) > maxActivityMetaLen {
+		p.ToolName = ""
+	}
+	if len(p.ToolUseID) > maxActivityMetaLen {
+		p.ToolUseID = ""
+	}
+	return p.ToolName, p.ToolUseID
 }
 
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
@@ -81,8 +114,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		return nil
 	}
 
+	toolName, toolUseID := activityMeta(payload)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state)}, nil); err != nil {
+	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Event: event, ToolName: toolName, ToolUseID: toolUseID}, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
