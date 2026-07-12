@@ -68,7 +68,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-	appendPermissionFlags(&cmd, cfg.Permissions)
 	return cmd, nil
 }
 
@@ -125,16 +124,6 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
-func appendPermissionFlags(cmd *[]string, mode ports.PermissionMode) {
-	switch mode {
-	case ports.PermissionModeAcceptEdits:
-		*cmd = append(*cmd, "--permission-mode", "acceptEdits")
-	case ports.PermissionModeAuto:
-		*cmd = append(*cmd, "--permission-mode", "auto")
-	case ports.PermissionModeBypassPermissions:
-		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
-	}
-}
 
 var ampBinarySpec = binaryutil.BinarySpec{
 	Label:         "amp",
