@@ -178,13 +178,11 @@ ao start
 
 ## Documentation
 
-| Document                                                         | Start here when you need                                                                     |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)                     | Backend mental model, lifecycle, persistence, CDC, status derivation, and daemon boundaries. |
-| [docs/backend-code-structure.md](docs/backend-code-structure.md) | Package ownership and where each backend concern belongs.                                    |
-| [docs/cli/README.md](docs/cli/README.md)                         | CLI behavior and daemon route mapping.                                                       |
-| [docs/STATUS.md](docs/STATUS.md)                                 | What currently ships on `main` and what remains in flight.                                   |
-| [docs/stack.md](docs/stack.md)                                   | Library, runtime, and dependency decisions.                                                  |
+| Document                                     | Start here when you need                                                                                  |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md) | Current runtime topology, ownership, lifecycle, dispatch, attention, health, persistence, and invariants. |
+| [docs/cli/README.md](docs/cli/README.md)     | CLI behavior and daemon route mapping.                                                                    |
+| [docs/stack.md](docs/stack.md)               | Library, runtime, and dependency decisions.                                                               |
 
 ## Telemetry
 

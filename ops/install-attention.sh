@@ -50,8 +50,7 @@ if [[ -r "${env_file}" ]]; then
   for k in "${required_keys[@]}"; do
     has_key "${k}" || missing+=("${k}")
   done
-  # A usable sink is EITHER a webhook OR a bot token *paired with* a channel —
-  # createSlackClient only uses the Web API when both token and channel are set.
+  # A usable sink is EITHER a webhook OR a bot token paired with a channel.
   have_sink=0
   has_key SLACK_WEBHOOK_URL && have_sink=1
   { has_key SLACK_BOT_TOKEN && has_key SLACK_CHANNEL; } && have_sink=1

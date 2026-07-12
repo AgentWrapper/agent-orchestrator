@@ -200,7 +200,6 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newSessionCommand(ctx))
 	root.AddCommand(newOrchestratorCommand(ctx))
 	root.AddCommand(newReviewCommand(ctx))
-	root.AddCommand(newWaitingCommand(ctx))
 	root.AddCommand(newCompletionCommand())
 	root.AddCommand(newVersionCommand())
 

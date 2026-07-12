@@ -55,14 +55,10 @@ import {
 	resolveMentionUserId,
 	signature,
 } from "./attention-core.mjs";
+import { loadEnvFile } from "./env-file.mjs";
 
 const ENV_FILE = process.env.AO_ENV_FILE || "/home/orchestrator/agent-orchestrator/.env";
-try {
-	for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
-		const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-		if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-	}
-} catch {}
+loadEnvFile(ENV_FILE);
 
 const PORT = process.env.AO_PORT || "3001";
 const TOKEN = process.env.SLACK_BOT_TOKEN;

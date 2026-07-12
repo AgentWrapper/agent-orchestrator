@@ -1,7 +1,7 @@
 # AO technical stack
 
 This is the source of truth for library and runtime choices in the AO rewrite.
-Keep this document about durable technology decisions; use `STATUS.md` for
+Keep this document about durable technology decisions; use GitHub issues for
 implementation progress and `architecture.md` for component behavior and
 invariants.
 

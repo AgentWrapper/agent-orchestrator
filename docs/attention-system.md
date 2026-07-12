@@ -16,9 +16,7 @@ is ops-only and touches no sensitive backend path.
 | `ops/attention-core.mjs`           | —                            | Pure logic: attention classification, dedup state machine, alert/digest rendering, `SLACK_MEMBER_ID` resolution, session→attention mapping.                                                                         |
 | `ops/agent-health-core.mjs`        | —                            | Pure logic used by the Slack notifier for agent-harness health checks and recovery alerts.                                                                                                                          |
 | `ops/slack-reply-core.mjs`         | —                            | Pure logic: Slack request-signature verification, thread↔session map, reply routing → `ao send` intent.                                                                                                             |
-| `ops/slack-client.mjs`             | —                            | Thin Slack Web API / webhook sink (`postMessage`, `update`).                                                                                                                                                        |
 | `ops/ao-slack-notifier.mjs`        | `ao-slack-notifier.service`  | Single outbound engine: catches up unread daemon notifications, follows `/notifications/stream`, polls `/sessions` for blocked/no-signal/dead-orchestrator coverage, posts the Slack digest, and self-health pages. |
-| `ops/attention-notifier.mjs`       | — (retired)                  | Historical session-poll outbound engine. It is not installed or run in the current deploy topology.                                                                                                                 |
 | `ops/attention-reply-listener.mjs` | `ao-attention-reply.service` | Inbound Slack Events endpoint → `ao send`.                                                                                                                                                                          |
 | `ops/what-needs-me.mjs`            | — (CLI)                      | Terminal "what needs me" view.                                                                                                                                                                                      |
 | `ops/install-attention.sh`         | —                            | Nickify/deploy wiring: install units + verify env.                                                                                                                                                                  |
@@ -32,8 +30,9 @@ catch-up of unread notifications, follows `/api/v1/notifications/stream`, polls
 alerts through the configured Slack sink. This avoids double-paging while still
 letting ao core remain the source of notification truth.
 
-The former `ao-attention-notifier.service` session-poll engine is retired by
-`ops/install-attention.sh` and `ops/deploy.sh`; the reply listener remains live.
+The former `ao-attention-notifier.service` session-poll engine has been deleted.
+`ops/install-attention.sh` and `ops/deploy.sh` still disable its historical unit
+and remove its state on upgraded hosts; the reply listener remains live.
 The retired engine's urgency coverage now lives inside the single notifier. The
 notifier polls `GET /api/v1/sessions` — the **authoritative current state**
 across all projects — so it can page on states that are not first-class daemon
@@ -141,8 +140,8 @@ alias remains only as a fallback for un-migrated hosts.
 Every decision is covered by fast `node --test` unit tests over the pure cores
 and the injectable engines (no live daemon or Slack needed):
 `ops/attention-core.test.mjs`, `ops/ao-slack-notifier.test.mjs`,
-`ops/agent-health-core.test.mjs`, `ops/slack-client.test.mjs`,
-`ops/slack-reply-core.test.mjs`, `ops/attention-notifier.test.mjs`,
-`ops/attention-reply-listener.test.mjs`, `ops/what-needs-me.test.mjs`,
-`ops/install-attention.test.mjs`, and `ops/deploy.test.mjs`. Run all ops tests
-with `npm run test:ops`.
+`ops/agent-health-core.test.mjs`, `ops/slack-reply-core.test.mjs`,
+`ops/attention-reply-listener.test.mjs`,
+`ops/env-file.test.mjs`, `ops/legacy-attention-state.test.mjs`,
+`ops/what-needs-me.test.mjs`, `ops/install-attention.test.mjs`, and
+`ops/deploy.test.mjs`. Run all ops tests with `npm run test:ops`.

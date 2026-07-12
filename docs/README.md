@@ -1,23 +1,21 @@
-# agent-orchestrator rewrite docs
+# Agent Orchestrator docs
 
-The agent-orchestrator is being rebuilt as a long-running Go backend daemon
-(`backend/`) plus an Electron + TypeScript frontend (`frontend/`). The backend
-supervises coding-agent sessions and exposes daemon control, project/session
-state, terminal streaming, and CDC/event infrastructure.
+Agent Orchestrator is a long-running Go daemon (`backend/`) with Electron,
+browser, CLI, mobile, and host-ops clients. The daemon supervises coding-agent
+sessions and exposes project/session state, terminal streaming, operator
+attention, notifications, and CDC/event infrastructure.
 
 Start with [architecture.md](architecture.md) for the current backend model and
 [cli/README.md](cli/README.md) for the CLI surface.
 
 ## Reference docs
 
-| Doc                                                    | What it covers                                                                                                             |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| [architecture.md](architecture.md)                     | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                         |
-| [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring.      |
-| [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                                   |
-| [STATUS.md](STATUS.md)                                 | What is shipped on `main` today and what is still in flight.                                                               |
-| [stack.md](stack.md)                                   | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                     |
-| [codex-foreground-only.md](codex-foreground-only.md)   | Operator rule that codex/codex-fugu always run in the foreground, why, and the audit of every codex exec path in the repo. |
+| Doc                                                  | What it covers                                                                                                             |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| [architecture.md](architecture.md)                   | Current topology, ownership, lifecycle, dispatch, attention, health, persistence/CDC, and load-bearing rules.              |
+| [cli/README.md](cli/README.md)                       | CLI commands and daemon control surface.                                                                                   |
+| [stack.md](stack.md)                                 | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                     |
+| [codex-foreground-only.md](codex-foreground-only.md) | Operator rule that codex/codex-fugu always run in the foreground, why, and the audit of every codex exec path in the repo. |
 
 ## Mental model
 

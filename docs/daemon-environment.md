@@ -1,6 +1,6 @@
 # Daemon environment: the GUI-launch PATH/credentials problem
 
-Status: proposed
+Status: implemented
 Scope: desktop (Electron) launch of the AO daemon on macOS (and any GUI-launched
 desktop platform)
 

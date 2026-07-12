@@ -167,10 +167,10 @@ remaining **two-way attention system** piece is the inbound reply-to-unblock
 path, still in the ops/nickify layer (vanilla rule: shells `ao send`; no ao core
 change). See `docs/attention-system.md` for the full design. Summary:
 
-- **`ops/attention-notifier.mjs`** (`ao-attention-notifier.service`) is retired
-  as an outbound service. `ops/install-attention.sh` disables any leftover unit
-  and removes the retired `~/.ao/attention-state.json` file so it cannot
-  duplicate pages or preserve frozen ghost attention records.
+- The former `ao-attention-notifier.service` outbound engine is deleted.
+  `ops/install-attention.sh` disables any leftover installed unit and removes
+  the retired `~/.ao/attention-state.json` file so it cannot duplicate pages or
+  preserve frozen ghost attention records.
 - **`ops/attention-reply-listener.mjs`** (`ao-attention-reply.service`) is a
   loopback Slack Events API endpoint: a signed, Nick-authored explicit send
   command is verified and routed via `ao send`. Threaded replies still work only

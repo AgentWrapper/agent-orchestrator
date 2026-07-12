@@ -22,8 +22,11 @@ import {
 	urlVerificationResponse,
 	verifySlackSignature,
 } from "./slack-reply-core.mjs";
-import { loadEnvFile, loadState } from "./attention-notifier.mjs";
 import { resolveMentionUserId } from "./attention-core.mjs";
+import { loadEnvFile } from "./env-file.mjs";
+import { loadLegacyThreadMap } from "./legacy-attention-state.mjs";
+
+const ENV_FILE = process.env.AO_ENV_FILE || "/home/orchestrator/agent-orchestrator/.env";
 
 // handleSlackRequest processes one raw inbound request body + headers and
 // returns { status, body, sent? }. Pure aside from the injected aoSend.
@@ -159,13 +162,13 @@ export function createServer({ signingSecret, threadMap, aoSend, allowedUserId, 
 }
 
 async function main() {
-	loadEnvFile();
+	loadEnvFile(ENV_FILE);
 	const signingSecret = process.env.SLACK_SIGNING_SECRET;
 	if (!signingSecret) {
 		console.error("attention-reply-listener: SLACK_SIGNING_SECRET is required for inbound verification");
 		process.exit(1);
 	}
-	const { threadMap } = loadState();
+	const threadMap = loadLegacyThreadMap();
 	// Honor the same member-id resolution as outbound alerts (SLACK_MEMBER_ID,
 	// with the legacy SLACK_MENTION_USER_ID fallback) so un-migrated hosts can
 	// still reply-to-unblock instead of failing closed.
@@ -185,8 +188,7 @@ async function main() {
 		// Re-read the shared state file so bindings the notifier persists after
 		// this listener started are visible to threaded replies.
 		refreshThreadMap: (tm) => {
-			const fresh = loadState();
-			tm.mergeFrom(fresh.threadMap);
+			tm.mergeFrom(loadLegacyThreadMap());
 		},
 	});
 	server.listen(port, "127.0.0.1", () => console.log(`attention-reply-listener on 127.0.0.1:${port}/slack/events`));

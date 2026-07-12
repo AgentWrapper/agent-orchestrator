@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 const SCRIPT = resolve("scripts/check-migration-versions.sh");
+const GO_WORKFLOW = resolve(".github/workflows/go.yml");
 const MIGRATIONS_DIR = "backend/internal/storage/sqlite/migrations";
 
 function run(cmd, args, cwd) {
@@ -38,6 +39,15 @@ function initRepo() {
 }
 
 describe("check-migration-versions", () => {
+	it("has one dedicated CI owner instead of a weaker build-test duplicate", () => {
+		const workflow = readFileSync(GO_WORKFLOW, "utf8");
+		const buildTest = workflow.split("\n  build-test:", 2)[1]?.split("\n  boot-daemon-smoke:", 1)[0] ?? "";
+
+		assert.doesNotMatch(buildTest, /check-migration-versions\.sh/);
+		assert.match(workflow, /migration-version-guard:/);
+		assert.match(workflow, /check-migration-versions\.sh --require-current-base/);
+	});
+
 	it("passes when a branch adds a fresh migration and is based on the current base ref", () => {
 		const repo = initRepo();
 
