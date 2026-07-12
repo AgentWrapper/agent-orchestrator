@@ -49,13 +49,14 @@ import (
 // contract drive the Service with no HTTP, DB, or Slack, and it travels with the
 // derivation logic (moved here from the controller in Phase 1).
 type parityFakeAttentionService struct {
-	sessions        []domain.Session
-	decisions       map[domain.SessionID]domain.PendingDecision
-	decisionErrs    map[domain.SessionID]error
-	prSummaries     map[domain.SessionID][]sessionsvc.PRSummary
-	prSummaryErrs   map[domain.SessionID]error
-	notifications   []notificationsvc.Notification
-	notificationErr error
+	sessions           []domain.Session
+	decisions          map[domain.SessionID]domain.PendingDecision
+	decisionErrs       map[domain.SessionID]error
+	prSummaries        map[domain.SessionID][]sessionsvc.PRSummary
+	prSummaryErrs      map[domain.SessionID]error
+	notifications      []notificationsvc.Notification
+	notificationFilter notificationsvc.ListFilter
+	notificationErr    error
 }
 
 func (f *parityFakeAttentionService) List(_ context.Context, _ sessionsvc.ListFilter) ([]domain.Session, error) {
@@ -82,7 +83,8 @@ func (f *parityFakeAttentionService) ListPRSummaries(_ context.Context, id domai
 	return nil, nil
 }
 
-func (f *parityFakeAttentionService) ListUnread(_ context.Context, _ notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
+func (f *parityFakeAttentionService) ListUnread(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
+	f.notificationFilter = filter
 	if f.notificationErr != nil {
 		return nil, f.notificationErr
 	}
@@ -159,15 +161,16 @@ func mergeReadyPRSession(id domain.SessionID, project domain.ProjectID, url stri
 // In addition, every projected item is asserted to carry a non-empty reason and
 // action regardless of whether the row pins the exact strings.
 type parityExpect struct {
-	id           string
-	kind         string
-	sessionID    string
-	prURL        string
-	deepLink     string
-	reason       string
-	action       string
-	decisionKind domain.DecisionKind
-	question     string
+	id            string
+	kind          string
+	sessionID     string
+	prURL         string
+	deepLink      string
+	exactDeepLink bool
+	reason        string
+	action        string
+	decisionKind  domain.DecisionKind
+	question      string
 }
 
 // ---- Ordered, exact-set scenarios ------------------------------------------
@@ -354,6 +357,145 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			}},
 		},
 		{
+			// Phase 2: main-CI red is a durable operator-attention notification the
+			// projection must fold in (it was only surfaced by the JS classifiers
+			// before). It carries no session, so it deliberately has no navigation
+			// target rather than a self-link back to the waiting page.
+			name: "main_ci_red notification surfaces as an operator-attention item",
+			build: func() *parityFakeAttentionService {
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-mainci", ProjectID: "ao",
+							Type: domain.NotificationMainCIRed, Status: domain.NotificationUnread,
+							Title:     "main is red at abc1234: build",
+							Body:      "Main-branch CI failed for aoagents/agent-orchestrator at abc1234. Merge is frozen until main is green.",
+							CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "notification:n-mainci:operator", kind: "main_ci_red",
+				sessionID:     "",
+				prURL:         "",
+				exactDeepLink: true,
+				reason:        "Main-branch CI failed for aoagents/agent-orchestrator at abc1234. Merge is frozen until main is green.",
+				action:        "Fix main-branch CI before merging; only main-CI fix PRs should merge until it is green.",
+			}},
+		},
+		{
+			name: "main_ci_red with no title/body uses type-specific fallback copy and has no deep link",
+			build: func() *parityFakeAttentionService {
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-mainci-empty", ProjectID: "ao",
+							Type: domain.NotificationMainCIRed, Status: domain.NotificationUnread,
+							CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "notification:n-mainci-empty:operator", kind: "main_ci_red",
+				sessionID:     "",
+				prURL:         "",
+				exactDeepLink: true,
+				reason:        "Main-branch CI is failing; merges are frozen until it is green.",
+				action:        "Fix main-branch CI before merging; only main-CI fix PRs should merge until it is green.",
+			}},
+		},
+		{
+			// Phase 2: a duplicate-PR alert is an operator-attention item (a human
+			// must pick which PR to keep). Its deep link is the duplicate PR URL.
+			name: "duplicate_pr notification surfaces with the PR deep link",
+			build: func() *parityFakeAttentionService {
+				dupPR := "https://github.com/aoagents/agent-orchestrator/pull/981"
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-dup", ProjectID: "ao", SessionID: "dup-sess", PRURL: dupPR,
+							Type: domain.NotificationDuplicatePR, Status: domain.NotificationUnread,
+							Title:     "Duplicate PR for the same issue",
+							CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "notification:n-dup:operator", kind: "duplicate_pr",
+				sessionID: "dup-sess",
+				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/981",
+				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/981",
+			}},
+		},
+		{
+			// Phase 2: replacement-capped is an operator-attention item (auto-repair
+			// gave up; a human must intervene). It deep-links to the dead role session.
+			name: "orchestrator_replacement_capped notification surfaces with the session deep link",
+			build: func() *parityFakeAttentionService {
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-capped", ProjectID: "ao", SessionID: "orch-1",
+							Type: domain.NotificationOrchestratorReplacementCapped, Status: domain.NotificationUnread,
+							Title:     "orchestrator replacement paused",
+							Body:      "AO stopped replacing this project orchestrator after repeated failures.",
+							CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "notification:n-capped:operator", kind: "orchestrator_replacement_capped",
+				sessionID: "orch-1",
+				prURL:     "",
+				deepLink:  "/projects/ao/sessions/orch-1",
+			}},
+		},
+		{
+			// Phase 2 negative: informational / non-operator-attention notification
+			// types must NOT surface in the projection. worker_died_unfinished is
+			// a routine death (a replacement is queued); pr_merged is informational;
+			// model_recovered is a recovery. needs_input and ready_to_merge are
+			// intentionally excluded here because the projection derives those from
+			// live session/decision and PR facts, not notification rows.
+			name: "informational and non-attention notification types are excluded",
+			build: func() *parityFakeAttentionService {
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-died", ProjectID: "ao", SessionID: "dead-x",
+							Type: domain.NotificationWorkerDiedUnfinished, Status: domain.NotificationUnread,
+							Title: "died", CreatedAt: now,
+						}},
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-merged", ProjectID: "ao", SessionID: "m-x",
+							Type: domain.NotificationPRMerged, Status: domain.NotificationUnread,
+							Title: "merged", CreatedAt: now,
+						}},
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-recovered", ProjectID: "ao",
+							Type: domain.NotificationModelRecovered, Status: domain.NotificationUnread,
+							Title: "model recovered", CreatedAt: now,
+						}},
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-needs-input", ProjectID: "ao", SessionID: "ask-x",
+							Type: domain.NotificationNeedsInput, Status: domain.NotificationUnread,
+							Title: "needs input", CreatedAt: now,
+						}},
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-ready", ProjectID: "ao", SessionID: "merge-x",
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Title: "ready to merge", CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: nil,
+		},
+		{
 			name: "sort: newer UpdatedAt comes first across mixed sources",
 			build: func() *parityFakeAttentionService {
 				older := "https://github.com/aoagents/agent-orchestrator/pull/940"
@@ -449,6 +591,34 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			}
 			assertProjectionEquals(t, items, tc.want)
 		})
+	}
+}
+
+func TestOperatorAttentionRequestsOnlyDurableAttentionNotifications(t *testing.T) {
+	now := parityTime(t)
+	svc := &parityFakeAttentionService{
+		notifications: []notificationsvc.Notification{
+			{NotificationRecord: domain.NotificationRecord{
+				ID: "n-mainci", ProjectID: "ao",
+				Type: domain.NotificationMainCIRed, Status: domain.NotificationUnread,
+				Title: "main red", CreatedAt: now,
+			}},
+		},
+	}
+	if _, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background()); err != nil {
+		t.Fatalf("ListOperator: %v", err)
+	}
+	if svc.notificationFilter.Limit != notificationsvc.MaxListLimit {
+		t.Fatalf("notification limit = %d, want %d", svc.notificationFilter.Limit, notificationsvc.MaxListLimit)
+	}
+	wantTypes := domain.OperatorAttentionNotificationTypes()
+	if len(svc.notificationFilter.Types) != len(wantTypes) {
+		t.Fatalf("notification types = %+v, want %+v", svc.notificationFilter.Types, wantTypes)
+	}
+	for i, want := range wantTypes {
+		if svc.notificationFilter.Types[i] != want {
+			t.Fatalf("notification types = %+v, want %+v", svc.notificationFilter.Types, wantTypes)
+		}
 	}
 }
 
@@ -662,7 +832,7 @@ func assertProjectionEquals(t *testing.T, items []Item, want []parityExpect) {
 		if got.PRURL != w.prURL {
 			t.Errorf("item %q prURL = %q, want %q", w.id, got.PRURL, w.prURL)
 		}
-		if w.deepLink != "" && got.DeepLink != w.deepLink {
+		if (w.exactDeepLink || w.deepLink != "") && got.DeepLink != w.deepLink {
 			t.Errorf("item %q deepLink = %q, want %q", w.id, got.DeepLink, w.deepLink)
 		}
 		if w.reason != "" && got.Reason != w.reason {

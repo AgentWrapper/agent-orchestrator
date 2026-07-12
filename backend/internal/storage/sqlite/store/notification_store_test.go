@@ -3,10 +3,12 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 )
 
 func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
@@ -40,7 +42,7 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	if err != nil || inserted {
 		t.Fatalf("duplicate inserted=%v err=%v, want false nil", inserted, err)
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnreadNotifications: %v", err)
 	}
@@ -77,7 +79,7 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	if read.Status != domain.NotificationRead {
 		t.Fatalf("status = %q, want read", read.Status)
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnreadNotifications: %v", err)
 	}
@@ -127,7 +129,7 @@ func TestNotificationStore_WorkerTerminalDedupeSurvivesRead(t *testing.T) {
 		if _, inserted, err := s.CreateNotification(ctx, again); err != nil || inserted {
 			t.Fatalf("%s CreateNotification after read inserted=%v err=%v, want false nil", notificationType, inserted, err)
 		}
-		rows, err := s.ListUnreadNotifications(ctx, 10)
+		rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 		if err != nil {
 			t.Fatalf("ListUnreadNotifications: %v", err)
 		}
@@ -176,7 +178,7 @@ func TestNotificationStore_WorkerDiedUnfinishedDedupeAllowsDistinctBodiesAfterRe
 	if _, inserted, err := s.CreateNotification(ctx, adopting); err != nil || !inserted {
 		t.Fatalf("CreateNotification adopting inserted=%v err=%v, want true nil", inserted, err)
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnreadNotifications: %v", err)
 	}
@@ -215,7 +217,7 @@ func TestNotificationStore_SensitiveReadyDoesNotDedupeRoutineReady(t *testing.T)
 	if _, inserted, err := s.CreateNotification(ctx, sensitive); err != nil || !inserted {
 		t.Fatalf("CreateNotification sensitive inserted=%v err=%v", inserted, err)
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnreadNotifications: %v", err)
 	}
@@ -274,7 +276,7 @@ func TestNotificationStore_MarkAllRead(t *testing.T) {
 			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
 		}
 	}
-	read, err := s.MarkAllNotificationsRead(ctx)
+	read, err := s.MarkAllNotificationsRead(ctx, nil)
 	if err != nil {
 		t.Fatalf("MarkAllNotificationsRead: %v", err)
 	}
@@ -286,12 +288,45 @@ func TestNotificationStore_MarkAllRead(t *testing.T) {
 			t.Fatalf("row = %+v, want read", row)
 		}
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnreadNotifications: %v", err)
 	}
 	if len(rows) != 0 {
 		t.Fatalf("unread rows = %+v, want none", rows)
+	}
+}
+
+func TestNotificationStore_MarkAllReadKeepsOperatorAttentionUnread(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	for _, rec := range []domain.NotificationRecord{
+		{ID: "ntf_clear", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationNeedsInput, Title: "clear", Status: domain.NotificationUnread, CreatedAt: base},
+		{ID: "ntf_keep", SessionID: "main-ci", ProjectID: sess.ProjectID, Type: domain.NotificationMainCIRed, Title: "main red", Status: domain.NotificationUnread, CreatedAt: base.Add(time.Minute)},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
+	}
+	read, err := s.MarkAllNotificationsRead(ctx, domain.OperatorAttentionNotificationTypes())
+	if err != nil {
+		t.Fatalf("MarkAllNotificationsRead: %v", err)
+	}
+	if len(read) != 1 || read[0].ID != "ntf_clear" {
+		t.Fatalf("read rows = %+v, want only non-operator-attention notification", read)
+	}
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ntf_keep" || rows[0].Status != domain.NotificationUnread {
+		t.Fatalf("unread rows = %+v, want preserved operator-attention row", rows)
 	}
 }
 
@@ -312,12 +347,60 @@ func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {
 			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
 		}
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 2)
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 2})
 	if err != nil {
 		t.Fatalf("ListUnreadNotifications: %v", err)
 	}
 	if len(rows) != 2 || rows[0].ID != "other" || rows[1].ID != "new" {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestNotificationStore_ListUnreadFiltersTypesBeforeLimit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < 105; i++ {
+		rec := domain.NotificationRecord{
+			ID:        fmt.Sprintf("noise_%03d", i),
+			SessionID: sess.ID,
+			ProjectID: sess.ProjectID,
+			PRURL:     fmt.Sprintf("https://github.com/o/r/pull/%d", i+1),
+			Type:      domain.NotificationPRMerged,
+			Title:     "merged",
+			Status:    domain.NotificationUnread,
+			CreatedAt: base.Add(time.Duration(i+1) * time.Minute),
+		}
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert noise %d inserted=%v err=%v", i, inserted, err)
+		}
+	}
+	attention := domain.NotificationRecord{
+		ID:        "ntf_attention",
+		SessionID: "main-ci",
+		ProjectID: sess.ProjectID,
+		Type:      domain.NotificationMainCIRed,
+		Title:     "main red",
+		Status:    domain.NotificationUnread,
+		CreatedAt: base,
+	}
+	if _, inserted, err := s.CreateNotification(ctx, attention); err != nil || !inserted {
+		t.Fatalf("insert attention inserted=%v err=%v", inserted, err)
+	}
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{
+		Limit: 1,
+		Types: []domain.NotificationType{domain.NotificationMainCIRed},
+	})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ntf_attention" {
+		t.Fatalf("rows = %+v, want old attention row despite newer noise over limit", rows)
 	}
 }
 
@@ -390,7 +473,7 @@ func TestNotificationStore_DifferentHeadSHADoesNotDedupe(t *testing.T) {
 				t.Fatalf("CreateNotification newHead inserted=%v err=%v", inserted, err)
 			}
 
-			rows, err := s.ListUnreadNotifications(ctx, 10)
+			rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 			if err != nil {
 				t.Fatalf("ListUnreadNotifications: %v", err)
 			}

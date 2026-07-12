@@ -103,4 +103,32 @@ describe("OperatorAttentionPage", () => {
 		expect(screen.getAllByText("Deploy question").length).toBeGreaterThan(0);
 		expect(screen.queryByText("Could not load waiting items.")).not.toBeInTheDocument();
 	});
+
+	it("does not expose click actions for sessionless items without a safe link", async () => {
+		useOperatorAttentionQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "notification:n-mainci:operator",
+					kind: "main_ci_red",
+					projectId: "ao",
+					sessionTitle: "Main CI red",
+					reason: "Main-branch CI is failing.",
+					action: "Fix main-branch CI.",
+					updatedAt: "2026-07-12T03:20:00Z",
+				},
+			],
+			isError: false,
+		});
+		const user = userEvent.setup();
+		render(<OperatorAttentionPage />);
+
+		const card = screen.getByRole("button", { name: /Main CI red/i });
+		expect(card).toBeDisabled();
+		await user.click(card);
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(openMock).not.toHaveBeenCalled();
+		for (const action of screen.getAllByRole("button", { name: /Fix main-branch CI/i })) {
+			expect(action).toBeDisabled();
+		}
+	});
 });

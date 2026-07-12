@@ -11,7 +11,15 @@ const kindTone: Record<string, string> = {
 	decision: "border-warning/40 bg-warning/10 text-warning",
 	pr: "border-success/40 bg-success/10 text-success",
 	worker_retry_exhausted: "border-destructive/40 bg-destructive/10 text-destructive",
+	main_ci_red: "border-destructive/40 bg-destructive/10 text-destructive",
+	duplicate_pr: "border-warning/40 bg-warning/10 text-warning",
+	orchestrator_replacement_capped: "border-destructive/40 bg-destructive/10 text-destructive",
+	orchestrator_dead: "border-destructive/40 bg-destructive/10 text-destructive",
+	prime_dead: "border-destructive/40 bg-destructive/10 text-destructive",
 };
+
+const kindBadgeClassName =
+	"h-auto min-h-5 w-auto min-w-0 max-w-full whitespace-normal break-words px-1.5 py-0.5 text-[10px] font-medium leading-3";
 
 export function OperatorAttentionPage() {
 	const navigate = useNavigate();
@@ -20,7 +28,7 @@ export function OperatorAttentionPage() {
 	const showLoadError = attention.isError && items.length === 0;
 
 	const openItem = (item: OperatorAttentionItem) => {
-		if (item.prUrl) {
+		if (isSafeExternalURL(item.prUrl)) {
 			window.open(item.prUrl, "_blank", "noopener,noreferrer");
 			return;
 		}
@@ -29,6 +37,10 @@ export function OperatorAttentionPage() {
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId: item.projectId, sessionId: item.sessionId },
 			});
+			return;
+		}
+		if (isSafeExternalURL(item.deepLink)) {
+			window.open(item.deepLink, "_blank", "noopener,noreferrer");
 		}
 	};
 
@@ -55,7 +67,7 @@ export function OperatorAttentionPage() {
 						<Table className="hidden md:table">
 							<TableHeader>
 								<TableRow>
-									<TableHead className="w-24">Kind</TableHead>
+									<TableHead className="w-56">Kind</TableHead>
 									<TableHead>Item</TableHead>
 									<TableHead>Reason</TableHead>
 									<TableHead className="w-48 text-right">Action</TableHead>
@@ -74,6 +86,16 @@ export function OperatorAttentionPage() {
 	);
 }
 
+function hasOpenTarget(item: OperatorAttentionItem) {
+	return Boolean(
+		isSafeExternalURL(item.prUrl) || (item.projectId && item.sessionId) || isSafeExternalURL(item.deepLink),
+	);
+}
+
+function isSafeExternalURL(value?: string) {
+	return typeof value === "string" && value.startsWith("https://");
+}
+
 function itemTitle(item: OperatorAttentionItem) {
 	return item.kind === "pr"
 		? `${item.prNumber ? `#${item.prNumber} ` : ""}${item.prTitle || "Pull request"}`
@@ -85,9 +107,14 @@ function itemMeta(item: OperatorAttentionItem) {
 }
 
 function AttentionCard({ item, onOpen }: { item: OperatorAttentionItem; onOpen: () => void }) {
+	const canOpen = hasOpenTarget(item);
 	return (
 		<button
-			className="w-full rounded-md border border-border bg-surface p-3 text-left transition-colors hover:border-border-strong"
+			className={cn(
+				"w-full rounded-md border border-border bg-surface p-3 text-left transition-colors",
+				canOpen ? "hover:border-border-strong" : "cursor-default",
+			)}
+			disabled={!canOpen}
 			onClick={onOpen}
 			type="button"
 		>
@@ -96,7 +123,7 @@ function AttentionCard({ item, onOpen }: { item: OperatorAttentionItem; onOpen: 
 					<div className="truncate text-[13px] font-medium text-foreground">{itemTitle(item)}</div>
 					<div className="mt-0.5 truncate font-mono text-[10px] text-passive">{itemMeta(item)}</div>
 				</div>
-				<Badge variant="outline" className={cn("h-5 shrink-0 px-1.5 text-[10px] font-medium", kindTone[item.kind])}>
+				<Badge variant="outline" className={cn(kindBadgeClassName, "shrink-0", kindTone[item.kind])}>
 					{item.kind}
 				</Badge>
 			</div>
@@ -112,11 +139,12 @@ function AttentionCard({ item, onOpen }: { item: OperatorAttentionItem; onOpen: 
 function AttentionRow({ item, onOpen }: { item: OperatorAttentionItem; onOpen: () => void }) {
 	const title = itemTitle(item);
 	const meta = itemMeta(item);
+	const canOpen = hasOpenTarget(item);
 
 	return (
-		<TableRow className="cursor-pointer" onClick={onOpen}>
+		<TableRow className={cn(canOpen && "cursor-pointer")} onClick={canOpen ? onOpen : undefined}>
 			<TableCell>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", kindTone[item.kind])}>
+				<Badge variant="outline" className={cn(kindBadgeClassName, kindTone[item.kind])}>
 					{item.kind}
 				</Badge>
 			</TableCell>
@@ -131,6 +159,7 @@ function AttentionRow({ item, onOpen }: { item: OperatorAttentionItem; onOpen: (
 					size="sm"
 					variant="ghost"
 					className="h-6 max-w-[180px] justify-end px-2 text-[11px]"
+					disabled={!canOpen}
 					onClick={onOpen}
 					title={item.action}
 				>

@@ -52,6 +52,19 @@ func (t NotificationType) Valid() bool {
 	}
 }
 
+// OperatorAttentionNotificationTypes returns durable notification types whose
+// unread rows represent an operator-actionable condition. Session-derived
+// attention, such as needs_input and ready_to_merge, is intentionally not
+// included here because service/attention derives it from live session/PR state.
+func OperatorAttentionNotificationTypes() []NotificationType {
+	return []NotificationType{
+		NotificationWorkerRetryExhausted,
+		NotificationMainCIRed,
+		NotificationDuplicatePR,
+		NotificationOrchestratorReplacementCapped,
+	}
+}
+
 // NotificationStatus is the read state for a stored notification.
 type NotificationStatus string
 

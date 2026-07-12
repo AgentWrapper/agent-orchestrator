@@ -135,7 +135,10 @@ func deriveOperatorAttention(ctx context.Context, sessions SessionReader, notifi
 		}
 	}
 	if notifications != nil {
-		unread, err := notifications.ListUnread(ctx, notificationsvc.ListFilter{Limit: notificationsvc.MaxListLimit})
+		unread, err := notifications.ListUnread(ctx, notificationsvc.ListFilter{
+			Limit: notificationsvc.MaxListLimit,
+			Types: domain.OperatorAttentionNotificationTypes(),
+		})
 		if err != nil {
 			// Notifications add durable operator escalations, but the core waiting
 			// surface must still render live session decisions and mergeable PRs if
@@ -158,8 +161,53 @@ func deriveOperatorAttention(ctx context.Context, sessions SessionReader, notifi
 	return items, nil
 }
 
+type operatorAttentionNotificationMetadata struct {
+	action        string
+	defaultReason string
+}
+
+// operatorAttentionNotificationMetadata maps durable notification types to the
+// operator copy they demand, and reports whether that type is an
+// operator-attention event at all. Only types a human must act on belong in the
+// projection; informational types (pr_merged, model_recovered, routine
+// worker_died_unfinished, orchestrator_replaced, …) are excluded so the
+// projection stays a "what needs me" surface, not a notification mirror.
+//
+// This is the durable-notification half of the JS notifier's
+// isMentionableNotification set (ops/ao-slack-notifier.mjs). needs_input and
+// ready_to_merge are intentionally covered by live session/PR derivation instead
+// of unread notification rows; Phase 5 must keep or replace any extra Slack-only
+// signal, such as sensitive merge parking, before deleting JS classification.
+func operatorAttentionNotificationMetadataFor(t domain.NotificationType) (operatorAttentionNotificationMetadata, bool) {
+	switch t {
+	case domain.NotificationWorkerRetryExhausted:
+		return operatorAttentionNotificationMetadata{
+			action:        "Diagnose the repeated failure, then resume or reassign the issue before respawning.",
+			defaultReason: "Worker retry cap exhausted for this issue.",
+		}, true
+	case domain.NotificationMainCIRed:
+		return operatorAttentionNotificationMetadata{
+			action:        "Fix main-branch CI before merging; only main-CI fix PRs should merge until it is green.",
+			defaultReason: "Main-branch CI is failing; merges are frozen until it is green.",
+		}, true
+	case domain.NotificationDuplicatePR:
+		return operatorAttentionNotificationMetadata{
+			action:        "Review the duplicate pull requests and close the one that should not land.",
+			defaultReason: "A second pull request was opened for the same issue.",
+		}, true
+	case domain.NotificationOrchestratorReplacementCapped:
+		return operatorAttentionNotificationMetadata{
+			action:        "Auto-replacement is paused; inspect the orchestrator's harness, auth, and hook pipeline, then restart or replace it.",
+			defaultReason: "AO stopped replacing this orchestrator after repeated failures.",
+		}, true
+	default:
+		return operatorAttentionNotificationMetadata{}, false
+	}
+}
+
 func notificationAttentionItem(notification notificationsvc.Notification) (Item, bool) {
-	if notification.Type != domain.NotificationWorkerRetryExhausted {
+	metadata, ok := operatorAttentionNotificationMetadataFor(notification.Type)
+	if !ok {
 		return Item{}, false
 	}
 	return Item{
@@ -168,8 +216,8 @@ func notificationAttentionItem(notification notificationsvc.Notification) (Item,
 		ProjectID:    notification.ProjectID,
 		SessionID:    notification.SessionID,
 		SessionTitle: firstNonEmptyString(notification.Title, notification.Body, string(notification.SessionID)),
-		Reason:       firstNonEmptyString(notification.Body, notification.Title, "Worker retry cap exhausted for this issue."),
-		Action:       "Diagnose the repeated failure, then resume or reassign the issue before respawning.",
+		Reason:       firstNonEmptyString(notification.Body, notification.Title, metadata.defaultReason),
+		Action:       metadata.action,
 		DeepLink:     notificationAttentionDeepLink(notification),
 		UpdatedAt:    notification.CreatedAt,
 		PRURL:        notification.PRURL,
@@ -190,7 +238,7 @@ func notificationAttentionDeepLink(notification notificationsvc.Notification) st
 	if notification.ProjectID != "" && notification.SessionID != "" {
 		return "/projects/" + string(notification.ProjectID) + "/sessions/" + string(notification.SessionID)
 	}
-	return "/waiting"
+	return ""
 }
 
 func isAttentionNotFound(err error) bool {

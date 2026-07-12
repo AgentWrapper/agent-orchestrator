@@ -580,7 +580,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Mark all unread notifications read
+      summary: Mark notification-center unread items read
       tags:
       - notifications
   /api/v1/notifications/stream:
@@ -3093,6 +3093,11 @@ components:
           - decision
           - pr
           - worker_retry_exhausted
+          - main_ci_red
+          - duplicate_pr
+          - orchestrator_replacement_capped
+          - prime_dead
+          - orchestrator_dead
           type: string
         prNumber:
           type: integer

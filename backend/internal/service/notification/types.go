@@ -31,4 +31,5 @@ type Notification struct {
 // ListFilter controls unread notification listing.
 type ListFilter struct {
 	Limit int
+	Types []domain.NotificationType
 }

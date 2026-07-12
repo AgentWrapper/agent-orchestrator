@@ -320,7 +320,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mark all unread notifications read */
+        /** Mark notification-center unread items read */
         post: operations["markAllNotificationsRead"];
         delete?: never;
         options?: never;
@@ -1224,7 +1224,7 @@ export interface components {
             deepLink: string;
             id: string;
             /** @enum {string} */
-            kind: "decision" | "pr" | "worker_retry_exhausted";
+            kind: "decision" | "pr" | "worker_retry_exhausted" | "main_ci_red" | "duplicate_pr" | "orchestrator_replacement_capped" | "prime_dead" | "orchestrator_dead";
             prNumber?: number;
             prTitle?: string;
             prUrl?: string;

@@ -95,12 +95,19 @@ func notificationDedupeSurvivesRead(t domain.NotificationType) bool {
 }
 
 // ListUnreadNotifications returns unread notifications newest-first.
-func (s *Store) ListUnreadNotifications(ctx context.Context, limit int) ([]domain.NotificationRecord, error) {
-	rows, err := s.qr.ListUnreadNotifications(ctx, int64(limit))
+func (s *Store) ListUnreadNotifications(ctx context.Context, filter notificationsvc.ListFilter) ([]domain.NotificationRecord, error) {
+	if len(filter.Types) == 0 {
+		rows, err := s.qr.ListUnreadNotifications(ctx, int64(filter.Limit))
+		if err != nil {
+			return nil, fmt.Errorf("list unread notifications: %w", err)
+		}
+		return notificationsFromGen(rows), nil
+	}
+	rows, err := s.queryUnreadNotificationsByTypes(ctx, filter.Types, filter.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list unread notifications: %w", err)
 	}
-	return notificationsFromGen(rows), nil
+	return rows, nil
 }
 
 // MarkNotificationRead marks one unread notification read.
@@ -117,15 +124,89 @@ func (s *Store) MarkNotificationRead(ctx context.Context, id string) (domain.Not
 	return notificationFromGen(row), true, nil
 }
 
-// MarkAllNotificationsRead marks every unread notification read.
-func (s *Store) MarkAllNotificationsRead(ctx context.Context) ([]domain.NotificationRecord, error) {
+// MarkAllNotificationsRead marks unread notification-center rows read. Types
+// passed in excludeTypes stay unread because they represent durable
+// operator-attention conditions, not merely delivery-center unread state.
+func (s *Store) MarkAllNotificationsRead(ctx context.Context, excludeTypes []domain.NotificationType) ([]domain.NotificationRecord, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if len(excludeTypes) > 0 {
+		rows, err := s.markAllNotificationsReadExcludingTypes(ctx, excludeTypes)
+		if err != nil {
+			return nil, fmt.Errorf("mark all notifications read: %w", err)
+		}
+		return rows, nil
+	}
 	rows, err := s.qw.MarkAllNotificationsRead(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("mark all notifications read: %w", err)
 	}
 	return notificationsFromGen(rows), nil
+}
+
+const notificationColumns = "id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths, head_sha"
+
+const listUnreadNotificationsByTypes = "SELECT " + notificationColumns + " FROM notifications WHERE status = 'unread' AND type IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT ?"
+
+const markAllNotificationsReadExcludingTypesSQL = "UPDATE notifications SET status = 'read' WHERE status = 'unread' AND type NOT IN (SELECT value FROM json_each(?)) RETURNING " + notificationColumns
+
+func (s *Store) queryUnreadNotificationsByTypes(ctx context.Context, types []domain.NotificationType, limit int) ([]domain.NotificationRecord, error) {
+	rows, err := s.readDB.QueryContext(ctx, listUnreadNotificationsByTypes, encodeNotificationTypes(types), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanNotificationRows(rows)
+}
+
+func (s *Store) markAllNotificationsReadExcludingTypes(ctx context.Context, excludeTypes []domain.NotificationType) ([]domain.NotificationRecord, error) {
+	rows, err := s.writeDB.QueryContext(ctx, markAllNotificationsReadExcludingTypesSQL, encodeNotificationTypes(excludeTypes))
+	if err != nil {
+		return nil, err
+	}
+	return scanNotificationRows(rows)
+}
+
+func scanNotificationRows(rows *sql.Rows) ([]domain.NotificationRecord, error) {
+	out := make([]domain.NotificationRecord, 0)
+	for rows.Next() {
+		var row gen.Notification
+		if err := rows.Scan(
+			&row.ID,
+			&row.SessionID,
+			&row.ProjectID,
+			&row.PRURL,
+			&row.Type,
+			&row.Title,
+			&row.Body,
+			&row.Status,
+			&row.CreatedAt,
+			&row.Sensitive,
+			&row.ChangedPaths,
+			&row.HeadSha,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, notificationFromGen(row))
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func encodeNotificationTypes(types []domain.NotificationType) string {
+	values := make([]string, 0, len(types))
+	for _, notificationType := range types {
+		values = append(values, string(notificationType))
+	}
+	b, err := json.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {

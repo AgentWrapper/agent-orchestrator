@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -384,7 +385,7 @@ func TestPollPublishesAdoptionNotificationAfterDeferredObservationWithRealDedupe
 	if !strings.Contains(got.Body, "dispatching a replacement to adopt https://github.com/acme/demo/pull/99") {
 		t.Fatalf("second body = %q, want adoption dispatch notification", got.Body)
 	}
-	rows, err := store.ListUnreadNotifications(ctx, 10)
+	rows, err := store.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnreadNotifications: %v", err)
 	}

@@ -170,7 +170,7 @@ type ListOperatorAttentionResponse struct {
 // OperatorAttentionItem is one live-derived item that only the operator can clear.
 type OperatorAttentionItem struct {
 	ID           string              `json:"id"`
-	Kind         string              `json:"kind" enum:"decision,pr,worker_retry_exhausted"`
+	Kind         string              `json:"kind" enum:"decision,pr,worker_retry_exhausted,main_ci_red,duplicate_pr,orchestrator_replacement_capped,prime_dead,orchestrator_dead"`
 	ProjectID    domain.ProjectID    `json:"projectId"`
 	SessionID    domain.SessionID    `json:"sessionId,omitempty"`
 	SessionTitle string              `json:"sessionTitle,omitempty"`

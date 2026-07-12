@@ -538,7 +538,7 @@ func notificationOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/notifications/read-all", id: "markAllNotificationsRead", tag: "notifications",
-			summary: "Mark all unread notifications read",
+			summary: "Mark notification-center unread items read",
 			resps: []respUnit{
 				{http.StatusOK, controllers.MarkAllNotificationsReadResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

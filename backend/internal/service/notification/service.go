@@ -35,8 +35,8 @@ func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notifica
 	if m == nil || m.store == nil {
 		return nil, errors.New("notification: store is required")
 	}
-	limit := normalizeLimit(filter.Limit)
-	rows, err := m.store.ListUnreadNotifications(ctx, limit)
+	filter.Limit = normalizeLimit(filter.Limit)
+	rows, err := m.store.ListUnreadNotifications(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -65,12 +65,13 @@ func (m *Manager) MarkRead(ctx context.Context, id string) (Notification, bool, 
 	return notificationFromRecord(row), true, nil
 }
 
-// MarkAllRead marks all unread notifications read.
+// MarkAllRead marks notification-center unread rows read while preserving
+// durable operator-attention rows whose underlying condition may still persist.
 func (m *Manager) MarkAllRead(ctx context.Context) ([]Notification, error) {
 	if m == nil || m.store == nil {
 		return nil, errors.New("notification: store is required")
 	}
-	rows, err := m.store.MarkAllNotificationsRead(ctx)
+	rows, err := m.store.MarkAllNotificationsRead(ctx, domain.OperatorAttentionNotificationTypes())
 	if err != nil {
 		return nil, err
 	}
