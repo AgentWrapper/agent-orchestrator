@@ -148,7 +148,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 				<PRSummaryParts className="mt-1" maxLinks={2} pr={row.pr} />
 			</TableCell>
 			<TableCell>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-micro font-medium", stateTone[row.pr.state])}>
+				<Badge variant="outline" className={cn("font-medium", stateTone[row.pr.state])}>
 					{row.pr.state}
 				</Badge>
 			</TableCell>

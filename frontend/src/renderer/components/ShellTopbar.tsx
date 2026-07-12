@@ -47,11 +47,10 @@ const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: 
 	unknown: { label: "Unknown", tone: "var(--color-text-muted)", breathe: false },
 };
 
-// The one app topbar (.dashboard-app-header), rendered by the shell layout
-// across the full window width — above both the sidebar and the route outlet —
-// so the crumb and actions sit at identical offsets on every screen and the
-// macOS traffic lights + TitlebarNav cluster live in its left inset
-// (.is-under-titlebar-nav pads past them). The
+// The one app topbar (topbarHeaderClass), rendered by the shell layout across
+// the full window width — above both the sidebar and the route outlet — so the
+// crumb and actions sit at identical offsets on every screen and the macOS
+// traffic lights + TitlebarNav cluster live in its left inset. The
 // variant is derived from the route, not props: a sessionId in the URL swaps
 // the lead to the session identity (orchestrator crumb + mode badge, or worker
 // branch + status pill) and the actions to board/orchestrator + inspector

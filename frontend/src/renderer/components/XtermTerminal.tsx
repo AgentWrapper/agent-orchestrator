@@ -29,7 +29,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
-import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
+import { TERMINAL_FONT_SIZE_DEFAULT } from "../../styles/tokens";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
@@ -73,7 +73,7 @@ function loadRenderer(term: Terminal): void {
 	}
 }
 
-// xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
+// xterm palette tracks the app theme (see lib/terminal-themes.ts + src/styles/tokens.ts).
 const SUPPRESS_NATIVE_PASTE_MS = 100;
 
 // Erase scrollback (3J) + display (2J) and home the cursor. Deliberately NOT

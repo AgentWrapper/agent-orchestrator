@@ -318,7 +318,7 @@ export function BrowserPanelView({
 								: "Annotate page"
 					}
 					aria-pressed={annotationMode || status === "picking"}
-					className="browser-panel__annotate-btn"
+					className="data-[aria-pressed=true]:bg-accent-weak data-[aria-pressed=true]:text-foreground"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
@@ -330,16 +330,17 @@ export function BrowserPanelView({
 				</Button>
 				{annotationStatusLabel ? (
 					<span
-						className={
-							status === "error"
-								? "browser-panel__annotation-status browser-panel__annotation-status--error"
-								: "browser-panel__annotation-status"
-						}
+						className={cn(
+							"max-w-24 truncate text-[11px] font-[650] leading-none text-muted-foreground",
+							status === "error" && "max-w-40 text-destructive",
+						)}
 					>
 						{annotationStatusLabel}
 					</span>
 				) : sessionBusy ? (
-					<span className="browser-panel__annotation-status">Agent working</span>
+					<span className="max-w-24 truncate text-[11px] font-[650] leading-none text-muted-foreground">
+						Agent working
+					</span>
 				) : null}
 				<div className="relative min-w-0 flex-1">
 					<Globe2

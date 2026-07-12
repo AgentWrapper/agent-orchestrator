@@ -1,18 +1,8 @@
 /*
- * Design tokens — Agent Orchestrator frontend
- * ============================================
- * Source of truth for the app (Electron renderer) visual system.
- * Extracted from the existing dark-first Cursor-like UI in
- * src/renderer/styles.css — not a restyle.
- *
- * Theme switching:
- *   - Default (:root)              → dark
- *   - :root[data-theme="light"]    → light (renderer Zustand toggle)
- *   - :root.dark / .dark           → alias for landing/docs (Fumadocs)
- *
- * Imported by src/renderer/styles.css. See DESIGN_TOKENS.md.
+ * AUTO-GENERATED — do not edit.
+ * Source: src/styles/primitives.ts, tailwind-bridge.ts, utilities.ts
+ * Regenerate: npm run tokens
  */
-
 :root,
 :root.dark,
 .dark {
@@ -24,40 +14,29 @@
 	   for one-off hex — map one-offs to the nearest existing role)
 	   ═══════════════════════════════════════════════════════════════ */
 
-	/* Surfaces (near-black ramp) */
 	--color-bg-primary: #0a0b0d;
 	--color-bg-secondary: #15171b;
 	--color-bg-tertiary: #1b1d22;
 	--color-bg-elevated: #212329;
 	--color-bg-sidebar: #08090b;
 	--color-bg-terminal: #15171b;
-
-	/* Text */
 	--color-text-primary: #f4f5f7;
 	--color-text-muted: #9ba1aa;
 	--color-text-passive: #646a73;
 	--color-text-terminal: #d7d7d2;
 	--color-text-terminal-dim: #7c7c7c;
-
-	/* Borders (hairline white-alpha on dark) */
 	--color-border: rgb(255 255 255 / 0.06);
 	--color-border-strong: rgb(255 255 255 / 0.1);
-
-	/* Accent — refined blue (primary actions, focus, active session) */
 	--color-accent: #4d8dff;
 	--color-accent-foreground: #ffffff;
 	--color-accent-weak: rgb(77 141 255 / 0.16);
 	--color-accent-dim: #24406e;
-
-	/* Status — matches daemon derived statuses */
-	--color-working: #f59f4c; /* agent working */
-	--color-warning: #e8c14a; /* needs-you / amber */
-	--color-success: #74b98a; /* mergeable */
-	--color-success-bright: #8bdc75; /* reviewer role highlight (was hardcoded) */
-	--color-danger: #ef6b6b; /* fail */
-	--color-purple: #a78bfa; /* accessory / magenta lane */
-
-	/* Interactive overlays */
+	--color-working: #f59f4c;
+	--color-warning: #e8c14a;
+	--color-success: #74b98a;
+	--color-success-bright: #8bdc75;
+	--color-danger: #ef6b6b;
+	--color-purple: #a78bfa;
 	--color-interactive-hover: rgb(255 255 255 / 0.04);
 	--color-interactive-active: rgb(255 255 255 / 0.07);
 	--color-overlay-subtle: rgb(255 255 255 / 0.018);
@@ -80,26 +59,27 @@
 		"Liberation Mono", "Courier New", monospace;
 
 	/* Scale — dense UI chrome uses half-steps between base sizes */
-	--font-size-2xs: 10.5px; /* uppercase meta, board footers */
-	--font-size-xs: 10px; /* micro labels, tight pills */
-	--font-size-caption: 11px; /* badges, kanban labels */
-	--font-size-sm-md: 11.5px; /* inspector tabs, status pills */
-	--font-size-sm: 12px; /* secondary chrome / Tailwind text-xs */
-	--font-size-md-sm: 12.5px; /* kv rows, PR summaries */
-	--font-size-base: 13px; /* dense controls (board buttons) */
-	--font-size-brand: 14.5px; /* titlebar project name */
-	--font-size-md: 14px; /* body / Tailwind text-sm */
-	--font-size-subtitle: 15px; /* dialog titles, stat values */
-	--font-size-heading-sm: 17px; /* empty-state headings */
-	--font-size-heading: 21px; /* dashboard subhead */
-	--font-size-heading-lg: 22px; /* preview mock headings */
+	--font-size-2xs: 10px;
+	--font-size-xs: 10.5px;
+	--font-size-caption: 11px;
+	--font-size-sm-md: 11.5px;
+	--font-size-sm: 12px;
+	--font-size-md-sm: 12.5px;
+	--font-size-base: 13px;
+	--font-size-md: 14px;
+	--font-size-brand: 14.5px;
+	--font-size-subtitle: 15px;
+	--font-size-terminal-max: 20px;
+	--font-size-heading-sm: 17px;
+	--font-size-heading: 21px;
+	--font-size-heading-lg: 22px;
 
 	--font-weight-medium: 500;
 	--font-weight-semibold: 600;
 
 	--line-height-normal: 1.5;
 	--line-height-snug: 1.42;
-	--line-height-row: 1.25rem; /* 20px — helper rows at text-xs / text-control */
+	--line-height-row: 1.25rem;
 	--line-height-body-md: 1.55;
 	--line-height-relaxed: 1.6;
 	--line-height-loose: 1.7;
@@ -118,33 +98,38 @@
 	/* Motion */
 	--duration-fast: 120ms;
 	--duration-normal: 150ms;
+	--duration-inspector-split: 0.2s;
+	--color-mix-purple-subtle: 12%;
+	--color-mix-surface-faint: 35%;
+	--animation-status-pulse-min-opacity: 0.35;
+	--animation-modal-in-scale-from: 0.95;
 
 	/* ═══════════════════════════════════════════════════════════════
 	   SPACING — 4px base (audit: 4/6/8/10/12/14/16/18 most common)
 	   Prefer even steps; map odd pixels (5/7/9/11/13/15) to nearest.
 	   ═══════════════════════════════════════════════════════════════ */
 
-	--space-0_5: 2px;
-	--space-0_75: 3px;
 	--space-1: 4px;
-	--space-1_25: 5px;
-	--space-1_5: 6px;
-	--space-1_75: 7px;
 	--space-2: 8px;
-	--space-2_25: 9px;
-	--space-2_5: 10px;
-	--space-2_75: 11px;
 	--space-3: 12px;
-	--space-3_25: 13px;
-	--space-3_5: 14px;
-	--space-3_75: 15px;
 	--space-4: 16px;
-	--space-4_5: 18px;
 	--space-5: 20px;
-	--space-5_5: 22px;
 	--space-6: 24px;
 	--space-8: 32px;
 	--space-10: 40px;
+	--space-0_5: 2px;
+	--space-0_75: 3px;
+	--space-1_25: 5px;
+	--space-1_5: 6px;
+	--space-1_75: 7px;
+	--space-2_25: 9px;
+	--space-2_5: 10px;
+	--space-2_75: 11px;
+	--space-3_25: 13px;
+	--space-3_5: 14px;
+	--space-3_75: 15px;
+	--space-4_5: 18px;
+	--space-5_5: 22px;
 
 	/* ═══════════════════════════════════════════════════════════════
 	   Z-INDEX — stacking layers
@@ -158,26 +143,25 @@
 	   RADIUS
 	   ═══════════════════════════════════════════════════════════════ */
 
-	--radius-xs: 3px; /* inline rename inputs, hairline controls */
-	--radius-sm: 4px; /* chips, tiny controls — absorb old 5px */
-	--radius-md: 6px; /* default controls — absorb old 7px */
-	--radius-lg: 8px; /* cards, larger buttons */
-	--radius-panel: 13px; /* kanban columns, empty-state cards */
-	--radius-full: 999px; /* pills, avatars, status dots */
+	--radius-xs: 3px;
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--radius-panel: 13px;
+	--radius-full: 999px;
 
 	/* ═══════════════════════════════════════════════════════════════
 	   BREAKPOINTS — documented here; @media cannot use var()
 	   ═══════════════════════════════════════════════════════════════ */
 
-	--breakpoint-layout-narrow: 680px; /* reviewer grid — @custom-media in styles.css */
-	--breakpoint-inspector-compact: 300px; /* inspector @container */
+	--breakpoint-layout-narrow: 680px;
+	--breakpoint-inspector-compact: 300px;
 
 	/* ═══════════════════════════════════════════════════════════════
 	   LAYOUT — fixed chrome dimensions (not spacing scale)
 	   ═══════════════════════════════════════════════════════════════ */
 
-	--ring-width-focus: 3px; /* select trigger focus ring */
-
+	--ring-width-focus: 3px;
 	--size-hairline: 1px;
 	--size-icon-2xs: 12px;
 	--size-icon-xs: 9px;
@@ -212,7 +196,7 @@
 	--size-kv-label: 74px;
 	--size-notification-width: 380px;
 	--size-notification-max-height: 420px;
-	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
+	--size-select-menu-max: 320px;
 	--size-notification-icon: 26px;
 	--size-font-size-label: 44px;
 	--size-inspector-status-chip-max: 58%;
@@ -231,8 +215,9 @@
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
 	--size-sidebar-project-actions: 84px;
-
-	--size-empty-offset-y: 5vh; /* board empty-state vertical nudge */
+	--size-empty-offset-y: 5vh;
+	--size-timeline-dot-ring: 3px;
+	--size-timeline-dot-glow: 8px;
 
 	/* Browser static preview (light mock page inside dark app) */
 	--color-preview-bg: #f7f8fb;
@@ -328,28 +313,23 @@
 	--color-bg-elevated: #e4e4e6;
 	--color-bg-sidebar: #fcfcfc;
 	--color-bg-terminal: #fafafa;
-
 	--color-text-primary: #1a1a1a;
 	--color-text-muted: #666666;
 	--color-text-passive: #9a9a9a;
 	--color-text-terminal: #24292f;
 	--color-text-terminal-dim: #6b7280;
-
 	--color-border: #e3e3e5;
 	--color-border-strong: #d4d4d6;
-
 	--color-accent: #2563eb;
 	--color-accent-foreground: #ffffff;
 	--color-accent-weak: rgb(37 99 235 / 0.12);
 	--color-accent-dim: #bcd2f7;
-
 	--color-working: #c2410c;
 	--color-warning: #9a6b00;
 	--color-success: #1a7f37;
 	--color-success-bright: #176639;
 	--color-danger: #c0392b;
 	--color-purple: #7c3aed;
-
 	--color-interactive-hover: rgb(0 0 0 / 0.04);
 	--color-interactive-active: rgb(0 0 0 / 0.07);
 	--color-overlay-subtle: rgb(0 0 0 / 0.02);
@@ -362,4 +342,292 @@
 	--elevation-md: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
 	--elevation-lg: 0 16px 48px rgb(20 30 50 / 0.16);
 	--elevation-xl: 0 1px 0 rgb(0 0 0 / 0.03), 0 20px 50px rgb(20 30 50 / 0.14);
+}
+
+@custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
+@custom-media --inspector-compact (width <= 300px); /* --breakpoint-inspector-compact */
+
+@theme inline {
+	--font-sans: var(--font-family-base);
+	--font-mono: var(--font-family-mono);
+
+	/* Typography — align Tailwind text-* with token scale */
+	--text-xs: var(--font-size-sm);
+	--text-sm: var(--font-size-md);
+	--text-base: var(--font-size-md);
+
+	/* Typography — token-named half-steps (text-control = dense 13px chrome) */
+	--text-micro: var(--font-size-2xs);
+	--text-2xs: var(--font-size-xs);
+	--text-caption: var(--font-size-caption);
+	--text-sm-md: var(--font-size-sm-md);
+	--text-md-sm: var(--font-size-md-sm);
+	--text-control: var(--font-size-base);
+	--text-brand: var(--font-size-brand);
+	--text-subtitle: var(--font-size-subtitle);
+	--text-heading-sm: var(--font-size-heading-sm);
+	--text-heading: var(--font-size-heading);
+	--text-heading-lg: var(--font-size-heading-lg);
+
+	/* Radius — align Tailwind rounded-* with token scale */
+	--radius-xs: var(--radius-xs);
+	--radius-sm: var(--radius-sm);
+	--radius-md: var(--radius-md);
+	--radius-lg: var(--radius-lg);
+	--radius-panel: var(--radius-panel);
+	--radius-full: var(--radius-full);
+
+	/* Breakpoints — for Tailwind max-* variants */
+	--breakpoint-layout-narrow: 680px;
+	--breakpoint-inspector-compact: 300px;
+
+	/* Spacing — align Tailwind p-*, gap-*, etc. with token scale */
+	--spacing-1: var(--space-1);
+	--spacing-2: var(--space-2);
+	--spacing-3: var(--space-3);
+	--spacing-4: var(--space-4);
+	--spacing-5: var(--space-5);
+	--spacing-6: var(--space-6);
+	--spacing-8: var(--space-8);
+	--spacing-10: var(--space-10);
+	--spacing-0_5: var(--space-0_5);
+	--spacing-0_75: var(--space-0_75);
+	--spacing-1_25: var(--space-1_25);
+	--spacing-1_5: var(--space-1_5);
+	--spacing-1_75: var(--space-1_75);
+	--spacing-2_25: var(--space-2_25);
+	--spacing-2_5: var(--space-2_5);
+	--spacing-2_75: var(--space-2_75);
+	--spacing-3_25: var(--space-3_25);
+	--spacing-3_5: var(--space-3_5);
+	--spacing-3_75: var(--space-3_75);
+	--spacing-4_5: var(--space-4_5);
+	--spacing-5_5: var(--space-5_5);
+
+	/* Z-index — z-chrome, z-titlebar, z-overlay */
+	--z-index-chrome: var(--z-chrome);
+	--z-index-titlebar: var(--z-titlebar);
+	--z-index-overlay: var(--z-overlay);
+
+	/* Ring width — ring-focus for dense control focus rings */
+	--ring-width-focus: var(--ring-width-focus);
+
+	/* Elevation — align Tailwind shadow-* with token scale */
+	--shadow-sm: var(--elevation-sm);
+	--shadow-md: var(--elevation-md);
+	--shadow-lg: var(--elevation-lg);
+	--shadow-xl: var(--elevation-xl);
+
+	/* Surfaces */
+	--color-background: var(--color-bg-primary);
+	--color-foreground: var(--color-text-primary);
+	--color-surface: var(--color-bg-secondary);
+	--color-card: var(--color-bg-secondary);
+	--color-card-foreground: var(--color-text-primary);
+	--color-raised: var(--color-bg-tertiary);
+	--color-overlay: var(--color-bg-elevated);
+	--color-popover: var(--color-bg-secondary);
+	--color-popover-foreground: var(--color-text-primary);
+	--color-sidebar: var(--color-bg-sidebar);
+	--color-sidebar-foreground: var(--color-text-muted);
+	--color-sidebar-primary: var(--bridge-accent);
+	--color-sidebar-primary-foreground: var(--bridge-accent-fg);
+	--color-sidebar-accent: var(--color-bg-tertiary);
+	--color-sidebar-accent-foreground: var(--color-text-primary);
+	--color-sidebar-border: var(--bridge-border);
+	--color-sidebar-ring: var(--bridge-accent);
+	--color-terminal: var(--color-bg-terminal);
+	--color-terminal-foreground: var(--color-text-terminal);
+	--color-terminal-dim: var(--color-text-terminal-dim);
+
+	/* Browser static preview (light mock inside dark app) */
+	--color-preview: var(--color-preview-bg);
+	--color-preview-foreground: var(--color-preview-fg);
+	--color-preview-muted: var(--bridge-preview-muted);
+	--color-preview-link: var(--bridge-preview-link);
+	--color-preview-heading: var(--bridge-preview-heading);
+	--color-preview-body: var(--bridge-preview-body);
+	--color-preview-card: var(--bridge-preview-card);
+	--color-preview-success: var(--bridge-preview-success);
+	--color-preview-tile: var(--bridge-preview-tile);
+	--color-preview-tile-border: var(--bridge-preview-tile-border);
+	--color-preview-terminal: var(--bridge-preview-terminal);
+	--color-preview-terminal-border: var(--bridge-preview-terminal-border);
+	--color-preview-terminal-foreground: var(--bridge-preview-terminal-fg);
+
+	/* Icon chrome — size-icon-* utilities */
+	--size-icon-2xs: var(--size-icon-2xs);
+	--size-icon-xs: var(--size-icon-xs);
+	--size-icon-sm: var(--size-icon-sm);
+	--size-icon-md: var(--size-icon-md);
+	--size-icon-base: var(--size-icon-base);
+	--size-icon-lg: var(--size-icon-lg);
+	--size-icon-xl: var(--size-icon-xl);
+
+	/* Typography — tracking & leading */
+	--tracking-tight-xl: var(--tracking-tight-xl);
+	--tracking-tight-lg: var(--tracking-tight-lg);
+	--tracking-tight: var(--tracking-tight);
+	--tracking-wide-xs: var(--tracking-wide-xs);
+	--tracking-wide-sm: var(--tracking-wide-sm);
+	--tracking-wide: var(--tracking-wide);
+	--tracking-wide-md: var(--tracking-wide-md);
+	--tracking-wide-lg: var(--tracking-wide-lg);
+	--tracking-wide-xl: var(--tracking-wide-xl);
+	--leading-snug: var(--line-height-snug);
+	--leading-body: var(--line-height-normal);
+	--leading-row: var(--line-height-row);
+	--leading-body-md: var(--line-height-body-md);
+	--leading-relaxed: var(--line-height-relaxed);
+	--leading-loose: var(--line-height-loose);
+	--font-weight-medium: var(--font-weight-medium);
+	--font-weight-semibold: var(--font-weight-semibold);
+	--duration-fast: var(--duration-fast);
+	--duration-normal: var(--duration-normal);
+
+	/* Layout — toolbar offset for fixed sidebar below topbar */
+	--spacing-toolbar: var(--size-toolbar);
+	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
+	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	--spacing-control-xs: var(--size-control-xs);
+	--spacing-control-sm: var(--size-control-sm);
+	--spacing-control-form: var(--size-control-form);
+	--spacing-control-md: var(--size-control-md);
+	--spacing-control-lg: var(--size-control-lg);
+	--spacing-control-xl: var(--size-control-xl);
+	--spacing-control-board-sm: var(--size-control-board-sm);
+	--spacing-control-board: var(--size-control-board);
+	--spacing-table-head: var(--size-table-head);
+	--spacing-inspector-tabs: var(--size-inspector-tabs);
+	--spacing-browser-url: var(--size-browser-url);
+	--spacing-browser-min: var(--size-browser-min);
+	--spacing-dot-sm: var(--size-dot-sm);
+	--spacing-content-max: var(--size-content-max);
+	--spacing-board-empty: var(--size-board-empty);
+	--spacing-preview-content: var(--size-preview-content);
+	--spacing-preview-max: var(--size-preview-max);
+	--spacing-notification-width: var(--size-notification-width);
+	--spacing-notification-max-height: var(--size-notification-max-height);
+	--spacing-select-menu-max: var(--size-select-menu-max);
+	--spacing-notification-icon: var(--size-notification-icon);
+	--spacing-font-size-label: var(--size-font-size-label);
+	--spacing-pr-table-actions: var(--size-pr-table-actions);
+	--spacing-pr-col-number: var(--size-pr-col-number);
+	--spacing-pr-col-state: var(--size-pr-col-state);
+	--spacing-inspector-min: var(--size-inspector-min);
+	--spacing-textarea-min: var(--size-textarea-min);
+	--spacing-sidebar-project-actions: var(--size-sidebar-project-actions);
+	--spacing-row-md: var(--size-row-md);
+	--spacing-empty-offset-y: var(--size-empty-offset-y);
+	--spacing-kv-label: var(--size-kv-label);
+	--spacing-branch-chip: var(--size-branch-chip);
+
+	--color-muted: var(--color-bg-tertiary);
+	--color-muted-foreground: var(--color-text-muted);
+	--color-passive: var(--color-text-passive);
+	--color-secondary: var(--color-bg-tertiary);
+	--color-secondary-foreground: var(--color-text-muted);
+	--color-success-bright: var(--color-success-bright);
+	--color-destructive-foreground: var(--color-accent-foreground);
+	--color-primary: var(--bridge-accent);
+	--color-primary-foreground: var(--bridge-accent-fg);
+	--color-accent: var(--bridge-accent);
+	--color-accent-foreground: var(--bridge-accent-fg);
+	--color-accent-weak: var(--bridge-accent-weak);
+	--color-accent-dim: var(--bridge-accent-dim);
+	--color-ring: var(--bridge-accent);
+	--color-border: var(--bridge-border);
+	--color-border-strong: var(--bridge-border-strong);
+	--color-working: var(--bridge-working);
+	--color-success: var(--bridge-success);
+	--color-warning: var(--bridge-warning);
+	--color-error: var(--bridge-danger);
+	--color-destructive: var(--bridge-danger);
+	--color-interactive-hover: var(--bridge-interactive-hover);
+	--color-interactive-active: var(--bridge-interactive-active);
+	--color-input: var(--bridge-border);
+	--color-scrim: var(--bridge-scrim);
+	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
+	--animate-overlay-in: overlay-in 150ms ease-out;
+	--animate-modal-in: modal-in 150ms ease-out;
+}
+
+@utility w-dialog-md {
+	width: min(var(--size-dialog-md), calc(100vw - var(--space-8)));
+}
+
+@utility w-dialog-lg {
+	width: min(var(--size-dialog-lg), calc(100vw - var(--space-8)));
+}
+
+@utility w-dialog-xl {
+	width: min(var(--size-dialog-xl), calc(100vw - var(--space-8)));
+}
+
+@utility w-dialog-orchestrator {
+	width: min(var(--size-dialog-orchestrator), calc(100vw - var(--space-8)));
+}
+
+@utility grid-cols-notification {
+	grid-template-columns: var(--size-notification-icon) minmax(0, 1fr) auto;
+}
+
+@utility max-w-inspector-status-chip {
+	max-width: var(--size-inspector-status-chip-max);
+}
+
+@utility w-font-size-label {
+	width: var(--size-font-size-label);
+}
+
+@utility bg-purple-subtle {
+	background-color: color-mix(in srgb, var(--color-purple) var(--color-mix-purple-subtle), transparent);
+}
+
+@utility text-purple-accent {
+	color: var(--color-purple);
+}
+
+@utility shadow-timeline-dot {
+	box-shadow: 0 0 0 var(--size-timeline-dot-ring) var(--color-bg-primary);
+}
+
+@utility shadow-timeline-dot-now {
+	box-shadow:
+		0 0 0 var(--size-timeline-dot-ring) var(--color-bg-primary),
+		0 0 var(--size-timeline-dot-glow) var(--color-working);
+}
+
+@utility bg-surface-faint {
+	background-color: color-mix(in srgb, var(--color-bg-primary) var(--color-mix-surface-faint), transparent);
+}
+
+@keyframes status-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: var(--animation-status-pulse-min-opacity);
+	}
+}
+
+@keyframes overlay-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes modal-in {
+	from {
+		opacity: 0;
+		scale: var(--animation-modal-in-scale-from);
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
 }

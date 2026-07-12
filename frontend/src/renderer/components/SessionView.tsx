@@ -241,7 +241,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
           and fills the entire window. */}
 			{browserPoppedOut && session
 				? createPortal(
-						<div className="browser-popout-overlay">
+						<div className="fixed inset-0 z-40 bg-background">
 							<BrowserPanelView
 								active
 								annotationQueue={browserAnnotationQueue}

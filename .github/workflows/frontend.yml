@@ -37,5 +37,8 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify design tokens are up to date
+        run: npm run tokens && git diff --exit-code src/styles/design-system.generated.css
+
       - name: Run vitest suite
         run: npx vitest run
