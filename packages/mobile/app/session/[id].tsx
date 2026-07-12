@@ -197,8 +197,48 @@ const TERMINAL_ENHANCE_JS = `
     try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt); } catch (_) {}
   }
 
+  // ---- App-driven scrolling (harness-agnostic) ------------------------------
+  // Full-screen TUIs (Claude Code, Codex, Gemini, aider, vim, less, ...) run in
+  // the terminal's ALTERNATE screen buffer, which by design keeps NO xterm
+  // scrollback — so .xterm-viewport has nothing to scroll and a drag "does
+  // nothing". Rather than hand-encode scroll bytes per harness, we synthesize the
+  // same 'wheel' event a desktop mouse produces and let xterm's own handler
+  // translate it for WHATEVER the app negotiated: proper mouse-wheel bytes when
+  // the app tracks the mouse (X10/UTF-8/SGR — xterm picks the right encoding),
+  // else cursor-key presses (honoring application-cursor mode) in the alt buffer.
+  // This means it works for every harness, not just one. The normal buffer (plain
+  // shell scrollback) keeps its local viewport scroll below.
+  function isAltScreen() {
+    try { var b = term().buffer.active; return !!(b && b.type === 'alternate'); }
+    catch (_) { return false; }
+  }
+  function mouseActive() {
+    try { var m = term().modes; return !!(m && m.mouseTrackingMode && m.mouseTrackingMode !== 'none'); }
+    catch (_) { return false; }
+  }
+  // Let xterm own the scroll only where a local viewport scroll wouldn't reach the
+  // app: the alt buffer (no scrollback) or any buffer where the app tracks mouse.
+  function appDrivesScroll() { return isAltScreen() || mouseActive(); }
+  // Dispatch one wheel notch to xterm (up = toward older output). Coordinates are
+  // the finger position so mouse-reporting apps get an accurate cell.
+  function wheelTick(up, cx, cy) {
+    var el = document.querySelector('.xterm'); if (!el) return;
+    var ev;
+    try {
+      ev = new WheelEvent('wheel', { bubbles: true, cancelable: true,
+        deltaX: 0, deltaY: up ? -1 : 1, deltaZ: 0,
+        deltaMode: 1 /* DOM_DELTA_LINE */, clientX: cx, clientY: cy });
+    } catch (_) {
+      ev = document.createEvent('Event'); ev.initEvent('wheel', true, true);
+      ev.deltaY = up ? -1 : 1; ev.deltaMode = 1; ev.clientX = cx; ev.clientY = cy;
+    }
+    el.dispatchEvent(ev);
+  }
+
   var sX = 0, sY = 0, mode = 'idle', anchor = 0, lpTimer = 0;
   var MOVE = 10, LONGPRESS = 350, DBLTAP = 300;
+  var altLines = 0;                        // wheel notches emitted to the app this gesture
+  var SCROLL_STEP_PX = 24;                 // finger px per wheel notch (scale-independent)
   // Android: we drive the viewport's scrollTop directly off finger movement —
   // its native overflow-scroll doesn't respond to touch reliably in the WebView,
   // which is why the terminal felt unscrollable there. iOS keeps native momentum.
@@ -225,6 +265,7 @@ const TERMINAL_ENHANCE_JS = `
     }
     var t = e.touches ? e.touches[0] : e;
     sX = t.clientX; sY = t.clientY; lX = sX; lY = sY; mode = 'pending';
+    altLines = 0;
     _vp = document.querySelector('.xterm-viewport');
     startScroll = _vp ? _vp.scrollTop : 0;
     try { term() && term().clearSelection(); } catch (_) {}
@@ -258,6 +299,28 @@ const TERMINAL_ENHANCE_JS = `
       return;
     }
     if (mode === 'scroll') {
+      if (appDrivesScroll()) {
+        // The app owns scrolling here (alt buffer / mouse tracking): feed it wheel
+        // notches instead of moving the (empty) xterm viewport. Content follows the
+        // finger (drag down -> older), matching the normal buffer's direction below.
+        // One notch per SCROLL_STEP_PX of travel; emit only on each boundary cross.
+        if (e.cancelable) e.preventDefault();
+        var moved = (t.clientY - sY) / SCROLL_STEP_PX;   // + = finger down = older
+        var want = moved > 0 ? Math.floor(moved) : Math.ceil(moved);
+        var diff = want - altLines;
+        if (diff !== 0) {
+          var up = diff > 0;                             // more "older" notches -> wheel up
+          for (var i = 0; i < Math.abs(diff); i++) wheelTick(up, t.clientX, t.clientY);
+          altLines = want;
+        }
+        // While zoomed, the horizontal component still pans the magnified grid.
+        if (Z.zoomed) {
+          var bz = box();
+          if (bz) { Z.tx += t.clientX - lX; clampT(bz); applyTransform(bz); Z.lastPan = Date.now(); }
+        }
+        lX = t.clientX; lY = t.clientY;
+        return;
+      }
       if (Z.zoomed) {
         // Zoomed in: one finger pans the viewport over the big grid. Vertical
         // overshoot past the grid edge spills into scrollback scrolling (divide
