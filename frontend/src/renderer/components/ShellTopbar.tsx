@@ -41,12 +41,12 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // Topbar shows only the raw agent activity state. SCM/context badges stay in
 // the inspector Summary > Activity row.
 const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { tone: string; breathe: boolean }> = {
-	active: { tone: "var(--color-working)", breathe: true },
-	idle: { tone: "var(--color-text-muted)", breathe: false },
-	waiting_input: { tone: "var(--color-warning)", breathe: false },
-	blocked: { tone: "var(--color-warning)", breathe: false },
-	exited: { tone: "var(--color-text-muted)", breathe: false },
-	unknown: { tone: "var(--color-text-muted)", breathe: false },
+	active: { tone: "var(--orange)", breathe: true },
+	idle: { tone: "var(--fg-muted)", breathe: false },
+	waiting_input: { tone: "var(--amber)", breathe: false },
+	blocked: { tone: "var(--red)", breathe: false },
+	exited: { tone: "var(--fg-muted)", breathe: false },
+	unknown: { tone: "var(--fg-muted)", breathe: false },
 };
 
 const TOPBAR_ACTIVITY_LABEL_KEY: Record<SessionActivityState, string> = {

@@ -130,10 +130,7 @@ export function MigrationSection() {
 					{report && (
 						<Row label={t("settings.migration.labels.lastReport")}>
 							<span className="text-foreground">
-								{t("settings.migration.messages.report", {
-    								imported: report.projectsImported,
-    								skipped: report.projectsSkipped,
-								})}
+								{t("settings.migration.messages.report",{imported: report.projectsImported,skipped: report.projectsSkipped,})}
 							</span>
 						</Row>
 					)}

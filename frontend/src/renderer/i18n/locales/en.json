@@ -144,7 +144,7 @@
       "title" : "Updates",
       "automaticUpdates" : "Automatic Updates",
       "updateChannel" : "Update Channel",
-      "saveChanges" : "Save Changes",
+      "saveChanges" : "Save changes",
       "enabled": "Enabled",
       "disabled": "Disabled",
       "stable": "Stable (latest release)",
@@ -177,7 +177,6 @@
         "declined": "Declined",
         "failed": "Last attempt failed"
       },
-    
       "labels": {
         "status": "Status",
         "completed": "Completed",
@@ -190,13 +189,10 @@
         "checking": "Checking…",
         "found": "Found",
         "noneFound": "None found",
-      
         "migrationFailed": "Migration failed.",
         "migrationComplete": "Migration complete.",
         "nothingToImport": "Nothing to import from a legacy install.",
-      
         "legacyUntouched": "Your legacy projects are untouched (nothing is ever deleted).",
-      
         "report": "{{imported}} imported, {{skipped}} already present"
       },
     
@@ -314,18 +310,30 @@
       "repoCannotImport": "Repository cannot be imported"
     }
   },
-
+  
   "connectMobile": {
     "title": "Connect Mobile",
     "description": "Pair the Agent Orchestrator mobile app with this desktop over your LAN.",
-    "checkingStatus": "Checking status…",
-    "statusLoadFailed": "Failed to load mobile status.",
-    "enableToggle": "Enable mobile",
-    "enableToggleDescription": "Open a password-protected port on your local network so your phone can connect.",
-    "address": "Address",
-    "password": "Password",
-    "copy": "Copy",
-    "copied": "Copied",
-    "regeneratePassword": "Regenerate password"
+
+    "status": {
+      "checking": "Checking status…",
+      "loadFailed": "Failed to load mobile status."
+    },
+
+    "toggle": {
+      "title": "Enable mobile",
+      "description": "Open a password-protected port on your local network so your phone can connect."
+    },
+
+    "fields": {
+      "address": "Address",
+      "password": "Password"
+    },
+
+    "buttons": {
+      "copy": "Copy",
+      "copied": "Copied",
+      "regenerate": "Regenerate password"
+    }
   }
 }

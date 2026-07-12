@@ -325,16 +325,28 @@
   },
 
   "connectMobile": {
-    "title": "连接手机",
+    "title": "连接移动设备",
     "description": "通过局域网将 Agent Orchestrator 移动应用与此桌面配对。",
-    "checkingStatus": "正在检查状态…",
-    "statusLoadFailed": "无法加载手机连接状态。",
-    "enableToggle": "启用手机连接",
-    "enableToggleDescription": "在您的本地网络上开放一个受密码保护的端口，以便手机可以连接。",
-    "address": "地址",
-    "password": "密码",
-    "copy": "复制",
-    "copied": "已复制",
-    "regeneratePassword": "重新生成密码"
+
+    "status": {
+      "checking": "正在检查状态…",
+      "loadFailed": "无法加载移动设备状态。"
+    },
+
+    "toggle": {
+      "title": "启用移动连接",
+      "description": "在本地网络上开启受密码保护的端口，以便手机连接。"
+    },
+
+    "fields": {
+      "address": "地址",
+      "password": "密码"
+    },
+
+    "buttons": {
+      "copy": "复制",
+      "copied": "已复制",
+      "regenerate": "重新生成密码"
+    }
   }
 }

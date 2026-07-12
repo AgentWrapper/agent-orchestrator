@@ -117,24 +117,24 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 				</DialogHeader>
 
 				{query.isLoading ? (
-					<p className="text-[12px] text-muted-foreground">{t("connectMobile.checkingStatus")}</p>
+					<p className="text-[12px] text-muted-foreground">{t("connectMobile.status.checking")}</p>
 				) : query.isError ? (
 					<p className="text-[12px] text-error">
-						{query.error instanceof Error ? query.error.message : t("connectMobile.statusLoadFailed")}
+						{query.error instanceof Error ? query.error.message : t("connectMobile.status.loadFailed")}
 					</p>
 				) : status ? (
 					<div className="flex flex-col gap-4">
 						{/* Toggle row — always visible. Flipping it starts/stops the bridge. */}
 						<div className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface/40 p-3">
 							<div className="flex min-w-0 flex-col">
-								<span className="text-[13px] text-foreground">{t("connectMobile.enableToggle")}</span>
+								<span className="text-[13px] text-foreground">{t("connectMobile.toggle.title")}</span>
 								<span className="text-[12px] leading-5 text-muted-foreground">
-									{t("connectMobile.enableToggleDescription")}
+									{t("connectMobile.toggle.description")}
 								</span>
 							</div>
 							<div className="flex shrink-0 items-center gap-2">
 								{busy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-								<Switch checked={enabled} onCheckedChange={onToggle} disabled={busy} aria-label={t("connectMobile.enableToggle")} />
+								<Switch checked={enabled} onCheckedChange={onToggle} disabled={busy} aria-label={t("connectMobile.toggle.title")} />
 							</div>
 						</div>
 
@@ -148,16 +148,16 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 								</div>
 
 								<div className="flex flex-col gap-2 text-[12px]">
-									<Row label={t("connectMobile.address")}>
+									<Row label={t("connectMobile.fields.address")}>
 										<span className="font-mono text-[11px] text-foreground">
 											{status.host}:{status.port}
 										</span>
 									</Row>
-									<Row label={t("connectMobile.password")}>
+									<Row label={t("connectMobile.fields.password")}>
 										<div className="flex min-w-0 flex-1 items-center gap-2">
 											<span className="truncate font-mono text-[11px] text-foreground">{status.password}</span>
 											<Button type="button" variant="outline" size="sm" onClick={() => void copyPassword()}>
-												{copied ? t("connectMobile.copied") : t("connectMobile.copy")}
+												{copied ? t("connectMobile.buttons.copied") : t("connectMobile.buttons.copy")}
 											</Button>
 										</div>
 									</Row>
@@ -172,7 +172,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 								<div>
 									<Button type="button" variant="outline" onClick={() => regenerate.mutate()} disabled={busy}>
 										{regenerate.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-										{t("connectMobile.regeneratePassword")}
+										{t("connectMobile.buttons.regenerate")}
 									</Button>
 								</div>
 							</div>
