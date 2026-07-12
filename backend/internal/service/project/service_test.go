@@ -238,7 +238,7 @@ func TestManager_RemoveTeardownsBeforeArchive(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
-func TestManager_RemoveDoesNotArchiveWhenTeardownFails(t *testing.T) {
+func TestManager_RemoveToleratesTeardownFailure(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
@@ -251,11 +251,15 @@ func TestManager_RemoveDoesNotArchiveWhenTeardownFails(t *testing.T) {
 	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if _, err := m.Remove(ctx, "ao"); !errors.Is(err, boom) {
-		t.Fatalf("Remove err = %v, want teardown failure", err)
+	rm, err := m.Remove(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Remove err = %v, want nil (teardown failures should not block removal)", err)
 	}
-	if got, err := m.Get(ctx, "ao"); err != nil || got.Project == nil || got.Project.ID != "ao" {
-		t.Fatalf("project after failed remove = %#v, %v; want still active", got, err)
+	if rm.ProjectID != "ao" {
+		t.Fatalf("Remove result = %#v", rm)
+	}
+	if got, err := m.Get(ctx, "ao"); err == nil && got.Project != nil && got.Project.ID == "ao" {
+		t.Fatalf("project still active after remove despite teardown failure: %#v", got)
 	}
 }
 
