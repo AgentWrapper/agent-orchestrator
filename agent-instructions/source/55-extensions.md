@@ -2,12 +2,15 @@
 
 - **Tracking:** GitHub-only (no `.beads/` here — skills degrade
   automatically; the issue is the sole tracker).
-- **Build/test gates:** backend is Go — `cd backend && go build ./... &&
-go vet ./... && go test ./...`; frontend is npm-lockfile-managed Vite under
+- **Build/test gates:** backend is Go — `npm run ci:backend` (runs `go build`,
+  `go vet`, `go test -race`, and the CI-pinned `golangci-lint` over `./...`);
+  frontend is npm-lockfile-managed Vite under
   `frontend/` (`frontend/package-lock.json` is authoritative; use
   `npm --prefix frontend ci` / `npm --prefix frontend run ...`, even though an
   upstream `pnpm-workspace.yaml` is present).
-  Upstream CI workflows are the remote gate.
+  Run `npm run format:check` before push for changed-file Prettier parity; set
+  `BASE_REF=origin/<branch>` when the PR base is not the default branch. Upstream
+  CI workflows are the remote gate.
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —
   a bad change here takes down the whole fleet; a human reviews those merges.
