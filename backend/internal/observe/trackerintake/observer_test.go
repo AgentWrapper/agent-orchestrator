@@ -233,7 +233,7 @@ func TestPollRespawnsWhenOnlyNonWorkerSessionIsAttachedToIssue(t *testing.T) {
 	}
 }
 
-func TestPollDoesNotEmitReplacementNotificationWhenRespawnAdmissionFails(t *testing.T) {
+func TestPollDoesNotEmitAdoptionNotificationWhenRespawnAdmissionFails(t *testing.T) {
 	issueID := domain.IssueID("github:acme/demo#12")
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
@@ -251,6 +251,14 @@ func TestPollDoesNotEmitReplacementNotificationWhenRespawnAdmissionFails(t *test
 			Activity:     domain.Activity{State: domain.ActivityExited},
 			UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
 		}},
+		prsBySession: map[domain.SessionID][]domain.PullRequest{
+			"demo-worker-1": {{
+				URL:          "https://github.com/acme/demo/pull/99",
+				SessionID:    "demo-worker-1",
+				Number:       99,
+				SourceBranch: "ao/demo-1/root",
+			}},
+		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
 		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
@@ -268,8 +276,11 @@ func TestPollDoesNotEmitReplacementNotificationWhenRespawnAdmissionFails(t *test
 	if len(spawner.calls) != 1 {
 		t.Fatalf("spawn calls = %+v, want replacement attempt", spawner.calls)
 	}
+	if spawner.calls[0].Branch != "ao/demo-1/root" {
+		t.Fatalf("replacement branch = %q, want orphan PR branch", spawner.calls[0].Branch)
+	}
 	if len(notifications.intents) != 0 {
-		t.Fatalf("notifications = %+v, want none because replacement did not start", notifications.intents)
+		t.Fatalf("notifications = %+v, want no adoption dispatch claim because replacement did not start", notifications.intents)
 	}
 }
 

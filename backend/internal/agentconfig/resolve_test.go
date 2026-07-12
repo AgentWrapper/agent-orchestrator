@@ -37,6 +37,7 @@ func TestConfiguredModelPinsUseLaunchPrecedence(t *testing.T) {
 			Model: "opus",
 			ModelByHarness: map[domain.AgentHarness]domain.HarnessModel{
 				domain.HarnessCodex: {Model: "gpt-5.5-codex"},
+				domain.HarnessAider: {Model: "aider-model"},
 			},
 		},
 		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex},
@@ -51,8 +52,8 @@ func TestConfiguredModelPinsUseLaunchPrecedence(t *testing.T) {
 	want := []ModelPin{
 		{Scope: "worker", Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"},
 		{Scope: "orchestrator", Harness: domain.HarnessClaudeCode, Model: "opus"},
+		{Scope: "agentConfig.modelByHarness[aider]", Harness: domain.HarnessAider, Model: "aider-model"},
 		{Scope: "workerMix[0]", Harness: domain.HarnessCodexFugu, Model: "fugu-ultra"},
-		{Scope: "workerMix[1]", Harness: domain.HarnessClaudeCode, Model: "opus"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("pins = %#v, want %#v", got, want)

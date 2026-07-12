@@ -629,15 +629,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// configurable grace window and proceeds to the title/prompt writes below.
 	// A second, post-write gate below preserves issue #219's end-of-spawn
 	// liveness guarantee for an agent that dies *during* those writes.
+	m.awaitPaneReady(ctx, handle)
 	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
 		m.markWorkerMixBucketDown(ctx, mixBucket, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch process: %w", id, err)
-	}
-	if spawnNeedsPaneWrite(agent, delivery, cfg.DisplayName, prompt) {
-		m.awaitPaneReady(ctx, handle)
 	}
 
 	// The harness title is cosmetic and the prompt already reached the agent
@@ -1730,6 +1728,11 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	if rec.Metadata.WorkspacePath == "" || (sessionWorkspaceMode(rec.Metadata) == domain.WorkspaceModeWorktree && rec.Metadata.Branch == "") {
 		m.logger.Warn("reconcile: live session has incomplete workspace metadata; terminating without restore marker",
 			"sessionID", rec.ID, "workspacePath", rec.Metadata.WorkspacePath, "branch", rec.Metadata.Branch, "workspaceMode", sessionWorkspaceMode(rec.Metadata))
+		if handle := runtimeHandle(rec.Metadata); handle.ID != "" {
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				m.logger.Warn("reconcile: destroy incomplete live session runtime failed", "sessionID", rec.ID, "handle", handle.ID, "error", err)
+			}
+		}
 		if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 			return fmt.Errorf("reconcile %s: mark incomplete live session terminated: %w", rec.ID, err)
 		}
@@ -3322,13 +3325,6 @@ func (m *Manager) deliverLaunchTitleWithReadiness(ctx context.Context, agent por
 		m.awaitPaneReady(ctx, handle)
 	}
 	return m.runtime.SendMessage(ctx, handle, command)
-}
-
-func spawnNeedsPaneWrite(agent ports.Agent, delivery ports.PromptDeliveryStrategy, title, prompt string) bool {
-	if _, ok := titleCommand(agent, title); ok {
-		return true
-	}
-	return delivery == ports.PromptDeliveryAfterStart && prompt != ""
 }
 
 // verifyLaunchCommandRunning rejects a spawn whose agent process exited before

@@ -4717,8 +4717,8 @@ func TestReconcileLive_IncompleteWorktreeSessionTerminated(t *testing.T) {
 			if lcm.terminated["s1"] != 1 {
 				t.Fatalf("MarkTerminated(s1) = %d, want 1 for incomplete worktree row", lcm.terminated["s1"])
 			}
-			if ws.stashCalls != 0 || rt.destroyed != 0 || len(st.worktrees["s1"]) != 0 {
-				t.Fatalf("incomplete row should terminate without stash/destroy/restore marker: stash=%d destroy=%d rows=%+v", ws.stashCalls, rt.destroyed, st.worktrees["s1"])
+			if ws.stashCalls != 0 || rt.destroyed != 1 || len(st.worktrees["s1"]) != 0 {
+				t.Fatalf("incomplete row should terminate with runtime destroy but without stash/restore marker: stash=%d destroy=%d rows=%+v", ws.stashCalls, rt.destroyed, st.worktrees["s1"])
 			}
 		})
 	}

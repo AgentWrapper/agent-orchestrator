@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -151,6 +152,7 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 	}
 
 	mix := targetMix(project.Config)
+	resolvedModels := resolvedWorkerMixModels(project.Config, mix)
 	targets := make(map[domain.BucketKey]int, len(mix))
 	for _, entry := range mix {
 		targets[entry.BucketKey()] = entry.Weight
@@ -176,7 +178,7 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 			targetCapacity := float64(*capacity.Cap) * float64(target) / 100
 			bucket.TargetCapacity = &targetCapacity
 		}
-		s.applyBucketHealth(&bucket, key, healthByID, modelByBucket, candidateByBucket)
+		s.applyBucketHealth(&bucket, key, resolvedModels[key], healthByID, modelByBucket, candidateByBucket)
 		if bucket.Down && capacity.Cap != nil {
 			share := float64(*capacity.Cap) * float64(target) / 100
 			bucket.DownCapacityShare = &share
@@ -239,7 +241,7 @@ func (s *WorkerCapacityService) candidateHealthByBucket() map[domain.BucketKey]c
 	return out
 }
 
-func (s *WorkerCapacityService) applyBucketHealth(bucket *WorkerCapacityBucket, key domain.BucketKey, healthByID map[string]agenthealth.HarnessHealth, modelByBucket map[domain.BucketKey]modelhealth.Verdict, candidateByBucket map[domain.BucketKey]candidatehealth.Status) {
+func (s *WorkerCapacityService) applyBucketHealth(bucket *WorkerCapacityBucket, key domain.BucketKey, resolvedModel string, healthByID map[string]agenthealth.HarnessHealth, modelByBucket map[domain.BucketKey]modelhealth.Verdict, candidateByBucket map[domain.BucketKey]candidatehealth.Status) {
 	if h, ok := healthByID[string(key.Harness)]; ok {
 		bucket.Health = h.Health
 		bucket.Reason = h.Reason
@@ -253,7 +255,11 @@ func (s *WorkerCapacityService) applyBucketHealth(bucket *WorkerCapacityBucket, 
 		bucket.BlockedBy = "harness_auth"
 		return
 	}
-	if verdict, ok := modelByBucket[key]; ok {
+	modelKey := key
+	if model := strings.TrimSpace(resolvedModel); model != "" {
+		modelKey.Model = model
+	}
+	if verdict, ok := modelByBucket[modelKey]; ok {
 		bucket.Down = true
 		bucket.BlockedBy = "model"
 		bucket.Reason = strings.TrimSpace(verdict.Reason)
@@ -282,6 +288,20 @@ func targetMix(cfg domain.ProjectConfig) domain.WorkerMix {
 		return domain.WorkerMix{{Harness: cfg.Worker.Harness, Weight: 100}}
 	}
 	return nil
+}
+
+func resolvedWorkerMixModels(cfg domain.ProjectConfig, mix domain.WorkerMix) map[domain.BucketKey]string {
+	out := make(map[domain.BucketKey]string, len(mix))
+	for _, entry := range mix {
+		resolved, err := agentconfig.Effective(domain.KindWorker, cfg, entry.Model, entry.Harness)
+		if err != nil {
+			continue
+		}
+		if model := strings.TrimSpace(resolved.Model); model != "" {
+			out[entry.BucketKey()] = model
+		}
+	}
+	return out
 }
 
 func runningWorkerBuckets(sessions []domain.SessionRecord) map[domain.BucketKey]int {

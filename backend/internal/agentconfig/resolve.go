@@ -124,6 +124,18 @@ func ConfiguredModelPins(cfg domain.ProjectConfig) []ModelPin {
 	addResolved("worker", domain.KindWorker, "", "")
 	addResolved("orchestrator", domain.KindOrchestrator, "", "")
 	addResolved("prime", domain.KindPrime, "", "")
+	for h := range cfg.AgentConfig.ModelByHarness {
+		addResolved("agentConfig.modelByHarness["+string(h)+"]", domain.KindWorker, h, "")
+	}
+	for h := range cfg.Worker.AgentConfig.ModelByHarness {
+		addResolved("worker.agentConfig.modelByHarness["+string(h)+"]", domain.KindWorker, h, "")
+	}
+	for h := range cfg.Orchestrator.AgentConfig.ModelByHarness {
+		addResolved("orchestrator.agentConfig.modelByHarness["+string(h)+"]", domain.KindOrchestrator, h, "")
+	}
+	for h := range cfg.Prime.AgentConfig.ModelByHarness {
+		addResolved("prime.agentConfig.modelByHarness["+string(h)+"]", domain.KindPrime, h, "")
+	}
 	for i, bucket := range cfg.WorkerMix {
 		addResolved("workerMix["+strconv.Itoa(i)+"]", domain.KindWorker, bucket.Harness, bucket.Model)
 	}
@@ -134,7 +146,7 @@ func dedupeModelPins(in []ModelPin) []ModelPin {
 	seen := map[string]struct{}{}
 	out := make([]ModelPin, 0, len(in))
 	for _, pin := range in {
-		key := string(pin.Harness) + "\x00" + strings.TrimSpace(pin.Model) + "\x00" + pin.Scope
+		key := string(pin.Harness) + "\x00" + strings.TrimSpace(pin.Model)
 		if _, ok := seen[key]; ok {
 			continue
 		}

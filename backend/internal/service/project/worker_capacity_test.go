@@ -126,6 +126,36 @@ func TestWorkerCapacityMarksExactModelUnreachable(t *testing.T) {
 	}
 }
 
+func TestWorkerCapacityMatchesModelHealthThroughResolvedMixModel(t *testing.T) {
+	pin := modelhealth.Pin{ProjectID: "ao", Scope: "workerMix[0]", Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"}
+	svc := project.NewWorkerCapacity(workerCapacityStore{
+		project: domain.ProjectRecord{
+			ID: "ao",
+			Config: domain.ProjectConfig{
+				AgentConfig: domain.AgentConfig{ModelByHarness: map[domain.AgentHarness]domain.HarnessModel{
+					domain.HarnessCodex: {Model: "gpt-5.5-codex"},
+				}},
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 5},
+				WorkerMix:     domain.WorkerMix{{Harness: domain.HarnessCodex, Weight: 100}},
+			},
+		},
+	}, workerCapacityHealth{snapshot: agenthealth.Snapshot{
+		Harnesses: []agenthealth.HarnessHealth{{ID: string(domain.HarnessCodex), Label: "Codex", Health: agenthealth.HealthHealthy}},
+	}}, project.WithModelHealth(workerCapacityModelHealth{{
+		Pin:    pin,
+		Status: agentsvc.ModelStatusUnreachable,
+		Reason: "model unavailable",
+	}}))
+
+	got, err := svc.WorkerCapacity(context.Background(), "ao")
+	if err != nil {
+		t.Fatalf("WorkerCapacity: %v", err)
+	}
+	if len(got.Buckets) != 1 || got.Buckets[0].Model != "" || !got.Buckets[0].Down || got.Buckets[0].BlockedBy != "model" {
+		t.Fatalf("bucket = %#v, want literal empty-model bucket blocked by resolved model", got.Buckets)
+	}
+}
+
 func TestWorkerCapacityMarksReactiveLaunchFailure(t *testing.T) {
 	svc := project.NewWorkerCapacity(workerCapacityStore{
 		project: domain.ProjectRecord{

@@ -249,13 +249,15 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 				spawnFailed = true
 				continue
 			}
-			if retry.intent != nil && !retry.spawn {
+			if retry.intent != nil && (!retry.spawn || !retry.intent.AdoptsOpenPR) {
 				o.emitNotification(ctx, *retry.intent)
 			}
 			if retry.done || !retry.spawn {
 				continue
 			}
-			postSpawnIntent = retry.intent
+			if retry.intent != nil && retry.intent.AdoptsOpenPR {
+				postSpawnIntent = retry.intent
+			}
 		} else {
 			var err error
 			retry, err = o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
@@ -264,7 +266,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 				spawnFailed = true
 				continue
 			}
-			if retry.intent != nil && !retry.spawn {
+			if retry.intent != nil && (!retry.spawn || !retry.intent.AdoptsOpenPR) {
 				o.emitNotification(ctx, *retry.intent)
 			}
 			if retry.done {
@@ -274,7 +276,9 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			if !retry.spawn {
 				continue
 			}
-			postSpawnIntent = retry.intent
+			if retry.intent != nil && retry.intent.AdoptsOpenPR {
+				postSpawnIntent = retry.intent
+			}
 		}
 		bypassPool := domain.IssueLabelsBypassWorkerPool(issue.Labels)
 		if normalPoolFull && !bypassPool {
