@@ -9,6 +9,7 @@ import {
 	readFile,
 	readlink,
 	rm,
+	symlink,
 	utimes,
 	writeFile,
 } from "node:fs/promises";
@@ -21,6 +22,37 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const deployScript = path.join(repoRoot, "ops", "deploy.sh");
+
+// A systemd setting that hands the daemon prime activation. Leading whitespace is
+// significant: systemd accepts an indented directive, so the guards must too.
+const PRIME_ACTIVATION_LINE = /^[ \t]*Environment(?:File)?=.*AO_PRIME_/m;
+
+// Fold a unit into systemd's *logical* lines: a trailing backslash continues the
+// directive, and systemd skips blank/comment lines inside that continuation. Guards
+// must match what systemd reads, not how the file happens to be typed — otherwise
+// `Environment=FOO=1 \` + `# comment` + `AO_PRIME_...=x` activates prime unseen.
+const asLogicalLines = (unitBody) => {
+	const logical = [];
+	let pending = null;
+	// Strip CR first: on a CRLF unit the continuation backslash is followed by \r, so
+	// without this the directive never folds and the guard misses what systemd reads.
+	for (const raw of unitBody.replace(/\r\n/g, "\n").split("\n")) {
+		if (pending !== null && (/^[ \t]*$/.test(raw) || /^[ \t]*[#;]/.test(raw))) {
+			continue;
+		}
+		const line = pending === null ? raw : `${pending} ${raw.replace(/^[ \t]+/, "")}`;
+		if (/\\$/.test(line)) {
+			pending = line.replace(/[ \t]*\\$/, "");
+			continue;
+		}
+		pending = null;
+		logical.push(line);
+	}
+	if (pending !== null) {
+		logical.push(pending);
+	}
+	return logical.join("\n");
+};
 
 let cleanup = [];
 
@@ -194,6 +226,358 @@ describe("ao self-deploy script", () => {
 			systemctlLog,
 			/^--user enable ao\.service ao-web\.service ao-slack-notifier\.service ao-attention-reply\.service$/m,
 		);
+	});
+
+	it("installs units that leave prime activation to the operator", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		for (const unit of ["ao.service", "ao-web.service", "ao-slack-notifier.service", "ao-attention-reply.service"]) {
+			const body = await readFile(path.join(fixture.home, ".config", "systemd", "user", unit), "utf8");
+			assert.doesNotMatch(
+				asLogicalLines(body),
+				PRIME_ACTIVATION_LINE,
+				`deploy must not install a ${unit} that activates prime; prime is an operator-only runtime toggle`,
+			);
+		}
+	});
+
+	it("strips prime activation split across a systemd line continuation", async () => {
+		// systemd folds a trailing-backslash directive into one logical line and skips
+		// blank/comment lines inside it, so a per-physical-line strip would install a
+		// prime-activating unit that still reads clean. Tab-separated assignments too.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(
+				/^Delegate=yes$/m,
+				'Environment=AO_PRIME_PROJECT_ID=agent-orchestrator\t"AO_PRIME_DISPLAY_NAME=AO Prime" \\\n' +
+					"# systemd ignores this comment inside the continuation\n" +
+					"    AO_PRIME_EXTRA=1\nDelegate=yes",
+			),
+		);
+		await commitFixture(fixture.dir, "release activating prime via a continuation line");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const installed = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao.service"), "utf8");
+		assert.doesNotMatch(
+			asLogicalLines(installed),
+			PRIME_ACTIVATION_LINE,
+			"a continuation-split directive must not smuggle prime activation past the install-time strip",
+		);
+		assert.match(installed, /^ExecStart=/m, "the sanitized unit must still be a usable service");
+		assert.match(installed, /^Environment=PATH=/m, "unrelated directives must survive");
+	});
+
+	it("refuses a daemon unit whose directive mixes prime activation with other variables", async () => {
+		// Dropping the whole directive would silently strip AO_KEEP_ME and could turn an
+		// emergency rollback into a broken service; rewriting it risks corrupting a value
+		// we did not parse correctly. Neither is safe, so refuse and say why.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(/^Delegate=yes$/m, "Environment=AO_KEEP_ME=1 AO_PRIME_PROJECT_ID=x\nDelegate=yes"),
+		);
+		await commitFixture(fixture.dir, "release co-assigning prime with a required variable");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0, `deploy must refuse this unit\n${result.stdout}\n${result.stderr}`);
+		assert.match(result.stderr, /mixes prime activation with other variables/);
+	});
+
+	it("refuses a daemon unit that hides prime activation behind a backslash escape", async () => {
+		// systemd decodes C-style escapes, so `A\x4f_PRIME_PROJECT_ID` IS AO_PRIME_PROJECT_ID
+		// while containing no literal match. Rather than reimplement systemd's unescaping,
+		// treat an escape in the daemon unit as unverifiable and refuse it.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(/^Delegate=yes$/m, "Environment=A\\x4f_PRIME_PROJECT_ID=agent-orchestrator\nDelegate=yes"),
+		);
+		await commitFixture(fixture.dir, "release hiding prime behind an escape");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0, `deploy must refuse this unit\n${result.stdout}\n${result.stderr}`);
+		assert.match(result.stderr, /escaping we cannot verify|backslash escapes we cannot verify/);
+	});
+
+	it("installs a daemon unit whose unrelated directive contains a backslash", async () => {
+		// A backslash in a Description= cannot activate prime. Refusing it would abort an
+		// emergency rollback over nothing, which is the worse failure.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(/^Description=.*$/m, "Description=Agent Orchestrator daemon \\o/"),
+		);
+		await commitFixture(fixture.dir, "release with a harmless backslash");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `a harmless backslash must not refuse the unit\n${result.stdout}\n${result.stderr}`);
+		const installed = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao.service"), "utf8");
+		assert.match(installed, /^ExecStart=/m, "the unit must install unchanged");
+	});
+
+	it("still detects prime activation in a unit too large to fit a pipe buffer", async () => {
+		// The prime-free check must not be a `grep -v | grep -q` pipeline: the downstream
+		// grep exits on match, the upstream dies of SIGPIPE (141), and `set -o pipefail`
+		// turns that into "prime-free" for a unit that DOES activate prime. It only shows
+		// up once the unit is big enough that the upstream grep is still writing.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		// The padding must SURVIVE the check's own comment filter and sit AFTER the match,
+		// so the upstream grep is still writing when the downstream one exits — comments
+		// would be filtered out and never fill the pipe.
+		const padding = Array.from(
+			{ length: 4000 },
+			(_, i) => `Environment=AO_PAD_${i}=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
+		).join("\n");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			// ExecStart-smuggled prime survives sanitizing, so only the prime-free check
+			// can catch it — exactly the check the pipeline bug would have blinded.
+			cleanUnit.replace(
+				/^ExecStart=.*$/m,
+				`ExecStart=/usr/bin/env AO_PRIME_PROJECT_ID=agent-orchestrator %h/.ao/deploy/current/bin/ao daemon\n${padding}`,
+			),
+		);
+		await commitFixture(fixture.dir, "large release smuggling prime through ExecStart");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0, `deploy must refuse this unit\n${result.stdout}\n${result.stderr}`);
+		assert.match(result.stderr, /still activates prime after sanitizing/);
+	});
+
+	it("folds CRLF payloads rather than refusing them", async () => {
+		// A CRLF unit's continuation backslash is followed by \r. Left unhandled it fails
+		// to fold and then reads as an escape, refusing a unit that is merely Windows-eol.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		const withPrime = cleanUnit.replace(
+			/^Delegate=yes$/m,
+			"Environment=AO_PRIME_PROJECT_ID=agent-orchestrator\nDelegate=yes",
+		);
+		await writeFile(path.join(fixture.dir, "ops", "ao.service"), withPrime.replace(/\n/g, "\r\n"));
+		await commitFixture(fixture.dir, "CRLF release carrying prime");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `a CRLF unit must not be refused\n${result.stdout}\n${result.stderr}`);
+		const installed = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao.service"), "utf8");
+		assert.doesNotMatch(asLogicalLines(installed), PRIME_ACTIVATION_LINE, "prime must still be stripped from CRLF");
+		assert.match(installed, /^ExecStart=/m, "the sanitized unit must still be a usable service");
+	});
+
+	it("leaves every unit untouched when one of them is refused", async () => {
+		// Units are validated before any is installed, so a refusal cannot leave the host
+		// with a half-updated set (a new daemon unit beside an old web unit, say).
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		const systemdDir = path.join(fixture.home, ".config", "systemd", "user");
+		const webBefore = await readFile(path.join(systemdDir, "ao-web.service"), "utf8");
+
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(/^Delegate=yes$/m, "Environment=AO_KEEP_ME=1 AO_PRIME_PROJECT_ID=x\nDelegate=yes"),
+		);
+		await writeFile(path.join(fixture.dir, "ops", "ao-web.service"), "[Service]\nExecStart=/new-web\n");
+		await commitFixture(fixture.dir, "release whose daemon unit must be refused");
+
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0, `deploy must refuse\n${result.stdout}\n${result.stderr}`);
+		assert.equal(
+			await readFile(path.join(systemdDir, "ao-web.service"), "utf8"),
+			webBefore,
+			"a refused deploy must not have installed the other units",
+		);
+		const leftovers = (await readdir(systemdDir)).filter((f) => f.includes(".service."));
+		assert.deepEqual(leftovers, [], `refusal must not strand staged temp files: ${leftovers}`);
+	});
+
+	it("does not replay prime when restoring units after a failed install", async () => {
+		// The restore path is an install path. A host that has not taken this fix yet has a
+		// PRIME-BAKED ao.service installed, so putting the snapshot back verbatim after a
+		// failed commit would replay the exact activation this code exists to stop.
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const unitDir = path.join(fixture.home, ".config", "systemd", "user");
+		await mkdir(unitDir, { recursive: true });
+		// The prime-baked unit this host is currently running.
+		await writeFile(
+			path.join(unitDir, "ao.service"),
+			"[Service]\nExecStart=%h/.local/bin/ao daemon\nEnvironment=AO_PRIME_PROJECT_ID=agent-orchestrator\n",
+		);
+		// Make one later unit's destination un-mv-able so the commit fails part-way and
+		// the restore path runs for real.
+		await mkdir(path.join(unitDir, "ao-web.service"), { recursive: true });
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0, `the failed commit must fail the deploy\n${result.stdout}\n${result.stderr}`);
+		const restored = await readFile(path.join(unitDir, "ao.service"), "utf8");
+		assert.doesNotMatch(
+			asLogicalLines(restored),
+			PRIME_ACTIVATION_LINE,
+			"restoring the previous units must not put prime activation back",
+		);
+		const leftovers = (await readdir(unitDir)).filter((f) => f.includes(".service."));
+		assert.deepEqual(leftovers, [], `a failed commit must strand no temp files: ${leftovers}`);
+	});
+
+	it("restores a masked unit as a mask rather than deleting it", async () => {
+		// A masked unit is a symlink to /dev/null, and `-f` follows the link to a character
+		// device — so a naive existence check reports it absent and the restore deletes it,
+		// silently unmasking a unit the operator masked on purpose.
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const unitDir = path.join(fixture.home, ".config", "systemd", "user");
+		await mkdir(unitDir, { recursive: true });
+		await symlink("/dev/null", path.join(unitDir, "ao-slack-notifier.service"));
+		// Force the commit to fail part-way so the restore path runs.
+		await mkdir(path.join(unitDir, "ao-attention-reply.service"), { recursive: true });
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0, `the failed commit must fail the deploy\n${result.stdout}\n${result.stderr}`);
+		const notifier = path.join(unitDir, "ao-slack-notifier.service");
+		assert.equal((await lstat(notifier)).isSymbolicLink(), true, "the mask must be restored as a symlink");
+		assert.equal(await readlink(notifier), "/dev/null", "the mask must still point at /dev/null");
+	});
+
+	it("installs a daemon unit that explicitly unsets prime rather than refusing it", async () => {
+		// The fail-closed check must not fire on a unit that REMOVES prime. A false
+		// positive here bricks an emergency rollback, which is the likelier harm.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(/^Delegate=yes$/m, "UnsetEnvironment=AO_PRIME_PROJECT_ID\nDelegate=yes"),
+		);
+		await commitFixture(fixture.dir, "release explicitly unsetting prime");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `an explicit unset must not be refused\n${result.stdout}\n${result.stderr}`);
+		const installed = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao.service"), "utf8");
+		assert.match(installed, /^UnsetEnvironment=AO_PRIME_PROJECT_ID$/m, "the unset directive must survive");
+	});
+
+	it("strips an EnvironmentFile from the daemon unit, whose contents it cannot see", async () => {
+		// Only the daemon reads AO_PRIME_*, and its shipped unit has no EnvironmentFile.
+		// An older release could point one at a file outside this repo that sets prime,
+		// so the daemon unit gets every EnvironmentFile dropped. The notifier and
+		// attention-reply units legitimately use theirs and must keep them.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(/^Delegate=yes$/m, "EnvironmentFile=-%h/agent-orchestrator/.env\nDelegate=yes"),
+		);
+		await commitFixture(fixture.dir, "release pointing the daemon at an external env file");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const systemdDir = path.join(fixture.home, ".config", "systemd", "user");
+		const daemon = await readFile(path.join(systemdDir, "ao.service"), "utf8");
+		assert.doesNotMatch(daemon, /^[ \t]*EnvironmentFile=/m, "the daemon unit must take no external env file");
+		assert.match(daemon, /^ExecStart=/m, "the sanitized unit must still be a usable service");
+
+		const notifier = await readFile(path.join(systemdDir, "ao-slack-notifier.service"), "utf8");
+		assert.match(notifier, /^EnvironmentFile=/m, "non-daemon units must keep their legitimate EnvironmentFile");
+	});
+
+	it("refuses to install a daemon unit that activates prime through syntax it cannot sanitize", async () => {
+		// Fail closed. Enumerating every way systemd can be told to set a variable is a
+		// losing game (here: ExecStart via `env`), so anything still naming AO_PRIME_
+		// after sanitizing stops the deploy loudly rather than quietly booting prime-on.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(
+				/^ExecStart=.*$/m,
+				"ExecStart=/usr/bin/env AO_PRIME_PROJECT_ID=agent-orchestrator %h/.ao/deploy/current/bin/ao daemon",
+			),
+		);
+		await commitFixture(fixture.dir, "release smuggling prime through ExecStart");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0, `deploy must refuse this unit\n${result.stdout}\n${result.stderr}`);
+		assert.match(result.stderr, /still activates prime after sanitizing/);
+	});
+
+	it("strips prime activation when rolling back to a release whose unit still carries it", async () => {
+		// Every release built before prime activation left the unit template still
+		// has AO_PRIME_* in its rendered unit. Rollback reinstalls that release's
+		// unit verbatim, so without install-time sanitizing an unrelated rollback
+		// silently switches prime back on.
+		const fixture = await makeGitFixture();
+		const cleanUnit = await readFile(path.join(fixture.dir, "ops", "ao.service"), "utf8");
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao.service"),
+			cleanUnit.replace(
+				/^Delegate=yes$/m,
+				'Environment=AO_PRIME_PROJECT_ID=agent-orchestrator\nEnvironment="AO_PRIME_DISPLAY_NAME=AO Prime"\nDelegate=yes',
+			),
+		);
+		await commitFixture(fixture.dir, "release whose template still activates prime");
+		const primeBaked = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await writeFile(path.join(fixture.dir, "ops", "ao.service"), cleanUnit);
+		await commitFixture(fixture.dir, "prime activation removed from the template");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		web = await startFakeWeb();
+		web.setVersionRevision(primeBaked);
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"], daemonRevision: primeBaked });
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		const installed = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao.service"), "utf8");
+		assert.doesNotMatch(
+			asLogicalLines(installed),
+			PRIME_ACTIVATION_LINE,
+			"rolling back to a prime-baked release must not reinstate prime activation",
+		);
+		assert.match(installed, /^ExecStart=/m, "the rolled-back unit must still be a usable service");
 	});
 
 	it("installs frontend dependencies before restarting web when package metadata changes", async () => {
@@ -615,6 +999,39 @@ describe("ao self-deploy script", () => {
 		assert.match(systemctlLog, /^--user disable --now ao-attention-reply\.service$/m);
 	});
 
+	it("strips prime activation when restoring the pre-hermetic backup", async () => {
+		// rollback_pre_hermetic restores the host's ORIGINAL unit, which on the real host
+		// is prime-baked. It is a different code path from the release rollback, so it
+		// needs its own guard: reverting its chokepoint call must fail a test.
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const unitDir = path.join(fixture.home, ".config", "systemd", "user");
+		await mkdir(unitDir, { recursive: true });
+		await writeFile(
+			path.join(unitDir, "ao.service"),
+			"[Service]\nExecStart=%h/.local/bin/ao daemon\nEnvironment=AO_PRIME_PROJECT_ID=agent-orchestrator\n" +
+				'Environment="AO_PRIME_DISPLAY_NAME=AO Prime"\n',
+		);
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const backup = await readFile(path.join(fixture.stateDir, "pre-hermetic", "systemd", "ao.service"), "utf8");
+		assert.match(backup, PRIME_ACTIVATION_LINE, "the backup is a verbatim snapshot and still carries prime");
+
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"] });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const restored = await readFile(path.join(unitDir, "ao.service"), "utf8");
+		assert.doesNotMatch(
+			asLogicalLines(restored),
+			PRIME_ACTIVATION_LINE,
+			"restoring the pre-hermetic backup must not reinstate prime activation",
+		);
+		assert.match(restored, /%h\/\.local\/bin\/ao daemon/, "the restored unit must still be the pre-hermetic daemon");
+	});
+
 	it("refuses pre-hermetic rollback when no ao.service was backed up", async () => {
 		const fixture = await makeGitFixture();
 		await commitFixture(fixture.dir, "initial");
@@ -752,6 +1169,49 @@ describe("ao self-deploy script", () => {
 		assert.match(unit, /^Delegate=yes$/m);
 		assert.match(unit, /^KillMode=process$/m);
 		assert.match(unit, /^TimeoutStopSec=60s$/m);
+	});
+
+	it("ships unit templates that never bake prime activation into the service environment", async () => {
+		// Prime activation must stay an operator-only runtime toggle. A committed
+		// template that sets AO_PRIME_* is re-installed by every deploy, so the
+		// daemon silently boots prime-on with nobody having asked for it.
+		// Globbed, not a fixed list: a newly added unit or drop-in must be covered
+		// the day it lands, without anyone remembering to extend this test.
+		const opsDir = path.join(repoRoot, "ops");
+		const entries = await readdir(opsDir, { withFileTypes: true });
+		const templates = [];
+		for (const entry of entries) {
+			if (entry.isFile() && entry.name.endsWith(".service")) {
+				templates.push(path.join(opsDir, entry.name));
+				continue;
+			}
+			// Drop-in dirs (`<unit>.service.d/*.conf`) can set Environment= too.
+			if (entry.isDirectory() && entry.name.endsWith(".service.d")) {
+				for (const dropIn of await readdir(path.join(opsDir, entry.name))) {
+					if (dropIn.endsWith(".conf")) {
+						templates.push(path.join(opsDir, entry.name, dropIn));
+					}
+				}
+			}
+		}
+
+		assert.ok(templates.length >= 4, `expected to find the shipped unit templates, got ${templates.length}`);
+		for (const template of templates) {
+			const body = await readFile(template, "utf8");
+			assert.doesNotMatch(
+				asLogicalLines(body),
+				PRIME_ACTIVATION_LINE,
+				`${path.relative(repoRoot, template)} must not set AO_PRIME_*; deploy would re-inject it on every release`,
+			);
+		}
+	});
+
+	it("ships an ao.service that cannot be handed prime activation through an env file", async () => {
+		// Activation is env-only, so an EnvironmentFile= on the daemon unit is an
+		// injection vector whose contents this repo cannot see or guard.
+		const unit = await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8");
+
+		assert.doesNotMatch(unit, /^[ \t]*EnvironmentFile=/m, "ops/ao.service must not read an external env file");
 	});
 
 	it("waits out the transient web 502 after ao-web.service restarts instead of failing the deploy", async () => {

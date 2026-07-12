@@ -669,12 +669,270 @@ render_release_units() {
   done
 }
 
+# Rewrite a unit so it cannot hand the daemon prime activation.
+#
+# Only the daemon (ao.service) reads AO_PRIME_*, so only it is checked strictly.
+# Refusing a unit that cannot activate prime would abort an emergency rollback for
+# no gain, and a bricked rollback is a worse outcome than a stale one.
+#
+# Lines are folded into systemd's *logical* lines first — a trailing backslash
+# continues a directive and systemd skips blank/comment lines inside it — so a
+# directive is judged the way systemd reads it, not the way it happens to be typed.
+#
+# Scope. This closes the way prime actually got switched on: a plain Environment=
+# directive baked into a unit that deploy or rollback then reinstalls. It is NOT a
+# security boundary against a hostile unit author — a wrapper that assembles the
+# variable name at runtime, a systemd drop-in, or the user manager's own environment
+# all set variables from outside this file, and no amount of scanning the file sees
+# them. Enforcement against a bad *commit* lives in CI (the template guards in
+# deploy.test.mjs); this function only makes sure deploy and rollback cannot replay a
+# prime-activating payload that already exists on disk.
+#
+# Rules for the daemon unit:
+#   - Environment=: all assignments AO_PRIME_*  -> drop the directive.
+#   -               mixes prime with other vars -> refuse (dropping it would silently
+#                   strip a required variable; rewriting risks corrupting one).
+#   -               cannot be tokenized (backslash escape, single quote, unbalanced
+#                   quote) -> refuse. `A\x4f_PRIME_...` decodes to the real variable
+#                   name, so an unparseable environment directive is never assumed
+#                   innocent. Every unit on the host parses cleanly.
+#   - ExecStart= carrying a backslash -> refuse; it could decode into the variable
+#     (`/usr/bin/env A\x4f_PRIME_...=x`). No real unit has one.
+#   - EnvironmentFile= -> drop. Its contents are outside this repo. The shipped daemon
+#     unit has none (CI enforces that) and no payload on the host has one, so this is
+#     a no-op in practice rather than a way to lose required config.
+#   - Everything else is left exactly as written. In particular a backslash in a
+#     Description= or a comment is not a reason to refuse a unit.
+sanitize_unit() {
+  local src="$1"
+  local strict="$2"
+  awk -v strict="${strict}" -v src="${src}" '
+    # Split an Environment= value into assignments, honouring systemd double quotes
+    # and tab separators. Returns -1 when the value cannot be parsed unambiguously,
+    # so the caller can refuse rather than guess.
+    function tokenize(rest, toks,   i, c, cur, inq, n) {
+      n = 0; cur = ""; inq = 0
+      for (i = 1; i <= length(rest); i++) {
+        c = substr(rest, i, 1)
+        if (c == "\\" || c == "'"'"'") return -1     # escapes / single quotes: do not guess
+        if (c == "\"") { inq = !inq; continue }
+        if ((c == " " || c == "\t") && !inq) { if (cur != "") toks[++n] = cur; cur = ""; continue }
+        cur = cur c
+      }
+      if (inq) return -1                            # unbalanced quote
+      if (cur != "") toks[++n] = cur
+      return n
+    }
+    function refuse(why) {
+      printf "Refusing to install %s: %s. Prime activation is operator-only.\n", src, why > "/dev/stderr"
+      exit 1
+    }
+    function emit(line,   n, i, toks, primes, rest) {
+      if (line ~ /^[ \t]*EnvironmentFile=/) {
+        if (strict == 1) return                     # contents are outside our view
+        if (line ~ /AO_PRIME_/) return
+        print line
+        return
+      }
+      if (line ~ /^[ \t]*Environment=/) {
+        match(line, /^[ \t]*Environment=/)
+        rest = substr(line, RLENGTH + 1)
+        n = tokenize(rest, toks)
+        if (n < 0) {
+          if (strict == 1) refuse("an Environment= directive uses escaping we cannot verify")
+          print line
+          return
+        }
+        primes = 0
+        for (i = 1; i <= n; i++) if (toks[i] ~ /^AO_PRIME_/) primes++
+        if (primes == 0) { print line; return }
+        if (primes == n) return                     # the whole directive was prime
+        if (strict == 1) refuse("an Environment= directive mixes prime activation with other variables")
+        print line
+        return
+      }
+      # An escape here could decode into the activating variable name.
+      if (strict == 1 && line ~ /^[ \t]*ExecStart=/ && line ~ /\\/)
+        refuse("its ExecStart= uses backslash escapes we cannot verify")
+      print line
+    }
+    {
+      sub(/\r$/, "")                                # tolerate CRLF payloads
+      if (cont) {
+        if ($0 ~ /^[ \t]*$/ || $0 ~ /^[ \t]*[#;]/) next   # systemd skips these inside a continuation
+        sub(/^[ \t]+/, "")
+        logical = logical " " $0
+      } else {
+        logical = $0
+      }
+      if (logical ~ /\\$/) { sub(/[ \t]*\\$/, "", logical); cont = 1; next }
+      cont = 0
+      emit(logical)
+      logical = ""
+    }
+    END { if (logical != "") emit(logical) }
+  ' "${src}"
+}
+
+# True when the daemon unit provably cannot activate prime. Comments may name the
+# variables, and UnsetEnvironment= removes them rather than setting them; anything
+# else still naming AO_PRIME_ is syntax we did not model and must not be installed.
+#
+# Deliberately a single awk rather than `grep -v ... | grep -q ...`: in that pipeline
+# the downstream grep exits as soon as it matches, the upstream grep then dies of
+# SIGPIPE (141), and under `set -o pipefail` the pipeline reports failure -- which the
+# leading `!` would invert into "prime-free" for a unit that DOES activate prime.
+unit_is_prime_free() {
+  ! awk '
+    /^[[:space:]]*[#;]/ { next }
+    /^[[:space:]]*UnsetEnvironment=/ { next }
+    /AO_PRIME_/ { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$1"
+}
+
+# Sanitize a unit into ${dst}, or fail without touching ${dst}.
+stage_unit_file() {
+  local src="$1"
+  local dst="$2"
+  local unit="$3"
+  local strict=0
+  [[ "${unit}" == "${ao_unit}" ]] && strict=1
+
+  if ! sanitize_unit "${src}" "${strict}" > "${dst}"; then
+    return 1
+  fi
+  # Only the daemon can act on AO_PRIME_*, so only it fails closed.
+  if [[ "${strict}" == "1" ]] && ! unit_is_prime_free "${dst}"; then
+    printf 'Refusing to install %s: it still activates prime after sanitizing (unrecognized syntax in %s). Prime activation is operator-only.\n' \
+      "${unit}" "${src}" >&2
+    return 1
+  fi
+  chmod 644 "${dst}"
+}
+
+# Install one unit, dropping any setting that would hand the daemon prime activation.
+install_unit_file() {
+  local src="$1"
+  local dst="$2"
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: %s\n' "$(quote_cmd cp "${src}" "${dst}")"
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp "${dst}.XXXXXX")"
+  if ! stage_unit_file "${src}" "${tmp}" "$(basename -- "${dst}")"; then
+    rm -f -- "${tmp}"
+    return 1
+  fi
+  if ! mv -Tf "${tmp}" "${dst}"; then
+    rm -f -- "${tmp}"
+    return 1
+  fi
+}
+
+# Put a snapshot of the previously installed units back after a failed commit.
+#
+# The snapshot is re-sanitized on the way in. A host that has not yet taken this fix
+# has a PRIME-BAKED ao.service installed, so restoring the snapshot verbatim would
+# replay the very activation this code exists to stop — the restore path is an
+# install path and gets the same guarantee. A unit absent from the snapshot did not
+# exist before the commit, so remove it rather than leaving it stranded.
+restore_units() {
+  local backup="$1"
+  shift
+  local unit tmp
+  for unit in "$@"; do
+    if [[ -L "${backup}/${unit}" ]]; then
+      # A masked/symlinked unit has no content to sanitize — put the link back as it was.
+      rm -f -- "${systemd_user_dir}/${unit}"
+      cp -a "${backup}/${unit}" "${systemd_user_dir}/${unit}" || printf 'Could not restore %s\n' "${unit}" >&2
+      continue
+    fi
+    if [[ -f "${backup}/${unit}" ]]; then
+      if ! tmp="$(mktemp "${systemd_user_dir}/${unit}.XXXXXX")"; then
+        printf 'Could not restore %s\n' "${unit}" >&2
+        continue
+      fi
+      if stage_unit_file "${backup}/${unit}" "${tmp}" "${unit}" && mv -Tf "${tmp}" "${systemd_user_dir}/${unit}"; then
+        continue
+      fi
+      rm -f -- "${tmp}"
+      # The unit now installed was validated prime-free, so leaving it is safe.
+      printf 'Could not restore %s; leaving the newly installed unit in place\n' "${unit}" >&2
+    else
+      rm -f -- "${systemd_user_dir}/${unit}" 2>/dev/null || true
+    fi
+  done
+}
+
+# Sanitize and validate EVERY unit before installing ANY of them, so a refusal
+# cannot leave the host with a half-updated set of units.
 install_units_from_current() {
   run mkdir -p "${systemd_user_dir}"
-  run cp "${current_link}/systemd/${ao_unit}" "${systemd_user_dir}/${ao_unit}"
-  run cp "${current_link}/systemd/${web_unit}" "${systemd_user_dir}/${web_unit}"
-  run cp "${current_link}/systemd/${notifier_unit}" "${systemd_user_dir}/${notifier_unit}"
-  run cp "${current_link}/systemd/${attention_reply_unit}" "${systemd_user_dir}/${attention_reply_unit}"
+  local units=("${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}")
+  local unit
+
+  if [[ "${dry_run}" == "1" ]]; then
+    for unit in "${units[@]}"; do
+      printf 'DRY-RUN: %s\n' "$(quote_cmd cp "${current_link}/systemd/${unit}" "${systemd_user_dir}/${unit}")"
+    done
+  else
+    local staged=()
+    local tmp
+    local failed=0
+    for unit in "${units[@]}"; do
+      # A mktemp failure must not strand the temps already staged.
+      if ! tmp="$(mktemp "${systemd_user_dir}/${unit}.XXXXXX")"; then
+        failed=1
+        break
+      fi
+      staged+=("${tmp}")
+      if ! stage_unit_file "${current_link}/systemd/${unit}" "${tmp}" "${unit}"; then
+        failed=1
+        break
+      fi
+    done
+    if (( failed )); then
+      [[ ${#staged[@]} -gt 0 ]] && rm -f -- "${staged[@]}"
+      return 1
+    fi
+
+    # Every unit is validated by here. Snapshot whatever is installed so a failure
+    # part-way through the commit restores the previous set rather than leaving a
+    # new daemon unit beside an old web unit.
+    local backup
+    if ! backup="$(mktemp -d)"; then
+      rm -f -- "${staged[@]}"
+      return 1
+    fi
+    for unit in "${units[@]}"; do
+      # -L before -e: a MASKED unit is a symlink to /dev/null, and `-f` follows the
+      # link to a character device, reporting the unit as absent. Snapshot the link
+      # itself (cp -a) so a restore can put the mask back instead of deleting it.
+      if [[ -L "${systemd_user_dir}/${unit}" || -e "${systemd_user_dir}/${unit}" ]]; then
+        if ! cp -a "${systemd_user_dir}/${unit}" "${backup}/${unit}"; then
+          rm -f -- "${staged[@]}"
+          rm -rf -- "${backup}"
+          return 1
+        fi
+      fi
+    done
+
+    local i=0
+    for unit in "${units[@]}"; do
+      if ! mv -Tf "${staged[i]}" "${systemd_user_dir}/${unit}"; then
+        printf 'Failed to install %s; restoring the previous units\n' "${unit}" >&2
+        restore_units "${backup}" "${units[@]}"
+        rm -f -- "${staged[@]}"
+        rm -rf -- "${backup}"
+        return 1
+      fi
+      i=$((i + 1))
+    done
+    rm -rf -- "${backup}"
+  fi
+
   run systemctl --user daemon-reload
   run systemctl --user enable "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"
 }
@@ -723,7 +981,7 @@ rollback_pre_hermetic() {
   local unit
   for unit in "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
     if [[ "${dry_run}" == "1" || -f "${pre_hermetic_dir}/systemd/${unit}" ]]; then
-      run cp "${pre_hermetic_dir}/systemd/${unit}" "${systemd_user_dir}/${unit}"
+      install_unit_file "${pre_hermetic_dir}/systemd/${unit}" "${systemd_user_dir}/${unit}"
     elif [[ -f "${systemd_user_dir}/${unit}" ]]; then
       run systemctl --user disable --now "${unit}"
       run rm -f "${systemd_user_dir}/${unit}"
