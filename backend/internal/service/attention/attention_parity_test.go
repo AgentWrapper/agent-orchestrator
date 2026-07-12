@@ -1,16 +1,18 @@
-package controllers
+package attention
 
 // Phase 0 of issue #268 (Refactor notifications and operator attention around
 // one canonical projection).
 //
 // This file is the PARITY CONTRACT for the operator-attention projection. It
 // pins the complete "operator-attention story" as a pure, table-driven test
-// that drives deriveOperatorAttention directly — no HTTP, no DB, no Slack.
+// that drives the attention Service (ListOperator) directly — no HTTP, no DB,
+// no Slack.
 //
 // Why it exists, and what later phases owe it:
-//   - Phase 1 extracts deriveOperatorAttention out of this controller into a
-//     transport-neutral service/attention owner. That refactor MUST keep every
-//     row here green; the rows are the behavior being preserved.
+//   - Phase 1 (DONE) extracted deriveOperatorAttention out of the httpd
+//     controller into this transport-neutral service/attention owner. The
+//     contract moved with the logic and every row stayed green; the rows are the
+//     behavior being preserved.
 //   - Phase 5 deletes the duplicate JS classifiers (ops/attention-core.mjs,
 //     ops/what-needs-me.mjs, and the urgency re-derivation in
 //     ops/ao-slack-notifier.mjs). Per #271's canonical architecture, that
@@ -42,10 +44,10 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
-// parityFakeAttentionService is a minimal in-package implementation of the two
-// derivation collaborators (AttentionSessionService and NotificationService).
-// It is deliberately separate from the external controllers_test fake so this
-// parity contract stands alone and travels with the derivation logic in Phase 1.
+// parityFakeAttentionService is a minimal implementation of the two derivation
+// collaborators (SessionReader and NotificationReader). It lets the parity
+// contract drive the Service with no HTTP, DB, or Slack, and it travels with the
+// derivation logic (moved here from the controller in Phase 1).
 type parityFakeAttentionService struct {
 	sessions        []domain.Session
 	decisions       map[domain.SessionID]domain.PendingDecision
@@ -441,9 +443,9 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := tc.build()
-			items, err := deriveOperatorAttention(context.Background(), svc, svc)
+			items, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background())
 			if err != nil {
-				t.Fatalf("deriveOperatorAttention: unexpected error: %v", err)
+				t.Fatalf("ListOperator: unexpected error: %v", err)
 			}
 			assertProjectionEquals(t, items, tc.want)
 		})
@@ -468,7 +470,7 @@ func TestOperatorAttentionParity_PRExclusionsAreIsolated(t *testing.T) {
 		sess, pr := mergeReadyPRSession("base", "ao", url, 910, now, now)
 		svc.sessions = []domain.Session{sess}
 		svc.prSummaries = map[domain.SessionID][]sessionsvc.PRSummary{"base": {pr}}
-		items, err := deriveOperatorAttention(context.Background(), svc, svc)
+		items, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background())
 		if err != nil {
 			t.Fatalf("derive: %v", err)
 		}
@@ -538,7 +540,7 @@ func TestOperatorAttentionParity_PRExclusionsAreIsolated(t *testing.T) {
 			f.flip(&sess, &pr)
 			svc.sessions = []domain.Session{sess}
 			svc.prSummaries = map[domain.SessionID][]sessionsvc.PRSummary{"x": {pr}}
-			items, err := deriveOperatorAttention(context.Background(), svc, svc)
+			items, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background())
 			if err != nil {
 				t.Fatalf("derive: %v", err)
 			}
@@ -567,7 +569,7 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 				"live":       {livePR},
 			},
 		}
-		items, err := deriveOperatorAttention(context.Background(), svc, svc)
+		items, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background())
 		if err != nil {
 			t.Fatalf("derive: %v", err)
 		}
@@ -609,7 +611,7 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 		} {
 			t.Run(order.name, func(t *testing.T) {
 				svc := &parityFakeAttentionService{notifications: order.input}
-				items, err := deriveOperatorAttention(context.Background(), svc, svc)
+				items, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background())
 				if err != nil {
 					t.Fatalf("derive: %v", err)
 				}
@@ -628,7 +630,7 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 				}},
 			},
 		}
-		items, err := deriveOperatorAttention(context.Background(), svc, svc)
+		items, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background())
 		if err != nil {
 			t.Fatalf("derive: %v", err)
 		}
@@ -641,7 +643,7 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 
 // assertProjectionEquals checks the projection matches want exactly: same
 // length, same order, and every asserted field on each item.
-func assertProjectionEquals(t *testing.T, items []OperatorAttentionItem, want []parityExpect) {
+func assertProjectionEquals(t *testing.T, items []Item, want []parityExpect) {
 	t.Helper()
 	if len(items) != len(want) {
 		t.Fatalf("projection size = %d, want %d; got IDs %v", len(items), len(want), idsOf(items))
@@ -683,7 +685,7 @@ func assertProjectionEquals(t *testing.T, items []OperatorAttentionItem, want []
 	}
 }
 
-func idsOf(items []OperatorAttentionItem) []string {
+func idsOf(items []Item) []string {
 	out := make([]string, 0, len(items))
 	for _, it := range items {
 		out = append(out, it.ID)

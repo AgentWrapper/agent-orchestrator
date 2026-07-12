@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	attentionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/attention"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
@@ -78,7 +79,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Svc:      deps.Sessions,
 			Activity: deps.Activity,
 		},
-		attention:     &controllers.AttentionController{Svc: deps.Sessions, Notifications: deps.Notifications},
+		attention:     &controllers.AttentionController{Svc: newOperatorAttentionService(deps)},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
@@ -87,6 +88,18 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		metrics:       &controllers.MetricsController{Provider: deps.Metrics},
 		version:       &controllers.VersionController{},
 	}
+}
+
+// newOperatorAttentionService builds the attention projection owner for the
+// controller. When no session read surface is configured it returns a nil
+// controllers.OperatorAttentionService so the controller's nil-service guard
+// still responds 501 NOT_IMPLEMENTED — preserving the pre-extraction contract
+// (the projection cannot be derived without sessions).
+func newOperatorAttentionService(deps APIDeps) controllers.OperatorAttentionService {
+	if deps.Sessions == nil {
+		return nil
+	}
+	return attentionsvc.New(attentionsvc.Deps{Sessions: deps.Sessions, Notifications: deps.Notifications})
 }
 
 // Register mounts the bounded /api/v1 REST surface. Long-lived surfaces such
