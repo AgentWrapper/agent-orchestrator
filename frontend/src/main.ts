@@ -27,7 +27,7 @@ import {
 	type UpdateStatus,
 } from "./main/update-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -755,15 +755,39 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 				return keepDaemonLogFd !== undefined ? ["ignore", keepDaemonLogFd, keepDaemonLogFd] : "ignore";
 			})()
 		: "pipe";
-	const child = spawn(launch.command, launch.args, {
-		cwd: launch.cwd,
-		env: daemonEnv(),
-		shell: launch.shell,
-		detached: true,
-		// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
-		windowsHide: true,
-		stdio,
-	});
+	let child: ChildProcess;
+	try {
+		child = spawn(launch.command, launch.args, {
+			cwd: launch.cwd,
+			env: daemonEnv(),
+			shell: launch.shell,
+			detached: true,
+			// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
+			windowsHide: true,
+			stdio,
+		});
+	} catch (err) {
+		// spawn can throw synchronously for invalid args; don't leak the log fd.
+		if (keepDaemonLogFd !== undefined) {
+			try {
+				closeSync(keepDaemonLogFd);
+			} catch {
+				// best-effort — the throw below is the real error
+			}
+		}
+		throw err;
+	}
+	// The child inherited its own copy of the log fd via stdio at spawn time;
+	// close the parent's copy now so each keep-alive start/stop cycle does not
+	// accumulate open descriptors until the process limit.
+	if (keepDaemonLogFd !== undefined) {
+		try {
+			closeSync(keepDaemonLogFd);
+		} catch {
+			// best-effort — the child still holds its inherited copy
+		}
+		keepDaemonLogFd = undefined;
+	}
 	if (keep) child.unref();
 	daemonProcess = child;
 

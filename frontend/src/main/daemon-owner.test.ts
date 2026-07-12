@@ -39,13 +39,23 @@ describe("keepDaemonAlive", () => {
 		expect(keepDaemonAlive({ AO_KEEP_DAEMON: "" })).toBe(false);
 	});
 
-	it.each(["1", "true", "TRUE", "yes", "on"])("returns true for truthy value %j", (value) => {
+	it.each(["1", "true", "TRUE", "yes", "on", "ON", "Yes"])("returns true for truthy value %j", (value) => {
 		expect(keepDaemonAlive({ AO_KEEP_DAEMON: value })).toBe(true);
 	});
 
-	it.each(["0", "false", "FALSE"])("returns false for explicit off value %j", (value) => {
+	// Explicit allowlist (PR #2231 review): conventional falsy values and any
+	// unrecognized string must NOT retain the daemon — "off"/"no" previously
+	// fell through the old "anything but 0/false" check and kept it alive.
+	it.each(["0", "false", "FALSE", "off", "OFF", "no", "No"])("returns false for conventional off value %j", (value) => {
 		expect(keepDaemonAlive({ AO_KEEP_DAEMON: value })).toBe(false);
 	});
+
+	it.each(["2", "random", "yep", "disable"])(
+		"returns false for unrecognized value %j (allowlist, not truthiness)",
+		(value) => {
+			expect(keepDaemonAlive({ AO_KEEP_DAEMON: value })).toBe(false);
+		},
+	);
 
 	it("trims surrounding whitespace before evaluating", () => {
 		expect(keepDaemonAlive({ AO_KEEP_DAEMON: "  0  " })).toBe(false);
