@@ -335,12 +335,16 @@ describe("ao Slack notifier replay/dedup", () => {
 		await writeFile(
 			stateFile,
 			JSON.stringify({
-				seen: ["needs_input|ao|agent-1|2026-07-12T00:00:00Z|waiting|"],
+				seen: [
+					"needs_input|ao|agent-1|2026-07-12T00:00:00Z|waiting|",
+					"ready_to_merge|ao|agent-2|2026-07-12T00:01:00Z|ready|https://github.example/pr/2",
+				],
 				attentionTracker: {
 					open: [["ao/agent-1#needs_input", { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true }]],
 				},
 				postedSignatures: {
 					"main_ci_red|ao|main||0|sha-main": 123,
+					"ready_to_merge|ao|agent-2|https://github.example/pr/2|0|sha-pr": 456,
 				},
 				needsResponseMessages: {
 					"ao/agent-1#needs_input": {
@@ -349,6 +353,18 @@ describe("ao Slack notifier replay/dedup", () => {
 						text: "waiting",
 						record: { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true },
 					},
+					"ao/agent-2#parked_sensitive_merge": {
+						ts: "2.3",
+						channel: "C",
+						text: "ready",
+						record: {
+							kind: "parked_sensitive_merge",
+							sessionId: "agent-2",
+							projectId: "ao",
+							url: "https://github.example/pr/2",
+							attention: true,
+						},
+					},
 				},
 			}),
 			"utf8",
@@ -356,6 +372,9 @@ describe("ao Slack notifier replay/dedup", () => {
 
 		const state = loadState(stateFile);
 		assert.ok(state.seen.has("needs_input|ao|session:agent-1|2026-07-12T00:00:00Z|waiting|"));
+		assert.ok(
+			state.seen.has("ready_to_merge|ao|pr:https://github.example/pr/2|2026-07-12T00:01:00Z|ready|https://github.example/pr/2"),
+		);
 		assert.ok(
 			state.attentionTracker.isOpen({
 				kind: "needs_input",
@@ -367,7 +386,18 @@ describe("ao Slack notifier replay/dedup", () => {
 			}),
 		);
 		assert.equal(state.postedSignatures["main_ci_red|ao|project:ao||0|sha-main"], 123);
+		const migratedPrSignature = contentSignature({
+			type: "ready_to_merge",
+			projectId: "ao",
+			sessionId: "agent-2",
+			prUrl: "https://github.example/pr/2",
+			subject: { kind: "pr", id: "https://github.example/pr/2" },
+			headSha: "sha-pr",
+		});
+		assert.equal(migratedPrSignature, "ready_to_merge|ao|pr:https://github.example/pr/2|https://github.example/pr/2|0|sha-pr");
+		assert.equal(state.postedSignatures[migratedPrSignature], 456);
 		assert.ok(state.needsResponseMessages["ao/session:agent-1#needs_input"]);
+		assert.ok(state.needsResponseMessages["ao/pr:https://github.example/pr/2#parked_sensitive_merge|https://github.example/pr/2"]);
 	});
 
 	it("catch-up posts unread notifications once and persists seen ids", async () => {
@@ -624,7 +654,13 @@ describe("ao Slack notifier needs-response routing", () => {
 			mentionUserId: "U123",
 			notifyChannel: "C-notify",
 			needsResponseChannel: "C-needs",
-			postMessage: async (text, opts = {}) => posts.push({ text, channel: opts.channel }),
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: "m1" };
+			},
+			updateMessage: async () => {
+				throw new Error("worker_retry_exhausted should not be resolved by session polling");
+			},
 			fetchImpl: async (url, init = {}) => {
 				if (init.method === "PATCH") {
 					marked.push(url.split("/").at(-1));
@@ -649,6 +685,13 @@ describe("ao Slack notifier needs-response routing", () => {
 		assert.match(posts[0].text, /worker_retry_exhausted/);
 		assert.equal(posts[0].channel, "C-needs");
 		assert.deepEqual(marked, ["exhausted"]);
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 1);
+		assert.equal(notifier.state.attentionTracker.pending().length, 0);
+
+		await notifier.pollSessionAttention();
+		await notifier.pollSessionAttention();
+
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 1);
 	});
 
 	it("edits the original needs-response message when a session wait clears", async () => {

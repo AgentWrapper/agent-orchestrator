@@ -143,6 +143,9 @@ export function signature(rec) {
 function attentionSubject(rec) {
 	if (rec?.subjectKind && rec?.subjectId) return { kind: rec.subjectKind, id: rec.subjectId };
 	if (rec?.kind === "main_ci_red" && rec?.projectId) return { kind: "project", id: rec.projectId };
+	if ((rec?.kind === "parked_sensitive_merge" || rec?.kind === "ready_to_merge") && rec?.url) {
+		return { kind: "pr", id: rec.url };
+	}
 	if (rec?.sessionId) return { kind: "session", id: rec.sessionId };
 	return { kind: "", id: "" };
 }

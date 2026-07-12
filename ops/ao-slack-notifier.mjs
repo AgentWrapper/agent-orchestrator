@@ -457,7 +457,7 @@ function normalizeNeedsResponseMessages(raw) {
 	for (const [sig, msg] of Object.entries(raw)) {
 		if (!msg || typeof msg !== "object") continue;
 		const record = msg.record && typeof msg.record === "object" ? msg.record : null;
-		const key = record ? signature(record) : migrateAttentionSignature(sig);
+		const key = record ? needsResponseSignature(record) : migrateAttentionSignature(sig);
 		out[key] = {
 			ts: String(msg.ts ?? ""),
 			channel: String(msg.channel ?? ""),
@@ -472,7 +472,8 @@ function normalizeNeedsResponseMessages(raw) {
 function migratePipeSubjectKey(key) {
 	const parts = String(key ?? "").split("|");
 	if (parts.length < 3 || parts[2].includes(":")) return String(key ?? "");
-	parts[2] = legacySubjectKey(parts[0], parts[1], parts[2]);
+	const prUrl = [parts[3], parts[5]].find((part) => looksLikeURL(part)) ?? "";
+	parts[2] = legacySubjectKey(parts[0], parts[1], parts[2], prUrl);
 	return parts.join("|");
 }
 
@@ -483,9 +484,20 @@ function migrateAttentionSignature(key) {
 	return `${match[1]}/${legacySubjectKey(match[3], match[1], match[2])}#${match[3]}`;
 }
 
-function legacySubjectKey(type, projectId, sessionId) {
+function legacySubjectKey(type, projectId, sessionId, prUrl = "") {
 	if (type === "main_ci_red") return `project:${projectId}`;
+	if (prUrl && PR_SUBJECT_TYPES.has(type)) return `pr:${prUrl}`;
 	return `session:${sessionId}`;
+}
+
+const PR_SUBJECT_TYPES = new Set(["ready_to_merge", "parked_sensitive_merge", "pr_merged", "pr_closed_unmerged", "duplicate_pr"]);
+
+function looksLikeURL(value) {
+	return /^https?:\/\//.test(String(value ?? ""));
+}
+
+function isPollBackedAttention(rec) {
+	return rec?.kind === "needs_input" || POLL_ALERT_KINDS.has(rec?.kind);
 }
 
 export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
@@ -621,7 +633,7 @@ export class SlackNotificationNotifier {
 			const msg = shouldPost && !suppressed && !rec ? describeSlackMessage(raw, this.mentionUserId) : null;
 			if (shouldPost && !suppressed && !rec && !msg) return false;
 			if (rec) {
-				await this.postNeedsResponse(rec, { trackWithSessionAttention: rec.kind !== "parked_sensitive_merge" });
+				await this.postNeedsResponse(rec, { trackWithSessionAttention: isPollBackedAttention(rec) });
 				this.recordPostedSignature(raw);
 			} else if (msg) {
 				await this.postMessage(msg, { channel: this.notifyChannel });
