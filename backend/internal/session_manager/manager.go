@@ -3308,10 +3308,6 @@ func (m *Manager) deliverRestorePrompt(ctx context.Context, agent ports.Agent, h
 	}
 }
 
-func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, title string) error {
-	return m.deliverLaunchTitleWithReadiness(ctx, agent, handle, title, true)
-}
-
 func (m *Manager) deliverLaunchTitleAfterReady(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, title string) error {
 	return m.deliverLaunchTitleWithReadiness(ctx, agent, handle, title, false)
 }

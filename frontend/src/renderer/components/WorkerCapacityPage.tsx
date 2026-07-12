@@ -207,7 +207,9 @@ function BucketTable({ buckets }: { buckets: WorkerCapacityBucket[] }) {
 							<TableCell>
 								<div className="flex max-w-[220px] flex-col gap-1">
 									<Badge variant={meta.variant}>{meta.label}</Badge>
-									{bucket.reason ? <span className="truncate text-[11px] text-muted-foreground">{bucket.reason}</span> : null}
+									{bucket.reason ? (
+										<span className="truncate text-[11px] text-muted-foreground">{bucket.reason}</span>
+									) : null}
 								</div>
 							</TableCell>
 							<TableCell className="text-right font-mono text-[11px] text-muted-foreground">
