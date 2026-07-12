@@ -102,7 +102,10 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		}
 	}
 
-	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Config); err != nil {
+	if strings.TrimSpace(cfg.SystemPrompt) != "" && strings.TrimSpace(cfg.SystemPromptFile) == "" {
+		return fmt.Errorf("kiro.GetAgentHooks: %w", errors.New("kiro: system prompt file required to build agent config"))
+	}
+	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, "", cfg.SystemPromptFile, cfg.Config); err != nil {
 		return fmt.Errorf("kiro.GetAgentHooks: %w", err)
 	}
 	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), kiroAgentFileName); err != nil {
@@ -257,10 +260,10 @@ func setKiroAgentDefaults(topLevel map[string]json.RawMessage, systemPrompt, sys
 		"toolsSettings":  map[string]any{},
 		"includeMcpJson": true,
 	}
-	if promptFile := strings.TrimSpace(systemPromptFile); promptFile != "" {
+	if strings.TrimSpace(systemPrompt) != "" {
+		defaults["prompt"] = systemPrompt
+	} else if promptFile := strings.TrimSpace(systemPromptFile); promptFile != "" {
 		defaults["prompt"] = "file://" + filepath.ToSlash(promptFile)
-	} else if strings.TrimSpace(systemPrompt) != "" {
-		return errors.New("kiro: system prompt file required to build agent config")
 	}
 	if model := strings.TrimSpace(agentConfig.Model); model != "" {
 		defaults["model"] = model

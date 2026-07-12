@@ -204,7 +204,7 @@ func kiroAgentFlag(inlinePrompt, promptFile, workspacePath string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	if err := writeKiroHooks(agentPath, topLevel, rawHooks, prompt, ports.AgentConfig{}); err != nil {
+	if err := writeKiroHooks(agentPath, topLevel, rawHooks, prompt, promptFile, ports.AgentConfig{}); err != nil {
 		return "", err
 	}
 	return kiroPromptAgentName, nil

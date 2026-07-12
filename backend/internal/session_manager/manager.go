@@ -1557,6 +1557,9 @@ USER MESSAGE:
 // and a blocked signal (else an Enter meant to resubmit a draft could answer a
 // permission dialog the harness cannot report).
 func (m *Manager) harnessNudgeSafe(harness domain.AgentHarness) bool {
+	if m.agents == nil {
+		return false
+	}
 	agent, ok := m.agents.Agent(harness)
 	if !ok {
 		return false
