@@ -1,12 +1,12 @@
 import type { ITheme } from "@xterm/xterm";
 
-/** Read a CSS custom property from :root (tokens.css). */
+/** Read a CSS custom property from :root (`design-system.generated.css`). */
 function cssVar(name: string): string {
 	if (typeof document === "undefined") return "";
 	return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-/** xterm palettes harmonized to tokens.css (--color-term-* / semantic colors). */
+/** xterm palettes harmonized to design tokens (--color-term-* / semantic colors). */
 export function buildTerminalThemes(): { dark: ITheme; light: ITheme } {
 	const dark: ITheme = {
 		background: cssVar("--color-bg-terminal"),

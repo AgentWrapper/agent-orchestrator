@@ -9,10 +9,9 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // macOS-only titlebar cluster (sidebar toggle + history arrows) pinned beside
 // the traffic lights, VS Code-style. Approved divergence from the web
 // reference, which has no window chrome (DESIGN.md banner, 2026-06-10).
-// Rendered once by the shell as a fixed overlay (.titlebar-nav in styles.css)
-// over the full-width topbar's left inset, so the buttons occupy the exact
-// same spot whether the sidebar is expanded or collapsed; the topbar starts
-// its content past the cluster (.is-under-titlebar-nav).
+// Rendered once by the shell as a fixed overlay over the full-width topbar's
+// left inset, so the buttons occupy the exact same spot whether the sidebar is
+// expanded or collapsed; the topbar starts its content past the cluster.
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
