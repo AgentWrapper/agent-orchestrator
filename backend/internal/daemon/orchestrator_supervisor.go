@@ -257,7 +257,16 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 	if primeProjectID == "" {
 		return
 	}
-	wakeInterval := primeWakeInterval(ctx, primeProjectID, projects, log)
+	projectConfig, hasProjectConfig := primeProjectConfig(ctx, primeProjectID, projects, log)
+	if !hasProjectConfig {
+		log.Debug("prime-supervisor: prime host project config unavailable; skipping ensure", "project", primeProjectID)
+		return
+	}
+	if hasProjectConfig && projectConfig.Prime.Harness == "" {
+		log.Debug("prime-supervisor: prime disabled; configure project prime.agent to enable", "project", primeProjectID)
+		return
+	}
+	wakeInterval := primeWakeInterval(primeProjectID, projectConfig, log)
 	prime, err := sessions.SpawnPrime(ctx, primeProjectID, false)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -309,29 +318,34 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 	}
 }
 
-func primeWakeInterval(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, log *slog.Logger) time.Duration {
+func primeProjectConfig(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, log *slog.Logger) (domain.ProjectConfig, bool) {
 	if projects == nil {
-		return domain.DefaultOrchestratorWakeInterval
+		return domain.ProjectConfig{}, false
 	}
 	summaries, err := projects.List(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Warn("prime-supervisor: list projects for wake interval failed; using default", "project", primeProjectID, "err", err)
+			log.Warn("prime-supervisor: list projects for prime config failed; skipping ensure", "project", primeProjectID, "err", err)
 		}
-		return domain.DefaultOrchestratorWakeInterval
+		return domain.ProjectConfig{}, false
 	}
 	for _, project := range summaries {
 		if project.ID != primeProjectID {
 			continue
 		}
-		interval, err := project.Config.WithDefaults().Prime.WakeIntervalDuration()
-		if err != nil {
-			log.Warn("prime-supervisor: invalid wake interval; using default", "project", primeProjectID, "err", err)
-			return domain.DefaultOrchestratorWakeInterval
-		}
-		return interval
+		return project.Config.WithDefaults(), true
 	}
-	return domain.DefaultOrchestratorWakeInterval
+	log.Debug("prime-supervisor: prime host project not found; skipping ensure", "project", primeProjectID)
+	return domain.ProjectConfig{}, false
+}
+
+func primeWakeInterval(primeProjectID domain.ProjectID, projectConfig domain.ProjectConfig, log *slog.Logger) time.Duration {
+	interval, err := projectConfig.Prime.WakeIntervalDuration()
+	if err != nil {
+		log.Warn("prime-supervisor: invalid wake interval; using default", "project", primeProjectID, "err", err)
+		return domain.DefaultOrchestratorWakeInterval
+	}
+	return interval
 }
 
 func (w *orchestratorWakeTracker) recordWakeAttempt(projectID domain.ProjectID, session domain.Session, now time.Time) orchestratorWakeState {

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -1421,7 +1422,7 @@ func TestStartPrimeSupervisorEnsuresConfiguredPrimeProject(t *testing.T) {
 	defer cancel()
 
 	ensurer := &fakeOrchestratorEnsurer{}
-	done := startPrimeSupervisor(ctx, config.Config{PrimeProjectID: "ao"}, fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao"}}}, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	done := startPrimeSupervisor(ctx, config.Config{PrimeProjectID: "ao"}, fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}, ensurer, nil, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -1457,7 +1458,7 @@ func TestEnsurePrimeWakesIdlePrime(t *testing.T) {
 		},
 	}}}
 
-	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao"}}}, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.sends) != 1 {
 		t.Fatalf("sends = %#v, want one prime wake", sessions.sends)
@@ -1471,7 +1472,7 @@ func TestEnsurePrimeHonorsConfiguredWakeInterval(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
 		ID:     "ao",
-		Config: domain.ProjectConfig{Prime: domain.RoleOverride{WakeInterval: "45m"}},
+		Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex, WakeInterval: "45m"}},
 	}}}
 	sessions := &fakeOrchestratorEnsurer{send: true, sessions: []domain.Session{{
 		SessionRecord: domain.SessionRecord{
@@ -1501,6 +1502,66 @@ func TestEnsurePrimeHonorsConfiguredWakeInterval(t *testing.T) {
 	}
 }
 
+func TestEnsurePrimeMissingHarnessDoesNotWarnEveryTick(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	sessions := &fakeOrchestratorEnsurer{}
+	var logs bytes.Buffer
+
+	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao"}}}, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	if strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "prime-supervisor: ensure prime failed") {
+		t.Fatalf("logs = %q, want missing prime harness to disable quietly", logs.String())
+	}
+	if len(sessions.primeCalls) != 0 {
+		t.Fatalf("prime calls = %v, want none when prime.agent is unset", sessions.primeCalls)
+	}
+}
+
+func TestEnsurePrimeMissingHostProjectDoesNotSpawn(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	sessions := &fakeOrchestratorEnsurer{}
+	var logs bytes.Buffer
+
+	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	if strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "prime-supervisor: ensure prime failed") {
+		t.Fatalf("logs = %q, want missing prime host project to skip quietly", logs.String())
+	}
+	if len(sessions.primeCalls) != 0 {
+		t.Fatalf("prime calls = %v, want none when prime host project is missing", sessions.primeCalls)
+	}
+}
+
+func TestEnsurePrimeProjectListErrorDoesNotSpawn(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	sessions := &fakeOrchestratorEnsurer{}
+	var logs bytes.Buffer
+
+	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{err: errors.New("store unavailable")}, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "list projects for prime config failed") {
+		t.Fatalf("logs = %q, want project-list failure warning", logs.String())
+	}
+	if strings.Contains(logs.String(), "prime-supervisor: ensure prime failed") {
+		t.Fatalf("logs = %q, want no follow-on prime ensure warning", logs.String())
+	}
+	if len(sessions.primeCalls) != 0 {
+		t.Fatalf("prime calls = %v, want none when prime config cannot be read", sessions.primeCalls)
+	}
+}
+
+func TestEnsurePrimeStillWarnsOnUnexpectedEnsureError(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	sessions := &fakeOrchestratorEnsurer{spawnErr: errors.New("store unavailable")}
+	var logs bytes.Buffer
+
+	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "prime-supervisor: ensure prime failed") {
+		t.Fatalf("logs = %q, want unexpected prime ensure error to warn", logs.String())
+	}
+}
+
 func TestEnsurePrimeReplacesStaleNoSignalPrime(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
@@ -1519,7 +1580,7 @@ func TestEnsurePrimeReplacesStaleNoSignalPrime(t *testing.T) {
 
 	notifier := &fakeOrchestratorNotifier{}
 
-	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao"}}}, sessions, notifier, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ensurePrime(context.Background(), "ao", fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}, sessions, notifier, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if len(sessions.primeClean) != 1 || sessions.primeClean[0] != "ao" {
 		t.Fatalf("prime clean replacements = %#v, want one for ao", sessions.primeClean)
@@ -1537,7 +1598,7 @@ func TestEnsurePrimeReplacesStaleNoSignalPrime(t *testing.T) {
 
 func TestEnsurePrimeCapsReplacementStormAndNotifies(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao"}}}
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}
 	staleActivity := domain.Activity{
 		State:          domain.ActivityIdle,
 		LastActivityAt: now.Add(-orchestratorUnhealthyReplacementThreshold - time.Minute),
