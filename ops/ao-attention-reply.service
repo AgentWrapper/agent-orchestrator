@@ -9,9 +9,10 @@ Wants=ao.service
 # come from the deploy/nickify env layer. Loopback-only; Slack reaches it via
 # the same tailnet/ingress boundary that fronts the web surface.
 EnvironmentFile=-%h/agent-orchestrator/.env
+Environment=AO_ENV_FILE=%h/agent-orchestrator/.env
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=AO_ATTENTION_REPLY_PORT=3002
-ExecStart=/usr/bin/node %h/agent-orchestrator/ops/attention-reply-listener.mjs
+ExecStart=/usr/bin/node %h/.ao/deploy/current/source/ops/attention-reply-listener.mjs
 Restart=on-failure
 RestartSec=15
 

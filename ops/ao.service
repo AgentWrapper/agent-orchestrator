@@ -7,7 +7,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/ao daemon
+ExecStart=%h/.ao/deploy/current/bin/ao daemon
 # Keep the user service persistent after clean daemon exits. Explicit operator
 # stops still go through `systemctl stop ao.service` (`ao stop` does this when
 # the unit owns the daemon PID), which does not trigger Restart=always.

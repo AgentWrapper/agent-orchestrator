@@ -1,0 +1,16 @@
+[Unit]
+Description=ao Slack notifier
+After=ao.service
+Wants=ao.service
+
+[Service]
+WorkingDirectory=%h/.ao/deploy/current/source
+EnvironmentFile=-%h/agent-orchestrator/.env
+Environment=AO_ENV_FILE=%h/agent-orchestrator/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node %h/.ao/deploy/current/source/ops/ao-slack-notifier.mjs
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

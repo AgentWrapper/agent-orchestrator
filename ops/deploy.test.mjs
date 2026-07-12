@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
-import { access, chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	access,
+	chmod,
+	lstat,
+	mkdtemp,
+	mkdir,
+	readdir,
+	readFile,
+	readlink,
+	rm,
+	utimes,
+	writeFile,
+} from "node:fs/promises";
 import { spawn } from "node:child_process";
 import http from "node:http";
 import os from "node:os";
@@ -32,7 +44,7 @@ describe("ao self-deploy script", () => {
 		assert.equal(result.code, 0, result.stderr);
 	});
 
-	it("backs up and rebuilds ao, restarts ao, and restarts changed frontend/ops units", async () => {
+	it("stages a release, installs stable units, and restarts every local service", async () => {
 		const fixture = await makeGitFixture();
 		await commitFixture(fixture.dir, "initial");
 		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
@@ -46,18 +58,28 @@ describe("ao self-deploy script", () => {
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(result.stdout, /Deploying ao from /);
 		assert.match(result.stdout, /DRY-RUN: mkdir -p .*\/\.config\/systemd\/user/);
-		assert.match(result.stdout, /DRY-RUN: cp .*\/ops\/ao\.service .*\/\.config\/systemd\/user\/ao\.service/);
+		assert.match(result.stdout, /DRY-RUN: git clone --no-checkout /);
+		assert.match(result.stdout, /DRY-RUN: cd .*\/source\/backend && go build -o .*\/bin\/ao \.\/cmd\/ao/);
+		assert.match(result.stdout, /DRY-RUN: render .*\/ops\/ao\.service -> .*\/systemd\/ao\.service/);
+		assert.match(result.stdout, /DRY-RUN: atomically point .*\/\.ao\/deploy\/current at .*\/releases\//);
+		assert.match(result.stdout, /DRY-RUN: ln -sfn .*\/\.ao\/deploy\/current\/bin\/ao .*\/\.local\/bin\/ao\.tmp/);
+		assert.match(result.stdout, /DRY-RUN: mv -Tf .*\/\.local\/bin\/ao\.tmp .*\/\.local\/bin\/ao/);
+		assert.match(
+			result.stdout,
+			/DRY-RUN: cp .*\/\.ao\/deploy\/current\/systemd\/ao\.service .*\/\.config\/systemd\/user\/ao\.service/,
+		);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user daemon-reload/);
-		assert.match(result.stdout, /DRY-RUN: cp .*\/\.local\/bin\/ao .*\/\.local\/bin\/ao\.prev/);
-		assert.match(result.stdout, /DRY-RUN: cd .*\/backend && go build -o .*\/\.local\/bin\/ao \.\/cmd\/ao/);
+		assert.match(
+			result.stdout,
+			/DRY-RUN: systemctl --user enable ao\.service ao-web\.service ao-slack-notifier\.service ao-attention-reply\.service/,
+		);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao\.service/);
-		assert.match(result.stdout, /frontend\/ changed; restarting ao-web\.service/);
+		assert.match(result.stdout, /frontend\/ changed; restarting ao-web\.service from the activated release/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
-		assert.match(result.stdout, /ops\/ changed; restarting ao-slack-notifier\.service/);
+		assert.match(result.stdout, /Restarting ao-slack-notifier\.service from the activated release/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-slack-notifier\.service/);
-		assert.match(result.stdout, /installing \+ restarting attention reply unit/);
-		assert.match(result.stdout, /outbound attention notifier is retired/);
-		assert.match(result.stdout, /DRY-RUN: cd .* && bash ops\/install-attention\.sh/);
+		assert.match(result.stdout, /Restarting ao-attention-reply\.service from the activated release/);
+		assert.match(result.stdout, /outbound attention notifier remains retired/);
 		assert.doesNotMatch(result.stdout, /is-active --quiet ao-attention-notifier\.service/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user is-active --quiet ao-attention-reply\.service/);
 		assert.match(result.stdout, /DRY-RUN: ao status/);
@@ -67,6 +89,110 @@ describe("ao self-deploy script", () => {
 			result.stdout.indexOf("DRY-RUN: systemctl --user restart ao-web.service") <
 				result.stdout.indexOf("https://mirrorborn.tailc1fd9.ts.net/"),
 			"tailnet web verification should run after the web unit restart when frontend/ changed",
+		);
+	});
+
+	it("builds a requested non-current ref from an isolated release checkout", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const requested = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+
+		await writeFile(path.join(fixture.dir, "README.md"), "newer head\n");
+		await commitFixture(fixture.dir, "newer head");
+		const invokingHead = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		assert.notEqual(invokingHead, requested, "fixture must have a newer HEAD than the requested deploy ref");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_DEPLOY_HEAD: requested });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(result.stdout, new RegExp(`Deploy range: .*\\.\\.${requested}`));
+		assert.equal((await readFile(fixture.stateFile, "utf8")).trim(), requested);
+
+		const buildLog = await readFile(fixture.goBuildLog, "utf8");
+		assert.match(buildLog, /cwd=.*\/releases\/\.staging-.*\/source\/backend/m);
+		assert.doesNotMatch(buildLog, new RegExp(`cwd=${escapeRegExp(path.join(fixture.dir, "backend"))}`));
+
+		const current = await lstat(path.join(fixture.stateDir, "current"));
+		assert.equal(current.isSymbolicLink(), true, "current release pointer must be a symlink");
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), requested);
+	});
+
+	it("does not corrupt dry-run head resolution when an origin remote exists", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const head = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		const remote = await mkdtemp(path.join(fixture.home, "origin-"));
+		await git(remote, ["init", "--bare"]);
+		await git(fixture.dir, ["remote", "add", "origin", remote]);
+
+		const result = await runDeployDryRun(fixture.dir, fixture.home);
+
+		assert.equal(result.code, 0, result.stderr);
+		assert.match(result.stderr, /DRY-RUN: git -C .* fetch --tags --prune origin/);
+		assert.match(result.stdout, new RegExp(`Deploy range: .*\\.\\.${head}`));
+		assert.doesNotMatch(result.stdout, /Deploy range: .*DRY-RUN: git/);
+	});
+
+	it("keeps dirty files in the invoking checkout out of the staged build", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		await writeFile(path.join(fixture.dir, "UNTRACKED_DEPLOY_POISON"), "must not enter release source\n");
+		await writeFile(path.join(fixture.dir, "README.md"), "dirty invoking checkout\n");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const buildLog = await readFile(fixture.goBuildLog, "utf8");
+		assert.match(buildLog, /^git-dir=directory$/m, "staged source must have a real .git directory");
+		assert.match(buildLog, /^status=$/m, "staged source must be clean when go build starts");
+		assert.doesNotMatch(buildLog, /UNTRACKED_DEPLOY_POISON/);
+	});
+
+	it("builds from a real git directory even when invoked from a linked worktree", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const linked = path.join(fixture.home, "linked-worktree");
+		await git(fixture.dir, ["worktree", "add", linked]);
+		await writeFile(path.join(fixture.dir, "UNTRACKED_PARENT_POISON"), "must not affect linked deploy\n");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_DEPLOY_REPO_ROOT: linked });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const buildLog = await readFile(fixture.goBuildLog, "utf8");
+		assert.match(buildLog, /^git-dir=directory$/m);
+		assert.match(buildLog, /^status=$/m);
+		assert.doesNotMatch(buildLog, /UNTRACKED_PARENT_POISON/);
+	});
+
+	it("installs stable units whose runtime paths resolve through the current release", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		for (const unit of ["ao.service", "ao-web.service", "ao-slack-notifier.service", "ao-attention-reply.service"]) {
+			const body = await readFile(path.join(fixture.home, ".config", "systemd", "user", unit), "utf8");
+			assert.match(
+				body,
+				new RegExp(`${escapeRegExp(fixture.stateDir)}/current`),
+				`${unit} should point at the configured current release`,
+			);
+			assert.doesNotMatch(
+				body,
+				/%h\/agent-orchestrator\/ops/,
+				`${unit} must not execute ops from the mutable checkout`,
+			);
+		}
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(
+			systemctlLog,
+			/^--user enable ao\.service ao-web\.service ao-slack-notifier\.service ao-attention-reply\.service$/m,
 		);
 	});
 
@@ -83,8 +209,8 @@ describe("ao self-deploy script", () => {
 		const result = await runDeployDryRun(fixture.dir, fixture.home, { AO_DEPLOY_BASE: base.stdout.trim() });
 
 		assert.equal(result.code, 0, result.stderr);
-		assert.match(result.stdout, /frontend package metadata changed; installing dependencies with npm ci/);
-		assert.match(result.stdout, /DRY-RUN: cd .*\/frontend && npm ci/);
+		assert.match(result.stdout, /Installing frontend dependencies with npm ci for staged web build/);
+		assert.match(result.stdout, /DRY-RUN: cd .*\/frontend && npm ci --cache .*\/npm-cache --prefer-offline/);
 		assertFrontendDependencyInstallBeforeWebRestart(result.stdout);
 	});
 
@@ -94,7 +220,7 @@ describe("ao self-deploy script", () => {
 		const stdout = [
 			"DRY-RUN: cd /repo/backend && go build -o /home/user/.local/bin/ao ./cmd/ao",
 			"DRY-RUN: systemctl --user restart ao-web.service",
-			"DRY-RUN: cd /repo/frontend && npm ci",
+			"DRY-RUN: cd /repo/frontend && npm ci --cache /repo-cache --prefer-offline",
 		].join("\n");
 
 		assert.throws(
@@ -125,12 +251,12 @@ describe("ao self-deploy script", () => {
 			/Frontend dependency install failed; aborting deploy before restarting ao-web\.service/,
 		);
 
-		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
 		assert.doesNotMatch(systemctlLog, /^--user restart ao-web\.service$/m);
 		await assert.rejects(access(fixture.stateFile), "a failed dependency install must not record the deployed ref");
 	});
 
-	it("does not restart web or notifier units when their directories are unchanged", async () => {
+	it("restarts web and notifier units even when directories are unchanged so they follow current", async () => {
 		const fixture = await makeGitFixture();
 		await commitFixture(fixture.dir, "initial");
 		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
@@ -141,35 +267,485 @@ describe("ao self-deploy script", () => {
 		const result = await runDeployDryRun(fixture.dir, fixture.home, { AO_DEPLOY_BASE: base.stdout.trim() });
 
 		assert.equal(result.code, 0, result.stderr);
-		assert.match(result.stdout, /frontend\/ unchanged; leaving ao-web\.service running/);
-		assert.match(result.stdout, /ops\/ unchanged; leaving ao-slack-notifier\.service running/);
 		assert.match(
 			result.stdout,
-			/leaving ao-attention-reply\.service running; outbound attention notifier remains retired/,
+			/frontend\/ unchanged; restarting ao-web\.service so it follows the activated release pointer/,
 		);
-		assert.doesNotMatch(result.stdout, /restart ao-web\.service/);
-		assert.doesNotMatch(result.stdout, /restart ao-slack-notifier\.service/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
+		assert.match(result.stdout, /Restarting ao-slack-notifier\.service from the activated release/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-slack-notifier\.service/);
+		assert.match(result.stdout, /Restarting ao-attention-reply\.service from the activated release/);
 	});
 
-	it("rolls back by restoring ao.prev and restarting ao without rebuilding", async () => {
+	it("rolls back by switching the release pointer and restarting all services without rebuilding", async () => {
 		const fixture = await makeGitFixture();
 		await commitFixture(fixture.dir, "initial");
 
 		const result = await runDeployDryRun(fixture.dir, fixture.home, {}, ["--rollback"]);
 
 		assert.equal(result.code, 0, result.stderr);
-		assert.match(result.stdout, /Rolling back ao binary/);
-		assert.match(result.stdout, /DRY-RUN: cp .*\/\.local\/bin\/ao\.prev .*\/\.local\/bin\/ao/);
-		assert.match(result.stdout, /DRY-RUN: cp .*\/ops\/ao\.service .*\/\.config\/systemd\/user\/ao\.service/);
+		assert.match(result.stdout, /Rolling back ao release/);
+		assert.match(result.stdout, /DRY-RUN: atomically point .*\/\.ao\/deploy\/current at previous release/);
+		assert.match(result.stdout, /DRY-RUN: ln -sfn .*\/\.ao\/deploy\/current\/bin\/ao .*\/\.local\/bin\/ao\.tmp/);
+		assert.match(result.stdout, /DRY-RUN: mv -Tf .*\/\.local\/bin\/ao\.tmp .*\/\.local\/bin\/ao/);
+		assert.match(
+			result.stdout,
+			/DRY-RUN: cp .*\/\.ao\/deploy\/current\/systemd\/ao\.service .*\/\.config\/systemd\/user\/ao\.service/,
+		);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user daemon-reload/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao\.service/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-slack-notifier\.service/);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-attention-reply\.service/);
 		assert.doesNotMatch(result.stdout, /go build/);
+	});
+
+	it("leaves the prior release active when a new build fails before activation", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const first = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const activeBefore = await readlinkReal(path.join(fixture.stateDir, "current"));
+
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('new ops');\n");
+		await commitFixture(fixture.dir, "ops change");
+		await writeFile(fixture.systemctlLog, "");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web, { AO_TEST_VCS_MODIFIED: "true" });
+
+		assert.notEqual(result.code, 0, "dirty build must fail before activation");
+		assert.equal(await readlinkReal(path.join(fixture.stateDir, "current")), activeBefore);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), first);
+		assert.equal((await readFile(fixture.stateFile, "utf8")).trim(), first);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "pre-activation failure must not restart services");
+	});
+
+	it("cleans stale staging directories and strips build-only payload from activated releases", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const stale = path.join(fixture.stateDir, "releases", ".staging-stale");
+		await mkdir(stale, { recursive: true });
+		const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+		await utimes(stale, old, old);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		await assert.rejects(access(stale), "stale staging dirs should be pruned");
+		await assert.rejects(access(path.join(fixture.stateDir, "current", "source", ".git")));
+		await assert.rejects(access(path.join(fixture.stateDir, "current", "source", "frontend", "node_modules")));
+		await assert.doesNotReject(access(path.join(fixture.stateDir, "current", "FRONTEND_TREE")));
+		await assert.doesNotReject(
+			access(path.join(fixture.stateDir, "current", "source", "frontend", "dist", "index.html")),
+		);
+	});
+
+	it("captures the pre-restart session count immediately before restarting the daemon", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		await writeFile(fixture.orderLog, "");
+
+		await writeFile(path.join(fixture.dir, "frontend", "app.js"), "console.log('force web build');\n");
+		await commitFixture(fixture.dir, "frontend change");
+
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const order = (await readFile(fixture.orderLog, "utf8")).trim().split("\n");
+		const goBuild = order.indexOf("go build");
+		const npmBuild = order.indexOf("npm run build:web");
+		const preRestartSessionCount = order.indexOf("session count");
+		const daemonRestart = order.indexOf("systemctl restart ao.service");
+		assert(goBuild !== -1, order.join("\n"));
+		assert(npmBuild !== -1, order.join("\n"));
+		assert(preRestartSessionCount !== -1, order.join("\n"));
+		assert(daemonRestart !== -1, order.join("\n"));
+		assert(preRestartSessionCount > goBuild, "pre-restart count should not include staging/build time");
+		assert(preRestartSessionCount > npmBuild, "pre-restart count should not include web build time");
+		assert(preRestartSessionCount < daemonRestart, "pre-restart count should be captured just before daemon restart");
+	});
+
+	it("refuses concurrent deploys while another deploy lock is held", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await mkdir(fixture.stateDir, { recursive: true });
+		const lockPath = path.join(fixture.stateDir, "deploy.lock");
+		const holder = spawn("bash", ["-c", `exec 9>${JSON.stringify(lockPath)}; flock -n 9; printf ready; sleep 30`]);
+		cleanup.push(() => {
+			holder.kill("SIGTERM");
+			return Promise.resolve();
+		});
+		await waitForStdout(holder, "ready");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /Another ao deploy or rollback already holds/);
+	});
+
+	it("fails before service restarts when Slack sink config is missing", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(fixture.slackEnvFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\n");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /has no usable sink/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "Slack precondition failure must not restart services");
+	});
+
+	it("fails before service restarts when Slack member or signing config is missing", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(fixture.slackEnvFile, "SLACK_WEBHOOK_URL=http://hook\n");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /missing SLACK_MEMBER_ID or SLACK_SIGNING_SECRET/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "Slack precondition failure must not restart services");
+	});
+
+	it("rejects quoted-empty Slack sinks before service restarts", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(
+			fixture.slackEnvFile,
+			'SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=""\nSLACK_BOT_TOKEN=""\nSLACK_CHANNEL=""\n',
+		);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /has no usable sink/);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "Slack precondition failure must not restart services");
+	});
+
+	it("accepts bot-token Slack sinks with modern per-channel config", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await writeFile(
+			fixture.slackEnvFile,
+			"SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_BOT_TOKEN=xoxb\nSLACK_CHANNEL_NOTIFY=C-notify\nSLACK_CHANNEL_NEEDS_RESPONSE=C-needs\n",
+		);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(result.stdout, /Slack notifier and reply config verified/);
+	});
+
+	it("retires the legacy outbound attention notifier during deploy", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const legacyState = path.join(fixture.home, ".ao", "attention-state.json");
+		await mkdir(path.dirname(legacyState), { recursive: true });
+		await writeFile(legacyState, '{"tracker":{"open":[["old",{}]]}}\n');
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_DEPLOY_ATTENTION_LEGACY_STATE: legacyState });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(systemctlLog, /^--user disable --now ao-attention-notifier\.service$/m);
+		await assert.rejects(access(legacyState));
+		assert.match(result.stdout, /Removed retired outbound attention state/);
+	});
+
+	it("rolls back the whole release pointer to matching backend, web, and ops artifacts", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const first = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await writeFile(path.join(fixture.dir, "frontend", "app.js"), "console.log('second frontend');\n");
+		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('second ops');\n");
+		await commitFixture(fixture.dir, "second release");
+		const second = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), second);
+
+		await writeFile(fixture.systemctlLog, "");
+		web = await startFakeWeb();
+		web.setVersionRevision(first);
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"], daemonRevision: first });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), first);
+		assert.equal((await readFile(fixture.stateFile, "utf8")).trim(), first);
+		const unit = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao-web.service"), "utf8");
+		assert.match(unit, new RegExp(`${escapeRegExp(fixture.stateDir)}/current/source/frontend/dist`));
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(systemctlLog, /^--user restart ao\.service$/m);
+		assert.match(systemctlLog, /^--user restart ao-web\.service$/m);
+		assert.match(systemctlLog, /^--user restart ao-slack-notifier\.service$/m);
+		assert.match(systemctlLog, /^--user restart ao-attention-reply\.service$/m);
+
+		web = await startFakeWeb();
+		web.setVersionRevision(first);
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"], daemonRevision: first });
+		assert.notEqual(result.code, 0, `second rollback should refuse a no-op\n${result.stdout}\n${result.stderr}`);
+		assert.match(result.stderr, /Already on rollback target/);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), first);
+	});
+
+	it("refuses release rollback before pointer flip when Slack config is invalid", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await writeFile(path.join(fixture.dir, "README.md"), "second\n");
+		await commitFixture(fixture.dir, "second release");
+		const second = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		await writeFile(fixture.slackEnvFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\n");
+		await writeFile(fixture.systemctlLog, "");
+
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"] });
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /has no usable sink/);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), second);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "Slack precondition failure must not restart rollback services");
+	});
+
+	it("rolls back even when the old daemon cannot list sessions before the pointer flip", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const first = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await writeFile(path.join(fixture.dir, "README.md"), "second\n");
+		await commitFixture(fixture.dir, "second release");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		web = await startFakeWeb();
+		web.setVersionRevision(first);
+		result = await runDeployLive(
+			fixture,
+			web,
+			{ AO_STUB_SESSION_FAIL: "1" },
+			{ args: ["--rollback"], daemonRevision: first },
+		);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(
+			result.stdout,
+			/Pre-rollback session count unavailable \(old daemon may be down\); skipping session re-adoption count comparison/,
+		);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), first);
+		assert.equal((await readFile(fixture.stateFile, "utf8")).trim(), first);
+	});
+
+	it("refuses to deploy when an old daemon is ready but sessions cannot be counted", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_STUB_SESSION_FAIL: "1" });
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /could not capture pre-restart session count/);
+		await assert.rejects(access(path.join(fixture.stateDir, "current")));
+	});
+
+	it("backs up and restores the pre-hermetic binary and units when no previous release exists", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const unitDir = path.join(fixture.home, ".config", "systemd", "user");
+		await mkdir(unitDir, { recursive: true });
+		await writeFile(path.join(unitDir, "ao.service"), "[Service]\nExecStart=%h/.local/bin/ao daemon\n");
+		await writeFile(path.join(unitDir, "ao-web.service"), "[Service]\nExecStart=/old-web\n");
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		await assert.doesNotReject(access(path.join(fixture.stateDir, "pre-hermetic", "ao")));
+		await assert.doesNotReject(access(path.join(fixture.stateDir, "pre-hermetic", "systemd", "ao.service")));
+
+		await writeFile(fixture.systemctlLog, "");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"] });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const aoBin = path.join(fixture.home, ".local", "bin", "ao");
+		assert.equal((await lstat(aoBin)).isSymbolicLink(), false);
+		assert.equal(await readFile(aoBin, "utf8"), "current ao\n");
+		assert.match(await readFile(path.join(unitDir, "ao.service"), "utf8"), /%h\/\.local\/bin\/ao daemon/);
+		assert.match(await readFile(path.join(unitDir, "ao-web.service"), "utf8"), /ExecStart=\/old-web/);
+		await assert.rejects(access(path.join(unitDir, "ao-slack-notifier.service")));
+		await assert.rejects(access(path.join(unitDir, "ao-attention-reply.service")));
+		await assert.rejects(access(path.join(fixture.stateDir, "current")));
+		await assert.rejects(access(fixture.stateFile));
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(systemctlLog, /^--user restart ao\.service$/m);
+		assert.match(systemctlLog, /^--user restart ao-web\.service$/m);
+		assert.match(systemctlLog, /^--user disable --now ao-slack-notifier\.service$/m);
+		assert.match(systemctlLog, /^--user disable --now ao-attention-reply\.service$/m);
+	});
+
+	it("refuses pre-hermetic rollback when no ao.service was backed up", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const deployed = (await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim();
+
+		await writeFile(fixture.systemctlLog, "");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"] });
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /no backed-up ao\.service/);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), deployed);
+		assert.equal(
+			await readFile(path.join(fixture.stateDir, "agent-orchestrator.last-deployed"), "utf8"),
+			`${deployed}\n`,
+		);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8").catch(() => "");
+		assert.equal(systemctlLog, "", "failed rollback must not restart or disable services");
+	});
+
+	it("rebuilds web when previous bundle provenance does not match the requested frontend tree", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await writeFile(path.join(fixture.stateDir, "current", "FRONTEND_TREE"), "not-the-current-tree\n");
+		await writeFile(path.join(fixture.dir, "README.md"), "docs only\n");
+		await commitFixture(fixture.dir, "docs only");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(
+			result.stdout,
+			/Previous web bundle provenance does not match this release; rebuilding from staged source/,
+		);
+		const npmLog = await readFile(fixture.npmLog, "utf8");
+		assert.match(npmLog, /^ci --cache .*\/deploy-state\/npm-cache --prefer-offline$/m);
+		assert.match(npmLog, /^run build:web$/m);
+	});
+
+	it("reuses the previous web bundle when frontend provenance matches", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await writeFile(fixture.npmLog, "");
+		await writeFile(path.join(fixture.dir, "README.md"), "docs only\n");
+		await commitFixture(fixture.dir, "docs only");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const npmLog = await readFile(fixture.npmLog, "utf8");
+		assert.doesNotMatch(npmLog, /^ci /m);
+		assert.doesNotMatch(npmLog, /^run build:web$/m);
+		await assert.doesNotReject(
+			access(path.join(fixture.stateDir, "current", "source", "frontend", "dist", "index.html")),
+		);
+	});
+
+	it("allows a first deploy before the stable ao symlink exists", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await rm(path.join(fixture.home, ".local", "bin", "ao"));
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		await assert.doesNotReject(access(path.join(fixture.home, ".local", "bin", "ao")));
+	});
+
+	it("continues from local refs when origin fetch fails", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		await git(fixture.dir, ["remote", "add", "origin", path.join(fixture.home, "missing-origin.git")]);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(result.stderr, /WARNING: origin fetch failed; deploying from local refs/);
+	});
+
+	it("fails when a requested remote-tracking deploy ref cannot be refreshed", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const head = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+		await git(fixture.dir, ["update-ref", "refs/remotes/origin/main", head]);
+		await git(fixture.dir, ["remote", "add", "origin", path.join(fixture.home, "missing-origin.git")]);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_DEPLOY_HEAD: "origin/main" });
+
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /requested remote-tracking ref may be stale/);
+	});
+
+	it("prunes old inactive releases while retaining current and previous", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		for (let i = 0; i < 3; i += 1) {
+			if (i > 0) {
+				await writeFile(path.join(fixture.dir, "README.md"), `release ${i}\n`);
+				await commitFixture(fixture.dir, `release ${i}`);
+			}
+			const web = await startFakeWeb();
+			const result = await runDeployLive(fixture, web, { AO_DEPLOY_RELEASE_RETENTION: "0" });
+			assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		}
+
+		const releaseDirs = await listReleaseDirs(fixture.stateDir);
+		assert.equal(releaseDirs.length, 2, `expected current + previous releases only, got ${releaseDirs.join(", ")}`);
+		const current = await readlinkReal(path.join(fixture.stateDir, "current"));
+		const previous = await readlinkReal(path.join(fixture.stateDir, "previous"));
+		assert.deepEqual(new Set(releaseDirs), new Set([current, previous]));
 	});
 
 	it("ships an ao.service unit that does not signal agent tmux sessions on restart", async () => {
 		const unit = await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8");
 
-		assert.match(unit, /^ExecStart=%h\/\.local\/bin\/ao daemon$/m);
+		assert.match(unit, /^ExecStart=%h\/\.ao\/deploy\/current\/bin\/ao daemon$/m);
 		assert.match(unit, /^Restart=always$/m);
 		assert.match(unit, /^StartLimitIntervalSec=60s$/m);
 		assert.match(unit, /^StartLimitBurst=5$/m);
@@ -187,8 +763,8 @@ describe("ao self-deploy script", () => {
 		await writeFile(path.join(fixture.dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops changed');\n");
 		await commitFixture(fixture.dir, "deploy-relevant changes");
 
-		// ao-web.service's ExecStartPre rebuilds the bundle and the node server
-		// takes a moment to bind, so the tailnet URL serves 502 briefly.
+		// ao-web.service starts a prebuilt bundle from the active release, and
+		// the node server takes a moment to bind, so the tailnet URL serves 502 briefly.
 		const web = await startFakeWeb({ webFailuresBeforeReady: 2 });
 		const result = await runDeployLive(fixture, web, { AO_DEPLOY_BASE: base.stdout.trim() });
 
@@ -392,12 +968,9 @@ describe("ao self-deploy script", () => {
 			"a dirty build must be refused before the ao.service restart",
 		);
 		await assert.rejects(access(fixture.stateFile), "a failed deploy must not record the deployed ref");
-		// A pre-restart rejection must leave the backed-up ao.prev holding the
-		// known-good previous binary so --rollback can restore it.
-		assert.equal(
-			await readFile(path.join(fixture.home, ".local", "bin", "ao.prev"), "utf8"),
-			"current ao\n",
-			"a pre-restart rejection must preserve the backed-up ao.prev for rollback",
+		await assert.rejects(
+			access(path.join(fixture.stateDir, "current")),
+			"a pre-activation rejection must leave the current release pointer untouched",
 		);
 	});
 
@@ -864,14 +1437,31 @@ async function makeGitFixture() {
 	await mkdir(path.join(home, ".local", "bin"), { recursive: true });
 
 	await writeFile(path.join(dir, "backend", "cmd", "ao", "main.go"), "package main\nfunc main() {}\n");
+	await writeFile(path.join(dir, "backend", "go.mod"), "module example.com/ao-fixture\n\ngo 1.22\n");
 	await writeFile(path.join(dir, "frontend", "app.js"), "console.log('frontend');\n");
+	await writeFile(path.join(dir, "frontend", "package.json"), '{"scripts":{"build:web":"echo build"}}\n');
+	await writeFile(path.join(dir, "frontend", "package-lock.json"), '{"lockfileVersion":3}\n');
 	await writeFile(path.join(dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops');\n");
-	await writeFile(path.join(dir, "ops", "ao.service"), "[Service]\nExecStart=/bin/true\n");
+	await writeFile(
+		path.join(dir, "ops", "ao.service"),
+		await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8"),
+	);
+	await writeFile(
+		path.join(dir, "ops", "ao-web.service"),
+		await readFile(path.join(repoRoot, "ops", "ao-web.service"), "utf8"),
+	);
+	await writeFile(
+		path.join(dir, "ops", "ao-slack-notifier.service"),
+		await readFile(path.join(repoRoot, "ops", "ao-slack-notifier.service"), "utf8"),
+	);
+	await writeFile(
+		path.join(dir, "ops", "ao-attention-reply.service"),
+		await readFile(path.join(repoRoot, "ops", "ao-attention-reply.service"), "utf8"),
+	);
 	await writeFile(path.join(dir, "ops", "install-attention.sh"), "#!/usr/bin/env bash\nexit 0\n");
 	await writeFile(path.join(dir, "README.md"), "fixture\n");
 	await writeFile(path.join(home, ".local", "bin", "ao"), "current ao\n");
 	await chmod(path.join(home, ".local", "bin", "ao"), 0o755);
-	await writeFile(path.join(home, ".local", "bin", "ao.prev"), "previous ao\n");
 
 	await git(dir, ["init", "-b", "main"]);
 	await git(dir, ["config", "user.email", "test@example.com"]);
@@ -879,17 +1469,36 @@ async function makeGitFixture() {
 
 	const stubBin = path.join(home, "stub-bin");
 	const systemctlLog = path.join(home, "systemctl.log");
+	const goBuildLog = path.join(home, "go-build.log");
+	const npmLog = path.join(home, "npm.log");
+	const orderLog = path.join(home, "deploy-order.log");
+	const slackEnvFile = path.join(home, "agent-orchestrator", ".env");
 	const ghStatusFile = path.join(home, "gh-status.json");
 	const ghRunsFile = path.join(home, "gh-runs.json");
 	const stateDir = path.join(home, "deploy-state");
 	const stateFile = path.join(stateDir, "agent-orchestrator.last-deployed");
 	await writeFile(ghStatusFile, JSON.stringify({ state: "success", failedJobs: [] }));
+	await mkdir(path.dirname(slackEnvFile), { recursive: true });
+	await writeFile(slackEnvFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
 	// Default: no scheduled/release workflow runs to exclude. Tests that exercise
 	// the schedule/release-guard exclusion overwrite this with a workflow_runs list.
 	await writeFile(ghRunsFile, JSON.stringify({ total_count: 0, workflow_runs: [] }));
 	await makeStubBin(stubBin);
 
-	return { dir, home, stubBin, systemctlLog, ghStatusFile, ghRunsFile, stateDir, stateFile };
+	return {
+		dir,
+		home,
+		stubBin,
+		systemctlLog,
+		goBuildLog,
+		npmLog,
+		orderLog,
+		slackEnvFile,
+		ghStatusFile,
+		ghRunsFile,
+		stateDir,
+		stateFile,
+	};
 }
 
 // Stubs for the host-mutating commands deploy.sh shells out to. `curl` is
@@ -902,12 +1511,22 @@ async function makeStubBin(stubBin) {
 case "$1" in
   status) echo "AO daemon: ready" ;;
   doctor) echo "PASS everything" ;;
-  session) echo "[]" ;;
+  session)
+    if [[ "\${AO_STUB_SESSION_FAIL:-0}" = "1" ]]; then
+      printf 'session list unavailable\\n' >&2
+      exit 42
+    fi
+    if [[ -n "\${AO_TEST_ORDER_LOG:-}" ]]; then printf 'session count\\n' >> "\${AO_TEST_ORDER_LOG}"; fi
+    echo "[]"
+    ;;
   *) exit 1 ;;
 esac
 `,
 		systemctl: `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "\${SYSTEMCTL_LOG}"
+if [[ -n "\${AO_TEST_ORDER_LOG:-}" && "$*" = "--user restart ao.service" ]]; then
+  printf 'systemctl restart ao.service\\n' >> "\${AO_TEST_ORDER_LOG}"
+fi
 exit 0
 `,
 		go: `#!/usr/bin/env bash
@@ -940,6 +1559,14 @@ while (( $# > 0 )); do
     *) shift ;;
   esac
 done
+if [[ -n "\${GO_BUILD_LOG:-}" ]]; then
+  {
+    printf 'cwd=%s\\n' "\$PWD"
+    if [[ -d ../.git ]]; then printf 'git-dir=directory\\n'; else printf 'git-dir=not-directory\\n'; fi
+    printf 'status=%s\\n' "\$(git -C .. status --porcelain | tr '\\n' ' ')"
+  } >> "\${GO_BUILD_LOG}"
+fi
+if [[ -n "\${AO_TEST_ORDER_LOG:-}" ]]; then printf 'go build\\n' >> "\${AO_TEST_ORDER_LOG}"; fi
 if [[ -n "\${out}" ]]; then printf 'rebuilt ao\\n' > "\${out}"; chmod +x "\${out}"; fi
 `,
 		gh: `#!/usr/bin/env bash
@@ -963,9 +1590,14 @@ exit 1
 `,
 		npm: `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "\${NPM_LOG:-/dev/null}"
+if [[ -n "\${AO_TEST_ORDER_LOG:-}" ]]; then printf 'npm %s\\n' "$*" >> "\${AO_TEST_ORDER_LOG}"; fi
 if [[ "\${NPM_STUB_FAIL:-0}" = "1" ]]; then
   printf 'npm ci failed in stub\\n' >&2
   exit 42
+fi
+if [[ "$*" = "run build:web" ]]; then
+  mkdir -p dist
+  printf 'built web\\n' > dist/index.html
 fi
 exit 0
 `,
@@ -1070,10 +1702,16 @@ async function commitFixture(cwd, message) {
 	await git(cwd, [
 		"add",
 		"README.md",
+		"backend/go.mod",
 		"backend/cmd/ao/main.go",
 		"frontend/app.js",
+		"frontend/package.json",
+		"frontend/package-lock.json",
 		"ops/ao-slack-notifier.mjs",
 		"ops/ao.service",
+		"ops/ao-web.service",
+		"ops/ao-slack-notifier.service",
+		"ops/ao-attention-reply.service",
 		"ops/install-attention.sh",
 	]);
 	await git(cwd, ["commit", "-m", message]);
@@ -1107,6 +1745,10 @@ function assertFrontendDependencyInstallBeforeWebRestart(stdout) {
 	assert(frontendInstall < webRestart, "npm ci must run before ao-web.service restart triggers the bundle build");
 }
 
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Runs deploy.sh for real (no AO_DEPLOY_DRY_RUN), with the host-mutating
 // commands stubbed on PATH but curl and the HTTP probes genuinely exercised.
 async function runDeployLive(fixture, web, env = {}, opts = {}) {
@@ -1115,10 +1757,11 @@ async function runDeployLive(fixture, web, env = {}, opts = {}) {
 	// reports that same sha. Tests exercising the gate's failure paths override
 	// AO_TEST_VCS_REVISION / AO_TEST_VCS_MODIFIED (what the built binary is
 	// stamped with) and/or opts.daemonRevision (what /api/v1/version reports).
-	const head = (await git(fixture.dir, ["rev-parse", "HEAD"])).stdout.trim();
+	const requestedRef = env.AO_DEPLOY_HEAD ?? "HEAD";
+	const head = (await git(fixture.dir, ["rev-parse", `${requestedRef}^{commit}`])).stdout.trim();
 	const stampedRevision = env.AO_TEST_VCS_REVISION ?? head;
 	web.setVersionRevision?.(opts.daemonRevision ?? stampedRevision);
-	return run("bash", [deployScript], {
+	return run("bash", [deployScript, ...(opts.args ?? [])], {
 		cwd: repoRoot,
 		env: {
 			...process.env,
@@ -1127,6 +1770,9 @@ async function runDeployLive(fixture, web, env = {}, opts = {}) {
 			PATH: `${fixture.stubBin}${path.delimiter}${process.env.PATH}`,
 			HOME: fixture.home,
 			SYSTEMCTL_LOG: fixture.systemctlLog,
+			GO_BUILD_LOG: fixture.goBuildLog,
+			NPM_LOG: fixture.npmLog,
+			AO_TEST_ORDER_LOG: fixture.orderLog,
 			GH_STATUS_FILE: fixture.ghStatusFile,
 			GH_RUNS_FILE: fixture.ghRunsFile,
 			AO_PORT: String(web.apiPort),
@@ -1140,6 +1786,44 @@ async function runDeployLive(fixture, web, env = {}, opts = {}) {
 			...env,
 		},
 	});
+}
+
+async function readlinkReal(linkPath) {
+	const target = await readlink(linkPath);
+	return path.resolve(path.dirname(linkPath), target);
+}
+
+function waitForStdout(child, expected) {
+	return new Promise((resolve, reject) => {
+		let stdout = "";
+		const timer = setTimeout(() => reject(new Error(`timed out waiting for ${expected}`)), 5000);
+		child.once("error", (err) => {
+			clearTimeout(timer);
+			reject(err);
+		});
+		child.stdout.on("data", (chunk) => {
+			stdout += String(chunk);
+			if (stdout.includes(expected)) {
+				clearTimeout(timer);
+				resolve();
+			}
+		});
+		child.once("exit", (code) => {
+			if (!stdout.includes(expected)) {
+				clearTimeout(timer);
+				reject(new Error(`lock holder exited before ${expected}: ${code}`));
+			}
+		});
+	});
+}
+
+async function listReleaseDirs(stateDir) {
+	const releasesDir = path.join(stateDir, "releases");
+	const names = await readdir(releasesDir);
+	return names
+		.filter((name) => !name.startsWith(".staging-"))
+		.map((name) => path.join(releasesDir, name))
+		.sort();
 }
 
 async function run(command, args, options = {}) {

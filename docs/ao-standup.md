@@ -15,14 +15,24 @@ client; the primary UI is the **web renderer over Tailscale**, not Electron
 (decision D-b). Slack is the notification surface, via a small read-only
 SSE consumer (also D-b).
 
-## 1. Build and install the binary
+## 1. Deploy the release pointer
 
-The `ao` CLI/daemon is the Go tree under `backend/`:
+Production is installed by `ops/deploy.sh`, not by writing directly to
+`~/.local/bin/ao`. The deploy script stages the requested git ref in an
+isolated clean checkout under `~/.ao/deploy/releases/`, builds the daemon from
+that checkout, builds or reuses the web bundle with recorded frontend
+provenance, renders the tracked user units into the release, then atomically
+flips `~/.ao/deploy/current` and the stable CLI symlink.
 
 ```bash
-cd ~/agent-orchestrator/backend
-go build -o ~/.local/bin/ao ./cmd/ao
+cd ~/agent-orchestrator
+AO_DEPLOY_HEAD=origin/main ops/deploy.sh
 ```
+
+Do not run `go build -o ~/.local/bin/ao ./cmd/ao` on this host. That path is a
+deploy-managed symlink to `~/.ao/deploy/current/bin/ao`; writing through it
+mutates an immutable release in place and desynchronizes the binary from its
+`REVISION` metadata.
 
 Two subcommands matter here and are easy to confuse:
 
@@ -35,33 +45,38 @@ Two subcommands matter here and are easy to confuse:
 
 ## 2. systemd user units + linger
 
-Three user units under `~/.config/systemd/user/`, all `WantedBy=default.target`.
-`loginctl enable-linger orchestrator` keeps the user manager (and therefore
-the fleet) alive without an interactive login; verified `Linger=yes`.
+Four user units are installed from the active release into
+`~/.config/systemd/user/`, all `WantedBy=default.target`.
+`loginctl enable-linger orchestrator` keeps the user manager (and therefore the
+fleet) alive without an interactive login; verified `Linger=yes`.
 
-- **`ao.service`** — tracked in `ops/ao.service`; `ExecStart=%h/.local/bin/ao
-daemon`, `Restart=on-failure`, `RestartSec=5`. `Environment=PATH=%h/.local/bin:…`
-  so spawned sessions and the daemon's own `ao hooks` calls resolve the binary.
-  `KillMode=mixed` keeps systemd from sending the daemon's restart SIGTERM to
-  tmux-backed agent sessions, and `TimeoutStopSec=60s` gives the daemon's
-  background workers enough room to drain before any cgroup-level SIGKILL.
+- **`ao.service`** — tracked in `ops/ao.service`;
+  `ExecStart=%h/.ao/deploy/current/bin/ao daemon`, `Restart=always`,
+  `RestartSec=5s`, and `TimeoutStopSec=60s`. `Environment=PATH=%h/.local/bin:…`
+  keeps spawned sessions and daemon-owned `ao hooks` calls on the stable CLI
+  path. `KillMode=process` keeps systemd from sending the daemon restart signal
+  to tmux-backed agent sessions.
 - **`ao-web.service`** — `After=ao.service`;
-  `WorkingDirectory=%h/agent-orchestrator`;
+  `WorkingDirectory=%h/.ao/deploy/current/source`;
   `Environment=VITE_AO_API_BASE_URL=` makes the browser bundle use same-origin
-  API calls; `ExecStartPre=/usr/bin/npm --prefix frontend run build:web` builds
-  the browser-mode renderer from already-installed npm lockfile dependencies;
-  `ops/deploy.sh` runs `npm ci` first whenever `frontend/package.json` or
-  `frontend/package-lock.json` changed in the deploy range, aborting before
-  restart if installation fails. `ExecStart=/usr/bin/node ops/ao-web-server.mjs`
+  API calls; `AO_WEB_DIST=%h/.ao/deploy/current/source/frontend/dist` points
+  the server at the activated bundle. `ops/deploy.sh` runs `npm ci` and
+  `npm run build:web` in the staged release when the frontend tree requires a
+  rebuild. `ExecStart=/usr/bin/node %h/.ao/deploy/current/source/ops/ao-web-server.mjs`
   serves the built bundle on `127.0.0.1:5173` and proxies `/api`, `/healthz`,
   `/readyz`, and `/mux` to the daemon on `127.0.0.1:3001`. `RestartSec=10`.
   The drop-in (`ao-web.service.d/override.conf`) records the public tailnet URL
   for logs — see §3.
 - **`ao-slack-notifier.service`** — `After=ao.service`;
-  `ExecStart=/usr/bin/node %h/agent-orchestrator/ops/ao-slack-notifier.mjs`;
+  `ExecStart=/usr/bin/node %h/.ao/deploy/current/source/ops/ao-slack-notifier.mjs`;
   `RestartSec=15`.
+- **`ao-attention-reply.service`** — inbound Slack reply listener from the
+  active release; retained for explicit `send <session> <message>` replies.
 
-Enable with `systemctl --user enable --now ao ao-web ao-slack-notifier`.
+The deploy script installs, enables, restarts, and verifies the units. On a
+fresh host, run `ops/deploy.sh` before enabling units by hand; the unit
+`ExecStart` paths intentionally point through `~/.ao/deploy/current`, which
+does not exist until the first release is activated.
 
 ## 3. Web UI: tailscale serve → production static server
 
@@ -70,9 +85,10 @@ patch (loopback is now ao's hardcoded default). The browser renderer is built
 with `VITE_NO_ELECTRON=1` and an empty `VITE_AO_API_BASE_URL` via
 `npm --prefix frontend run build:web`, then served by `ops/ao-web-server.mjs`.
 The frontend is npm-lockfile-managed: `frontend/package-lock.json` is the
-authoritative dependency graph, and the deploy path runs
-`npm --prefix frontend ci` before restarting web whenever the package metadata
-changed.
+authoritative dependency graph. The deploy path builds from the staged release
+checkout when the frontend tree requires a rebuild, records `FRONTEND_TREE`,
+and otherwise reuses the previous release's bundle only when that provenance
+matches the requested release.
 The server is intentionally small: static files come from `frontend/dist`,
 unknown non-API paths fall back to `index.html`, and same-origin `/api`,
 `/healthz`, `/readyz`, and `/mux` requests are proxied to the daemon on
@@ -178,12 +194,14 @@ change). See `docs/attention-system.md` for the full design. Summary:
   new bindings.
 - **`ops/what-needs-me.mjs`** is the terminal view of current session-derived
   attention.
-- **`ops/install-attention.sh`** is the nickify/deploy wiring — it installs the
-  reply unit, disables the retired outbound attention notifier, and checks that
-  `SLACK_MEMBER_ID`, `SLACK_SIGNING_SECRET`, and a Slack sink are present in the
-  env layer. `ops/deploy.sh` runs it whenever `ops/` changes. The notifier reads
-  **`SLACK_MEMBER_ID` natively** (the legacy `SLACK_MENTION_USER_ID` alias is
-  only a fallback), closing the config bug that made #6 inert.
+- **`ops/install-attention.sh`** is bootstrap/manual wiring for the reply unit:
+  it can install the unit from the current release, disables the retired outbound
+  attention notifier, and checks that `SLACK_MEMBER_ID`,
+  `SLACK_SIGNING_SECRET`, and a Slack sink are present in the env layer.
+  `ops/deploy.sh` installs the release-rendered reply unit directly during every
+  deploy/rollback. The notifier reads **`SLACK_MEMBER_ID` natively** (the legacy
+  `SLACK_MENTION_USER_ID` alias is only a fallback), closing the config bug that
+  made #6 inert.
 
 ## 6. Tracked deltas from upstream (the vanilla rule)
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile, mkdir, readdir, access } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir, readdir, access, chmod } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,85 @@ describe("install-attention.sh (reply listener wiring; outbound notifier retired
 		assert.match(body, /attention-reply-listener\.mjs/);
 	});
 
+	it("enables but does not restart the reply unit before the first deploy release exists", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const bin = await tmp("ao-bin-");
+		const envFile = path.join(home, ".env");
+		const systemctlLog = path.join(home, "systemctl.log");
+		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
+		const fakeSystemctl = path.join(bin, "systemctl");
+		await writeFile(fakeSystemctl, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}\n`);
+		await chmod(fakeSystemctl, 0o755);
+
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_RELEASE_CURRENT: path.join(home, ".ao", "deploy", "current"),
+			AO_ATTENTION_START: "1",
+			AO_ATTENTION_DRY_RUN: "0",
+			PATH: `${bin}:${process.env.PATH}`,
+		});
+
+		assert.equal(r.code, 0, r.err);
+		assert.match(r.out, /release pointer .* not found/);
+		const log = await readFile(systemctlLog, "utf8");
+		assert.match(log, /^--user enable ao-attention-reply\.service$/m);
+		assert.doesNotMatch(log, /^--user restart ao-attention-reply\.service$/m);
+	});
+
+	it("installs the rendered reply unit from the current release when available", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const current = path.join(home, ".ao", "deploy", "current");
+		const envFile = path.join(home, ".env");
+		await mkdir(path.join(current, "systemd"), { recursive: true });
+		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
+		await writeFile(
+			path.join(current, "systemd", "ao-attention-reply.service"),
+			"[Service]\nExecStart=/custom/current/source/ops/attention-reply-listener.mjs\n",
+		);
+
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_RELEASE_CURRENT: current,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "0",
+		});
+
+		assert.equal(r.code, 0, r.err);
+		const body = await readFile(path.join(units, "ao-attention-reply.service"), "utf8");
+		assert.match(body, /\/custom\/current\/source\/ops\/attention-reply-listener\.mjs/);
+		assert.doesNotMatch(body, /%h\/\.ao\/deploy\/current/);
+	});
+
+	it("derives the current release from AO_DEPLOY_STATE_DIR when no attention-specific override is set", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const stateDir = path.join(home, "custom-deploy-state");
+		const current = path.join(stateDir, "current");
+		const envFile = path.join(home, ".env");
+		await mkdir(path.join(current, "systemd"), { recursive: true });
+		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=http://hook\n");
+		await writeFile(
+			path.join(current, "systemd", "ao-attention-reply.service"),
+			"[Service]\nExecStart=/custom-state/current/source/ops/attention-reply-listener.mjs\n",
+		);
+
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_DEPLOY_STATE_DIR: stateDir,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "0",
+		});
+
+		assert.equal(r.code, 0, r.err);
+		const body = await readFile(path.join(units, "ao-attention-reply.service"), "utf8");
+		assert.match(body, /\/custom-state\/current\/source\/ops\/attention-reply-listener\.mjs/);
+	});
+
 	it("warns (does not fail) when required config keys are missing", async () => {
 		const units = await tmp("ao-units-");
 		const home = await tmp("ao-home-");
@@ -100,11 +179,47 @@ describe("install-attention.sh (reply listener wiring; outbound notifier retired
 		assert.match(r.out, /Slack sink/);
 	});
 
+	it("warns when Slack sink values are quoted empty strings", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const envFile = path.join(home, ".env");
+		await writeFile(
+			envFile,
+			'SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_WEBHOOK_URL=""\nSLACK_BOT_TOKEN=""\nSLACK_CHANNEL=""\n',
+		);
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "0",
+		});
+
+		assert.equal(r.code, 0, r.err);
+		assert.match(r.out, /Slack sink/);
+	});
+
 	it("accepts a bot token paired with a channel as a valid sink", async () => {
 		const units = await tmp("ao-units-");
 		const home = await tmp("ao-home-");
 		const envFile = path.join(home, ".env");
 		await writeFile(envFile, "SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_BOT_TOKEN=xoxb\nSLACK_CHANNEL=C1\n");
+		const r = await run({
+			AO_ATTENTION_UNITS_DIR: units,
+			AO_ENV_FILE: envFile,
+			AO_ATTENTION_START: "0",
+			AO_ATTENTION_DRY_RUN: "0",
+		});
+		assert.doesNotMatch(r.out, /Slack sink/);
+	});
+
+	it("accepts a bot token paired with modern per-channel config as a valid sink", async () => {
+		const units = await tmp("ao-units-");
+		const home = await tmp("ao-home-");
+		const envFile = path.join(home, ".env");
+		await writeFile(
+			envFile,
+			"SLACK_MEMBER_ID=U1\nSLACK_SIGNING_SECRET=sec\nSLACK_BOT_TOKEN=xoxb\nSLACK_CHANNEL_NOTIFY=C-notify\nSLACK_CHANNEL_NEEDS_RESPONSE=C-needs\n",
+		);
 		const r = await run({
 			AO_ATTENTION_UNITS_DIR: units,
 			AO_ENV_FILE: envFile,

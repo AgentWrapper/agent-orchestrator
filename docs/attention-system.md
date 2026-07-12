@@ -93,14 +93,18 @@ missing binaries.
 
 ## 5. Config lives in the deploy/nickify layer
 
-`ops/install-attention.sh` installs and restarts the reply listener, verifies
-the env layer carries `SLACK_MEMBER_ID`, `SLACK_SIGNING_SECRET`, and a Slack
-sink (`SLACK_BOT_TOKEN`+`SLACK_CHANNEL` or `SLACK_WEBHOOK_URL`), and disables
-any leftover `ao-attention-notifier.service` and removes the retired state file
-(`AO_ATTENTION_LEGACY_STATE`, then `AO_ATTENTION_STATE`, then
-`~/.ao/attention-state.json`) so frozen legacy attention records do not appear
-live. `ops/deploy.sh` invokes that installer whenever `ops/` changes and
-restarts `ao-slack-notifier.service` as the single outbound notifier. The
+`ops/install-attention.sh` is the bootstrap/repair helper for the reply
+listener. It verifies the env layer carries `SLACK_MEMBER_ID`,
+`SLACK_SIGNING_SECRET`, and a Slack sink (`SLACK_BOT_TOKEN`+`SLACK_CHANNEL` or
+`SLACK_WEBHOOK_URL`), disables any leftover `ao-attention-notifier.service`,
+and removes the retired state file (`AO_ATTENTION_LEGACY_STATE`, then
+`AO_ATTENTION_STATE`, then `~/.ao/attention-state.json`) so frozen legacy
+attention records do not appear live. When a release already exists it installs
+the rendered reply unit from `~/.ao/deploy/current/systemd/`; before the first
+release it installs and enables the unit but skips restart until `ops/deploy.sh`
+creates the release pointer. Normal deploys install the reply unit directly
+from the activated release alongside `ao.service`, `ao-web.service`, and
+`ao-slack-notifier.service`; deploy no longer shells out to the installer. The
 notifier reads `SLACK_MEMBER_ID` natively — the legacy `SLACK_MENTION_USER_ID`
 alias remains only as a fallback for un-migrated hosts.
 

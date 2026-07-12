@@ -19,6 +19,7 @@ env_file="${AO_ENV_FILE:-${HOME}/agent-orchestrator/.env}"
 dry_run="${AO_ATTENTION_DRY_RUN:-0}"
 do_start="${AO_ATTENTION_START:-1}"
 legacy_state="${AO_ATTENTION_LEGACY_STATE:-${AO_ATTENTION_STATE:-${HOME}/.ao/attention-state.json}}"
+release_current="${AO_ATTENTION_RELEASE_CURRENT:-${AO_DEPLOY_CURRENT:-${AO_DEPLOY_STATE_DIR:-${HOME}/.ao/deploy}/current}}"
 
 log() { printf '%s\n' "$*"; }
 run() {
@@ -45,16 +46,30 @@ run_soft() {
 # 1. Verify required config keys (warn, don't fail — a host may wire env later).
 required_keys=(SLACK_MEMBER_ID SLACK_SIGNING_SECRET)
 missing=()
-has_key() { grep -qE "^${1}=" "${env_file}"; }
+has_nonempty_key() {
+  local key="$1" value
+  value="$(grep -E "^${key}=" "${env_file}" | tail -n 1 | cut -d= -f2- || true)"
+  value="${value%$'\r'}"
+  value="${value#\"}"
+  value="${value%\"}"
+  value="${value#\'}"
+  value="${value%\'}"
+  [[ -n "${value}" ]]
+}
 if [[ -r "${env_file}" ]]; then
   for k in "${required_keys[@]}"; do
-    has_key "${k}" || missing+=("${k}")
+    has_nonempty_key "${k}" || missing+=("${k}")
   done
   # A usable sink is EITHER a webhook OR a bot token paired with a channel.
   have_sink=0
-  has_key SLACK_WEBHOOK_URL && have_sink=1
-  { has_key SLACK_BOT_TOKEN && has_key SLACK_CHANNEL; } && have_sink=1
-  [[ "${have_sink}" == "1" ]] || missing+=("a Slack sink (SLACK_BOT_TOKEN+SLACK_CHANNEL or SLACK_WEBHOOK_URL)")
+  has_nonempty_key SLACK_WEBHOOK_URL && have_sink=1
+  if has_nonempty_key SLACK_BOT_TOKEN &&
+    { has_nonempty_key SLACK_CHANNEL ||
+      has_nonempty_key SLACK_CHANNEL_NOTIFY ||
+      has_nonempty_key SLACK_CHANNEL_NEEDS_RESPONSE; }; then
+    have_sink=1
+  fi
+  [[ "${have_sink}" == "1" ]] || missing+=("a Slack sink (SLACK_BOT_TOKEN plus a Slack channel or SLACK_WEBHOOK_URL)")
 else
   log "WARN: env file ${env_file} not found; the units will start but cannot post until it exists."
 fi
@@ -70,8 +85,12 @@ fi
 # /api/v1/notifications, so running both would duplicate pages.
 run mkdir -p "${units_dir}"
 unit="ao-attention-reply.service"
+unit_source="${repo_root}/ops/${unit}"
+if [[ -f "${release_current}/systemd/${unit}" ]]; then
+  unit_source="${release_current}/systemd/${unit}"
+fi
 log "Installing ${unit} -> ${units_dir}/${unit}"
-run cp "${repo_root}/ops/${unit}" "${units_dir}/${unit}"
+run cp "${unit_source}" "${units_dir}/${unit}"
 
 # 3. Reload + (re)start the reply listener, and best-effort disable any stale
 # outbound attention notifier unit left from a previous #82 install.
@@ -87,7 +106,10 @@ if [[ -e "${legacy_state}" ]]; then
   fi
 fi
 
-if [[ "${do_start}" == "1" ]]; then
+if [[ "${do_start}" == "1" && "${dry_run}" != "1" && ! -e "${release_current}" ]]; then
+  run_soft systemctl --user enable "${unit}"
+  log "WARN: release pointer ${release_current} not found; reply unit installed and enabled, but start skipped until ops/deploy.sh creates a release."
+elif [[ "${do_start}" == "1" ]]; then
   run_soft systemctl --user enable "${unit}"
   run_soft systemctl --user restart "${unit}"
   log "Attention reply service installed and (re)started; outbound attention notifier retired."

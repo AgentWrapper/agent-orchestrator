@@ -10,12 +10,23 @@ Deploy ao's self-hosted production target: the local user-level ao daemon.
 
 Environment overrides:
   AO_DEPLOY_REPO_ROOT       repo checkout to deploy from (default: script parent)
-  AO_DEPLOY_AO_BIN          ao binary path (default: ~/.local/bin/ao)
+  AO_DEPLOY_AO_BIN          stable ao CLI symlink path (default: ~/.local/bin/ao)
   AO_DEPLOY_SYSTEMD_USER_DIR systemd user unit dir (default: ~/.config/systemd/user)
+  AO_DEPLOY_STATE_DIR       release state dir (default: ~/.ao/deploy)
+  AO_DEPLOY_STATE_FILE      deployed revision marker (default: $AO_DEPLOY_STATE_DIR/agent-orchestrator.last-deployed)
+  AO_DEPLOY_LOCK_FILE       deploy/rollback lock file (default: $AO_DEPLOY_STATE_DIR/deploy.lock)
+  AO_DEPLOY_PRE_HERMETIC_DIR pre-hermetic binary/unit backup dir (default: $AO_DEPLOY_STATE_DIR/pre-hermetic)
+  AO_DEPLOY_RELEASES_DIR    immutable release dirs (default: $AO_DEPLOY_STATE_DIR/releases)
+  AO_DEPLOY_CURRENT         current release symlink (default: $AO_DEPLOY_STATE_DIR/current)
+  AO_DEPLOY_PREVIOUS        previous release symlink (default: $AO_DEPLOY_STATE_DIR/previous)
+  AO_DEPLOY_RELEASE_RETENTION inactive releases to keep besides current/previous (default: 3)
+  AO_DEPLOY_NPM_CACHE_DIR   npm cache used by staged web builds (default: $AO_DEPLOY_STATE_DIR/npm-cache)
   AO_DEPLOY_BASE            base git ref for changed-path detection
   AO_DEPLOY_HEAD            head git ref for changed-path detection (default: HEAD)
   AO_DEPLOY_GITHUB_REPO     GitHub repo owner/name for main CI verification
   AO_DEPLOY_WEB_URL         tailnet/public web URL to verify
+  AO_DEPLOY_SLACK_ENV_FILE  Slack config env file (default: ~/agent-orchestrator/.env)
+  AO_DEPLOY_LEGACY_ATTENTION_UNIT retired outbound notifier unit (default: ao-attention-notifier.service)
   AO_DEPLOY_WAIT_SECONDS    ao restart + web readiness timeout (default: 30)
   AO_DEPLOY_DRY_RUN=1       print actions without changing the host
 EOF
@@ -24,10 +35,16 @@ EOF
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="${AO_DEPLOY_REPO_ROOT:-$(cd "${script_dir}/.." && pwd -P)}"
 ao_bin="${AO_DEPLOY_AO_BIN:-${HOME}/.local/bin/ao}"
-ao_prev="${AO_DEPLOY_AO_PREV:-${ao_bin}.prev}"
 systemd_user_dir="${AO_DEPLOY_SYSTEMD_USER_DIR:-${HOME}/.config/systemd/user}"
 state_dir="${AO_DEPLOY_STATE_DIR:-${HOME}/.ao/deploy}"
 state_file="${AO_DEPLOY_STATE_FILE:-${state_dir}/agent-orchestrator.last-deployed}"
+deploy_lock="${AO_DEPLOY_LOCK_FILE:-${state_dir}/deploy.lock}"
+pre_hermetic_dir="${AO_DEPLOY_PRE_HERMETIC_DIR:-${state_dir}/pre-hermetic}"
+release_root="${AO_DEPLOY_RELEASES_DIR:-${state_dir}/releases}"
+current_link="${AO_DEPLOY_CURRENT:-${state_dir}/current}"
+previous_link="${AO_DEPLOY_PREVIOUS:-${state_dir}/previous}"
+release_retention="${AO_DEPLOY_RELEASE_RETENTION:-3}"
+npm_cache_dir="${AO_DEPLOY_NPM_CACHE_DIR:-${state_dir}/npm-cache}"
 # Durable, append-only record of every deploy: timestamp, source ref, and the
 # built revision. The old ~/.ao/deploy-main.log went stale (last written by a
 # since-deleted worktree) because nothing appended to it reliably; log() now
@@ -38,6 +55,9 @@ ao_unit="${AO_DEPLOY_AO_UNIT:-ao.service}"
 web_unit="${AO_DEPLOY_WEB_UNIT:-ao-web.service}"
 notifier_unit="${AO_DEPLOY_NOTIFIER_UNIT:-ao-slack-notifier.service}"
 attention_reply_unit="${AO_DEPLOY_ATTENTION_REPLY_UNIT:-ao-attention-reply.service}"
+slack_env_file="${AO_DEPLOY_SLACK_ENV_FILE:-${AO_ENV_FILE:-${HOME}/agent-orchestrator/.env}}"
+legacy_attention_unit="${AO_DEPLOY_LEGACY_ATTENTION_UNIT:-ao-attention-notifier.service}"
+legacy_attention_state="${AO_DEPLOY_ATTENTION_LEGACY_STATE:-${AO_ATTENTION_LEGACY_STATE:-${AO_ATTENTION_STATE:-${HOME}/.ao/attention-state.json}}}"
 wait_seconds="${AO_DEPLOY_WAIT_SECONDS:-30}"
 ao_port="${AO_PORT:-3001}"
 dry_run="${AO_DEPLOY_DRY_RUN:-0}"
@@ -111,6 +131,16 @@ run_in() {
   (cd "${dir}" && "$@")
 }
 
+run_best_effort() {
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: %s\n' "$(quote_cmd "$@")"
+    return 0
+  fi
+  if ! "$@"; then
+    log "WARN: '$(quote_cmd "$@")' failed; continuing."
+  fi
+}
+
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -151,7 +181,8 @@ daemon_reported_revision() {
 # "dev"/"unknown", which is undetectable from any ao surface (the exact trap
 # #262 exists to close), so every one of these is a HARD FAILURE, not a
 # warning. Failing here (before restart_unit) leaves the old daemon running and
-# the backed-up ao.prev intact so `--rollback` restores a known-good binary.
+# the active release pointer is left untouched so rollback still has a
+# known-good release to switch to.
 verify_built_revision_stamped() {
   local revision="$1" modified="$2" expected_ref="$3"
   if [[ "${dry_run}" == "1" ]]; then
@@ -214,8 +245,30 @@ verify_daemon_revision() {
   log "Running daemon revision matches built binary: ${reported}"
 }
 
+maybe_fetch_origin() {
+  local origin_url
+  origin_url="$(git -C "${repo_root}" remote get-url origin 2>/dev/null || true)"
+  if [[ -z "${origin_url}" ]]; then
+    return 0
+  fi
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: git -C %s fetch --tags --prune origin\n' "$(printf '%q' "${repo_root}")" >&2
+    return 0
+  fi
+  if ! git -C "${repo_root}" fetch --tags --prune origin; then
+    case "${AO_DEPLOY_HEAD:-HEAD}" in
+      origin/*|refs/remotes/origin/*)
+        printf 'Refusing to deploy %s: origin fetch failed, so the requested remote-tracking ref may be stale.\n' "${AO_DEPLOY_HEAD}" >&2
+        return 1
+        ;;
+    esac
+    printf 'WARNING: origin fetch failed; deploying from local refs.\n' >&2
+  fi
+}
+
 git_head() {
-  git -C "${repo_root}" rev-parse "${AO_DEPLOY_HEAD:-HEAD}"
+  maybe_fetch_origin || return 1
+  git -C "${repo_root}" rev-parse "${AO_DEPLOY_HEAD:-HEAD}^{commit}"
 }
 
 github_repo() {
@@ -392,12 +445,26 @@ changed_in_range() {
 }
 
 install_frontend_dependencies() {
-  if [[ ! -f "${repo_root}/frontend/package-lock.json" ]]; then
-    printf 'Refusing to install frontend dependencies: %s is missing; this deploy expects npm lockfile management.\n' "${repo_root}/frontend/package-lock.json" >&2
+  local source_root="$1"
+  local lockfile="${source_root}/frontend/package-lock.json"
+  local npm_ci_args=(npm ci --cache "${npm_cache_dir}" --prefer-offline)
+  if [[ "${dry_run}" == "1" ]]; then
+    if [[ ! -f "${lockfile}" ]] &&
+      ! git -C "${repo_root}" cat-file -e "${AO_DEPLOY_HEAD:-HEAD}:frontend/package-lock.json" 2>/dev/null; then
+      printf 'Refusing to install frontend dependencies: staged source is missing frontend/package-lock.json; this deploy expects npm lockfile management.\n' >&2
+      return 1
+    fi
+    log "Installing frontend dependencies with npm ci for staged web build."
+    run_in "${source_root}/frontend" "${npm_ci_args[@]}"
+    return 0
+  fi
+  if [[ ! -f "${lockfile}" ]]; then
+    printf 'Refusing to install frontend dependencies: %s is missing; this deploy expects npm lockfile management.\n' "${lockfile}" >&2
     return 1
   fi
-  log "frontend package metadata changed; installing dependencies with npm ci."
-  if ! run_in "${repo_root}/frontend" npm ci; then
+  log "Installing frontend dependencies with npm ci for staged web build."
+  run mkdir -p "${npm_cache_dir}"
+  if ! run_in "${source_root}/frontend" "${npm_ci_args[@]}"; then
     printf 'Frontend dependency install failed; aborting deploy before restarting %s.\n' "${web_unit}" >&2
     return 1
   fi
@@ -413,6 +480,19 @@ process.stdin.on("end", () => {
   console.log(Array.isArray(sessions) ? sessions.length : 0);
 });
 '
+}
+
+capture_pre_restart_sessions() {
+  local count
+  if count="$(session_count 2>/dev/null)"; then
+    printf '%s\n' "${count}"
+    return 0
+  fi
+  if [[ -L "${current_link}" ]] || ao status 2>/dev/null | grep -q 'AO daemon: ready'; then
+    printf 'Refusing to deploy: could not capture pre-restart session count from a running ao daemon.\n' >&2
+    return 1
+  fi
+  return 0
 }
 
 wait_for_ao_ready() {
@@ -525,8 +605,8 @@ verify_tailnet_web() {
     return 0
   fi
 
-  # ao-web.service's ExecStartPre rebuilds the web bundle and the node server
-  # then needs a moment to bind, so the URL serves 502 (or refuses the
+  # ao-web.service starts a prebuilt bundle from the active release, but the
+  # node server still needs a moment to bind, so the URL serves 502 (or refuses the
   # connection) for a few seconds after a restart. Retry on the same budget as
   # the daemon readiness loop rather than treating the transient as a failure.
   local start now status remaining
@@ -566,10 +646,195 @@ restart_unit() {
   run systemctl --user restart "${unit}"
 }
 
-install_ao_unit() {
+render_release_units() {
+  local release_dir="$1"
+  local unit_dir="${release_dir}/systemd"
+  local source_ops="${release_dir}/source/ops"
+  local escaped_current="${current_link//\\/\\\\}"
+  local unit
+  escaped_current="${escaped_current//&/\\&}"
+  escaped_current="${escaped_current//|/\\|}"
+  run mkdir -p "${unit_dir}"
+
+  for unit in "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+    if [[ "${dry_run}" == "1" ]]; then
+      printf 'DRY-RUN: render %s -> %s\n' "${source_ops}/${unit}" "${unit_dir}/${unit}"
+      continue
+    fi
+    if [[ ! -f "${source_ops}/${unit}" ]]; then
+      printf 'Refusing to deploy: unit template missing from staged source: %s\n' "${source_ops}/${unit}" >&2
+      return 1
+    fi
+    sed "s|%h/.ao/deploy/current|${escaped_current}|g" "${source_ops}/${unit}" > "${unit_dir}/${unit}"
+  done
+}
+
+install_units_from_current() {
   run mkdir -p "${systemd_user_dir}"
-  run cp "${repo_root}/ops/ao.service" "${systemd_user_dir}/${ao_unit}"
+  run cp "${current_link}/systemd/${ao_unit}" "${systemd_user_dir}/${ao_unit}"
+  run cp "${current_link}/systemd/${web_unit}" "${systemd_user_dir}/${web_unit}"
+  run cp "${current_link}/systemd/${notifier_unit}" "${systemd_user_dir}/${notifier_unit}"
+  run cp "${current_link}/systemd/${attention_reply_unit}" "${systemd_user_dir}/${attention_reply_unit}"
   run systemctl --user daemon-reload
+  run systemctl --user enable "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"
+}
+
+backup_pre_hermetic_host() {
+  if [[ -L "${current_link}" ]]; then
+    return 0
+  fi
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: backup pre-hermetic ao binary and units into %s\n' "${pre_hermetic_dir}"
+    return 0
+  fi
+  if [[ -e "${pre_hermetic_dir}/MANIFEST" ]]; then
+    return 0
+  fi
+  mkdir -p "${pre_hermetic_dir}/systemd"
+  if [[ -f "${ao_bin}" && ! -L "${ao_bin}" ]]; then
+    cp -p "${ao_bin}" "${pre_hermetic_dir}/ao"
+  fi
+  local unit copied=0
+  for unit in "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+    if [[ -f "${systemd_user_dir}/${unit}" ]]; then
+      cp -p "${systemd_user_dir}/${unit}" "${pre_hermetic_dir}/systemd/${unit}"
+      copied=$((copied + 1))
+    fi
+  done
+  printf 'ao_bin=%s\nunits=%s\n' "${ao_bin}" "${copied}" > "${pre_hermetic_dir}/MANIFEST"
+  log "Backed up pre-hermetic deploy state in ${pre_hermetic_dir}"
+}
+
+rollback_pre_hermetic() {
+  local pre_sessions="$1"
+  if [[ "${dry_run}" != "1" && ! -f "${pre_hermetic_dir}/ao" ]]; then
+    printf 'Rollback release not found: %s (no previous release and no pre-hermetic ao backup at %s)\n' "${previous_link}" "${pre_hermetic_dir}/ao" >&2
+    return 1
+  fi
+  if [[ "${dry_run}" != "1" && ! -f "${pre_hermetic_dir}/systemd/${ao_unit}" ]]; then
+    printf 'Pre-hermetic rollback cannot restart ao: no backed-up %s in %s\n' "${ao_unit}" "${pre_hermetic_dir}/systemd" >&2
+    return 1
+  fi
+  log "Rolling back to pre-hermetic ao binary and units from ${pre_hermetic_dir}"
+  run mkdir -p "$(dirname "${ao_bin}")" "${systemd_user_dir}"
+  run cp "${pre_hermetic_dir}/ao" "${ao_bin}.tmp"
+  run mv -Tf "${ao_bin}.tmp" "${ao_bin}"
+  run rm -f "${current_link}" "${previous_link}"
+  local unit
+  for unit in "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+    if [[ "${dry_run}" == "1" || -f "${pre_hermetic_dir}/systemd/${unit}" ]]; then
+      run cp "${pre_hermetic_dir}/systemd/${unit}" "${systemd_user_dir}/${unit}"
+    elif [[ -f "${systemd_user_dir}/${unit}" ]]; then
+      run systemctl --user disable --now "${unit}"
+      run rm -f "${systemd_user_dir}/${unit}"
+    fi
+  done
+  run systemctl --user daemon-reload
+  if [[ "${dry_run}" != "1" ]]; then
+    chmod +x "${ao_bin}"
+  fi
+  restart_unit "${ao_unit}"
+  verify_after_restart "${pre_sessions}" "Pre-rollback session count unavailable (old daemon may be down)"
+  for unit in "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+    if [[ "${dry_run}" == "1" || -f "${pre_hermetic_dir}/systemd/${unit}" ]]; then
+      restart_unit "${unit}"
+      verify_unit_active "${unit}" "${unit}"
+    fi
+  done
+  [[ "${dry_run}" == "1" ]] || rm -f "${state_file}"
+  log "Pre-hermetic rollback complete."
+}
+
+install_cli_link() {
+  run mkdir -p "$(dirname "${ao_bin}")"
+  run ln -sfn "${current_link}/bin/ao" "${ao_bin}.tmp"
+  run mv -Tf "${ao_bin}.tmp" "${ao_bin}"
+}
+
+stage_release_source() {
+  local head="$1" stage_dir="$2" source_dir="${stage_dir}/source"
+  run mkdir -p "${release_root}"
+  cleanup_stale_staging
+  run rm -rf "${stage_dir}"
+  run git clone --no-checkout "${repo_root}" "${source_dir}"
+  run_in "${source_dir}" git checkout --detach "${head}"
+  run_in "${source_dir}" git clean -ffdx
+}
+
+cleanup_stale_staging() {
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: prune stale staging dirs in %s\n' "${release_root}"
+    return 0
+  fi
+  [[ -d "${release_root}" ]] || return 0
+  find "${release_root}" -mindepth 1 -maxdepth 1 -type d -name '.staging-*' -mmin +60 -prune -exec rm -rf {} +
+}
+
+copy_previous_web_dist_if_available() {
+  local stage_dir="$1"
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: reuse previous web dist when available\n'
+    return 0
+  fi
+  if [[ -d "${current_link}/source/frontend/dist" ]]; then
+    mkdir -p "${stage_dir}/source/frontend"
+    cp -a "${current_link}/source/frontend/dist" "${stage_dir}/source/frontend/dist"
+    return 0
+  fi
+  return 1
+}
+
+finalize_release_payload() {
+  local stage_dir="$1"
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: strip build-only git metadata and frontend dependencies from release payload\n'
+    return 0
+  fi
+  rm -rf "${stage_dir}/source/.git" "${stage_dir}/source/frontend/node_modules"
+}
+
+activate_release() {
+  local final_dir="$1"
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: atomically point %s at %s\n' "${current_link}" "${final_dir}"
+    return 0
+  fi
+  mkdir -p "${state_dir}"
+  local old_current=""
+  if [[ -L "${current_link}" ]]; then
+    old_current="$(readlink -f "${current_link}" || true)"
+  fi
+  if [[ -n "${old_current}" && -d "${old_current}" ]]; then
+    ln -sfn "${old_current}" "${previous_link}.tmp"
+    mv -Tf "${previous_link}.tmp" "${previous_link}"
+  fi
+  ln -sfn "${final_dir}" "${current_link}.tmp"
+  mv -Tf "${current_link}.tmp" "${current_link}"
+}
+
+prune_old_releases() {
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: prune old releases in %s keeping %s plus current/previous\n' "${release_root}" "${release_retention}"
+    return 0
+  fi
+  [[ -d "${release_root}" ]] || return 0
+  local keep_current="" keep_previous="" seen=0 entry dir resolved
+  [[ -L "${current_link}" ]] && keep_current="$(readlink -f "${current_link}" || true)"
+  [[ -L "${previous_link}" ]] && keep_previous="$(readlink -f "${previous_link}" || true)"
+  while IFS= read -r -d '' entry; do
+    dir="${entry#*$'\t'}"
+    resolved="$(readlink -f "${dir}" || true)"
+    if [[ -n "${resolved}" && ( "${resolved}" == "${keep_current}" || "${resolved}" == "${keep_previous}" ) ]]; then
+      continue
+    fi
+    seen=$((seen + 1))
+    if (( seen > release_retention )); then
+      rm -rf "${dir}"
+    fi
+  done < <(
+    find "${release_root}" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' -printf '%T@\t%p\0' |
+      sort -z -rn
+  )
 }
 
 verify_unit_active() {
@@ -587,8 +852,63 @@ verify_unit_active() {
   log "${label} unit ${unit} is active"
 }
 
+env_file_has_nonempty_key() {
+  local key="$1" value
+  value="$(grep -E "^${key}=" "${slack_env_file}" | tail -n 1 | cut -d= -f2- || true)"
+  value="${value%$'\r'}"
+  value="${value#\"}"
+  value="${value%\"}"
+  value="${value#\'}"
+  value="${value%\'}"
+  [[ -n "${value}" ]]
+}
+
+verify_slack_configured() {
+  if [[ "${dry_run}" == "1" ]]; then
+    log "DRY-RUN: would verify Slack notifier and reply config in ${slack_env_file}"
+    return 0
+  fi
+  if [[ ! -r "${slack_env_file}" ]]; then
+    printf 'Slack config %s is not readable; refusing to declare deploy healthy with no verified Slack config.\n' "${slack_env_file}" >&2
+    return 1
+  fi
+  local have_webhook=0 have_bot=0 have_channel=0
+  env_file_has_nonempty_key SLACK_WEBHOOK_URL && have_webhook=1
+  env_file_has_nonempty_key SLACK_BOT_TOKEN && have_bot=1
+  if env_file_has_nonempty_key SLACK_CHANNEL ||
+    env_file_has_nonempty_key SLACK_CHANNEL_NOTIFY ||
+    env_file_has_nonempty_key SLACK_CHANNEL_NEEDS_RESPONSE; then
+    have_channel=1
+  fi
+  if ! env_file_has_nonempty_key SLACK_MEMBER_ID || ! env_file_has_nonempty_key SLACK_SIGNING_SECRET; then
+    printf 'Slack config %s is missing SLACK_MEMBER_ID or SLACK_SIGNING_SECRET.\n' "${slack_env_file}" >&2
+    return 1
+  fi
+  if [[ "${have_webhook}" == "1" || ( "${have_bot}" == "1" && "${have_channel}" == "1" ) ]]; then
+    log "Slack notifier and reply config verified from ${slack_env_file}"
+    return 0
+  fi
+  printf 'Slack config %s has no usable sink; set SLACK_WEBHOOK_URL or SLACK_BOT_TOKEN plus a Slack channel.\n' "${slack_env_file}" >&2
+  return 1
+}
+
+retire_legacy_attention_notifier() {
+  log "Retiring legacy outbound attention notifier ${legacy_attention_unit} if present."
+  run_best_effort systemctl --user disable --now "${legacy_attention_unit}"
+  if [[ -e "${legacy_attention_state}" ]]; then
+    if [[ "${dry_run}" == "1" ]]; then
+      log "Would remove retired outbound attention state: ${legacy_attention_state}"
+    elif rm -f "${legacy_attention_state}"; then
+      log "Removed retired outbound attention state: ${legacy_attention_state}"
+    else
+      log "WARN: failed to remove retired outbound attention state: ${legacy_attention_state}"
+    fi
+  fi
+}
+
 verify_after_restart() {
   local expected_sessions="$1"
+  local skip_reason="${2:-pre-restart session count unavailable}"
 
   wait_for_ao_ready
   verify_ao_doctor
@@ -597,45 +917,84 @@ verify_after_restart() {
   if [[ "${dry_run}" == "1" ]]; then
     run ao session ls --json
   else
-    local actual_sessions
-    actual_sessions="$(session_count)"
-    if [[ "${actual_sessions}" != "${expected_sessions}" ]]; then
-      printf 'Session re-adoption count mismatch: before=%s after=%s\n' "${expected_sessions}" "${actual_sessions}" >&2
-      return 1
+    if [[ -n "${expected_sessions}" ]]; then
+      local actual_sessions
+      actual_sessions="$(session_count)"
+      if [[ "${actual_sessions}" != "${expected_sessions}" ]]; then
+        printf 'Session re-adoption count mismatch: before=%s after=%s\n' "${expected_sessions}" "${actual_sessions}" >&2
+        return 1
+      fi
+      log "Session re-adoption count preserved: ${actual_sessions}"
+    else
+      log "${skip_reason}; skipping session re-adoption count comparison."
     fi
-    log "Session re-adoption count preserved: ${actual_sessions}"
   fi
 
 }
 
 rollback_deploy() {
-  log "Rolling back ao binary from ${ao_prev} to ${ao_bin}"
-  if [[ "${dry_run}" != "1" && ! -f "${ao_prev}" ]]; then
-    printf 'Rollback binary not found: %s\n' "${ao_prev}" >&2
-    return 1
+  log "Rolling back ao release via ${previous_link}"
+  if [[ "${dry_run}" != "1" && ! -L "${previous_link}" ]]; then
+    local fallback_sessions
+    fallback_sessions="$(session_count 2>/dev/null || true)"
+    rollback_pre_hermetic "${fallback_sessions}"
+    return
   fi
 
   local pre_sessions
   if [[ "${dry_run}" == "1" ]]; then
     pre_sessions=0
   else
-    pre_sessions="$(session_count)"
+    pre_sessions="$(session_count 2>/dev/null || true)"
+  fi
+  verify_slack_configured
+
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: atomically point %s at previous release %s\n' "${current_link}" "${previous_link}"
+  else
+    local rollback_target current_target
+    rollback_target="$(readlink -f "${previous_link}")"
+    if [[ ! -f "${rollback_target}/REVISION" ]]; then
+      printf 'Rollback release has no REVISION metadata: %s\n' "${rollback_target}" >&2
+      return 1
+    fi
+    if [[ -L "${current_link}" ]]; then
+      current_target="$(readlink -f "${current_link}")"
+      if [[ "${current_target}" == "${rollback_target}" ]]; then
+        printf 'Already on rollback target %s; refusing a no-op rollback.\n' "${rollback_target}" >&2
+        return 1
+      fi
+    fi
+    ln -sfn "${rollback_target}" "${current_link}.tmp"
+    mv -Tf "${current_link}.tmp" "${current_link}"
   fi
 
-  run cp "${ao_prev}" "${ao_bin}"
-  run chmod +x "${ao_bin}"
-  install_ao_unit
+  install_cli_link
+  install_units_from_current
+  retire_legacy_attention_notifier
   restart_unit "${ao_unit}"
-  verify_after_restart "${pre_sessions}"
+  verify_after_restart "${pre_sessions}" "Pre-rollback session count unavailable (old daemon may be down)"
+  local rolled_revision=""
+  if [[ "${dry_run}" != "1" ]]; then
+    rolled_revision="$(cat "${current_link}/REVISION")"
+    verify_daemon_revision "${rolled_revision}"
+    mkdir -p "${state_dir}"
+    printf '%s\n' "${rolled_revision}" > "${state_file}"
+  fi
+  restart_unit "${web_unit}"
+  verify_unit_active "${web_unit}" "ao web"
+  restart_unit "${notifier_unit}"
+  verify_unit_active "${notifier_unit}" "Slack notifier"
+  restart_unit "${attention_reply_unit}"
+  verify_unit_active "${attention_reply_unit}" "attention reply listener"
   verify_tailnet_web
 }
 
 deploy() {
-  local head base frontend_changed=false frontend_package_metadata_changed=false ops_changed=false pre_sessions
+  local head base frontend_changed=false frontend_package_metadata_changed=false web_build_needed=false pre_sessions
 
-  if [[ "${dry_run}" != "1" && ! -x "${ao_bin}" ]]; then
-    printf 'Current ao binary is not executable: %s\n' "${ao_bin}" >&2
-    return 1
+  if [[ "${dry_run}" != "1" && -L "${current_link}" && ! -x "${ao_bin}" ]]; then
+    log "WARN: current ao symlink is missing or not executable at ${ao_bin}; deploy will repair it before restart."
   fi
 
   head="$(git_head)"
@@ -644,6 +1003,7 @@ deploy() {
   log "Deploying ao from ${repo_root}"
   log "Deploy range: ${base:-<unknown/first deploy>}..${head}"
   verify_main_ci_green "${head}"
+  verify_slack_configured
 
   if changed_in_range "${base}" "${head}" "frontend/"; then
     frontend_changed=true
@@ -652,69 +1012,101 @@ deploy() {
     changed_in_range "${base}" "${head}" "frontend/package-lock.json"; then
     frontend_package_metadata_changed=true
   fi
-  if changed_in_range "${base}" "${head}" "ops/"; then
-    ops_changed=true
+  if [[ "${frontend_changed}" == "true" || "${frontend_package_metadata_changed}" == "true" ]]; then
+    web_build_needed=true
+  fi
+  if [[ "${dry_run}" != "1" && ! -d "${current_link}/source/frontend/dist" ]]; then
+    web_build_needed=true
   fi
 
-  if [[ "${dry_run}" == "1" ]]; then
-    pre_sessions=0
+  local stage_dir release_dir release_source release_bin release_name frontend_tree previous_frontend_tree
+  release_name="${head}-$(date -u +%Y%m%d%H%M%S)-$$"
+  stage_dir="${release_root}/.staging-${release_name}"
+  release_dir="${release_root}/${release_name}"
+  release_source="${stage_dir}/source"
+  release_bin="${stage_dir}/bin/ao"
+
+  stage_release_source "${head}" "${stage_dir}"
+  run mkdir -p "${stage_dir}/bin"
+  frontend_tree="$(git -C "${repo_root}" rev-parse "${head}:frontend" 2>/dev/null || true)"
+  if [[ "${dry_run}" != "1" && -f "${current_link}/FRONTEND_TREE" ]]; then
+    previous_frontend_tree="$(cat "${current_link}/FRONTEND_TREE")"
   else
-    pre_sessions="$(session_count)"
+    previous_frontend_tree=""
+  fi
+  if [[ "${dry_run}" != "1" && "${web_build_needed}" != "true" && "${previous_frontend_tree}" != "${frontend_tree}" ]]; then
+    log "Previous web bundle provenance does not match this release; rebuilding from staged source."
+    web_build_needed=true
   fi
 
-  run mkdir -p "$(dirname "${ao_bin}")"
-  install_ao_unit
-  run cp "${ao_bin}" "${ao_prev}"
-  run_in "${repo_root}/backend" go build -o "${ao_bin}" ./cmd/ao
+  run_in "${release_source}/backend" go build -o "${release_bin}" ./cmd/ao
 
   # Record + gate the built revision before restarting: the log line lands in
   # the durable deploy log, and a binary that is unstamped, dirty, or built
   # from a different ref than we are shipping is refused HERE — before the
-  # service restarts onto it — so the old daemon and backed-up ao.prev remain
-  # intact for `--rollback` (#262).
+  # service restarts onto it — so the old daemon and active release pointer
+  # remain intact for `--rollback` (#262/#270).
   local built_revision built_modified
   if [[ "${dry_run}" != "1" ]]; then
-    built_revision="$(binary_build_setting "${ao_bin}" vcs.revision)"
-    built_modified="$(binary_build_setting "${ao_bin}" vcs.modified)"
+    built_revision="$(binary_build_setting "${release_bin}" vcs.revision)"
+    built_modified="$(binary_build_setting "${release_bin}" vcs.modified)"
     log "Built ao revision: ${built_revision:-<unknown>} (dirty=${built_modified:-unknown})"
   fi
   verify_built_revision_stamped "${built_revision:-}" "${built_modified:-}" "${head}"
 
+  if [[ "${web_build_needed}" == "true" ]]; then
+    install_frontend_dependencies "${release_source}"
+    log "Building web bundle from staged release source."
+    run_in "${release_source}/frontend" npm run build:web
+  else
+    log "frontend/ unchanged; reusing previous web bundle when available."
+    if ! copy_previous_web_dist_if_available "${stage_dir}"; then
+      log "Previous web bundle unavailable; building from staged source."
+      install_frontend_dependencies "${release_source}"
+      run_in "${release_source}/frontend" npm run build:web
+    fi
+  fi
+
+  if [[ "${dry_run}" != "1" ]]; then
+    printf '%s\n' "${head}" > "${stage_dir}/REVISION"
+    printf '%s\n' "${repo_root}" > "${stage_dir}/SOURCE_REPO"
+    printf '%s\n' "${frontend_tree}" > "${stage_dir}/FRONTEND_TREE"
+  else
+    printf 'DRY-RUN: write release metadata for %s\n' "${head}"
+  fi
+  render_release_units "${stage_dir}"
+  finalize_release_payload "${stage_dir}"
+  run mv "${stage_dir}" "${release_dir}"
+
+  if [[ "${dry_run}" == "1" ]]; then
+    pre_sessions=0
+  else
+    pre_sessions="$(capture_pre_restart_sessions)"
+  fi
+  backup_pre_hermetic_host
+  activate_release "${release_dir}"
+  install_cli_link
+  install_units_from_current
+  retire_legacy_attention_notifier
   restart_unit "${ao_unit}"
-  verify_after_restart "${pre_sessions}"
+  verify_after_restart "${pre_sessions}" "Pre-restart session count unavailable (first deploy or old daemon unreachable)"
   verify_daemon_revision "${built_revision:-}"
 
   if [[ "${frontend_changed}" == "true" ]]; then
-    if [[ "${frontend_package_metadata_changed}" == "true" ]]; then
-      install_frontend_dependencies
-    fi
-    log "frontend/ changed; restarting ${web_unit} (ExecStartPre rebuilds the production web bundle)."
-    restart_unit "${web_unit}"
-    verify_unit_active "${web_unit}" "ao web"
+    log "frontend/ changed; restarting ${web_unit} from the activated release."
   else
-    log "frontend/ unchanged; leaving ${web_unit} running."
+    log "frontend/ unchanged; restarting ${web_unit} so it follows the activated release pointer."
   fi
+  restart_unit "${web_unit}"
+  verify_unit_active "${web_unit}" "ao web"
 
-  if [[ "${ops_changed}" == "true" ]]; then
-    log "ops/ changed; restarting ${notifier_unit}."
-    restart_unit "${notifier_unit}"
-    verify_unit_active "${notifier_unit}" "Slack notifier"
+  log "Restarting ${notifier_unit} from the activated release."
+  restart_unit "${notifier_unit}"
+  verify_unit_active "${notifier_unit}" "Slack notifier"
 
-    # Reconcile #82/#87: ao-slack-notifier.service is the single outbound
-    # notifier. It now reads the durable notifications API, so the session-poll
-    # ao-attention-notifier.service must not also run and duplicate pages. Keep
-    # only the inbound reply listener wiring from the two-way attention system.
-    log "ops/ changed; installing + restarting attention reply unit (${attention_reply_unit}); outbound attention notifier is retired."
-    run_in "${repo_root}" bash ops/install-attention.sh
-
-    # install-attention.sh is best-effort (run_soft) so it can run on hosts
-    # without a user bus; in a real deploy we must not finish green with the
-    # reply listener down.
-    verify_unit_active "${attention_reply_unit}" "attention reply listener"
-  else
-    log "ops/ unchanged; leaving ${notifier_unit} running."
-    log "ops/ unchanged; leaving ${attention_reply_unit} running; outbound attention notifier remains retired."
-  fi
+  log "Restarting ${attention_reply_unit} from the activated release; outbound attention notifier remains retired."
+  restart_unit "${attention_reply_unit}"
+  verify_unit_active "${attention_reply_unit}" "attention reply listener"
 
   # Verify last: every unit this deploy is responsible for restarting has now
   # been restarted, so a web URL that is genuinely down still fails the deploy
@@ -728,12 +1120,28 @@ deploy() {
     run mkdir -p "${state_dir}"
     printf 'DRY-RUN: write deployed ref %s to %s\n' "${head}" "${state_file}"
   fi
+  prune_old_releases
 
   log "ao deploy complete."
 }
 
+with_deploy_lock() {
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: flock -n %s\n' "$(printf '%q' "${deploy_lock}")"
+    "$@"
+    return
+  fi
+  mkdir -p "$(dirname "${deploy_lock}")"
+  exec 9>"${deploy_lock}"
+  if ! flock -n 9; then
+    printf 'Another ao deploy or rollback already holds %s; refusing to run concurrently.\n' "${deploy_lock}" >&2
+    return 1
+  fi
+  "$@"
+}
+
 if [[ "${rollback}" == "true" ]]; then
-  rollback_deploy
+  with_deploy_lock rollback_deploy
 else
-  deploy
+  with_deploy_lock deploy
 fi

@@ -303,21 +303,25 @@ go vet ./... && go test ./...`; frontend is npm-lockfile-managed Vite under
 
 - **Deploy target:** ao production is the local self-hosted user daemon and
   browser-mode web surface, not an external PaaS. Deploy command:
-  `ops/deploy.sh`. The script backs up `~/.local/bin/ao` to
-  `~/.local/bin/ao.prev`, rebuilds the daemon binary from `backend/`, restarts
-  `ao.service`, and retries readiness for about 30 seconds so the brief
-  self-hosted API outage is not treated as a failure. If frontend package
-  metadata changed in the deployed range it first runs `npm ci` under
-  `frontend/` and aborts before the web restart on install failure. If
-  `frontend/` changed in the deployed range it restarts `ao-web.service`
-  (whose `ExecStartPre` rebuilds the web bundle); if `ops/` changed it restarts
-  `ao-slack-notifier.service`. Before restarting, it refuses to deploy a binary
-  whose Go VCS metadata is missing (unstamped / `-buildvcs=false`), dirty
-  (`vcs.modified=true`), or stamped with a revision other than the deploy
+  `ops/deploy.sh`. The script resolves and fetches the requested ref, stages it
+  in an isolated clean checkout, builds the daemon and web bundle from that
+  checkout, assembles a versioned release under `~/.ao/deploy/releases/`, and
+  atomically flips `~/.ao/deploy/current` only after build provenance
+  validation passes. The stable `~/.local/bin/ao` path is a symlink to
+  `current/bin/ao`, and daemon/web/notifier/reply systemd units execute through
+  the same `current` release pointer. Deploy restarts `ao.service`, retries
+  readiness for about 30 seconds so the brief self-hosted API outage is not
+  treated as a failure, then restarts and verifies the web, Slack notifier, and
+  attention reply services so all local services converge to the same release.
+  Changed-path detection may skip rebuilding an unchanged web bundle only when
+  the previous bundle's recorded `frontend/` tree matches the requested ref; it
+  never skips unit topology convergence. Before activation, deploy refuses a
+  binary whose Go VCS metadata is missing (unstamped / `-buildvcs=false`),
+  dirty (`vcs.modified=true`), or stamped with a revision other than the deploy
   source ref — a build that could not prove its provenance never reaches the
-  running daemon. After the restart it fails unless the running daemon reports
-  that same just-built VCS revision (via `/api/v1/version`), and it appends
-  every deploy (timestamp, source ref, revision) to
+  running daemon. After restart it fails unless the running daemon reports that
+  same just-built VCS revision (via `/api/v1/version`), and it appends every
+  deploy (timestamp, source ref, revision) to
   `~/.ao/deploy/agent-orchestrator.deploy.log`.
 
 ### Codex-family reviewers run in the foreground only
@@ -361,9 +365,10 @@ blocking, attached commands that run to completion in view.
 - **Logs:** `journalctl --user -u ao`; for web and notifier follow-ups use
   `journalctl --user -u ao-web` and
   `journalctl --user -u ao-slack-notifier`.
-- **Rollback:** `ops/deploy.sh --rollback` restores `~/.local/bin/ao.prev` to
-  `~/.local/bin/ao`, restarts `ao.service`, and reruns the same daemon
-  readiness/API/session/web checks.
+- **Rollback:** `ops/deploy.sh --rollback` switches `~/.ao/deploy/current`
+  back to the previous release pointer, refreshes the stable CLI symlink and
+  unit files, restarts daemon/web/notifier/reply services, and reruns the same
+  daemon readiness/API/session/web checks.
 - **Pool:** deploy-only work runs on the cheap haiku pool:
   `ao spawn --model haiku`.
 
