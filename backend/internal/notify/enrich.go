@@ -41,6 +41,9 @@ func withIntentSubject(rec domain.NotificationRecord, intent Intent) domain.Noti
 		return rec.WithInferredSubject()
 	}
 	switch {
+	case intent.Type == domain.NotificationWorkerDiedUnfinished || intent.Type == domain.NotificationWorkerRetryExhausted:
+		rec.SubjectKind = domain.NotificationSubjectSession
+		rec.SubjectID = string(intent.SessionID)
 	case intent.Type == domain.NotificationModelUnreachable || intent.Type == domain.NotificationModelRecovered:
 		rec.SubjectKind = domain.NotificationSubjectModel
 		rec.SubjectID = modelSubjectID(intent)
@@ -226,6 +229,9 @@ func modelSubjectID(intent Intent) string {
 	}
 	if len(parts) > 0 {
 		return strings.Join(parts, "/")
+	}
+	if intent.ProjectID != "" {
+		return string(intent.ProjectID)
 	}
 	return string(intent.SessionID)
 }

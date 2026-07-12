@@ -77,10 +77,17 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 	const title = n.title ?? n.message ?? "";
 	const url = n.url ?? n.prUrl ?? "";
 	const rawKind = n.kind ?? n.type ?? outerType;
+	const subject = n.subject ?? raw.subject ?? {};
 	const sessionId =
 		rawKind === "main_ci_red"
 			? (n.sessionId ?? n.session ?? raw.sessionId ?? "main")
 			: (n.sessionId ?? n.session ?? raw.sessionId ?? "");
+	const subjectKind =
+		subject.kind ??
+		(rawKind === "main_ci_red" ? "project" : url ? "pr" : sessionId ? "session" : "");
+	const subjectId =
+		subject.id ??
+		(subjectKind === "project" ? projectId : subjectKind === "pr" ? url : subjectKind === "session" ? sessionId : "");
 
 	// A park anywhere in the payload text is an attention/blocked signal even
 	// when the daemon labels the envelope generically (queue_update, etc.).
@@ -102,6 +109,8 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 	return {
 		kind,
 		sessionId: String(sessionId),
+		subjectKind: String(subjectKind),
+		subjectId: String(subjectId),
 		projectId: String(projectId),
 		title: String(title),
 		url: String(url),
@@ -113,6 +122,9 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 // between must not re-alert. Distinct kinds for the same session DO alert (a
 // worker going needs_input -> blocked is a real new transition).
 export function signature(rec) {
+	if (rec.subjectKind && rec.subjectId) {
+		return `${rec.projectId}/${rec.subjectKind}:${rec.subjectId}#${rec.kind}`;
+	}
 	return `${rec.projectId}/${rec.sessionId}#${rec.kind}`;
 }
 

@@ -236,14 +236,23 @@ export function normalizeNotification(raw) {
 	const n = raw.notification ?? raw.payload ?? raw;
 	const type = n.type ?? n.kind ?? raw.type ?? raw.event ?? "";
 	if (!INTERESTING.has(type)) return null;
+	const subject = n.subject ?? raw.subject ?? {};
+	const prUrl = n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "";
+	const projectId = n.projectId ?? n.project ?? raw.projectId ?? "";
+	const sessionId = n.sessionId ?? n.session ?? raw.sessionId ?? "";
+	const subjectKind = subject.kind ?? (type === "main_ci_red" ? "project" : prUrl ? "pr" : sessionId ? "session" : "");
+	const subjectId =
+		subject.id ?? (subjectKind === "project" ? projectId : subjectKind === "pr" ? prUrl : subjectKind === "session" ? sessionId : "");
 	return {
 		id: n.id ?? raw.id ?? null,
 		type,
-		sessionId: n.sessionId ?? n.session ?? raw.sessionId ?? "",
-		projectId: n.projectId ?? n.project ?? raw.projectId ?? "",
+		sessionId,
+		subjectKind,
+		subjectId,
+		projectId,
 		title: n.title ?? n.message ?? raw.title ?? "",
 		body: n.body ?? raw.body ?? "",
-		prUrl: n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "",
+		prUrl,
 		sensitive: Boolean(n.sensitive ?? raw.sensitive),
 		changedPaths: Array.isArray(n.changedPaths)
 			? n.changedPaths
@@ -296,6 +305,8 @@ function needsResponseRecordFromNotification(raw) {
 	return {
 		kind: notificationLabel(n),
 		sessionId: String(n.sessionId ?? ""),
+		subjectKind: String(n.subjectKind ?? ""),
+		subjectId: String(n.subjectId ?? ""),
 		projectId: String(n.projectId ?? ""),
 		title: String(n.title || n.body || ""),
 		url: String(n.prUrl ?? ""),
@@ -321,7 +332,7 @@ function renderResolvedNeedsResponse(rec, { reason, resolvedAt = new Date(), cle
 export function notificationKey(raw) {
 	const n = normalizeNotification(raw);
 	if (!n) return null;
-	return n.id || `${n.type}|${n.projectId}|${n.sessionId}|${n.createdAt}|${n.title}|${n.prUrl}`;
+	return n.id || `${n.type}|${n.projectId}|${notificationSubjectKey(n)}|${n.createdAt}|${n.title}|${n.prUrl}`;
 }
 
 // contentSignature ignores the per-row id and createdAt (which change on every
@@ -334,7 +345,12 @@ export function contentSignature(raw) {
 	if (!n) return null;
 	// head SHA is part of the signature: a new push (new head) is a real state
 	// change that must re-notify even inside the cooldown window (issue #190).
-	return `${n.type}|${n.projectId}|${n.sessionId}|${n.prUrl}|${n.sensitive ? "1" : "0"}|${n.headSha ?? ""}`;
+	return `${n.type}|${n.projectId}|${notificationSubjectKey(n)}|${n.prUrl}|${n.sensitive ? "1" : "0"}|${n.headSha ?? ""}`;
+}
+
+function notificationSubjectKey(n) {
+	if (n?.subjectKind && n?.subjectId) return `${n.subjectKind}:${n.subjectId}`;
+	return `session:${n?.sessionId ?? ""}`;
 }
 
 export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
@@ -343,7 +359,8 @@ export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
 	const label = notificationLabel(n);
 	const icon = ICONS[label] ?? "📌";
 	const proj = n.projectId ? `[${n.projectId}] ` : "";
-	const sess = n.sessionId ? `${n.sessionId}: ` : "";
+	const displaySubject = n.sessionId || (n.type === "main_ci_red" ? "main" : "");
+	const sess = displaySubject ? `${displaySubject}: ` : "";
 	const title = n.title || n.body;
 	const text = `${icon} *${label}* ${proj}${sess}${title} ${n.prUrl}`.trim();
 	if (mentionUserId && isMentionableNotification(n)) return `<@${mentionUserId}> ${text}`;

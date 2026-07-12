@@ -25,7 +25,7 @@ type CreateNotificationParams struct {
 	ProjectID    domain.ProjectID
 	PRURL        string
 	Type         domain.NotificationType
-	SubjectKind  string
+	SubjectKind  domain.NotificationSubjectKind
 	SubjectID    string
 	Title        string
 	Body         string
@@ -81,7 +81,7 @@ LIMIT 1
 `
 
 type GetUnreadNotificationByDedupeParams struct {
-	SubjectKind string
+	SubjectKind domain.NotificationSubjectKind
 	SubjectID   string
 	Type        domain.NotificationType
 	PRURL       string
@@ -130,7 +130,7 @@ LIMIT 1
 `
 
 type GetWorkerTerminalNotificationByDedupeParams struct {
-	SubjectKind string
+	SubjectKind domain.NotificationSubjectKind
 	SubjectID   string
 	Type        domain.NotificationType
 	Body        string

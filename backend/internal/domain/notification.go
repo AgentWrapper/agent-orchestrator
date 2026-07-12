@@ -142,6 +142,9 @@ var (
 func (r NotificationRecord) WithInferredSubject() NotificationRecord {
 	if r.SubjectKind == "" {
 		switch {
+		case r.Type == NotificationWorkerDiedUnfinished || r.Type == NotificationWorkerRetryExhausted:
+			r.SubjectKind = NotificationSubjectSession
+			r.SubjectID = string(r.SessionID)
 		case r.Type == NotificationModelUnreachable || r.Type == NotificationModelRecovered:
 			r.SubjectKind = NotificationSubjectModel
 			r.SubjectID = string(r.SessionID)
@@ -174,7 +177,6 @@ func (r NotificationRecord) WithInferredSubject() NotificationRecord {
 
 // Validate checks the required fields and enum values for a stored notification.
 func (r NotificationRecord) Validate() error {
-	r = r.WithInferredSubject()
 	if r.ProjectID == "" || r.Title == "" || r.CreatedAt.IsZero() || r.SubjectID == "" {
 		return ErrInvalidNotificationRecord
 	}

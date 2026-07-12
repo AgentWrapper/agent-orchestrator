@@ -127,7 +127,7 @@ SELECT
     CASE
         WHEN session_id != '' THEN session_id
         WHEN subject_kind = 'model' THEN subject_id
-        WHEN type = 'main_ci_red' THEN 'main-ci'
+        WHEN type = 'main_ci_red' THEN 'main-ci-' || project_id
         ELSE subject_id
     END,
     project_id,

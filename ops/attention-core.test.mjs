@@ -40,6 +40,8 @@ describe("normalizeEvent", () => {
 		assert.deepEqual(rec, {
 			kind: "needs_input",
 			sessionId: "agent-1",
+			subjectKind: "session",
+			subjectId: "agent-1",
 			projectId: "ao",
 			title: "permission prompt",
 			url: "",
@@ -102,11 +104,26 @@ describe("normalizeEvent", () => {
 		assert.deepEqual(rec, {
 			kind: "main_ci_red",
 			sessionId: "main",
+			subjectKind: "project",
+			subjectId: "ao",
 			projectId: "ao",
 			title: "main is red at fee462ed: go, cli-e2e",
 			url: "https://github.example/actions/runs/1",
 			attention: true,
 		});
+	});
+
+	it("uses typed subject identity in signatures when present", () => {
+		const rec = normalizeEvent({
+			type: "main_ci_red",
+			notification: {
+				projectId: "ao",
+				sessionId: "",
+				subject: { kind: "project", id: "ao" },
+				title: "main is red",
+			},
+		});
+		assert.equal(signature(rec), "ao/project:ao#main_ci_red");
 	});
 
 	it("returns null for uninteresting events", () => {

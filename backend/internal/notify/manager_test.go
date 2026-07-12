@@ -305,6 +305,9 @@ func TestManagerNotifyWorkerRetryExhaustedNamesOrphanedPR(t *testing.T) {
 	if got.Body != "demo #12 fix-login terminated after 3 attempts for issue #12; retry cap is 2, so ao is suspending respawns and leaving the orphaned PR https://github.com/acme/demo/pull/99 for a human." {
 		t.Fatalf("body = %q", got.Body)
 	}
+	if got.SubjectKind != domain.NotificationSubjectSession || got.SubjectID != "demo-3" {
+		t.Fatalf("subject = %q/%q, want worker session", got.SubjectKind, got.SubjectID)
+	}
 }
 
 func TestManagerNotifyWorkerRetryBlockedNamesReason(t *testing.T) {

@@ -180,6 +180,72 @@ func TestNotificationsMigrationUsesTypedSubjectsAndOpenTypeSchema(t *testing.T) 
 	}
 }
 
+func TestNotificationsTypedSubjectMigrationBackfillsExistingRows(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 45)
+	if _, err := db.Exec(`INSERT INTO projects (id, path, registered_at) VALUES ('ao', '/tmp/ao', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, session_id, project_id, pr_url, type, title, status, created_at, head_sha)
+		VALUES
+			('sess', 'ao-1', 'ao', '', 'needs_input', 'session', 'unread', '2026-07-12T00:00:00Z', ''),
+			('pr', 'ao-2', 'ao', 'https://github.com/o/r/pull/1', 'ready_to_merge', 'pr', 'unread', '2026-07-12T00:01:00Z', 'sha-pr'),
+			('model', 'ao-model-codex', 'ao', '', 'model_unreachable', 'model', 'unread', '2026-07-12T00:02:00Z', ''),
+			('main', 'main-ci', 'ao', '', 'main_ci_red', 'main', 'unread', '2026-07-12T00:03:00Z', 'sha-main')
+	`); err != nil {
+		t.Fatalf("seed notifications: %v", err)
+	}
+
+	upTo(t, db, 46)
+	rows, err := db.Query(`SELECT id, session_id, subject_kind, subject_id FROM notifications ORDER BY id`)
+	if err != nil {
+		t.Fatalf("read migrated notifications: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	got := map[string][3]string{}
+	for rows.Next() {
+		var id, sessionID, subjectKind, subjectID string
+		if err := rows.Scan(&id, &sessionID, &subjectKind, &subjectID); err != nil {
+			t.Fatalf("scan migrated notification: %v", err)
+		}
+		got[id] = [3]string{sessionID, subjectKind, subjectID}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migrated notifications: %v", err)
+	}
+	want := map[string][3]string{
+		"main":  {"", "project", "ao"},
+		"model": {"", "model", "ao-model-codex"},
+		"pr":    {"ao-2", "pr", "https://github.com/o/r/pull/1"},
+		"sess":  {"ao-1", "session", "ao-1"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("migrated rows = %+v, want %+v", got, want)
+	}
+	for id, wantRow := range want {
+		if got[id] != wantRow {
+			t.Fatalf("%s migrated row = %+v, want %+v", id, got[id], wantRow)
+		}
+	}
+
+	downTo(t, db, 45)
+	assertNoSQLiteColumn(t, db, "notifications", "subject_kind")
+	assertNoSQLiteColumn(t, db, "notifications", "subject_id")
+	var mainSession string
+	if err := db.QueryRow(`SELECT session_id FROM notifications WHERE id = 'main'`).Scan(&mainSession); err != nil {
+		t.Fatalf("read main after down migration: %v", err)
+	}
+	if mainSession != "main-ci-ao" {
+		t.Fatalf("main session after down = %q, want project-scoped synthetic id", mainSession)
+	}
+}
+
 func downTo(t *testing.T, db *sql.DB, version int64) {
 	t.Helper()
 	gooseMu.Lock()
@@ -202,6 +268,17 @@ func assertSQLiteColumn(t *testing.T, db *sql.DB, table, column string) {
 	}
 	if !ok {
 		t.Fatalf("missing column %s.%s", table, column)
+	}
+}
+
+func assertNoSQLiteColumn(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	ok, err := sqliteColumnExists(db, table, column)
+	if err != nil {
+		t.Fatalf("check %s.%s: %v", table, column, err)
+	}
+	if ok {
+		t.Fatalf("unexpected column %s.%s", table, column)
 	}
 }
 

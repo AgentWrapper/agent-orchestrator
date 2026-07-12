@@ -42,7 +42,7 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		ProjectID:    rec.ProjectID,
 		PRURL:        rec.PRURL,
 		Type:         rec.Type,
-		SubjectKind:  string(rec.SubjectKind),
+		SubjectKind:  rec.SubjectKind,
 		SubjectID:    rec.SubjectID,
 		Title:        rec.Title,
 		Body:         rec.Body,
@@ -75,7 +75,7 @@ func (s *Store) getPersistentNotificationByDedupe(ctx context.Context, rec domai
 		return domain.NotificationRecord{}, false, nil
 	}
 	row, err := s.qw.GetWorkerTerminalNotificationByDedupe(ctx, gen.GetWorkerTerminalNotificationByDedupeParams{
-		SubjectKind: string(rec.SubjectKind),
+		SubjectKind: rec.SubjectKind,
 		SubjectID:   rec.SubjectID,
 		Type:        rec.Type,
 		Body:        rec.Body,
@@ -217,7 +217,7 @@ func encodeNotificationTypes(types []domain.NotificationType) string {
 
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	row, err := s.qw.GetUnreadNotificationByDedupe(ctx, gen.GetUnreadNotificationByDedupeParams{
-		SubjectKind: string(rec.SubjectKind),
+		SubjectKind: rec.SubjectKind,
 		SubjectID:   rec.SubjectID,
 		Type:        rec.Type,
 		PRURL:       rec.PRURL,
@@ -245,7 +245,7 @@ func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 		ProjectID:    row.ProjectID,
 		PRURL:        row.PRURL,
 		Type:         row.Type,
-		SubjectKind:  domain.NotificationSubjectKind(row.SubjectKind),
+		SubjectKind:  row.SubjectKind,
 		SubjectID:    row.SubjectID,
 		Title:        row.Title,
 		Body:         row.Body,

@@ -1620,6 +1620,19 @@ describe("ao Slack notifier head-SHA aware cooldown (issue #190)", () => {
 		assert.notEqual(a, b);
 	});
 
+	it("uses typed subject identity when sessionId is empty", () => {
+		const base = {
+			type: "main_ci_red",
+			sessionId: "",
+			projectId: "ao",
+			title: "main is red",
+			subject: { kind: "project", id: "ao" },
+			headSha: "sha-1",
+		};
+		assert.equal(contentSignature(base), contentSignature({ ...base, id: "ntf_2" }));
+		assert.notEqual(contentSignature(base), contentSignature({ ...base, subject: { kind: "project", id: "other" } }));
+	});
+
 	it("re-posts a ready_to_merge for a new head within the cooldown", async () => {
 		const stateFile = await tmpState();
 		const posts = [];
