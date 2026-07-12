@@ -4,6 +4,7 @@
 import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
 import { fileURLToPath, URL } from "node:url";
+import { execSync } from "node:child_process";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -45,6 +46,22 @@ const CONTENT_SECURITY_POLICY = [
 	"frame-src 'none'",
 ].join("; ");
 
+function gitRevision(): string {
+	try {
+		return execSync("git rev-parse HEAD", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+	} catch {
+		return "";
+	}
+}
+
+function gitFrontendTree(): string {
+	try {
+		return execSync("git rev-parse HEAD:frontend", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+	} catch {
+		return "";
+	}
+}
+
 const injectCspMeta: Plugin = {
 	name: "inject-csp-meta",
 	apply: "build",
@@ -59,7 +76,41 @@ const injectCspMeta: Plugin = {
 	},
 };
 
+const rendererBuildRevision = process.env.AO_RENDERER_BUILD_REVISION || gitRevision();
+const rendererFrontendTree = process.env.AO_RENDERER_FRONTEND_TREE || gitFrontendTree();
+
+const buildManifestPlugin: Plugin = {
+	name: "ao-web-build-manifest",
+	buildStart() {
+		if (rendererFrontendTree === "") {
+			this.warn("AO renderer frontend tree identity is unavailable; stale-build detection will fail open.");
+		}
+	},
+	configureServer(server) {
+		if (rendererFrontendTree === "") {
+			server.config.logger.warn(
+				"AO renderer frontend tree identity is unavailable; stale-build detection will fail open.",
+			);
+		}
+		server.middlewares.use("/ao-web-build.json", (_request, response) => {
+			response.setHeader("Cache-Control", "no-store");
+			response.setHeader("Content-Type", "application/json");
+			response.end(JSON.stringify({ revision: rendererBuildRevision, frontendTree: rendererFrontendTree }));
+		});
+	},
+	generateBundle() {
+		this.emitFile({
+			type: "asset",
+			fileName: "ao-web-build.json",
+			source: `${JSON.stringify({ revision: rendererBuildRevision, frontendTree: rendererFrontendTree }, null, 2)}\n`,
+		});
+	},
+};
+
 export default defineConfig({
+	define: {
+		__AO_RENDERER_FRONTEND_TREE__: JSON.stringify(rendererFrontendTree),
+	},
 	// "@/" → the renderer root (src/renderer), the shadcn/ui import convention.
 	resolve: {
 		alias: {
@@ -100,6 +151,7 @@ export default defineConfig({
 		react(),
 		tailwindcss(),
 		injectCspMeta,
+		buildManifestPlugin,
 	],
 	build: {
 		// PostHog's full no-external browser client is intentionally self-contained

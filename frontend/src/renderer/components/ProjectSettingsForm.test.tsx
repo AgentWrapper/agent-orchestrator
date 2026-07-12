@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, putMock, postMock } = vi.hoisted(() => ({
+const { getMock, putMock, postMock, buildMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	putMock: vi.fn(),
 	postMock: vi.fn(),
+	buildMock: { frontendTree: "" },
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -26,6 +27,7 @@ vi.mock("../lib/api-client", () => ({
 
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { buildFreshnessQueryKey, CLIENT_FRONTEND_TREE } from "../lib/build-freshness";
 import type { WorkspaceSummary } from "../types/workspace";
 
 function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
@@ -110,12 +112,21 @@ beforeEach(() => {
 	getMock.mockReset();
 	putMock.mockReset();
 	postMock.mockReset();
+	buildMock.frontendTree = CLIENT_FRONTEND_TREE;
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => new Response(JSON.stringify({ frontendTree: buildMock.frontendTree }), { status: 200 })),
+	);
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
 	postMock.mockResolvedValue({
 		data: { orchestrator: { id: "proj-1-orch-2" } },
 		error: undefined,
 		response: { status: 200 },
 	});
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
 });
 
 describe("ProjectSettingsForm", () => {
@@ -555,6 +566,36 @@ describe("ProjectSettingsForm", () => {
 		).toBeInTheDocument();
 		expect(putMock).not.toHaveBeenCalled();
 	}, 20_000);
+
+	it("blocks settings saves from a stale renderer bundle", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		buildMock.frontendTree = "served-newer-tree";
+		const queryClient = renderSettings();
+		const saveButton = await screen.findByRole("button", { name: "Save changes" });
+		await waitFor(() =>
+			expect(queryClient.getQueryData(buildFreshnessQueryKey)).toMatchObject({
+				state: "stale",
+				servedFrontendTree: "served-newer-tree",
+			}),
+		);
+
+		await userEvent.click(saveButton);
+
+		expect(await screen.findByText("Reload AO before saving settings.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	});
 
 	it("shows the daemon validation message when save fails", async () => {
 		mockProject({

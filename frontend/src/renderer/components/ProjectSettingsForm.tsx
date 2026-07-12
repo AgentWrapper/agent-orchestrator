@@ -10,6 +10,7 @@ import {
 } from "../hooks/useModelAvailabilityQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { useBuildFreshness } from "../lib/build-freshness";
 import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
@@ -184,6 +185,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const missingRequiredAgent = missingWorkerAgent || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const modelAvailabilityQuery = useModelAvailabilityQuery();
+	const buildFreshnessQuery = useBuildFreshness();
+	const staleBuild = buildFreshnessQuery.data?.state === "stale";
 	const agentCatalog = agentsQuery.data;
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
@@ -320,6 +323,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				}
 				if (!mixIsValid(form.workerMix)) {
 					setValidationError("Worker mix percentages must sum to 100% and every row needs an agent.");
+					return;
+				}
+				if (staleBuild) {
+					setValidationError("Reload AO before saving settings.");
 					return;
 				}
 				setValidationError(null);

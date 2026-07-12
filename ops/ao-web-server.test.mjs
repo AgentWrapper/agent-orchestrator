@@ -47,6 +47,10 @@ describe("ao web production server", () => {
 		assert.equal(asset.body, "console.log('ao');\n");
 		assert.equal(asset.headers.get("cache-control"), "public, max-age=31536000, immutable");
 
+		const manifest = await fetchText(`${server.url}/ao-web-build.json`);
+		assert.match(manifest.body, /frontendTree/);
+		assert.equal(manifest.headers.get("cache-control"), "no-store");
+
 		const missingAsset = await fetchText(`${server.url}/assets/missing.js`);
 		assert.equal(missingAsset.status, 404);
 	});
@@ -229,6 +233,7 @@ describe("ao web production server", () => {
 async function makeDist() {
 	const dir = await mkdtemp(path.join(os.tmpdir(), "ao-web-dist-"));
 	await writeFile(path.join(dir, "index.html"), '<!doctype html><div id="root"></div>\n');
+	await writeFile(path.join(dir, "ao-web-build.json"), '{"frontendTree":"fixture"}\n');
 	await writeFile(path.join(dir, "favicon.ico"), "ico");
 	await mkdir(path.join(dir, "assets"));
 	await writeFile(path.join(dir, "assets", "app.js"), "console.log('ao');\n");

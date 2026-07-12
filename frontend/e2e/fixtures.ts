@@ -245,7 +245,20 @@ async function fulfillSse(route: Route) {
 	});
 }
 
-export async function mockAoApi(page: Page) {
+type MockAoApiOptions = {
+	build?: {
+		revision?: string;
+		frontendTree?: string;
+	};
+};
+
+export async function mockAoApi(page: Page, options: MockAoApiOptions = {}) {
+	await page.route("**/ao-web-build.json*", async (route) => {
+		await fulfill(route, {
+			revision: options.build?.revision,
+			frontendTree: options.build?.frontendTree,
+		});
+	});
 	await page.route("**/healthz", async (route) => {
 		await fulfill(route, { status: "ok", service: "agent-orchestrator-daemon", pid: 4242 });
 	});

@@ -131,7 +131,7 @@ async function serveStatic({ distDir, pathname, request, response }) {
 	const contentType = CONTENT_TYPES.get(path.extname(filePath)) ?? "application/octet-stream";
 	response.setHeader("Content-Type", contentType);
 	response.setHeader("X-Content-Type-Options", "nosniff");
-	if (path.basename(filePath) === "index.html") {
+	if (path.basename(filePath) === "index.html" || path.basename(filePath) === "ao-web-build.json") {
 		response.setHeader("Cache-Control", "no-store");
 	} else {
 		response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
