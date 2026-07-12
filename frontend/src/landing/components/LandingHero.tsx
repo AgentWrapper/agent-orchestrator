@@ -1070,9 +1070,8 @@ export function LandingHero() {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [starCount, setStarCount] = useState<string | null>(null);
 	const [downloadTarget, setDownloadTarget] = useState<ReturnType<typeof getDownloadTarget>>(null);
-	const [downloadOptions, setDownloadOptions] = useState<readonly (typeof DESKTOP_DOWNLOADS)[number][]>(
-		DESKTOP_DOWNLOADS,
-	);
+	const [downloadOptions, setDownloadOptions] =
+		useState<readonly (typeof DESKTOP_DOWNLOADS)[number][]>(DESKTOP_DOWNLOADS);
 
 	useEffect(() => {
 		setDownloadTarget(getDownloadTarget(navigator));

@@ -61,7 +61,5 @@ export function getDownloadTarget(navigator: PlatformNavigator) {
 
 export function getDownloadOptions(navigator: PlatformNavigator) {
 	const platform = platformDescription(navigator);
-	return platform.includes("mac") && !isPortableDevice(navigator)
-		? DESKTOP_DOWNLOADS.slice(0, 2)
-		: DESKTOP_DOWNLOADS;
+	return platform.includes("mac") && !isPortableDevice(navigator) ? DESKTOP_DOWNLOADS.slice(0, 2) : DESKTOP_DOWNLOADS;
 }
