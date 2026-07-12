@@ -15,13 +15,26 @@ const (
 	claudeHookTimeout       = 30
 )
 
-// claudeStartupMatcher is referenced by pointer so SessionStart serializes with
-// its required "startup" matcher.
-var claudeStartupMatcher = "startup"
+// claudeSessionStartMatcher is referenced by pointer so SessionStart
+// serializes with a matcher covering both a fresh launch ("startup") and a
+// relaunch that continues an existing native session ("resume", e.g. AO's own
+// `claude --resume` restore/daemon-restart path). Claude Code's SessionStart
+// matcher supports "|"-separated alternation of its exact source values
+// (startup, resume, clear, compact); scoping to "startup" alone silently
+// dropped the hook on every resume, which was the actual cause of a resumed
+// session never proving its hook pipeline alive (#2604) — the daemon-side
+// ActivitySignalOnly handling was necessary but not sufficient without this.
+var claudeSessionStartMatcher = "startup|resume"
 
-// claudeManagedHooks is the source of truth for the hooks AO installs.
+// claudeManagedHooks is the source of truth for the hooks AO installs:
+// SessionStart (under the claudeSessionStartMatcher matcher), UserPromptSubmit,
+// Stop, Notification, and SessionEnd. They report normalized session metadata
+// and activity-state signals back into AO's store (see DeriveActivityState).
+// Notification and SessionEnd carry no matcher: each installs once and fires
+// for every sub-type, and the handler filters on the payload's
+// notification_type / reason field.
 var claudeManagedHooks = []hooksjson.HookSpec{
-	{Event: "SessionStart", Matcher: &claudeStartupMatcher, Command: claudeHookCommandPrefix + "session-start"},
+	{Event: "SessionStart", Matcher: &claudeSessionStartMatcher, Command: claudeHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: claudeHookCommandPrefix + "user-prompt-submit"},
 	{Event: "Stop", Command: claudeHookCommandPrefix + "stop"},
 	{Event: "Notification", Command: claudeHookCommandPrefix + "notification"},

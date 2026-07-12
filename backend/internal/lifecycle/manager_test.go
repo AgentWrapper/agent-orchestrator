@@ -138,7 +138,7 @@ func TestActivity_SignalOnlySeedsFirstSignalWithoutChangingState(t *testing.T) {
 	m, st, _ := newManager()
 	seeded := domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}}
 	st.sessions["mer-1"] = seeded
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivitySignalOnly, Event: "session-start"}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivitySignalOnly}); err != nil {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
@@ -158,14 +158,14 @@ func TestActivity_SignalOnlySeedsFirstSignalWithoutChangingState(t *testing.T) {
 func TestActivity_SignalOnlyDoesNotStompLaterState(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}}
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit"}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
 		t.Fatal(err)
 	}
 	firstSignalAt := st.sessions["mer-1"].FirstSignalAt
 	if firstSignalAt.IsZero() {
 		t.Fatal("the real signal must seed FirstSignalAt")
 	}
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivitySignalOnly, Event: "session-start"}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivitySignalOnly}); err != nil {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
