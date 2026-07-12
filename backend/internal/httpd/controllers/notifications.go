@@ -187,7 +187,7 @@ func notificationResponses(in []notificationsvc.Notification) []NotificationResp
 }
 
 func notificationResponse(n notificationsvc.Notification) NotificationResponse {
-	rec := n.NotificationRecord.WithInferredSubject()
+	rec := n.WithInferredSubject()
 	subject := n.Subject
 	if subject.Kind == "" || subject.ID == "" {
 		subject = notificationsvc.Subject{Kind: rec.SubjectKind, ID: rec.SubjectID}

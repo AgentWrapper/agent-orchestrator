@@ -83,7 +83,7 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 	const subject = n.subject ?? raw.subject ?? {};
 	const sessionId =
 		rawKind === "main_ci_red"
-			? (n.sessionId || n.session || raw.sessionId || "main")
+			? n.sessionId || n.session || raw.sessionId || "main"
 			: (n.sessionId ?? n.session ?? raw.sessionId ?? "");
 	const subjectKind =
 		subject.kind ??

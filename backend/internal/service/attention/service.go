@@ -251,7 +251,7 @@ func notificationSubject(notification notificationsvc.Notification) (string, str
 	if notification.Subject.Kind != "" && notification.Subject.ID != "" {
 		return string(notification.Subject.Kind), notification.Subject.ID
 	}
-	rec := notification.NotificationRecord.WithInferredSubject()
+	rec := notification.WithInferredSubject()
 	return string(rec.SubjectKind), rec.SubjectID
 }
 

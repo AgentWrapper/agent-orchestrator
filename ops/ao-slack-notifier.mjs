@@ -256,7 +256,8 @@ export function normalizeNotification(raw) {
 						? "session"
 						: "");
 	const subjectId =
-		subject.id ?? (subjectKind === "project" ? projectId : subjectKind === "pr" ? prUrl : subjectKind === "session" ? sessionId : "");
+		subject.id ??
+		(subjectKind === "project" ? projectId : subjectKind === "pr" ? prUrl : subjectKind === "session" ? sessionId : "");
 	return {
 		id: n.id ?? raw.id ?? null,
 		type,
@@ -490,7 +491,13 @@ function legacySubjectKey(type, projectId, sessionId, prUrl = "") {
 	return `session:${sessionId}`;
 }
 
-const PR_SUBJECT_TYPES = new Set(["ready_to_merge", "parked_sensitive_merge", "pr_merged", "pr_closed_unmerged", "duplicate_pr"]);
+const PR_SUBJECT_TYPES = new Set([
+	"ready_to_merge",
+	"parked_sensitive_merge",
+	"pr_merged",
+	"pr_closed_unmerged",
+	"duplicate_pr",
+]);
 
 function looksLikeURL(value) {
 	return /^https?:\/\//.test(String(value ?? ""));

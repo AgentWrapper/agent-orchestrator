@@ -340,7 +340,9 @@ describe("ao Slack notifier replay/dedup", () => {
 					"ready_to_merge|ao|agent-2|2026-07-12T00:01:00Z|ready|https://github.example/pr/2",
 				],
 				attentionTracker: {
-					open: [["ao/agent-1#needs_input", { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true }]],
+					open: [
+						["ao/agent-1#needs_input", { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true }],
+					],
 				},
 				postedSignatures: {
 					"main_ci_red|ao|main||0|sha-main": 123,
@@ -373,7 +375,9 @@ describe("ao Slack notifier replay/dedup", () => {
 		const state = loadState(stateFile);
 		assert.ok(state.seen.has("needs_input|ao|session:agent-1|2026-07-12T00:00:00Z|waiting|"));
 		assert.ok(
-			state.seen.has("ready_to_merge|ao|pr:https://github.example/pr/2|2026-07-12T00:01:00Z|ready|https://github.example/pr/2"),
+			state.seen.has(
+				"ready_to_merge|ao|pr:https://github.example/pr/2|2026-07-12T00:01:00Z|ready|https://github.example/pr/2",
+			),
 		);
 		assert.ok(
 			state.attentionTracker.isOpen({
@@ -394,10 +398,17 @@ describe("ao Slack notifier replay/dedup", () => {
 			subject: { kind: "pr", id: "https://github.example/pr/2" },
 			headSha: "sha-pr",
 		});
-		assert.equal(migratedPrSignature, "ready_to_merge|ao|pr:https://github.example/pr/2|https://github.example/pr/2|0|sha-pr");
+		assert.equal(
+			migratedPrSignature,
+			"ready_to_merge|ao|pr:https://github.example/pr/2|https://github.example/pr/2|0|sha-pr",
+		);
 		assert.equal(state.postedSignatures[migratedPrSignature], 456);
 		assert.ok(state.needsResponseMessages["ao/session:agent-1#needs_input"]);
-		assert.ok(state.needsResponseMessages["ao/pr:https://github.example/pr/2#parked_sensitive_merge|https://github.example/pr/2"]);
+		assert.ok(
+			state.needsResponseMessages[
+				"ao/pr:https://github.example/pr/2#parked_sensitive_merge|https://github.example/pr/2"
+			],
+		);
 	});
 
 	it("catch-up posts unread notifications once and persists seen ids", async () => {
