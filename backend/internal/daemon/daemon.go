@@ -169,7 +169,7 @@ func Run() error {
 	// harness for install+auth readiness and tracks transitions so operators can
 	// be alerted when a login expires. Async + bounded — never gates readiness.
 	agentHealth, agentHealthDone := startAgentHealth(ctx, agentHealthConfig{Interval: cfg.AgentHealthInterval, DefaultAgent: cfg.Agent}, agentSvc, projectSvc, log)
-	_, modelHealthDone := startModelHealth(ctx, modelHealthConfig{Interval: cfg.ModelRevalidationInterval}, agentSvc, projectSvc, notificationWriter, log)
+	modelHealth, modelHealthDone := startModelHealth(ctx, modelHealthConfig{Interval: cfg.ModelRevalidationInterval}, agentSvc, projectSvc, notificationWriter, log)
 
 	// Resource metrics observer: coarse-tick sampling of host load/memory/disk,
 	// per-session cgroup-scope memory, per-project session/zombie counts, and
@@ -190,9 +190,14 @@ func Run() error {
 	}
 	mc := &controllers.MobileController{Bridge: bs}
 
+	capacityOpts := []projectsvc.WorkerCapacityOption{projectsvc.WithModelHealth(modelHealth)}
+	if candidateHealth, ok := sessMgr.(projectsvc.CandidateHealthSnapshotter); ok {
+		capacityOpts = append(capacityOpts, projectsvc.WithCandidateHealth(candidateHealth))
+	}
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
-		ProjectCapacity:    projectsvc.NewWorkerCapacity(store, agentHealth),
+		ProjectCapacity:    projectsvc.NewWorkerCapacity(store, agentHealth, capacityOpts...),
 		Agents:             agentSvc,
 		AgentHealth:        agentHealth,
 		Sessions:           sessionSvc,

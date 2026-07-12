@@ -1629,6 +1629,8 @@ export interface components {
         WorkerCapacityBucket: {
             activeWorkers: number;
             agent: string;
+            /** @enum {string} */
+            blockedBy?: "harness_auth" | "model" | "launch_failure";
             down: boolean;
             downCapacityShare?: null | number;
             health: string;

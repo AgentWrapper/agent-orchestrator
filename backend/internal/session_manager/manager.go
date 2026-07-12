@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -77,7 +78,7 @@ var (
 	// different provider than the resolved harness (e.g. a Claude model on a
 	// Codex spawn). Passing it would hang the agent, so spawn fails loudly
 	// instead. The API maps it to a 400.
-	ErrModelHarnessMismatch = errors.New("session: model not valid for harness")
+	ErrModelHarnessMismatch = agentconfig.ErrModelHarnessMismatch
 	// ErrWorkerMixBucketDown means the weighted worker mix selected an
 	// agent/model bucket that this daemon has already failed to launch. AO must
 	// not silently substitute a different bucket for that spawn attempt.
@@ -628,6 +629,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// configurable grace window and proceeds to the title/prompt writes below.
 	// A second, post-write gate below preserves issue #219's end-of-spawn
 	// liveness guarantee for an agent that dies *during* those writes.
+	m.awaitPaneReady(ctx, handle)
 	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -648,7 +650,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// shell, so a title-write failure here is treated as a transient send-keys
 	// hiccup rather than a dead session — but only while we can still prove the
 	// pane is alive; anything else rolls back exactly as it did before.
-	if err := m.deliverLaunchTitle(ctx, agent, handle, cfg.DisplayName); err != nil {
+	if err := m.deliverLaunchTitleAfterReady(ctx, agent, handle, cfg.DisplayName); err != nil {
 		if alive, aliveErr := m.runtime.IsAlive(ctx, handle); alive && aliveErr == nil {
 			m.logger.Warn("spawn: could not set the harness title; session keeps AO's display name",
 				"sessionID", id, "displayName", cfg.DisplayName, "error", err)
@@ -664,7 +666,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		}
 	}
 
-	if err := m.deliverInitialPrompt(ctx, agent, handle, ports.LaunchConfig{
+	if err := m.deliverInitialPromptAfterReady(ctx, agent, handle, ports.LaunchConfig{
 		SessionID:     string(id),
 		DataDir:       m.dataDir,
 		Kind:          cfg.Kind,
@@ -846,77 +848,7 @@ func roleConfigName(kind domain.SessionKind) string {
 // whose provider is unknown is unguarded: every model is compatible, preserving
 // behavior for the many harnesses AO has not mapped.
 func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spawnModel string, harness domain.AgentHarness) (ports.AgentConfig, error) {
-	base := cfg.AgentConfig
-	override := roleOverride(kind, cfg).AgentConfig
-	hp := harness.ModelProvider()
-
-	resolved := ports.AgentConfig{Permissions: base.Permissions}
-	if override.Permissions != "" {
-		resolved.Permissions = override.Permissions
-	}
-
-	var model string
-	var effort domain.Effort
-
-	// 1–2: scalar fallbacks (role over base), compatibility-gated so an
-	// incompatible pinned model is ignored rather than leaked onto this harness.
-	if m := strings.TrimSpace(base.Model); m != "" && domain.ClassifyModelProvider(m).CompatibleWith(hp) {
-		model = m
-	}
-	if base.Effort != "" {
-		effort = base.Effort
-	}
-	if m := strings.TrimSpace(override.Model); m != "" && domain.ClassifyModelProvider(m).CompatibleWith(hp) {
-		model = m
-	}
-	if override.Effort != "" {
-		effort = override.Effort
-	}
-
-	// 3–4: per-harness pins (base then role override) are the authoritative
-	// source and win over the scalars for this harness. The model is still
-	// compatibility-gated here — AgentConfig.Validate already rejects a
-	// cross-provider map entry at write time, but gating in resolution too keeps
-	// the resolver self-defending against a hand-edited row or a future write
-	// path that skips validation, mirroring the scalar gate above.
-	applyHarnessModel := func(hm domain.HarnessModel) {
-		if m := strings.TrimSpace(hm.Model); m != "" && domain.ClassifyModelProvider(m).CompatibleWith(hp) {
-			model = m
-		}
-		if hm.Effort != "" {
-			effort = hm.Effort
-		}
-	}
-	if hm, ok := base.ModelByHarness[harness]; ok {
-		applyHarnessModel(hm)
-	}
-	if hm, ok := override.ModelByHarness[harness]; ok {
-		applyHarnessModel(hm)
-	}
-
-	// 5: explicit per-spawn model wins, but a cross-provider explicit model is a
-	// loud failure rather than a silent hang.
-	if sm := strings.TrimSpace(spawnModel); sm != "" {
-		if !domain.ClassifyModelProvider(sm).CompatibleWith(hp) {
-			return ports.AgentConfig{}, fmt.Errorf("%w: %q is not a %s model (harness %q)", ErrModelHarnessMismatch, sm, hp, harness)
-		}
-		model = sm
-	}
-
-	// 6: default guard. Nothing above pinned a model, so this spawn would emit no
-	// model override and inherit the harness's account/CLI default. For
-	// claude-code that default is Fable — the most expensive model — which a
-	// *default* must never be. Substitute the harness default (opus for
-	// claude-code; empty, i.e. no change, for every other harness). This never
-	// overrides an explicit choice: any selection above already set model, so the
-	// guard only fills the empty, unintended default.
-	if model == "" {
-		model = domain.DefaultModelForHarness(harness)
-	}
-
-	resolved.Model = model
-	resolved.Effort = effort
-	return resolved, nil
+	return agentconfig.Effective(kind, cfg, spawnModel, harness)
 }
 
 func (m *Manager) liveWorkerCount(ctx context.Context, projectID domain.ProjectID) (int, error) {
@@ -971,6 +903,12 @@ func (m *Manager) applyWorkerMixSkipped(counts map[domain.BucketKey]int) {
 // a thin method over the shared tracker for the package's tests.
 func (m *Manager) workerMixBucketDown(key domain.BucketKey) bool {
 	return m.mixHealth.IsDown(bucketCandidate(key))
+}
+
+// WorkerMixHealthSnapshot returns the reactive health state of exact
+// worker-mix candidates for read-side capacity projections.
+func (m *Manager) WorkerMixHealthSnapshot() []candidatehealth.Status {
+	return m.mixHealth.Snapshot()
 }
 
 // markWorkerMixBucketDown records an exact-bucket launch failure (the mix-only
@@ -1784,8 +1722,20 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	// Same mode-aware guard as SaveAndTeardownAll: a branch-less session is only
 	// "incomplete" in worktree mode. An in-place session has no branch by design,
 	// so it must fall through to be adopted (if alive) or terminated-with-marker
-	// (if dead) rather than be silently left looking live forever.
+	// (if dead) rather than be silently left looking live forever. A worktree row
+	// missing workspace or branch cannot be probed, stashed, restored, or sent to;
+	// terminate it without a restore marker so supervisors can replace it.
 	if rec.Metadata.WorkspacePath == "" || (sessionWorkspaceMode(rec.Metadata) == domain.WorkspaceModeWorktree && rec.Metadata.Branch == "") {
+		m.logger.Warn("reconcile: live session has incomplete workspace metadata; terminating without restore marker",
+			"sessionID", rec.ID, "workspacePath", rec.Metadata.WorkspacePath, "branch", rec.Metadata.Branch, "workspaceMode", sessionWorkspaceMode(rec.Metadata))
+		if handle := runtimeHandle(rec.Metadata); handle.ID != "" {
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				m.logger.Warn("reconcile: destroy incomplete live session runtime failed", "sessionID", rec.ID, "handle", handle.ID, "error", err)
+			}
+		}
+		if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+			return fmt.Errorf("reconcile %s: mark incomplete live session terminated: %w", rec.ID, err)
+		}
 		return nil
 	}
 	handle := runtimeHandle(rec.Metadata)
@@ -3310,6 +3260,14 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 }
 
 func (m *Manager) deliverInitialPrompt(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, cfg ports.LaunchConfig) error {
+	return m.deliverInitialPromptWithReadiness(ctx, agent, handle, cfg, true)
+}
+
+func (m *Manager) deliverInitialPromptAfterReady(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, cfg ports.LaunchConfig) error {
+	return m.deliverInitialPromptWithReadiness(ctx, agent, handle, cfg, false)
+}
+
+func (m *Manager) deliverInitialPromptWithReadiness(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, cfg ports.LaunchConfig, wait bool) error {
 	if cfg.Prompt == "" {
 		return nil
 	}
@@ -3322,14 +3280,20 @@ func (m *Manager) deliverInitialPrompt(ctx context.Context, agent ports.Agent, h
 	}
 	// Same boot race as the title write. Harnesses that can carry the prompt in
 	// argv already returned PromptDeliveryInCommand and never reach here.
-	return m.deliverPromptAfterStart(ctx, handle, cfg.Prompt)
+	return m.deliverPromptAfterStartWithReadiness(ctx, handle, cfg.Prompt, wait)
 }
 
 func (m *Manager) deliverPromptAfterStart(ctx context.Context, handle ports.RuntimeHandle, prompt string) error {
+	return m.deliverPromptAfterStartWithReadiness(ctx, handle, prompt, true)
+}
+
+func (m *Manager) deliverPromptAfterStartWithReadiness(ctx context.Context, handle ports.RuntimeHandle, prompt string, wait bool) error {
 	if prompt == "" {
 		return nil
 	}
-	m.awaitPaneReady(ctx, handle)
+	if wait {
+		m.awaitPaneReady(ctx, handle)
+	}
 	return m.runtime.SendMessage(ctx, handle, domain.SanitizeControlChars(prompt))
 }
 
@@ -3344,12 +3308,18 @@ func (m *Manager) deliverRestorePrompt(ctx context.Context, agent ports.Agent, h
 	}
 }
 
-func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, title string) error {
+func (m *Manager) deliverLaunchTitleAfterReady(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, title string) error {
+	return m.deliverLaunchTitleWithReadiness(ctx, agent, handle, title, false)
+}
+
+func (m *Manager) deliverLaunchTitleWithReadiness(ctx context.Context, agent ports.Agent, handle ports.RuntimeHandle, title string, wait bool) error {
 	command, ok := titleCommand(agent, title)
 	if !ok {
 		return nil
 	}
-	m.awaitPaneReady(ctx, handle)
+	if wait {
+		m.awaitPaneReady(ctx, handle)
+	}
 	return m.runtime.SendMessage(ctx, handle, command)
 }
 
@@ -3365,7 +3335,6 @@ func (m *Manager) deliverLaunchTitle(ctx context.Context, agent ports.Agent, han
 // tmux adapter's IsRunningCommand for why comm-name matching cannot make this
 // distinction (issue #219).
 func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.RuntimeHandle, command string) error {
-	m.awaitPaneReady(ctx, handle)
 	attempts := m.launchProbe.attempts
 	if attempts < 1 {
 		attempts = 1

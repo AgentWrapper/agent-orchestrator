@@ -181,6 +181,75 @@ func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (stri
 	return last_nudge_signature, err
 }
 
+const listOpenPRs = `-- name: ListOpenPRs :many
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature FROM pr
+WHERE is_merged = 0 AND is_closed = 0
+ORDER BY number ASC, url ASC
+`
+
+func (q *Queries) ListOpenPRs(ctx context.Context) ([]PR, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenPRs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PR{}
+	for rows.Next() {
+		var i PR
+		if err := rows.Scan(
+			&i.URL,
+			&i.SessionID,
+			&i.Number,
+			&i.PRState,
+			&i.ReviewDecision,
+			&i.CIState,
+			&i.Mergeability,
+			&i.UpdatedAt,
+			&i.Provider,
+			&i.Host,
+			&i.Repo,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.HeadSha,
+			&i.Title,
+			&i.Additions,
+			&i.Deletions,
+			&i.ChangedFiles,
+			&i.Author,
+			&i.BaseSha,
+			&i.MergeCommitSha,
+			&i.IsDraft,
+			&i.IsMerged,
+			&i.IsClosed,
+			&i.ProviderState,
+			&i.ProviderMergeable,
+			&i.ProviderMergeStateStatus,
+			&i.HtmlURL,
+			&i.CreatedAtProvider,
+			&i.UpdatedAtProvider,
+			&i.MergedAtProvider,
+			&i.ClosedAtProvider,
+			&i.MetadataHash,
+			&i.CIHash,
+			&i.ReviewHash,
+			&i.ObservedAt,
+			&i.CIObservedAt,
+			&i.ReviewObservedAt,
+			&i.LastNudgeSignature,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPRFactsBySession = `-- name: ListPRFactsBySession :many
 SELECT
     pr.url,
@@ -519,73 +588,4 @@ func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 		arg.ReviewObservedAt,
 	)
 	return err
-}
-
-const listOpenPRs = `-- name: ListOpenPRs :many
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature FROM pr
-WHERE is_merged = 0 AND is_closed = 0
-ORDER BY number ASC, url ASC
-`
-
-func (q *Queries) ListOpenPRs(ctx context.Context) ([]PR, error) {
-	rows, err := q.db.QueryContext(ctx, listOpenPRs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []PR{}
-	for rows.Next() {
-		var i PR
-		if err := rows.Scan(
-			&i.URL,
-			&i.SessionID,
-			&i.Number,
-			&i.PRState,
-			&i.ReviewDecision,
-			&i.CIState,
-			&i.Mergeability,
-			&i.UpdatedAt,
-			&i.Provider,
-			&i.Host,
-			&i.Repo,
-			&i.SourceBranch,
-			&i.TargetBranch,
-			&i.HeadSha,
-			&i.Title,
-			&i.Additions,
-			&i.Deletions,
-			&i.ChangedFiles,
-			&i.Author,
-			&i.BaseSha,
-			&i.MergeCommitSha,
-			&i.IsDraft,
-			&i.IsMerged,
-			&i.IsClosed,
-			&i.ProviderState,
-			&i.ProviderMergeable,
-			&i.ProviderMergeStateStatus,
-			&i.HtmlURL,
-			&i.CreatedAtProvider,
-			&i.UpdatedAtProvider,
-			&i.MergedAtProvider,
-			&i.ClosedAtProvider,
-			&i.MetadataHash,
-			&i.CIHash,
-			&i.ReviewHash,
-			&i.ObservedAt,
-			&i.CIObservedAt,
-			&i.ReviewObservedAt,
-			&i.LastNudgeSignature,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

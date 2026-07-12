@@ -114,16 +114,18 @@ FROM notifications
 WHERE session_id = ?
   AND type = ?
   AND type IN ('worker_died_unfinished', 'worker_retry_exhausted')
+  AND (type != 'worker_died_unfinished' OR body = ?)
 LIMIT 1
 `
 
 type GetWorkerTerminalNotificationByDedupeParams struct {
 	SessionID domain.SessionID
 	Type      domain.NotificationType
+	Body      string
 }
 
 func (q *Queries) GetWorkerTerminalNotificationByDedupe(ctx context.Context, arg GetWorkerTerminalNotificationByDedupeParams) (Notification, error) {
-	row := q.db.QueryRowContext(ctx, getWorkerTerminalNotificationByDedupe, arg.SessionID, arg.Type)
+	row := q.db.QueryRowContext(ctx, getWorkerTerminalNotificationByDedupe, arg.SessionID, arg.Type, arg.Body)
 	var i Notification
 	err := row.Scan(
 		&i.ID,

@@ -4709,6 +4709,36 @@ func TestReconcileLive_DeadSessionStashedAndTerminated(t *testing.T) {
 	}
 }
 
+func TestReconcileLive_IncompleteWorktreeSessionTerminated(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		meta domain.SessionMetadata
+	}{
+		{"missing workspace", domain.SessionMetadata{Branch: "ao/s1/root", RuntimeHandleID: "s1"}},
+		{"missing branch", domain.SessionMetadata{WorkspacePath: "/wt/s1", RuntimeHandleID: "s1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			rt := &fakeRuntime{aliveByHandle: map[string]bool{"s1": true}}
+			ws := &fakeWorkspace{}
+			lcm := &fakeLCM{store: st}
+			lookPath := func(string) (string, error) { return "/bin/true", nil }
+			m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+			rec := domain.SessionRecord{ID: "s1", ProjectID: "p1", IsTerminated: false, Metadata: tc.meta}
+			if err := m.reconcileLive(context.Background(), rec); err != nil {
+				t.Fatalf("reconcileLive: %v", err)
+			}
+			if lcm.terminated["s1"] != 1 {
+				t.Fatalf("MarkTerminated(s1) = %d, want 1 for incomplete worktree row", lcm.terminated["s1"])
+			}
+			if ws.stashCalls != 0 || rt.destroyed != 1 || len(st.worktrees["s1"]) != 0 {
+				t.Fatalf("incomplete row should terminate with runtime destroy but without stash/restore marker: stash=%d destroy=%d rows=%+v", ws.stashCalls, rt.destroyed, st.worktrees["s1"])
+			}
+		})
+	}
+}
+
 func TestReconcileLive_OrchestratorMissingWorktreeIsRestored(t *testing.T) {
 	st := newFakeStore()
 	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
@@ -5603,6 +5633,9 @@ func TestSpawn_AfterStartHarnessDeliversTitleThenPromptOnceReady(t *testing.T) {
 	}
 	if got := rt.getOutputCallsAtSend[0]; got <= rt.blankReads {
 		t.Fatalf("first write happened after %d pane reads, want it to wait past %d", got, rt.blankReads)
+	}
+	if got := rt.getOutputCallsAtSend[1]; got != rt.getOutputCallsAtSend[0] {
+		t.Fatalf("prompt performed a second readiness wait: title sent after %d reads, prompt after %d", rt.getOutputCallsAtSend[0], got)
 	}
 }
 

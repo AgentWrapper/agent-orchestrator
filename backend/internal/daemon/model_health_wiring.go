@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -82,30 +82,10 @@ func configuredModelPins(ctx context.Context, projects projectConfigLister, log 
 }
 
 func modelPinsFromProject(projectID domain.ProjectID, cfg domain.ProjectConfig) []modelhealth.Pin {
-	var pins []modelhealth.Pin
-	add := func(scope string, h domain.AgentHarness, model string) {
-		model = strings.TrimSpace(model)
-		if h == "" || model == "" {
-			return
-		}
-		if !domain.ClassifyModelProvider(model).CompatibleWith(h.ModelProvider()) {
-			return
-		}
-		pins = append(pins, modelhealth.Pin{ProjectID: projectID, Scope: scope, Harness: h, Model: model})
-	}
-	addConfig := func(scope string, defaultHarness domain.AgentHarness, cfg domain.AgentConfig) {
-		add(scope+".model", defaultHarness, cfg.Model)
-		for h, hm := range cfg.ModelByHarness {
-			add(scope+".modelByHarness["+string(h)+"]", h, hm.Model)
-		}
-	}
-	addConfig("agentConfig", cfg.Worker.Harness, cfg.AgentConfig)
-	addConfig("worker.agentConfig", cfg.Worker.Harness, cfg.Worker.AgentConfig)
-	addConfig("orchestrator.agentConfig", cfg.Orchestrator.Harness, cfg.Orchestrator.AgentConfig)
-	for i, bucket := range cfg.WorkerMix {
-		scope := "workerMix[" + strconv.Itoa(i) + "]"
-		add(scope+".model", bucket.Harness, bucket.Model)
-		addConfig(scope+".agentConfig", bucket.Harness, cfg.AgentConfig)
+	resolved := agentconfig.ConfiguredModelPins(cfg)
+	pins := make([]modelhealth.Pin, 0, len(resolved))
+	for _, pin := range resolved {
+		pins = append(pins, modelhealth.Pin{ProjectID: projectID, Scope: pin.Scope, Harness: pin.Harness, Model: pin.Model})
 	}
 	return pins
 }
