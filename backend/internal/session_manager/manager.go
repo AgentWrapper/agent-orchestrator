@@ -502,10 +502,18 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 		merged.Env = mergeEnv(cfg.AgentConfig.Env, override.Env)
 	}
 	if override.MCP != nil {
-		merged.MCP = override.MCP
+		// Copy the MCPConfig (and its Configs slice) rather than aliasing the
+		// override pointer — same defense-in-depth as Env: the merged config
+		// flows to adapters, and a future adapter/hook that mutated it would
+		// otherwise corrupt the stored project config for the daemon's lifetime.
+		cp := *override.MCP
+		if len(cp.Configs) > 0 {
+			cp.Configs = append([]string(nil), cp.Configs...)
+		}
+		merged.MCP = &cp
 	}
 	if len(override.PluginDirs) > 0 {
-		merged.PluginDirs = override.PluginDirs
+		merged.PluginDirs = append([]string(nil), override.PluginDirs...)
 	}
 	return merged
 }

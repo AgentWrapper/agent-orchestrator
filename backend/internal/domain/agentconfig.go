@@ -36,6 +36,9 @@ type AgentConfig struct {
 	// SystemPrompt is a per-role base prompt appended to AO's role-derived
 	// system prompt at spawn/restore. It lets a project layer standing
 	// instructions onto a worker (or orchestrator) beyond the built-in role.
+	// A role SystemPrompt replaces (not concatenates) a base AgentConfig
+	// SystemPrompt; today only the role level is configurable, so this matters
+	// only if the base level is ever exposed.
 	SystemPrompt string `json:"systemPrompt,omitempty"`
 	// Env are extra environment variables forwarded into the session runtime,
 	// merged on top of the project's Env so a per-role value wins on key
