@@ -104,37 +104,37 @@ export function UpdatesSection() {
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="text-[13px]">Updates</CardTitle>
+				<CardTitle className="text-control">Updates</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
 				{activeBuild && (
 					<>
-						<div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[12px]">
+						<div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs">
 							<Badge variant="accent">PR #{activeBuild.pr}</Badge>
 							<span className="flex-1 text-foreground">You are on PR #{activeBuild.pr}'s build.</span>
 							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
 								Return to {form.channel === "nightly" ? "Nightly" : "Stable"}
 							</Button>
 						</div>
-						<p className="text-[12px] text-muted-foreground">
+						<p className="text-xs text-muted-foreground">
 							Automatic updates, if enabled, will return you to your home channel on the next check.
 						</p>
 					</>
 				)}
 
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="updatesEnabled" className="text-[12px] text-muted-foreground">
+					<Label htmlFor="updatesEnabled" className="text-xs text-muted-foreground">
 						Automatic updates
 					</Label>
 					<EnabledSelect id="updatesEnabled" value={form.enabled} onChange={setEnabled} />
 				</div>
 
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="updateChannel" className="text-[12px] text-muted-foreground">
+					<Label htmlFor="updateChannel" className="text-xs text-muted-foreground">
 						Update channel
 					</Label>
 					<Select value={primaryValue} onValueChange={handlePrimaryChannel} disabled={!form.enabled}>
-						<SelectTrigger id="updateChannel" className="h-8 w-full text-[13px]">
+						<SelectTrigger id="updateChannel" className="h-control-form w-full text-control">
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
@@ -150,7 +150,7 @@ export function UpdatesSection() {
 				)}
 
 				{form.channel === "nightly" && form.feature === null && form.enabled && (
-					<p className="text-[12px] leading-5 text-warning">
+					<p className="text-xs leading-row text-warning">
 						Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable
 						with that.
 					</p>
@@ -161,11 +161,11 @@ export function UpdatesSection() {
 						{save.isPending ? "Saving..." : "Save changes"}
 					</Button>
 					{save.isError && (
-						<span className="text-[12px] text-error">
+						<span className="text-xs text-error">
 							{save.error instanceof Error ? save.error.message : "Save failed"}
 						</span>
 					)}
-					{savedAt && !save.isPending && !save.isError && <span className="text-[12px] text-success">Saved.</span>}
+					{savedAt && !save.isPending && !save.isError && <span className="text-xs text-success">Saved.</span>}
 				</div>
 
 				<UpdateActions />
@@ -192,10 +192,10 @@ function FeatureBuildsSelect({
 	if (buildsQuery.isLoading) {
 		return (
 			<div className="flex flex-col gap-1.5">
-				<Label className="text-[12px] text-muted-foreground">Feature build</Label>
+				<Label className="text-xs text-muted-foreground">Feature build</Label>
 				<div className="flex flex-col gap-1">
-					<Skeleton className="h-8 w-full" />
-					<Skeleton className="h-8 w-full" />
+					<Skeleton className="h-control-form w-full" />
+					<Skeleton className="h-control-form w-full" />
 				</div>
 			</div>
 		);
@@ -206,8 +206,8 @@ function FeatureBuildsSelect({
 	if (builds.length === 0) {
 		return (
 			<div className="flex flex-col gap-1.5">
-				<Label className="text-[12px] text-muted-foreground">Feature build</Label>
-				<p className="text-[12px] text-muted-foreground">No live feature releases.</p>
+				<Label className="text-xs text-muted-foreground">Feature build</Label>
+				<p className="text-xs text-muted-foreground">No live feature releases.</p>
 			</div>
 		);
 	}
@@ -221,11 +221,11 @@ function FeatureBuildsSelect({
 
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor="featureBuild" className="text-[12px] text-muted-foreground">
+			<Label htmlFor="featureBuild" className="text-xs text-muted-foreground">
 				Feature build
 			</Label>
 			<Select value={currentPr != null ? String(currentPr) : ""} onValueChange={handleChange}>
-				<SelectTrigger id="featureBuild" className="h-8 w-full text-[13px]">
+				<SelectTrigger id="featureBuild" className="h-control-form w-full text-control">
 					<SelectValue placeholder="Select a feature build..." />
 				</SelectTrigger>
 				<SelectContent>
@@ -250,7 +250,7 @@ function FeatureBuildItem({ build }: { build: FeatureBuild }) {
 					PR #{build.pr}: {build.title}
 				</span>
 				<div className="flex items-center gap-1.5">
-					<span className="font-mono text-[11px] text-passive">{build.buildId}</span>
+					<span className="font-mono text-caption text-passive">{build.buildId}</span>
 					<Badge variant={isStale ? "warning" : "neutral"}>{ageLabel}</Badge>
 				</div>
 			</div>
@@ -281,13 +281,13 @@ function UpdateActions() {
 
 	return (
 		<div className="flex flex-col gap-3 border-t border-border pt-4">
-			<div className="flex items-center gap-2 text-[12px]">
+			<div className="flex items-center gap-2 text-xs">
 				<span className="text-passive">Current version</span>
-				<span className="font-mono text-[11px] text-foreground">{version.data ? `v${version.data}` : "..."}</span>
+				<span className="font-mono text-caption text-foreground">{version.data ? `v${version.data}` : "..."}</span>
 			</div>
 			<div className="flex items-center gap-3">
 				<Button type="button" variant="outline" onClick={() => void aoBridge.updates.check()} disabled={busy}>
-					{checking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+					{checking && <Loader2 className="mr-2 size-icon-base animate-spin" />}
 					Check for updates
 				</Button>
 
@@ -311,23 +311,23 @@ function UpdateActions() {
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	switch (status.state) {
 		case "checking":
-			return <span className="text-[12px] text-muted-foreground">Checking for updates...</span>;
+			return <span className="text-xs text-muted-foreground">Checking for updates...</span>;
 		case "available":
 			return (
-				<span className="text-[12px] text-muted-foreground">
+				<span className="text-xs text-muted-foreground">
 					Update available{status.version ? ` (v${status.version})` : ""}.
 				</span>
 			);
 		case "downloading":
-			return <span className="text-[12px] text-muted-foreground">Downloading... {status.percent ?? 0}%</span>;
+			return <span className="text-xs text-muted-foreground">Downloading... {status.percent ?? 0}%</span>;
 		case "downloaded":
-			return <span className="text-[12px] text-success">Downloaded. Restart to finish updating.</span>;
+			return <span className="text-xs text-success">Downloaded. Restart to finish updating.</span>;
 		case "not-available":
-			return <span className="text-[12px] text-muted-foreground">You're on the latest version.</span>;
+			return <span className="text-xs text-muted-foreground">You're on the latest version.</span>;
 		case "unsupported":
-			return <span className="text-[12px] text-passive">{status.message ?? "Updates need the installed app."}</span>;
+			return <span className="text-xs text-passive">{status.message ?? "Updates need the installed app."}</span>;
 		case "error":
-			return <span className="text-[12px] text-error">{status.message ?? "Update failed."}</span>;
+			return <span className="text-xs text-error">{status.message ?? "Update failed."}</span>;
 		default:
 			return null;
 	}
@@ -336,7 +336,7 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 function EnabledSelect({ id, value, onChange }: { id: string; value: boolean; onChange: (value: boolean) => void }) {
 	return (
 		<Select value={value ? "on" : "off"} onValueChange={(v) => onChange(v === "on")}>
-			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
+			<SelectTrigger id={id} className="h-control-form w-full text-control">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>

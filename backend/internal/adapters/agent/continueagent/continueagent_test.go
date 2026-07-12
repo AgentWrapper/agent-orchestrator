@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -73,51 +74,54 @@ func TestGetPromptDeliveryStrategyContextCanceled(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandBypass(t *testing.T) {
+func TestGetLaunchCommandWorkerBypassIsInteractive(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cn"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:        domain.KindWorker,
 		Prompt:      "do the thing",
 		Permissions: ports.PermissionModeBypassPermissions,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--auto", "--", "do the thing"}
+	want := []string{"cn", "--auto", "--", "do the thing"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestGetLaunchCommandAuto(t *testing.T) {
+func TestGetLaunchCommandWorkerAutoIsInteractive(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cn"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:        domain.KindWorker,
 		Prompt:      "refactor auth",
 		Permissions: ports.PermissionModeAuto,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--auto", "--", "refactor auth"}
+	want := []string{"cn", "--auto", "--", "refactor auth"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestGetLaunchCommandDefaultPerms(t *testing.T) {
+func TestGetLaunchCommandWorkerDefaultPermsIsInteractive(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cn"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:   domain.KindWorker,
 		Prompt: "fix it",
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--", "fix it"}
+	want := []string{"cn", "--", "fix it"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 	joined := strings.Join(cmd, " ")
-	if strings.Contains(joined, "--auto") || strings.Contains(joined, "--readonly") {
-		t.Fatal("should not emit a permission flag for default perms")
+	if strings.Contains(joined, "--print") || strings.Contains(joined, "--auto") || strings.Contains(joined, "--readonly") {
+		t.Fatal("should launch interactively and emit no permission flag for default perms")
 	}
 }
 
@@ -130,7 +134,7 @@ func TestGetLaunchCommandAcceptEditsNoFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--", "tidy up"}
+	want := []string{"cn", "--", "tidy up"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v (accept-edits should emit no flag)", cmd, want)
 	}
@@ -188,7 +192,7 @@ func TestGetRestoreCommand(t *testing.T) {
 	if !ok {
 		t.Fatal("ok=false, want true")
 	}
-	want := []string{"cn", "--print", "--auto", "--fork", "sess-abc123"}
+	want := []string{"cn", "--auto", "--fork", "sess-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -209,7 +213,7 @@ func TestGetRestoreCommandDefaultPerms(t *testing.T) {
 	if !ok {
 		t.Fatal("ok=false, want true")
 	}
-	want := []string{"cn", "--print", "--fork", "sess-xyz"}
+	want := []string{"cn", "--fork", "sess-xyz"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

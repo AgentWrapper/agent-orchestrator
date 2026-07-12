@@ -29,6 +29,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
+import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
@@ -72,9 +73,7 @@ function loadRenderer(term: Terminal): void {
 	}
 }
 
-// xterm palette tracks the app theme (see lib/terminal-themes.ts + --term-* in
-// styles.css). The PTY content is still the agent's own ANSI output.
-const terminalThemes = buildTerminalThemes();
+// xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
 const SUPPRESS_NATIVE_PASTE_MS = 100;
 
 // Erase scrollback (3J) + display (2J) and home the cursor. Deliberately NOT
@@ -169,13 +168,12 @@ type XtermInternal = Terminal & {
 	};
 };
 
-// We never scroll locally (scrollback:0). Instead we synthesize SGR mouse-wheel
-// reports and write them to the pane; tmux (with `mouse on`, set by the runtime
-// adapter) acts on them and scrolls its scrollback via copy-mode. With
-// scrollback:0 xterm would otherwise convert the wheel into cursor-arrow keys
-// (its alt-buffer fallback), which move the agent's cursor rather than scrolling.
-// SGR button 64 = wheel up, 65 = down; reports are 1-based and a single cell is
-// enough for a borderless single pane.
+// For mouse-tracking panes we synthesize SGR mouse-wheel reports and write them
+// to the pane; tmux (with `mouse on`, set by the runtime adapter) acts on them
+// and scrolls its scrollback via copy-mode. Left to itself xterm would convert
+// the wheel into cursor-arrow keys (its alt-buffer fallback), which move the
+// agent's cursor rather than scrolling. SGR button 64 = wheel up, 65 = down;
+// reports are 1-based and a single cell is enough for a borderless single pane.
 const SGR_WHEEL_UP = 64;
 const SGR_WHEEL_DOWN = 65;
 
@@ -219,7 +217,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const term = termRef.current;
 		if (!term) return;
-		term.options.theme = props.theme === "dark" ? terminalThemes.dark : terminalThemes.light;
+		const { dark, light } = buildTerminalThemes();
+		term.options.theme = props.theme === "dark" ? dark : light;
 	}, [props.theme]);
 
 	useEffect(() => {
@@ -237,6 +236,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		let term: Terminal;
 		try {
+			const { dark, light } = buildTerminalThemes();
 			term = new Terminal({
 				// Required for the Unicode 11 width addon below.
 				allowProposedApi: true,
@@ -249,7 +249,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				fontFamily:
 					getComputedStyle(host).getPropertyValue("--font-mono").trim() ||
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
-				fontSize: props.fontSize ?? 12,
+				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
 				// Agent TUIs leave SGR bold active while using ANSI black for
 				// separators; keep bold weight-only so black stays black.
@@ -258,14 +258,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// background, the way VS Code's terminal does; without it dim colors
 				// render washed out.
 				minimumContrastRatio: 4.5,
-				// The pane PTY runs a full-screen alt-buffer app (tmux attach) that
-				// owns scrollback itself, so xterm's own buffer never accumulates
-				// history (the alt screen doesn't feed scrollback) and wheel events
-				// are forwarded as mouse reports instead of scrolling locally. 0 also
-				// stops FitAddon reserving ~14px on the right for a scrollbar that can
-				// never appear.
-				scrollback: 0,
-				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
+				// Alt-buffer panes (tmux attach, mouse-tracking agent TUIs) never feed
+				// this buffer — the alt screen doesn't accumulate scrollback — so this
+				// only matters for normal-buffer panes that print their transcript and
+				// rely on the terminal's scrollback (codex, a plain shell). Keep it > 0
+				// so that history survives to be scrolled locally (see the wheel
+				// handler's normal-buffer branch). The scrollbar itself is hidden in
+				// CSS so FitAddon's ~14px reservation doesn't shift the grid.
+				scrollback: 5000,
+				theme: props.theme === "dark" ? dark : light,
 			});
 		} catch (error) {
 			callbacksRef.current.onError?.(error);
@@ -348,6 +349,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				});
 		};
 		term.attachCustomKeyEventHandler((event) => {
+			// xterm invokes this same handler on keydown, keyup, AND keypress (see
+			// Terminal.ts _keyDown/_keyUp/_keyPress). Only keydown should trigger our
+			// shortcut actions (copy/paste/word-nav) — otherwise releasing the key
+			// re-matches the same combo and fires the action a second time (double
+			// paste, double word-delete, etc). keyup/keypress fall through to
+			// xterm's own default handling for that event type.
+			if (event.type === "keyup" || event.type === "keypress") return true;
 			if (isTerminalCopyShortcut(event)) {
 				if (copySelection()) {
 					consumeTerminalShortcut(event);
@@ -497,29 +505,39 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			} else if (event.deltaMode === 2 /* DOM_DELTA_PAGE */) {
 				lines = (Math.trunc(event.deltaY) || Math.sign(event.deltaY)) * term.rows;
 			} else {
-				const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
+				const rowHeight = (term.options.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT) * (term.options.lineHeight ?? 1);
 				wheelAccumPx += event.deltaY;
 				lines = Math.trunc(wheelAccumPx / rowHeight);
 				wheelAccumPx -= lines * rowHeight;
 			}
 			if (lines === 0) return false;
-			// The SGR wheel path exists to drive tmux/zellij copy-mode on
-			// macOS/Linux. It cannot scroll a full-screen TUI that keeps its own
-			// transcript and only scrolls on PageUp/PageDown (opencode): the report
-			// is either consumed by the mux or handed to an app that ignores it.
-			// Send page keys for such apps (paneScrollsByKeyboard), on Windows
-			// (conpty has no mux, so SGR reaches the app and is ignored), and for
-			// any pane app with mouse tracking fully off.
-			if (
-				callbacksRef.current.paneScrollsByKeyboard ||
-				isWindowsPlatform() ||
-				term.modes.mouseTrackingMode === "none"
-			) {
+			// A full-screen TUI that keeps its own transcript and scrolls it only by
+			// keyboard (opencode) ignores wheel/mouse reports on every platform; route
+			// its wheel to page keys. Kept first so opencode is unaffected by the
+			// buffer-aware paths below.
+			if (callbacksRef.current.paneScrollsByKeyboard) {
 				emitUserInput(pageKeyReport(lines), "wheel");
 				return false;
 			}
-			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
-			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
+			// A normal-buffer pane with mouse tracking off (codex, a plain shell)
+			// prints its transcript and relies on the terminal's own scrollback — the
+			// way it scrolls in a raw terminal. Scroll xterm's viewport locally; the
+			// pane never sees these bytes. Requires scrollback > 0 (see Terminal opts).
+			if (term.modes.mouseTrackingMode === "none" && term.buffer.active.type === "normal") {
+				term.scrollLines(lines);
+				return false;
+			}
+			// Mouse tracking on: the pane (tmux/zellij copy-mode, or any app that
+			// tracks the mouse) acts on SGR wheel reports. On Windows conpty this
+			// reaches the app directly; under a mux it drives copy-mode.
+			if (term.modes.mouseTrackingMode !== "none") {
+				const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
+				emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
+				return false;
+			}
+			// Alt-buffer pane with mouse tracking off and no keyboard-scroll hint:
+			// no scrollback to move locally, so fall back to page keys.
+			emitUserInput(pageKeyReport(lines), "wheel");
 			return false;
 		});
 		const pasteInput = (event: ClipboardEvent) => {

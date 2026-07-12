@@ -57,17 +57,17 @@ export function PullRequestsPage() {
 				count={rows.length}
 			/>
 
-			<div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				{rows.length === 0 ? (
-					<p className="py-10 text-center text-[12px] text-passive">No open pull requests.</p>
+					<p className="py-10 text-center text-xs text-passive">No open pull requests.</p>
 				) : (
 					<Table>
 						<TableHeader>
 							<TableRow>
-								<TableHead className="w-16">PR</TableHead>
+								<TableHead className="w-pr-col-number">PR</TableHead>
 								<TableHead>Worker</TableHead>
-								<TableHead className="w-24">State</TableHead>
-								<TableHead className="w-[220px] text-right">Actions</TableHead>
+								<TableHead className="w-pr-col-state">State</TableHead>
+								<TableHead className="w-pr-table-actions text-right">Actions</TableHead>
 							</TableRow>
 						</TableHeader>
 						<TableBody>
@@ -132,10 +132,10 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 
 	return (
 		<TableRow className="cursor-pointer" onClick={onOpen}>
-			<TableCell className="font-mono text-[12px] text-muted-foreground">#{row.pr.number}</TableCell>
+			<TableCell className="font-mono text-xs text-muted-foreground">#{row.pr.number}</TableCell>
 			<TableCell className="max-w-0">
-				<div className="truncate text-[13px] text-foreground">{row.pr.title || row.session.title}</div>
-				<div className="truncate font-mono text-[10px] text-passive">
+				<div className="truncate text-control text-foreground">{row.pr.title || row.session.title}</div>
+				<div className="truncate font-mono text-micro text-passive">
 					{[
 						row.session.workspaceName,
 						row.pr.sourceBranch || row.session.branch,
@@ -148,19 +148,19 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 				<PRSummaryParts className="mt-1" maxLinks={2} pr={row.pr} />
 			</TableCell>
 			<TableCell>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", stateTone[row.pr.state])}>
+				<Badge variant="outline" className={cn("h-5 px-1.5 text-micro font-medium", stateTone[row.pr.state])}>
 					{row.pr.state}
 				</Badge>
 			</TableCell>
 			<TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
 				{note ? (
-					<span className={cn("text-[11px]", note.ok ? "text-success" : "text-error")}>{note.text}</span>
+					<span className={cn("text-caption", note.ok ? "text-success" : "text-error")}>{note.text}</span>
 				) : actionable ? (
 					<div className="flex items-center justify-end gap-1.5">
 						<Button
 							size="sm"
 							variant="ghost"
-							className="h-6 px-2 text-[11px]"
+							className="h-6 px-2 text-caption"
 							disabled={resolve.isPending}
 							onClick={() => resolve.mutate()}
 						>
@@ -169,7 +169,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 						<Button
 							size="sm"
 							variant="primary"
-							className="h-6 px-2 text-[11px]"
+							className="h-6 px-2 text-caption"
 							disabled={merge.isPending}
 							onClick={() => merge.mutate()}
 						>
@@ -177,7 +177,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 						</Button>
 					</div>
 				) : (
-					<span className="text-[11px] text-passive">—</span>
+					<span className="text-caption text-passive">—</span>
 				)}
 			</TableCell>
 		</TableRow>

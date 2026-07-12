@@ -35,9 +35,9 @@ export function toSessionStatus(status?: string, isTerminated = false): SessionS
 	return isTerminated ? "terminated" : "unknown";
 }
 
-export type SessionActivityState = "active" | "idle" | "waiting_input" | "exited" | "unknown";
+export type SessionActivityState = "active" | "idle" | "waiting_input" | "blocked" | "exited" | "unknown";
 
-const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "exited"]);
+const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "blocked", "exited"]);
 
 export type SessionActivity = {
 	state: SessionActivityState;
@@ -173,6 +173,14 @@ export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 	if (!issueId) return undefined;
 	return TRACKER_PROVIDER_PREFIXES.some((prefix) => issueId.startsWith(prefix)) ? issueId : undefined;
 }
+
+export type ProjectKind = "single_repo" | "workspace";
+
+export type WorkspaceRepoSummary = {
+	name: string;
+	relativePath: string;
+	repo: string;
+};
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
@@ -355,7 +363,9 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 export type WorkspaceSummary = {
 	id: string;
 	name: string;
+	kind?: ProjectKind;
 	path: string;
+	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";
 	orchestratorAgent?: AgentProvider;
 	accentColor?: string;

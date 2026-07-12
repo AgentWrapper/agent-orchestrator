@@ -15,6 +15,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
@@ -62,6 +63,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
 	mountTelemetry(r, deps.Telemetry)
+	mountMobile(r, deps.Mobile)
 	NewAPI(cfg, deps).Register(r)
 
 	return r
@@ -97,6 +99,26 @@ func mountControl(r chi.Router, deps ControlDeps) {
 		})
 		deps.RequestShutdown()
 	})
+}
+
+// mountMobile registers the Connect Mobile control routes: status, enable,
+// disable, and regenerate. These toggle the LAN bridge that lets a phone reach
+// the daemon. They must be reachable from the desktop renderer — a browser
+// context that always sends an Origin header — so they are NOT gated by
+// localControlRequest (which rejects any Origin-bearing request and is meant for
+// the CLI). The "phone must never toggle its own access" invariant is enforced
+// on the LAN listener instead, by lanControlBlock, which 404s /api/v1/mobile on
+// the 0.0.0.0 socket the phone reaches — a transport-based check that cannot be
+// spoofed with a forged Host header. On the loopback listener these routes are
+// protected by the same CORS allowlist as every other app route.
+func mountMobile(r chi.Router, c *controllers.MobileController) {
+	if c == nil {
+		return
+	}
+	r.Get("/api/v1/mobile/status", c.Status)
+	r.Post("/api/v1/mobile/enable", c.Enable)
+	r.Post("/api/v1/mobile/disable", c.Disable)
+	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
 }
 
 type cliInvokedRequest struct {

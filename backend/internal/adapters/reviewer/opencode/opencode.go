@@ -28,6 +28,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
+var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
 // ReviewCommand launches the reviewer with an inline permission policy that
 // permits inspection and the two reporting commands while denying edits and
@@ -53,4 +54,10 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 // ReviewMessage returns the centrally-authored task for an existing pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
+}
+
+// ReviewCancel stops the active OpenCode reviewer turn while preserving the
+// terminal pane for inspection.
+func (r *Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
 }

@@ -1,13 +1,11 @@
-// Package vibe implements the Mistral Vibe agent adapter: launching new
-// non-interactive Vibe sessions and resuming sessions when a native Vibe
-// session id is known.
+// Package vibe implements the Mistral Vibe agent adapter: launching interactive
+// Vibe sessions and resuming sessions when a native Vibe session id is known.
 //
 // Mistral Vibe (binary "vibe", https://github.com/mistralai/mistral-vibe) is a
 // Python CLI installed via `uv tool install mistral-vibe`, pip, or its install
-// script. AO drives it in programmatic/headless mode with `-p <prompt>`, which
-// auto-approves tools, prints the final response, and exits. `--trust` skips
-// the working-directory trust prompt for non-interactive automation, and
-// `--output text` pins the human-readable output format.
+// script. AO drives Vibe in interactive mode by passing the task as the
+// positional initial prompt. `--trust` skips the working-directory trust prompt
+// for AO-managed worktrees while preserving Vibe's normal TUI.
 //
 // Permission modes map onto Vibe's builtin agent profiles via `--agent`:
 // accept-edits ("auto-approves file edits only") and auto-approve
@@ -66,16 +64,19 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds the argv to start a new non-interactive Vibe session:
+// GetLaunchCommand builds the argv to start a new interactive Vibe session:
 //
-//	vibe --trust --output text [--workdir <path>] [--agent <profile>] -p <prompt>
+//	vibe --trust [--workdir <path>] [--agent <profile>] [-- <prompt>]
 //
-// The prompt is delivered through `-p` (programmatic mode), so AO uses
-// in-command delivery. `--trust` skips the trust prompt for automation and
-// `--output text` pins the output format. `--workdir` is passed explicitly
-// because Vibe validates its own working directory in addition to the process
-// cwd AO sets through the runtime. Vibe exposes no CLI system-prompt flag
-// (system prompts are config-driven), so SystemPrompt is not forwarded.
+// When present, the prompt is delivered as Vibe's positional initial prompt, so
+// AO uses in-command delivery. Empty prompts intentionally launch an interactive
+// Vibe TUI with no positional prompt: the session manager uses promptless
+// launches for orchestrators and restore fallback. `--trust` skips the trust
+// prompt for automation and avoiding `-p` keeps Vibe in its Textual TUI instead
+// of programmatic output mode. `--workdir` is passed explicitly because Vibe
+// validates its own working directory in addition to the process cwd AO sets
+// through the runtime. Vibe exposes no CLI system-prompt flag (system prompts
+// are config-driven), so SystemPrompt is not forwarded.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -85,11 +86,12 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	cmd = []string{binary, "--trust", "--output", "text"}
+	cmd = make([]string, 0, 6)
+	cmd = append(cmd, binary, "--trust")
 	appendWorkdirFlag(&cmd, cfg.WorkspacePath)
 	appendAgentFlags(&cmd, cfg.Permissions)
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "-p", cfg.Prompt)
+	if strings.TrimSpace(cfg.Prompt) != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
 	}
 	return cmd, nil
 }
@@ -111,7 +113,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 	cmd = make([]string, 0, 8)
-	cmd = append(cmd, binary, "--trust", "--output", "text")
+	cmd = append(cmd, binary, "--trust")
 	appendWorkdirFlag(&cmd, cfg.Session.WorkspacePath)
 	appendAgentFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--resume", agentSessionID)

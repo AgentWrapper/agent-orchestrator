@@ -64,6 +64,12 @@ func sendEnterArgs(id string) []string {
 	return []string{"send-keys", "-t", id, "Enter"}
 }
 
+// sendInterruptArgs builds args for `tmux send-keys -t <id> C-c` to interrupt
+// the foreground process without killing the terminal session.
+func sendInterruptArgs(id string) []string {
+	return []string{"send-keys", "-t", id, "C-c"}
+}
+
 // capturePaneArgs builds args for `tmux capture-pane -t <id> -p -S -<lines>`.
 // -p prints to stdout; -S -<n> starts n lines back in history.
 func capturePaneArgs(id string, lines int) []string {

@@ -10,6 +10,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -55,12 +56,14 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // GetLaunchCommand builds the argv to start an interactive Crush session.
 // Shape:
 //
-//	crush [--cwd <WorkspacePath>] [--yolo] [-- <Prompt>]
+//	crush [--cwd <WorkspacePath>] [--yolo]
 //
 // The session runs in the worktree (cwd is set by the runtime). Crush doesn't
 // have native system prompt support, so cfg.SystemPrompt / SystemPromptFile are
-// intentionally ignored. The initial task prompt is delivered as a positional
-// argument after `--`. The --yolo flag corresponds to bypass-permissions mode.
+// intentionally ignored. Worker task prompts are delivered after startup so AO
+// keeps the interactive TUI; Crush's documented `run` command is intentionally
+// not used here because it is non-interactive. The --yolo flag corresponds to
+// bypass-permissions mode.
 //
 // We intentionally do not pass --session on launch: cfg.SessionID is the
 // AO-internal id, not a Crush-native session id. Letting Crush mint its own
@@ -84,12 +87,34 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--yolo")
 	}
 
-	// Prompt is passed after `--` so a leading "-" is not read as a flag
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
-	}
-
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that prompted sessions receive their task
+// after the interactive Crush UI starts.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if cfg.Prompt != "" {
+		return ports.PromptDeliveryAfterStart, nil
+	}
+	return ports.PromptDeliveryInCommand, nil
+}
+
+// PromptReadinessHints waits for Crush's ready prompt before AO injects the
+// worker's first task.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 500 * time.Millisecond,
+		Patterns:     []string{"Ready..."},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      8 * time.Second,
+		Lines:        80,
+	}, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Crush session:

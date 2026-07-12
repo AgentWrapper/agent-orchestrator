@@ -65,21 +65,21 @@ export function MigrationPopup() {
 			}}
 		>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
+				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
 					<Dialog.Title className="text-sm font-medium text-foreground">
 						Import projects from your earlier AO?
 					</Dialog.Title>
-					<Dialog.Description className="mt-2 text-[13px] leading-[1.5] text-muted-foreground">
-						We found an existing install at <span className="font-mono text-[11px] text-foreground">{legacyRoot}</span>.
-						Importing brings in your projects. Your old files are never modified, and you can do this later.
+					<Dialog.Description className="mt-2 text-control leading-body text-muted-foreground">
+						We found an existing install at <span className="font-mono text-caption text-foreground">{legacyRoot}</span>
+						. Importing brings in your projects. Your old files are never modified, and you can do this later.
 					</Dialog.Description>
 					{error && (
-						<div className="mt-3 text-[12px] text-destructive">
+						<div className="mt-3 text-xs text-destructive">
 							Migration failed: {error}. Your legacy projects are untouched (nothing is ever deleted). You can retry.
 						</div>
 					)}
-					<p className="mt-3 text-[11px] text-muted-foreground">You can run this again later.</p>
+					<p className="mt-3 text-caption text-muted-foreground">You can run this again later.</p>
 					<div className="mt-4 flex items-center justify-between gap-2">
 						<Button variant="ghost" className="text-destructive" onClick={dontMigrate} disabled={busy} type="button">
 							Don't Migrate
@@ -89,7 +89,7 @@ export function MigrationPopup() {
 								Skip
 							</Button>
 							<Button variant="primary" onClick={proceed} disabled={busy} type="button">
-								{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+								{busy && <Loader2 className="mr-2 size-icon-base animate-spin" />}
 								{error ? "Retry" : "Proceed"}
 							</Button>
 						</div>

@@ -58,6 +58,16 @@ vi.mock("./BrowserPanel", () => ({
 			{poppedOut ? "browser center" : "browser rail"}
 		</button>
 	),
+	useBrowserAnnotationQueue: () => ({
+		status: "idle",
+		error: "",
+		queuedCount: 0,
+		beginPicking: vi.fn(),
+		cancelPicking: vi.fn(),
+		enqueue: vi.fn(),
+		failPicking: vi.fn(),
+		retryQueued: vi.fn(),
+	}),
 }));
 const browserDestroy = vi.hoisted(() => vi.fn());
 vi.mock("../hooks/useBrowserView", () => ({
@@ -301,16 +311,18 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().isInspectorOpen).toBe(true);
 	});
 
-	it("lets the browser take over the center pane and return to the rail", () => {
+	it("maximizes the browser over the whole app window and returns to the rail", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
 
-		expect(screen.queryByText("terminal center")).not.toBeInTheDocument();
+		// The maximized overlay appears; the terminal stays mounted behind it.
 		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
+		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(browserDestroy).not.toHaveBeenCalled();
 	});

@@ -31,7 +31,7 @@ func newPreviewCommand(ctx *commandContext) *cobra.Command {
   ao preview file://$(pwd)/index.html
   ao preview http://localhost:5173
   ao preview clear`,
-		Args: cobra.MaximumNArgs(1),
+		Args: atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var target string
 			if len(args) == 1 {
@@ -43,7 +43,7 @@ func newPreviewCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "clear",
 		Short: "Clear the desktop browser panel for the current session",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return ctx.clearPreview(cmd.Context())
 		},
