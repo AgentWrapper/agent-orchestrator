@@ -232,6 +232,12 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
+	// Defense-in-depth, symmetric with GetLaunchCommand: the config was
+	// validated on write, but re-check here so a config mutated later (by a
+	// bug or a different code path) is caught at restore too, not only launch.
+	if err := cfg.Config.Validate(); err != nil {
+		return nil, false, fmt.Errorf("claude-code: %w", err)
+	}
 
 	sessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
 	if sessionID == "" && cfg.Session.ID != "" {
