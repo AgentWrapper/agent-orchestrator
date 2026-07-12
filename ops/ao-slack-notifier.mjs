@@ -413,7 +413,7 @@ export function loadState(file = STATE_FILE) {
 	try {
 		const raw = JSON.parse(readFileSync(file, "utf8"));
 		return {
-			seen: new Set(Array.isArray(raw.seen) ? raw.seen : []),
+			seen: new Set(Array.isArray(raw.seen) ? raw.seen.map(migratePipeSubjectKey) : []),
 			lastEventId: String(raw.lastEventId ?? ""),
 			lastHeartbeatAt: Number(raw.lastHeartbeatAt ?? 0),
 			initialized: Boolean(raw.initialized),
@@ -446,7 +446,7 @@ function normalizePostedSignatures(raw) {
 	if (!raw || typeof raw !== "object") return out;
 	for (const [sig, ts] of Object.entries(raw)) {
 		const n = Number(ts);
-		if (Number.isFinite(n)) out[sig] = n;
+		if (Number.isFinite(n)) out[migratePipeSubjectKey(sig)] = n;
 	}
 	return out;
 }
@@ -456,15 +456,36 @@ function normalizeNeedsResponseMessages(raw) {
 	if (!raw || typeof raw !== "object") return out;
 	for (const [sig, msg] of Object.entries(raw)) {
 		if (!msg || typeof msg !== "object") continue;
-		out[sig] = {
+		const record = msg.record && typeof msg.record === "object" ? msg.record : null;
+		const key = record ? signature(record) : migrateAttentionSignature(sig);
+		out[key] = {
 			ts: String(msg.ts ?? ""),
 			channel: String(msg.channel ?? ""),
 			text: String(msg.text ?? ""),
-			record: msg.record && typeof msg.record === "object" ? msg.record : null,
+			record,
 			openedAt: String(msg.openedAt ?? ""),
 		};
 	}
 	return out;
+}
+
+function migratePipeSubjectKey(key) {
+	const parts = String(key ?? "").split("|");
+	if (parts.length < 3 || parts[2].includes(":")) return String(key ?? "");
+	parts[2] = legacySubjectKey(parts[0], parts[1], parts[2]);
+	return parts.join("|");
+}
+
+function migrateAttentionSignature(key) {
+	const text = String(key ?? "");
+	const match = /^([^/]+)\/([^#]+)#(.+)$/.exec(text);
+	if (!match || match[2].includes(":")) return text;
+	return `${match[1]}/${legacySubjectKey(match[3], match[1], match[2])}#${match[3]}`;
+}
+
+function legacySubjectKey(type, projectId, sessionId) {
+	if (type === "main_ci_red") return `project:${projectId}`;
+	return `session:${sessionId}`;
 }
 
 export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {

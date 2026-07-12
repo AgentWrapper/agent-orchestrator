@@ -330,6 +330,46 @@ describe("ao Slack notifier replay/dedup", () => {
 		assert.equal(notificationKey({ id: "ntf_1", type: "needs_input" }), "ntf_1");
 	});
 
+	it("migrates legacy subject-less state keys on load", async () => {
+		const stateFile = await tmpState();
+		await writeFile(
+			stateFile,
+			JSON.stringify({
+				seen: ["needs_input|ao|agent-1|2026-07-12T00:00:00Z|waiting|"],
+				attentionTracker: {
+					open: [["ao/agent-1#needs_input", { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true }]],
+				},
+				postedSignatures: {
+					"main_ci_red|ao|main||0|sha-main": 123,
+				},
+				needsResponseMessages: {
+					"ao/agent-1#needs_input": {
+						ts: "1.2",
+						channel: "C",
+						text: "waiting",
+						record: { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true },
+					},
+				},
+			}),
+			"utf8",
+		);
+
+		const state = loadState(stateFile);
+		assert.ok(state.seen.has("needs_input|ao|session:agent-1|2026-07-12T00:00:00Z|waiting|"));
+		assert.ok(
+			state.attentionTracker.isOpen({
+				kind: "needs_input",
+				sessionId: "agent-1",
+				subjectKind: "session",
+				subjectId: "agent-1",
+				projectId: "ao",
+				attention: true,
+			}),
+		);
+		assert.equal(state.postedSignatures["main_ci_red|ao|project:ao||0|sha-main"], 123);
+		assert.ok(state.needsResponseMessages["ao/session:agent-1#needs_input"]);
+	});
+
 	it("catch-up posts unread notifications once and persists seen ids", async () => {
 		const stateFile = await tmpState();
 		const posts = [];

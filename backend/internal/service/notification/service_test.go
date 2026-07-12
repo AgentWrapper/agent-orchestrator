@@ -59,7 +59,7 @@ func TestListUnreadAddsTargets(t *testing.T) {
 	if got[1].Subject.Kind != domain.NotificationSubjectPR || got[1].Subject.ID != "https://github.com/o/r/pull/1" {
 		t.Fatalf("pr subject = %+v", got[1].Subject)
 	}
-	if got[2].Subject.Kind != domain.NotificationSubjectModel || got[2].Subject.ID != "model-1" {
+	if got[2].Subject.Kind != domain.NotificationSubjectModel || got[2].Subject.ID != "mer" {
 		t.Fatalf("model subject = %+v", got[2].Subject)
 	}
 	if got[3].Subject.Kind != domain.NotificationSubjectSession || got[3].Subject.ID != "mer-2" {

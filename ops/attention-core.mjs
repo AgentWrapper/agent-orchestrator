@@ -133,10 +133,25 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 // between must not re-alert. Distinct kinds for the same session DO alert (a
 // worker going needs_input -> blocked is a real new transition).
 export function signature(rec) {
-	if (rec.subjectKind && rec.subjectId) {
-		return `${rec.projectId}/${rec.subjectKind}:${rec.subjectId}#${rec.kind}`;
+	const subject = attentionSubject(rec);
+	if (subject.kind && subject.id) {
+		return `${rec.projectId}/${subject.kind}:${subject.id}#${rec.kind}`;
 	}
 	return `${rec.projectId}/${rec.sessionId}#${rec.kind}`;
+}
+
+function attentionSubject(rec) {
+	if (rec?.subjectKind && rec?.subjectId) return { kind: rec.subjectKind, id: rec.subjectId };
+	if (rec?.kind === "main_ci_red" && rec?.projectId) return { kind: "project", id: rec.projectId };
+	if (rec?.sessionId) return { kind: "session", id: rec.sessionId };
+	return { kind: "", id: "" };
+}
+
+function withAttentionSubject(rec) {
+	if (!rec || typeof rec !== "object") return rec;
+	const subject = attentionSubject(rec);
+	if (!subject.kind || !subject.id) return rec;
+	return { ...rec, subjectKind: subject.kind, subjectId: subject.id };
 }
 
 // --- Message rendering -----------------------------------------------------
@@ -262,7 +277,10 @@ export class AttentionTracker {
 		const t = new AttentionTracker();
 		try {
 			const raw = typeof json === "string" ? JSON.parse(json) : json;
-			for (const [sig, rec] of raw.open ?? []) t.open.set(sig, rec);
+			for (const [, rec] of raw.open ?? []) {
+				const normalized = withAttentionSubject(rec);
+				t.open.set(signature(normalized), normalized);
+			}
 		} catch {}
 		return t;
 	}
@@ -303,6 +321,8 @@ export function attentionFromSession(s) {
 	return {
 		kind,
 		sessionId: String(s.id ?? ""),
+		subjectKind: "session",
+		subjectId: String(s.id ?? ""),
 		projectId: String(s.projectId ?? ""),
 		title: attentionTitle(kind, s),
 		url: sessionUrl(s),
@@ -319,6 +339,8 @@ export function attentionFromMainCI(main) {
 	return {
 		kind: "main_ci_red",
 		sessionId: "main",
+		subjectKind: "project",
+		subjectId: String(main.projectId ?? ""),
 		projectId: String(main.projectId ?? ""),
 		title: `main is red at ${sha || "unknown"}: ${jobs}`,
 		url: String(main.url ?? main.htmlUrl ?? ""),

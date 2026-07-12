@@ -76,7 +76,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 const getUnreadNotificationByDedupe = `-- name: GetUnreadNotificationByDedupe :one
 SELECT id, session_id, project_id, pr_url, type, subject_kind, subject_id, title, body, status, created_at, sensitive, changed_paths, head_sha
 FROM notifications
-WHERE subject_kind = ? AND subject_id = ? AND type = ? AND pr_url = ? AND sensitive = ? AND head_sha = ? AND status = 'unread'
+WHERE subject_kind = ? AND COALESCE(NULLIF(subject_id, ''), session_id) = ? AND type = ? AND pr_url = ? AND sensitive = ? AND head_sha = ? AND status = 'unread'
 LIMIT 1
 `
 
@@ -122,7 +122,7 @@ const getWorkerTerminalNotificationByDedupe = `-- name: GetWorkerTerminalNotific
 SELECT id, session_id, project_id, pr_url, type, subject_kind, subject_id, title, body, status, created_at, sensitive, changed_paths, head_sha
 FROM notifications
 WHERE subject_kind = ?
-  AND subject_id = ?
+  AND COALESCE(NULLIF(subject_id, ''), session_id) = ?
   AND type = ?
   AND type IN ('worker_died_unfinished', 'worker_retry_exhausted')
   AND (type != 'worker_died_unfinished' OR body = ?)

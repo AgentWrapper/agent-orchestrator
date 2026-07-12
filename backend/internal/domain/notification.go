@@ -147,7 +147,6 @@ func (r NotificationRecord) WithInferredSubject() NotificationRecord {
 			r.SubjectID = string(r.SessionID)
 		case r.Type == NotificationModelUnreachable || r.Type == NotificationModelRecovered:
 			r.SubjectKind = NotificationSubjectModel
-			r.SubjectID = string(r.SessionID)
 		case r.Type == NotificationMainCIRed:
 			r.SubjectKind = NotificationSubjectProject
 			r.SubjectID = string(r.ProjectID)

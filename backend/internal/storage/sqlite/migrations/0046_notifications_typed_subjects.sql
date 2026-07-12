@@ -163,6 +163,51 @@ SELECT
     head_sha
 FROM notifications;
 
+UPDATE notifications_old
+SET status = 'read'
+WHERE status = 'unread'
+  AND EXISTS (
+    SELECT 1
+    FROM notifications_old AS newer
+    WHERE newer.status = 'unread'
+      AND newer.session_id = notifications_old.session_id
+      AND newer.type = notifications_old.type
+      AND newer.pr_url = notifications_old.pr_url
+      AND newer.sensitive = notifications_old.sensitive
+      AND newer.head_sha = notifications_old.head_sha
+      AND (
+        newer.created_at > notifications_old.created_at
+        OR (newer.created_at = notifications_old.created_at AND newer.id > notifications_old.id)
+      )
+  );
+
+DELETE FROM notifications_old
+WHERE type = 'worker_retry_exhausted'
+  AND EXISTS (
+    SELECT 1
+    FROM notifications_old AS newer
+    WHERE newer.session_id = notifications_old.session_id
+      AND newer.type = notifications_old.type
+      AND (
+        newer.created_at > notifications_old.created_at
+        OR (newer.created_at = notifications_old.created_at AND newer.id > notifications_old.id)
+      )
+  );
+
+DELETE FROM notifications_old
+WHERE type = 'worker_died_unfinished'
+  AND EXISTS (
+    SELECT 1
+    FROM notifications_old AS newer
+    WHERE newer.session_id = notifications_old.session_id
+      AND newer.type = notifications_old.type
+      AND newer.body = notifications_old.body
+      AND (
+        newer.created_at > notifications_old.created_at
+        OR (newer.created_at = notifications_old.created_at AND newer.id > notifications_old.id)
+      )
+  );
+
 DROP INDEX IF EXISTS idx_notifications_unread_dedupe;
 DROP INDEX IF EXISTS idx_notifications_status;
 DROP INDEX IF EXISTS idx_notifications_worker_terminal_dedupe;
