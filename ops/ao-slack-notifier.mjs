@@ -137,6 +137,8 @@ const INTERESTING = new Set([
 	"worker_died_unfinished",
 	"worker_retry_exhausted",
 	"main_ci_red",
+	"model_unreachable",
+	"model_recovered",
 ]);
 const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal", "main_ci_red"]);
 const ICONS = {
@@ -151,6 +153,8 @@ const ICONS = {
 	worker_died_unfinished: "🧯",
 	worker_retry_exhausted: "🚨",
 	main_ci_red: "🚨",
+	model_unreachable: "🧠",
+	model_recovered: "🧠",
 };
 
 export function digestContentKey(records) {
@@ -236,14 +240,34 @@ export function normalizeNotification(raw) {
 	const n = raw.notification ?? raw.payload ?? raw;
 	const type = n.type ?? n.kind ?? raw.type ?? raw.event ?? "";
 	if (!INTERESTING.has(type)) return null;
+	const subject = n.subject ?? raw.subject ?? {};
+	const prUrl = n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "";
+	const projectId = n.projectId ?? n.project ?? raw.projectId ?? "";
+	const sessionId = n.sessionId ?? n.session ?? raw.sessionId ?? "";
+	const subjectKind =
+		subject.kind ??
+		(type === "main_ci_red"
+			? "project"
+			: type === "worker_died_unfinished" || type === "worker_retry_exhausted"
+				? "session"
+				: prUrl
+					? "pr"
+					: sessionId
+						? "session"
+						: "");
+	const subjectId =
+		subject.id ??
+		(subjectKind === "project" ? projectId : subjectKind === "pr" ? prUrl : subjectKind === "session" ? sessionId : "");
 	return {
 		id: n.id ?? raw.id ?? null,
 		type,
-		sessionId: n.sessionId ?? n.session ?? raw.sessionId ?? "",
-		projectId: n.projectId ?? n.project ?? raw.projectId ?? "",
+		sessionId,
+		subjectKind,
+		subjectId,
+		projectId,
 		title: n.title ?? n.message ?? raw.title ?? "",
 		body: n.body ?? raw.body ?? "",
-		prUrl: n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "",
+		prUrl,
 		sensitive: Boolean(n.sensitive ?? raw.sensitive),
 		changedPaths: Array.isArray(n.changedPaths)
 			? n.changedPaths
@@ -296,6 +320,8 @@ function needsResponseRecordFromNotification(raw) {
 	return {
 		kind: notificationLabel(n),
 		sessionId: String(n.sessionId ?? ""),
+		subjectKind: String(n.subjectKind ?? ""),
+		subjectId: String(n.subjectId ?? ""),
 		projectId: String(n.projectId ?? ""),
 		title: String(n.title || n.body || ""),
 		url: String(n.prUrl ?? ""),
@@ -321,7 +347,7 @@ function renderResolvedNeedsResponse(rec, { reason, resolvedAt = new Date(), cle
 export function notificationKey(raw) {
 	const n = normalizeNotification(raw);
 	if (!n) return null;
-	return n.id || `${n.type}|${n.projectId}|${n.sessionId}|${n.createdAt}|${n.title}|${n.prUrl}`;
+	return n.id || `${n.type}|${n.projectId}|${notificationSubjectKey(n)}|${n.createdAt}|${n.title}|${n.prUrl}`;
 }
 
 // contentSignature ignores the per-row id and createdAt (which change on every
@@ -334,7 +360,12 @@ export function contentSignature(raw) {
 	if (!n) return null;
 	// head SHA is part of the signature: a new push (new head) is a real state
 	// change that must re-notify even inside the cooldown window (issue #190).
-	return `${n.type}|${n.projectId}|${n.sessionId}|${n.prUrl}|${n.sensitive ? "1" : "0"}|${n.headSha ?? ""}`;
+	return `${n.type}|${n.projectId}|${notificationSubjectKey(n)}|${n.prUrl}|${n.sensitive ? "1" : "0"}|${n.headSha ?? ""}`;
+}
+
+function notificationSubjectKey(n) {
+	if (n?.subjectKind && n?.subjectId) return `${n.subjectKind}:${n.subjectId}`;
+	return `session:${n?.sessionId ?? ""}`;
 }
 
 export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
@@ -343,7 +374,8 @@ export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
 	const label = notificationLabel(n);
 	const icon = ICONS[label] ?? "📌";
 	const proj = n.projectId ? `[${n.projectId}] ` : "";
-	const sess = n.sessionId ? `${n.sessionId}: ` : "";
+	const displaySubject = n.sessionId || (n.type === "main_ci_red" ? "main" : n.subjectId || "");
+	const sess = displaySubject ? `${displaySubject}: ` : "";
 	const title = n.title || n.body;
 	const text = `${icon} *${label}* ${proj}${sess}${title} ${n.prUrl}`.trim();
 	if (mentionUserId && isMentionableNotification(n)) return `<@${mentionUserId}> ${text}`;
@@ -382,7 +414,7 @@ export function loadState(file = STATE_FILE) {
 	try {
 		const raw = JSON.parse(readFileSync(file, "utf8"));
 		return {
-			seen: new Set(Array.isArray(raw.seen) ? raw.seen : []),
+			seen: new Set(Array.isArray(raw.seen) ? raw.seen.map(migratePipeSubjectKey) : []),
 			lastEventId: String(raw.lastEventId ?? ""),
 			lastHeartbeatAt: Number(raw.lastHeartbeatAt ?? 0),
 			initialized: Boolean(raw.initialized),
@@ -415,7 +447,7 @@ function normalizePostedSignatures(raw) {
 	if (!raw || typeof raw !== "object") return out;
 	for (const [sig, ts] of Object.entries(raw)) {
 		const n = Number(ts);
-		if (Number.isFinite(n)) out[sig] = n;
+		if (Number.isFinite(n)) out[migratePipeSubjectKey(sig)] = n;
 	}
 	return out;
 }
@@ -425,15 +457,54 @@ function normalizeNeedsResponseMessages(raw) {
 	if (!raw || typeof raw !== "object") return out;
 	for (const [sig, msg] of Object.entries(raw)) {
 		if (!msg || typeof msg !== "object") continue;
-		out[sig] = {
+		const record = msg.record && typeof msg.record === "object" ? msg.record : null;
+		const key = record ? needsResponseSignature(record) : migrateAttentionSignature(sig);
+		out[key] = {
 			ts: String(msg.ts ?? ""),
 			channel: String(msg.channel ?? ""),
 			text: String(msg.text ?? ""),
-			record: msg.record && typeof msg.record === "object" ? msg.record : null,
+			record,
 			openedAt: String(msg.openedAt ?? ""),
 		};
 	}
 	return out;
+}
+
+function migratePipeSubjectKey(key) {
+	const parts = String(key ?? "").split("|");
+	if (parts.length < 3 || parts[2].includes(":")) return String(key ?? "");
+	const prUrl = [parts[3], parts[5]].find((part) => looksLikeURL(part)) ?? "";
+	parts[2] = legacySubjectKey(parts[0], parts[1], parts[2], prUrl);
+	return parts.join("|");
+}
+
+function migrateAttentionSignature(key) {
+	const text = String(key ?? "");
+	const match = /^([^/]+)\/([^#]+)#(.+)$/.exec(text);
+	if (!match || match[2].includes(":")) return text;
+	return `${match[1]}/${legacySubjectKey(match[3], match[1], match[2])}#${match[3]}`;
+}
+
+function legacySubjectKey(type, projectId, sessionId, prUrl = "") {
+	if (type === "main_ci_red") return `project:${projectId}`;
+	if (prUrl && PR_SUBJECT_TYPES.has(type)) return `pr:${prUrl}`;
+	return `session:${sessionId}`;
+}
+
+const PR_SUBJECT_TYPES = new Set([
+	"ready_to_merge",
+	"parked_sensitive_merge",
+	"pr_merged",
+	"pr_closed_unmerged",
+	"duplicate_pr",
+]);
+
+function looksLikeURL(value) {
+	return /^https?:\/\//.test(String(value ?? ""));
+}
+
+function isPollBackedAttention(rec) {
+	return rec?.kind === "needs_input" || POLL_ALERT_KINDS.has(rec?.kind);
 }
 
 export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
@@ -569,7 +640,7 @@ export class SlackNotificationNotifier {
 			const msg = shouldPost && !suppressed && !rec ? describeSlackMessage(raw, this.mentionUserId) : null;
 			if (shouldPost && !suppressed && !rec && !msg) return false;
 			if (rec) {
-				await this.postNeedsResponse(rec, { trackWithSessionAttention: rec.kind !== "parked_sensitive_merge" });
+				await this.postNeedsResponse(rec, { trackWithSessionAttention: isPollBackedAttention(rec) });
 				this.recordPostedSignature(raw);
 			} else if (msg) {
 				await this.postMessage(msg, { channel: this.notifyChannel });

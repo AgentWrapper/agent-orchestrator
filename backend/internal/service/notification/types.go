@@ -22,10 +22,17 @@ type Target struct {
 	PRURL     string
 }
 
+// Subject describes the durable entity a notification is about.
+type Subject struct {
+	Kind domain.NotificationSubjectKind
+	ID   string
+}
+
 // Notification is the dashboard-facing service DTO assembled from a stored row.
 type Notification struct {
 	domain.NotificationRecord
-	Target Target
+	Subject Subject
+	Target  Target
 }
 
 // ListFilter controls unread notification listing.

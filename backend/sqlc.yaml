@@ -68,6 +68,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "NotificationType"
+          - column: "notifications.subject_kind"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "NotificationSubjectKind"
           - column: "notifications.status"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

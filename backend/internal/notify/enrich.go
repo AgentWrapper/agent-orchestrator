@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/modelhealth"
 )
 
 func enrich(intent Intent) (domain.NotificationRecord, error) {
@@ -13,6 +14,8 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 		ProjectID:    intent.ProjectID,
 		PRURL:        strings.TrimSpace(intent.PRURL),
 		Type:         intent.Type,
+		SubjectKind:  intent.SubjectKind,
+		SubjectID:    strings.TrimSpace(intent.SubjectID),
 		Status:       domain.NotificationUnread,
 		CreatedAt:    intent.CreatedAt,
 		Sensitive:    intent.Sensitive,
@@ -25,12 +28,24 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 	if notificationRequiresPR(intent.Type) && rec.PRURL == "" {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationRecord
 	}
+	rec = withIntentSubject(rec, intent)
 	rec.Title = titleForIntent(intent)
 	rec.Body = bodyForIntent(intent)
 	if err := rec.Validate(); err != nil {
 		return domain.NotificationRecord{}, err
 	}
 	return rec, nil
+}
+
+func withIntentSubject(rec domain.NotificationRecord, intent Intent) domain.NotificationRecord {
+	if rec.SubjectKind != "" && rec.SubjectID != "" {
+		return rec.WithInferredSubject()
+	}
+	if intent.Type == domain.NotificationModelUnreachable || intent.Type == domain.NotificationModelRecovered {
+		rec.SubjectKind = domain.NotificationSubjectModel
+		rec.SubjectID = modelSubjectID(intent)
+	}
+	return rec.WithInferredSubject()
 }
 
 func notificationRequiresPR(t domain.NotificationType) bool {
@@ -187,6 +202,21 @@ func modelDetail(intent Intent) string {
 		return "model"
 	}
 	return strings.Join(parts, " / ")
+}
+
+func modelSubjectID(intent Intent) string {
+	if intent.ModelScope != "" || intent.ModelHarness != "" || intent.Model != "" {
+		return modelhealth.NotificationSubjectID(modelhealth.Pin{
+			ProjectID: intent.ProjectID,
+			Scope:     intent.ModelScope,
+			Harness:   intent.ModelHarness,
+			Model:     intent.Model,
+		})
+	}
+	if intent.ProjectID != "" {
+		return string(intent.ProjectID)
+	}
+	return string(intent.SessionID)
 }
 
 func reasonSuffix(reason string) string {

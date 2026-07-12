@@ -17,6 +17,12 @@ type NotificationIntent struct {
 	PRURL     string
 	CreatedAt time.Time
 
+	// Subject identifies the durable entity this notification is about. When
+	// unset, notify enriches it from the legacy session/pr fields for backwards
+	// compatibility with older producers.
+	SubjectKind domain.NotificationSubjectKind
+	SubjectID   string
+
 	// Enrichment hints. These avoid storage reads on the hot path.
 	SessionDisplayName string
 	SessionKind        domain.SessionKind

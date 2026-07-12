@@ -12,6 +12,7 @@ import {
 	digestContentKey,
 	fetchMainCI,
 	loadState,
+	normalizeNotification,
 	notificationKey,
 	parsePollMs,
 	parseSSEFrames,
@@ -194,6 +195,29 @@ describe("ao Slack notifier notification formatting", () => {
 		assert.equal(msg, "<@U123> 🚨 *worker_retry_exhausted* [ao] agent-6: worker retry cap exhausted: issue #155");
 	});
 
+	it("keeps retry cap notifications session-scoped when a fallback payload has a PR URL", () => {
+		const n = normalizeNotification({
+			type: "worker_retry_exhausted",
+			sessionId: "agent-6",
+			projectId: "ao",
+			prUrl: "https://github.example/pr/6",
+		});
+		assert.equal(n.subjectKind, "session");
+		assert.equal(n.subjectId, "agent-6");
+	});
+
+	it("shows model subjects when sessionId is empty", () => {
+		const msg = describeSlackMessage({
+			type: "model_unreachable",
+			sessionId: "",
+			projectId: "ao",
+			subject: { kind: "model", id: "ao-workerMix-0-model-codex" },
+			title: "gpt-5 model unreachable",
+		});
+
+		assert.equal(msg, "🧠 *model_unreachable* [ao] ao-workerMix-0-model-codex: gpt-5 model unreachable");
+	});
+
 	it("accepts the SSE envelope shape from older tests", () => {
 		const msg = describeSlackMessage(
 			{
@@ -304,6 +328,87 @@ describe("ao Slack notifier main CI poll", () => {
 describe("ao Slack notifier replay/dedup", () => {
 	it("uses stable notification ids as the dedup cursor", () => {
 		assert.equal(notificationKey({ id: "ntf_1", type: "needs_input" }), "ntf_1");
+	});
+
+	it("migrates legacy subject-less state keys on load", async () => {
+		const stateFile = await tmpState();
+		await writeFile(
+			stateFile,
+			JSON.stringify({
+				seen: [
+					"needs_input|ao|agent-1|2026-07-12T00:00:00Z|waiting|",
+					"ready_to_merge|ao|agent-2|2026-07-12T00:01:00Z|ready|https://github.example/pr/2",
+				],
+				attentionTracker: {
+					open: [
+						["ao/agent-1#needs_input", { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true }],
+					],
+				},
+				postedSignatures: {
+					"main_ci_red|ao|main||0|sha-main": 123,
+					"ready_to_merge|ao|agent-2|https://github.example/pr/2|0|sha-pr": 456,
+				},
+				needsResponseMessages: {
+					"ao/agent-1#needs_input": {
+						ts: "1.2",
+						channel: "C",
+						text: "waiting",
+						record: { kind: "needs_input", sessionId: "agent-1", projectId: "ao", attention: true },
+					},
+					"ao/agent-2#parked_sensitive_merge": {
+						ts: "2.3",
+						channel: "C",
+						text: "ready",
+						record: {
+							kind: "parked_sensitive_merge",
+							sessionId: "agent-2",
+							projectId: "ao",
+							url: "https://github.example/pr/2",
+							attention: true,
+						},
+					},
+				},
+			}),
+			"utf8",
+		);
+
+		const state = loadState(stateFile);
+		assert.ok(state.seen.has("needs_input|ao|session:agent-1|2026-07-12T00:00:00Z|waiting|"));
+		assert.ok(
+			state.seen.has(
+				"ready_to_merge|ao|pr:https://github.example/pr/2|2026-07-12T00:01:00Z|ready|https://github.example/pr/2",
+			),
+		);
+		assert.ok(
+			state.attentionTracker.isOpen({
+				kind: "needs_input",
+				sessionId: "agent-1",
+				subjectKind: "session",
+				subjectId: "agent-1",
+				projectId: "ao",
+				attention: true,
+			}),
+		);
+		assert.equal(state.postedSignatures["main_ci_red|ao|project:ao||0|sha-main"], 123);
+		const migratedPrSignature = contentSignature({
+			type: "ready_to_merge",
+			projectId: "ao",
+			sessionId: "agent-2",
+			prUrl: "https://github.example/pr/2",
+			subject: { kind: "pr", id: "https://github.example/pr/2" },
+			headSha: "sha-pr",
+		});
+		assert.equal(
+			migratedPrSignature,
+			"ready_to_merge|ao|pr:https://github.example/pr/2|https://github.example/pr/2|0|sha-pr",
+		);
+		assert.equal(state.postedSignatures[migratedPrSignature], 456);
+		assert.ok(state.needsResponseMessages["ao/session:agent-1#needs_input"]);
+		assert.ok(
+			state.needsResponseMessages[
+				"ao/pr:https://github.example/pr/2#parked_sensitive_merge|https://github.example/pr/2"
+			],
+		);
 	});
 
 	it("catch-up posts unread notifications once and persists seen ids", async () => {
@@ -560,7 +665,13 @@ describe("ao Slack notifier needs-response routing", () => {
 			mentionUserId: "U123",
 			notifyChannel: "C-notify",
 			needsResponseChannel: "C-needs",
-			postMessage: async (text, opts = {}) => posts.push({ text, channel: opts.channel }),
+			postMessage: async (text, opts = {}) => {
+				posts.push({ text, channel: opts.channel });
+				return { ts: "m1" };
+			},
+			updateMessage: async () => {
+				throw new Error("worker_retry_exhausted should not be resolved by session polling");
+			},
 			fetchImpl: async (url, init = {}) => {
 				if (init.method === "PATCH") {
 					marked.push(url.split("/").at(-1));
@@ -585,6 +696,13 @@ describe("ao Slack notifier needs-response routing", () => {
 		assert.match(posts[0].text, /worker_retry_exhausted/);
 		assert.equal(posts[0].channel, "C-needs");
 		assert.deepEqual(marked, ["exhausted"]);
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 1);
+		assert.equal(notifier.state.attentionTracker.pending().length, 0);
+
+		await notifier.pollSessionAttention();
+		await notifier.pollSessionAttention();
+
+		assert.equal(Object.keys(notifier.state.needsResponseMessages).length, 1);
 	});
 
 	it("edits the original needs-response message when a session wait clears", async () => {
@@ -1618,6 +1736,19 @@ describe("ao Slack notifier head-SHA aware cooldown (issue #190)", () => {
 			headSha: "sha-2",
 		});
 		assert.notEqual(a, b);
+	});
+
+	it("uses typed subject identity when sessionId is empty", () => {
+		const base = {
+			type: "main_ci_red",
+			sessionId: "",
+			projectId: "ao",
+			title: "main is red",
+			subject: { kind: "project", id: "ao" },
+			headSha: "sha-1",
+		};
+		assert.equal(contentSignature(base), contentSignature({ ...base, id: "ntf_2" }));
+		assert.notEqual(contentSignature(base), contentSignature({ ...base, subject: { kind: "project", id: "other" } }));
 	});
 
 	it("re-posts a ready_to_merge for a new head within the cooldown", async () => {

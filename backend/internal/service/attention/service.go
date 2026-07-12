@@ -210,12 +210,13 @@ func notificationAttentionItem(notification notificationsvc.Notification) (Item,
 	if !ok {
 		return Item{}, false
 	}
+	subjectID := notificationSubjectID(notification)
 	return Item{
 		ID:           notificationAttentionID(notification),
 		Kind:         string(notification.Type),
 		ProjectID:    notification.ProjectID,
 		SessionID:    notification.SessionID,
-		SessionTitle: firstNonEmptyString(notification.Title, notification.Body, string(notification.SessionID)),
+		SessionTitle: firstNonEmptyString(notification.Title, notification.Body, subjectID, string(notification.SessionID)),
 		Reason:       firstNonEmptyString(notification.Body, notification.Title, metadata.defaultReason),
 		Action:       metadata.action,
 		DeepLink:     notificationAttentionDeepLink(notification),
@@ -228,17 +229,35 @@ func notificationAttentionID(notification notificationsvc.Notification) string {
 	if notification.ID != "" {
 		return "notification:" + notification.ID + ":operator"
 	}
-	return fmt.Sprintf("notification:%s:%s:%s", notification.ProjectID, notification.SessionID, notification.Type)
+	subjectKind, subjectID := notificationSubject(notification)
+	if subjectKind == string(domain.NotificationSubjectSession) {
+		return fmt.Sprintf("notification:%s:%s:%s", notification.ProjectID, subjectID, notification.Type)
+	}
+	return fmt.Sprintf("notification:%s:%s:%s:%s", notification.ProjectID, subjectKind, subjectID, notification.Type)
 }
 
 func notificationAttentionDeepLink(notification notificationsvc.Notification) string {
 	if notification.PRURL != "" {
 		return notification.PRURL
 	}
-	if notification.ProjectID != "" && notification.SessionID != "" {
-		return "/projects/" + string(notification.ProjectID) + "/sessions/" + string(notification.SessionID)
+	subjectKind, subjectID := notificationSubject(notification)
+	if notification.ProjectID != "" && subjectKind == string(domain.NotificationSubjectSession) && subjectID != "" {
+		return "/projects/" + string(notification.ProjectID) + "/sessions/" + subjectID
 	}
 	return ""
+}
+
+func notificationSubject(notification notificationsvc.Notification) (string, string) {
+	if notification.Subject.Kind != "" && notification.Subject.ID != "" {
+		return string(notification.Subject.Kind), notification.Subject.ID
+	}
+	rec := notification.WithInferredSubject()
+	return string(rec.SubjectKind), rec.SubjectID
+}
+
+func notificationSubjectID(notification notificationsvc.Notification) string {
+	_, id := notificationSubject(notification)
+	return id
 }
 
 func isAttentionNotFound(err error) bool {

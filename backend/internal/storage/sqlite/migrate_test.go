@@ -146,6 +146,132 @@ func TestMainCIRedMigrationPreservesWorkerTerminalDedupeIndex(t *testing.T) {
 	assertWorkerTerminalDedupeIndex(t, db)
 }
 
+func TestNotificationsMigrationUsesTypedSubjectsAndOpenTypeSchema(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	assertSQLiteColumn(t, db, "notifications", "subject_kind")
+	assertSQLiteColumn(t, db, "notifications", "subject_id")
+
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read notifications schema: %v", err)
+	}
+	if strings.Contains(schema, "type IN") {
+		t.Fatalf("notifications.type still has a closed SQL enum CHECK; schema:\n%s", schema)
+	}
+
+	if _, err := db.Exec(`INSERT INTO projects (id, path, registered_at) VALUES ('ao', '/tmp/ao', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, project_id, type, title, status, created_at, subject_kind, subject_id)
+		VALUES ('future-type', 'ao', 'future_notification_type', 'future', 'unread', '2026-07-12T00:00:00Z', 'project', 'ao')
+	`); err != nil {
+		t.Fatalf("insert future notification type through SQL schema: %v", err)
+	}
+}
+
+func TestNotificationsTypedSubjectMigrationBackfillsExistingRows(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 45)
+	if _, err := db.Exec(`INSERT INTO projects (id, path, registered_at) VALUES ('ao', '/tmp/ao', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, session_id, project_id, pr_url, type, title, status, created_at, head_sha)
+		VALUES
+			('sess', 'ao-1', 'ao', '', 'needs_input', 'session', 'unread', '2026-07-12T00:00:00Z', ''),
+			('pr-dupe', 'ao-0', 'ao', 'https://github.com/o/r/pull/1', 'ready_to_merge', 'pr dupe', 'unread', '2026-07-12T00:00:30Z', 'sha-pr'),
+			('pr', 'ao-2', 'ao', 'https://github.com/o/r/pull/1', 'ready_to_merge', 'pr', 'unread', '2026-07-12T00:01:00Z', 'sha-pr'),
+			('model', 'ao-model-codex', 'ao', '', 'model_unreachable', 'model', 'unread', '2026-07-12T00:02:00Z', ''),
+			('main', 'main-ci', 'ao', '', 'main_ci_red', 'main', 'unread', '2026-07-12T00:03:00Z', 'sha-main'),
+			('worker-pr', 'ao-3', 'ao', 'https://github.com/o/r/pull/2', 'worker_retry_exhausted', 'worker', 'unread', '2026-07-12T00:04:00Z', '')
+	`); err != nil {
+		t.Fatalf("seed notifications: %v", err)
+	}
+
+	upTo(t, db, 46)
+	rows, err := db.Query(`SELECT id, session_id, subject_kind, subject_id, status FROM notifications ORDER BY id`)
+	if err != nil {
+		t.Fatalf("read migrated notifications: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	got := map[string][4]string{}
+	for rows.Next() {
+		var id, sessionID, subjectKind, subjectID, status string
+		if err := rows.Scan(&id, &sessionID, &subjectKind, &subjectID, &status); err != nil {
+			t.Fatalf("scan migrated notification: %v", err)
+		}
+		got[id] = [4]string{sessionID, subjectKind, subjectID, status}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migrated notifications: %v", err)
+	}
+	want := map[string][4]string{
+		"main":      {"", "project", "ao", "unread"},
+		"model":     {"", "model", "ao-model-codex", "unread"},
+		"pr":        {"ao-2", "pr", "https://github.com/o/r/pull/1", "unread"},
+		"pr-dupe":   {"ao-0", "pr", "https://github.com/o/r/pull/1", "read"},
+		"sess":      {"ao-1", "session", "ao-1", "unread"},
+		"worker-pr": {"ao-3", "session", "ao-3", "unread"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("migrated rows = %+v, want %+v", got, want)
+	}
+	for id, wantRow := range want {
+		if got[id] != wantRow {
+			t.Fatalf("%s migrated row = %+v, want %+v", id, got[id], wantRow)
+		}
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, session_id, project_id, pr_url, type, subject_kind, subject_id, title, status, created_at)
+		VALUES ('future', '', 'ao', '', 'future_notification', 'project', 'ao', 'future', 'unread', '2026-07-12T00:05:00Z')
+	`); err != nil {
+		t.Fatalf("seed future notification after up migration: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, session_id, project_id, pr_url, type, title, status, created_at)
+		VALUES
+			('legacy-1', 'ao-legacy-1', 'ao', '', 'needs_input', 'legacy 1', 'unread', '2026-07-12T00:06:00Z'),
+			('legacy-2', 'ao-legacy-2', 'ao', '', 'needs_input', 'legacy 2', 'unread', '2026-07-12T00:07:00Z')
+	`); err != nil {
+		t.Fatalf("insert legacy subject-less notifications after up migration: %v", err)
+	}
+
+	downTo(t, db, 45)
+	assertNoSQLiteColumn(t, db, "notifications", "subject_kind")
+	assertNoSQLiteColumn(t, db, "notifications", "subject_id")
+	var mainSession string
+	if err := db.QueryRow(`SELECT session_id FROM notifications WHERE id = 'main'`).Scan(&mainSession); err != nil {
+		t.Fatalf("read main after down migration: %v", err)
+	}
+	if mainSession != "main-ci-ao" {
+		t.Fatalf("main session after down = %q, want project-scoped synthetic id", mainSession)
+	}
+	var futureRows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE id = 'future'`).Scan(&futureRows); err != nil {
+		t.Fatalf("count future notification after down migration: %v", err)
+	}
+	if futureRows != 0 {
+		t.Fatalf("future notification rows after down = %d, want 0", futureRows)
+	}
+}
+
 func downTo(t *testing.T, db *sql.DB, version int64) {
 	t.Helper()
 	gooseMu.Lock()
@@ -168,6 +294,17 @@ func assertSQLiteColumn(t *testing.T, db *sql.DB, table, column string) {
 	}
 	if !ok {
 		t.Fatalf("missing column %s.%s", table, column)
+	}
+}
+
+func assertNoSQLiteColumn(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	ok, err := sqliteColumnExists(db, table, column)
+	if err != nil {
+		t.Fatalf("check %s.%s: %v", table, column, err)
+	}
+	if ok {
+		t.Fatalf("unexpected column %s.%s", table, column)
 	}
 }
 

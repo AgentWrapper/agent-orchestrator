@@ -7,6 +7,7 @@ package modelhealth
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +28,18 @@ type Pin struct {
 // Key returns the stable transition key for this pin.
 func (p Pin) Key() string {
 	return string(p.ProjectID) + "|" + strings.TrimSpace(p.Scope) + "|" + string(p.Harness) + "|" + strings.TrimSpace(p.Model)
+}
+
+var notificationSubjectRe = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+
+// NotificationSubjectID returns the stable model-notification subject for a pin.
+func NotificationSubjectID(pin Pin) string {
+	key := notificationSubjectRe.ReplaceAllString(pin.Key(), "-")
+	key = strings.Trim(key, "-")
+	if key == "" {
+		key = string(pin.ProjectID)
+	}
+	return key
 }
 
 // Verdict is one probe result for a configured pin.

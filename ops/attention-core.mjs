@@ -31,10 +31,11 @@ export const ATTENTION_KINDS = new Set([
 	"daemon_unhealthy", // the daemon health probe is failing
 	"no_signal", // a session whose activity hook went silent (stuck/dead)
 	"main_ci_red", // main-branch CI is failing and merges/deploys are frozen
+	"worker_retry_exhausted", // worker respawn is capped and needs operator action
 ]);
 
 // Informational kinds we forward but never @mention.
-export const INFO_KINDS = new Set(["pr_merged", "pr_closed_unmerged", "heartbeat"]);
+export const INFO_KINDS = new Set(["pr_merged", "pr_closed_unmerged", "heartbeat", "worker_died_unfinished"]);
 
 const ICONS = {
 	needs_input: "🖐️",
@@ -44,6 +45,8 @@ const ICONS = {
 	daemon_unhealthy: "❤️‍🩹",
 	no_signal: "🛰️",
 	main_ci_red: "🚨",
+	worker_retry_exhausted: "🚨",
+	worker_died_unfinished: "🧯",
 	ready_to_merge: "🟢",
 	pr_merged: "🚀",
 	pr_closed_unmerged: "🗑️",
@@ -77,10 +80,25 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 	const title = n.title ?? n.message ?? "";
 	const url = n.url ?? n.prUrl ?? "";
 	const rawKind = n.kind ?? n.type ?? outerType;
+	const subject = n.subject ?? raw.subject ?? {};
 	const sessionId =
 		rawKind === "main_ci_red"
-			? (n.sessionId ?? n.session ?? raw.sessionId ?? "main")
+			? n.sessionId || n.session || raw.sessionId || "main"
 			: (n.sessionId ?? n.session ?? raw.sessionId ?? "");
+	const subjectKind =
+		subject.kind ??
+		(rawKind === "main_ci_red"
+			? "project"
+			: rawKind === "worker_died_unfinished" || rawKind === "worker_retry_exhausted"
+				? "session"
+				: url
+					? "pr"
+					: sessionId
+						? "session"
+						: "");
+	const subjectId =
+		subject.id ??
+		(subjectKind === "project" ? projectId : subjectKind === "pr" ? url : subjectKind === "session" ? sessionId : "");
 
 	// A park anywhere in the payload text is an attention/blocked signal even
 	// when the daemon labels the envelope generically (queue_update, etc.).
@@ -102,6 +120,8 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 	return {
 		kind,
 		sessionId: String(sessionId),
+		subjectKind: String(subjectKind),
+		subjectId: String(subjectId),
 		projectId: String(projectId),
 		title: String(title),
 		url: String(url),
@@ -113,7 +133,28 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 // between must not re-alert. Distinct kinds for the same session DO alert (a
 // worker going needs_input -> blocked is a real new transition).
 export function signature(rec) {
+	const subject = attentionSubject(rec);
+	if (subject.kind && subject.id) {
+		return `${rec.projectId}/${subject.kind}:${subject.id}#${rec.kind}`;
+	}
 	return `${rec.projectId}/${rec.sessionId}#${rec.kind}`;
+}
+
+function attentionSubject(rec) {
+	if (rec?.subjectKind && rec?.subjectId) return { kind: rec.subjectKind, id: rec.subjectId };
+	if (rec?.kind === "main_ci_red" && rec?.projectId) return { kind: "project", id: rec.projectId };
+	if ((rec?.kind === "parked_sensitive_merge" || rec?.kind === "ready_to_merge") && rec?.url) {
+		return { kind: "pr", id: rec.url };
+	}
+	if (rec?.sessionId) return { kind: "session", id: rec.sessionId };
+	return { kind: "", id: "" };
+}
+
+function withAttentionSubject(rec) {
+	if (!rec || typeof rec !== "object") return rec;
+	const subject = attentionSubject(rec);
+	if (!subject.kind || !subject.id) return rec;
+	return { ...rec, subjectKind: subject.kind, subjectId: subject.id };
 }
 
 // --- Message rendering -----------------------------------------------------
@@ -239,7 +280,10 @@ export class AttentionTracker {
 		const t = new AttentionTracker();
 		try {
 			const raw = typeof json === "string" ? JSON.parse(json) : json;
-			for (const [sig, rec] of raw.open ?? []) t.open.set(sig, rec);
+			for (const [, rec] of raw.open ?? []) {
+				const normalized = withAttentionSubject(rec);
+				t.open.set(signature(normalized), normalized);
+			}
 		} catch {}
 		return t;
 	}
@@ -280,6 +324,8 @@ export function attentionFromSession(s) {
 	return {
 		kind,
 		sessionId: String(s.id ?? ""),
+		subjectKind: "session",
+		subjectId: String(s.id ?? ""),
 		projectId: String(s.projectId ?? ""),
 		title: attentionTitle(kind, s),
 		url: sessionUrl(s),
@@ -296,6 +342,8 @@ export function attentionFromMainCI(main) {
 	return {
 		kind: "main_ci_red",
 		sessionId: "main",
+		subjectKind: "project",
+		subjectId: String(main.projectId ?? ""),
 		projectId: String(main.projectId ?? ""),
 		title: `main is red at ${sha || "unknown"}: ${jobs}`,
 		url: String(main.url ?? main.htmlUrl ?? ""),

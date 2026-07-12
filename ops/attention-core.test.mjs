@@ -40,6 +40,8 @@ describe("normalizeEvent", () => {
 		assert.deepEqual(rec, {
 			kind: "needs_input",
 			sessionId: "agent-1",
+			subjectKind: "session",
+			subjectId: "agent-1",
 			projectId: "ao",
 			title: "permission prompt",
 			url: "",
@@ -102,11 +104,41 @@ describe("normalizeEvent", () => {
 		assert.deepEqual(rec, {
 			kind: "main_ci_red",
 			sessionId: "main",
+			subjectKind: "project",
+			subjectId: "ao",
 			projectId: "ao",
 			title: "main is red at fee462ed: go, cli-e2e",
 			url: "https://github.example/actions/runs/1",
 			attention: true,
 		});
+	});
+
+	it("uses typed subject identity in signatures when present", () => {
+		const rec = normalizeEvent({
+			type: "main_ci_red",
+			notification: {
+				projectId: "ao",
+				sessionId: "",
+				subject: { kind: "project", id: "ao" },
+				title: "main is red",
+			},
+		});
+		assert.equal(rec.sessionId, "main");
+		assert.equal(signature(rec), "ao/project:ao#main_ci_red");
+		assert.match(renderDigest([rec], { now: new Date("2026-07-12T00:00:00Z") }), /`main`/);
+	});
+
+	it("keeps worker terminal notifications session-scoped even when they include a PR URL", () => {
+		const rec = normalizeEvent({
+			type: "worker_retry_exhausted",
+			notification: {
+				projectId: "ao",
+				sessionId: "agent-7",
+				prUrl: "https://github.example/pr/7",
+				title: "worker retry cap exhausted",
+			},
+		});
+		assert.equal(signature(rec), "ao/session:agent-7#worker_retry_exhausted");
 	});
 
 	it("returns null for uninteresting events", () => {
@@ -251,7 +283,7 @@ describe("renderDigest — 'what needs me' view (acceptance #3)", () => {
 describe("signature", () => {
 	it("is stable per (project, session, kind)", () => {
 		const rec = { projectId: "ao", sessionId: "a", kind: "needs_input" };
-		assert.equal(signature(rec), "ao/a#needs_input");
+		assert.equal(signature(rec), "ao/session:a#needs_input");
 	});
 });
 
@@ -268,7 +300,22 @@ describe("attentionFromSession — poll-based current state (acceptance #1, #3)"
 		});
 		assert.equal(rec.kind, "needs_input");
 		assert.equal(rec.sessionId, "agent-48");
+		assert.equal(rec.subjectKind, "session");
+		assert.equal(rec.subjectId, "agent-48");
 		assert.equal(rec.attention, true);
+	});
+
+	it("matches notification and session-poll signatures for the same session", () => {
+		const fromPoll = attentionFromSession({
+			id: "agent-48",
+			projectId: "ao",
+			activity: { state: "waiting_input" },
+		});
+		const fromNotification = normalizeEvent({
+			type: "needs_input",
+			notification: { sessionId: "agent-48", projectId: "ao", title: "needs input" },
+		});
+		assert.equal(signature(fromPoll), signature(fromNotification));
 	});
 
 	it("maps a blocked session to blocked attention", () => {
@@ -335,11 +382,32 @@ describe("attentionFromMainCI — project-level red-main inventory", () => {
 		assert.deepEqual(rec, {
 			kind: "main_ci_red",
 			sessionId: "main",
+			subjectKind: "project",
+			subjectId: "ao",
 			projectId: "ao",
 			title: "main is red at fee462ed: go, cli-e2e",
 			url: "https://github.example/actions/runs/1",
 			attention: true,
 		});
+	});
+
+	it("matches notification and main-CI poll signatures for the same project", () => {
+		const fromPoll = attentionFromMainCI({
+			projectId: "ao",
+			sha: "fee462ed3aabb",
+			status: "failing",
+			failedJobs: ["go"],
+		});
+		const fromNotification = normalizeEvent({
+			type: "main_ci_red",
+			notification: {
+				projectId: "ao",
+				sessionId: "",
+				subject: { kind: "project", id: "ao" },
+				title: "main is red",
+			},
+		});
+		assert.equal(signature(fromPoll), signature(fromNotification));
 	});
 
 	it("ignores non-failing main branch records", () => {

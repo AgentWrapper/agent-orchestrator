@@ -187,19 +187,28 @@ func notificationResponses(in []notificationsvc.Notification) []NotificationResp
 }
 
 func notificationResponse(n notificationsvc.Notification) NotificationResponse {
+	rec := n.WithInferredSubject()
+	subject := n.Subject
+	if subject.Kind == "" || subject.ID == "" {
+		subject = notificationsvc.Subject{Kind: rec.SubjectKind, ID: rec.SubjectID}
+	}
 	return NotificationResponse{
-		ID:           n.ID,
-		SessionID:    string(n.SessionID),
-		ProjectID:    string(n.ProjectID),
-		PRURL:        n.PRURL,
-		Type:         string(n.Type),
-		Title:        n.Title,
-		Body:         n.Body,
-		Sensitive:    n.Sensitive,
-		ChangedPaths: append([]string(nil), n.ChangedPaths...),
-		HeadSHA:      n.HeadSHA,
-		Status:       string(n.Status),
-		CreatedAt:    n.CreatedAt,
+		ID:        rec.ID,
+		SessionID: string(rec.SessionID),
+		ProjectID: string(rec.ProjectID),
+		PRURL:     rec.PRURL,
+		Type:      string(rec.Type),
+		Subject: NotificationSubject{
+			Kind: string(subject.Kind),
+			ID:   subject.ID,
+		},
+		Title:        rec.Title,
+		Body:         rec.Body,
+		Sensitive:    rec.Sensitive,
+		ChangedPaths: append([]string(nil), rec.ChangedPaths...),
+		HeadSHA:      rec.HeadSHA,
+		Status:       string(rec.Status),
+		CreatedAt:    rec.CreatedAt,
 		Target: NotificationTarget{
 			Kind:      string(n.Target.Kind),
 			SessionID: string(n.Target.SessionID),
@@ -209,12 +218,17 @@ func notificationResponse(n notificationsvc.Notification) NotificationResponse {
 }
 
 func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationResponse {
+	rec = rec.WithInferredSubject()
 	return NotificationResponse{
-		ID:           rec.ID,
-		SessionID:    string(rec.SessionID),
-		ProjectID:    string(rec.ProjectID),
-		PRURL:        rec.PRURL,
-		Type:         string(rec.Type),
+		ID:        rec.ID,
+		SessionID: string(rec.SessionID),
+		ProjectID: string(rec.ProjectID),
+		PRURL:     rec.PRURL,
+		Type:      string(rec.Type),
+		Subject: NotificationSubject{
+			Kind: string(rec.SubjectKind),
+			ID:   rec.SubjectID,
+		},
 		Title:        rec.Title,
 		Body:         rec.Body,
 		Sensitive:    rec.Sensitive,
@@ -227,11 +241,12 @@ func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationR
 }
 
 func notificationTargetFromRecord(rec domain.NotificationRecord) NotificationTarget {
+	rec = rec.WithInferredSubject()
 	if rec.PRURL != "" {
 		return NotificationTarget{Kind: "pr", SessionID: string(rec.SessionID), PRURL: rec.PRURL}
 	}
-	if rec.Type == domain.NotificationModelUnreachable || rec.Type == domain.NotificationModelRecovered {
-		return NotificationTarget{Kind: "none"}
+	if rec.SubjectKind == domain.NotificationSubjectSession {
+		return NotificationTarget{Kind: "session", SessionID: string(rec.SessionID)}
 	}
-	return NotificationTarget{Kind: "session", SessionID: string(rec.SessionID)}
+	return NotificationTarget{Kind: "none"}
 }

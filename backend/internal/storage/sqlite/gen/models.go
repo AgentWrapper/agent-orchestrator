@@ -32,6 +32,8 @@ type Notification struct {
 	ProjectID    domain.ProjectID
 	PRURL        string
 	Type         domain.NotificationType
+	SubjectKind  domain.NotificationSubjectKind
+	SubjectID    string
 	Title        string
 	Body         string
 	Status       domain.NotificationStatus

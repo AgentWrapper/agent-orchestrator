@@ -1,7 +1,7 @@
 -- name: CreateNotification :one
 INSERT INTO notifications (
-    id, session_id, project_id, pr_url, type, title, body, sensitive, changed_paths, head_sha, status, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    id, session_id, project_id, pr_url, type, subject_kind, subject_id, title, body, sensitive, changed_paths, head_sha, status, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListUnreadNotifications :many
@@ -26,13 +26,14 @@ RETURNING *;
 -- name: GetUnreadNotificationByDedupe :one
 SELECT *
 FROM notifications
-WHERE session_id = ? AND type = ? AND pr_url = ? AND sensitive = ? AND head_sha = ? AND status = 'unread'
+WHERE subject_kind = ? AND COALESCE(NULLIF(subject_id, ''), session_id) = ? AND type = ? AND pr_url = ? AND sensitive = ? AND head_sha = ? AND status = 'unread'
 LIMIT 1;
 
 -- name: GetWorkerTerminalNotificationByDedupe :one
 SELECT *
 FROM notifications
-WHERE session_id = ?
+WHERE subject_kind = ?
+  AND COALESCE(NULLIF(subject_id, ''), session_id) = ?
   AND type = ?
   AND type IN ('worker_died_unfinished', 'worker_retry_exhausted')
   AND (type != 'worker_died_unfinished' OR body = ?)

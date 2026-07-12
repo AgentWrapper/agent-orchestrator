@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
 
@@ -131,7 +130,8 @@ func notifyModelHealthTransition(ctx context.Context, notifier notificationSink,
 	}
 	pin := tr.Current.Pin
 	intent := ports.NotificationIntent{
-		SessionID:    modelNotificationSessionID(pin),
+		SubjectKind:  domain.NotificationSubjectModel,
+		SubjectID:    modelhealth.NotificationSubjectID(pin),
 		ProjectID:    pin.ProjectID,
 		ModelHarness: pin.Harness,
 		Model:        pin.Model,
@@ -148,15 +148,4 @@ func notifyModelHealthTransition(ctx context.Context, notifier notificationSink,
 	if err := notifier.Notify(ctx, intent); err != nil && log != nil {
 		log.Warn("model-health: notification failed", "err", err)
 	}
-}
-
-var modelNotificationRe = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
-
-func modelNotificationSessionID(pin modelhealth.Pin) domain.SessionID {
-	key := modelNotificationRe.ReplaceAllString(pin.Key(), "-")
-	key = strings.Trim(key, "-")
-	if key == "" {
-		key = string(pin.ProjectID)
-	}
-	return domain.SessionID(key)
 }
