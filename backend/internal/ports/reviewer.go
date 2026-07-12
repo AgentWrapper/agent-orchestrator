@@ -21,6 +21,28 @@ type Reviewer interface {
 	ReviewMessage(ctx context.Context, inv ReviewInvocation) (string, error)
 }
 
+// ReviewCancelMode names how AO should stop a running reviewer.
+type ReviewCancelMode string
+
+const (
+	// ReviewCancelInterrupt sends the terminal interrupt key sequence to the
+	// reviewer process while preserving the terminal pane.
+	ReviewCancelInterrupt ReviewCancelMode = "interrupt"
+)
+
+// ReviewCancelSpec is the adapter-selected cancellation behavior for a running
+// reviewer.
+type ReviewCancelSpec struct {
+	Mode       ReviewCancelMode
+	Interrupts int
+}
+
+// ReviewerCanceller is implemented by reviewer adapters that explicitly define
+// how their running CLI should be cancelled.
+type ReviewerCanceller interface {
+	ReviewCancel(ctx context.Context) (ReviewCancelSpec, error)
+}
+
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
 // the reviewer needs are passed explicitly here (and embedded in the prompt /
 // message), never through environment variables.

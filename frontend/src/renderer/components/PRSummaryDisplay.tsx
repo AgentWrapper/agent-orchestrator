@@ -28,7 +28,7 @@ export function PRSummaryMeta({
 		return null;
 	}
 	return (
-		<div className={cn("min-w-0 font-mono text-[10.5px] leading-4", className)}>
+		<div className={cn("min-w-0 font-mono text-2xs leading-4", className)}>
 			{primary.length > 0 ? <div className="truncate text-passive">{primary.join(" · ")}</div> : null}
 			{hasDiff ? <PRDiffMeta pr={pr} /> : null}
 		</div>
@@ -90,8 +90,8 @@ export function PRSummaryParts({
 		<div
 			className={cn(
 				stacked
-					? "flex flex-col gap-1.5 font-mono text-[10.5px] leading-4"
-					: "flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10.5px]",
+					? "flex flex-col gap-1.5 font-mono text-2xs leading-4"
+					: "flex flex-wrap gap-x-3 gap-y-1 font-mono text-2xs",
 				className,
 			)}
 		>

@@ -1,6 +1,9 @@
 import { create } from "zustand";
+import { resolveTheme, themeStorageKey, type Theme } from "../lib/theme";
 
-export type Theme = "light" | "dark";
+export type { Theme } from "../lib/theme";
+export { readStoredTheme } from "../lib/theme";
+
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
 
@@ -28,7 +31,6 @@ type UiState = {
 
 const sidebarStorageKey = "ao.sidebar.open";
 const inspectorStorageKey = "ao.inspector.open";
-const themeStorageKey = "ao.theme";
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -43,27 +45,11 @@ function initialInspectorOpen() {
 	return getLocalStorage()?.getItem(inspectorStorageKey) !== "false";
 }
 
-function systemTheme(): Theme {
-	if (typeof window === "undefined") return "dark";
-	return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
-
-function initialTheme(): Theme {
-	const stored = getLocalStorage()?.getItem(themeStorageKey);
-	if (stored === "light" || stored === "dark") return stored;
-	return systemTheme();
-}
-
-export function readStoredTheme(): Theme | null {
-	const stored = getLocalStorage()?.getItem(themeStorageKey);
-	return stored === "light" || stored === "dark" ? stored : null;
-}
-
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	isInspectorOpen: initialInspectorOpen(),
-	theme: initialTheme(),
+	theme: resolveTheme(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},

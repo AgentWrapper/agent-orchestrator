@@ -103,6 +103,38 @@ func TestInsertReviewRunAllowsRerunAfterChangesRequested(t *testing.T) {
 	}
 }
 
+func TestInsertReviewRunAllowsRerunAfterTerminalEmptyVerdict(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
+		Harness: domain.ReviewerClaudeCode, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert review: %v", err)
+	}
+	run := domain.ReviewRun{
+		ID: "run-1", ReviewID: "rev-1", SessionID: rec.ID, Harness: domain.ReviewerClaudeCode,
+		PRURL: "https://example/pr/1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictNone, CreatedAt: now,
+	}
+	if err := s.InsertReviewRun(ctx, run); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	rerun := run
+	rerun.ID = "run-2"
+	rerun.Status = domain.ReviewRunRunning
+	rerun.CreatedAt = now.Add(time.Second)
+	if err := s.InsertReviewRun(ctx, rerun); err != nil {
+		t.Fatalf("rerun after terminal empty-verdict insert: %v", err)
+	}
+}
+
 func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -195,6 +227,60 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 		t.Fatalf("second update: %v", err)
 	} else if ok {
 		t.Fatal("second update completed an already-complete run")
+	}
+}
+
+func TestCancelRunningReviewRunsBySession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
+		Harness: domain.ReviewerCodex, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert review: %v", err)
+	}
+	for _, run := range []domain.ReviewRun{
+		{ID: "run-1", ReviewID: "rev-1", SessionID: rec.ID, Harness: domain.ReviewerCodex, PRURL: "https://example/pr/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning, CreatedAt: now},
+		{ID: "run-2", ReviewID: "rev-1", SessionID: rec.ID, Harness: domain.ReviewerCodex, PRURL: "https://example/pr/2", TargetSHA: "sha2", Status: domain.ReviewRunRunning, CreatedAt: now.Add(time.Second)},
+		{ID: "run-3", ReviewID: "rev-1", SessionID: rec.ID, Harness: domain.ReviewerCodex, PRURL: "https://example/pr/3", TargetSHA: "sha3", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now.Add(2 * time.Second)},
+	} {
+		if err := s.InsertReviewRun(ctx, run); err != nil {
+			t.Fatalf("insert %s: %v", run.ID, err)
+		}
+	}
+	running, err := s.ListRunningReviewRunsBySession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("list running: %v", err)
+	}
+	if len(running) != 2 || running[0].ID != "run-2" || running[1].ID != "run-1" {
+		t.Fatalf("running = %+v", running)
+	}
+	n, err := s.CancelRunningReviewRunsBySession(ctx, rec.ID, "cancelled by user")
+	if err != nil {
+		t.Fatalf("cancel running: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("cancelled rows = %d, want 2", n)
+	}
+	runs, err := s.ListReviewRunsBySession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	byID := map[string]domain.ReviewRun{}
+	for _, run := range runs {
+		byID[run.ID] = run
+	}
+	if byID["run-1"].Status != domain.ReviewRunCancelled || byID["run-2"].Status != domain.ReviewRunCancelled {
+		t.Fatalf("running runs not cancelled: %+v", byID)
+	}
+	if byID["run-3"].Status != domain.ReviewRunComplete {
+		t.Fatalf("complete run changed: %+v", byID["run-3"])
 	}
 }
 

@@ -539,6 +539,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/reviews/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a running code review */
+        post: operations["cancelReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/reviews/submit": {
         parameters: {
             query?: never;
@@ -656,6 +673,10 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+        };
+        CancelReviewResponse: {
+            reviewerHandleId: string;
+            reviews: components["schemas"]["PRReviewState"][];
         };
         ClaimPRRequest: {
             allowTakeover?: null | boolean;
@@ -1026,11 +1047,17 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
         };
         SetActivityRequest: {
+            /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
+            event?: string;
             /**
              * @description Agent activity state reported by an agent hook.
              * @enum {string}
              */
-            state: "active" | "idle" | "waiting_input" | "exited";
+            state: "active" | "idle" | "waiting_input" | "blocked" | "exited";
+            /** @description Native tool name, for tool-use hook events. */
+            toolName?: string;
+            /** @description Native tool-use id, for tool-use hook events. */
+            toolUseId?: string;
         };
         SetActivityResponse: {
             ok: boolean;
@@ -2981,6 +3008,56 @@ export interface operations {
             };
         };
     };
+    cancelReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancelReviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     submitReview: {
         parameters: {
             query?: never;
@@ -3189,6 +3266,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

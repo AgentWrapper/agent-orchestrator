@@ -35,22 +35,22 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
+				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
 					<Dialog.Title className="text-sm font-medium text-foreground">Session can no longer be restored</Dialog.Title>
-					<Dialog.Description className="mt-2 text-[13px] text-muted-foreground">
+					<Dialog.Description className="mt-2 text-control text-muted-foreground">
 						{orchestrator
 							? "This orchestrator has no saved agent session to resume. You can create a new orchestrator on the same branch; its committed work is preserved and the old worktree is cleaned."
 							: "This session has no saved agent session or prompt to resume from."}
 					</Dialog.Description>
-					{error && <div className="mt-3 text-[12px] text-destructive">{error}</div>}
+					{error && <div className="mt-3 text-xs text-destructive">{error}</div>}
 					<div className="mt-4 flex justify-end gap-2">
 						<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
 							{orchestrator ? "Cancel" : "Close"}
 						</Button>
 						{orchestrator && (
 							<Button onClick={recreate} disabled={busy}>
-								{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+								{busy && <Loader2 className="mr-2 size-icon-base animate-spin" />}
 								Create new orchestrator
 							</Button>
 						)}

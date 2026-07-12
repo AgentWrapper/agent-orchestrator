@@ -1445,6 +1445,45 @@ paths:
       summary: List a worker's code-review runs
       tags:
       - reviews
+  /api/v1/sessions/{sessionId}/reviews/cancel:
+    post:
+      operationId: cancelReview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelReviewResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel a running code review
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/reviews/submit:
     post:
       operationId: submitReview
@@ -1617,6 +1656,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
         "500":
           content:
             application/json:
@@ -1723,6 +1768,18 @@ components:
       required:
       - id
       - label
+      type: object
+    CancelReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
       type: object
     ClaimPRRequest:
       properties:
@@ -2719,13 +2776,23 @@ components:
       type: object
     SetActivityRequest:
       properties:
+        event:
+          description: AO hook sub-command that produced this state (e.g. post-tool-use).
+          type: string
         state:
           description: Agent activity state reported by an agent hook.
           enum:
           - active
           - idle
           - waiting_input
+          - blocked
           - exited
+          type: string
+        toolName:
+          description: Native tool name, for tool-use hook events.
+          type: string
+        toolUseId:
+          description: Native tool-use id, for tool-use hook events.
           type: string
       required:
       - state

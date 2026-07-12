@@ -45,16 +45,19 @@ export function TitlebarNav() {
 	if (!isMac) return null;
 
 	return (
-		<div className="titlebar-nav" style={noDragStyle}>
+		<div
+			className="fixed top-0 left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1"
+			style={noDragStyle}
+		>
 			<TitlebarButton
 				label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 				onClick={toggleSidebar}
 				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
 			>
-				<PanelLeft className="h-[15px] w-[15px]" aria-hidden="true" />
+				<PanelLeft className="size-icon-lg" aria-hidden="true" />
 			</TitlebarButton>
 			<TitlebarButton disabled={!canGoBack} label="Go back" onClick={() => router.history.back()} title="Go back">
-				<ArrowLeft className="h-[15px] w-[15px]" aria-hidden="true" />
+				<ArrowLeft className="size-icon-lg" aria-hidden="true" />
 			</TitlebarButton>
 			<TitlebarButton
 				disabled={!canGoForward}
@@ -62,7 +65,7 @@ export function TitlebarNav() {
 				onClick={() => router.history.forward()}
 				title="Go forward"
 			>
-				<ArrowRight className="h-[15px] w-[15px]" aria-hidden="true" />
+				<ArrowRight className="size-icon-lg" aria-hidden="true" />
 			</TitlebarButton>
 		</div>
 	);
@@ -84,7 +87,7 @@ function TitlebarButton({
 	return (
 		<button
 			aria-label={label}
-			className="titlebar-nav__btn grid place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:pointer-events-none disabled:opacity-45"
+			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:pointer-events-none disabled:opacity-45"
 			disabled={disabled}
 			onClick={onClick}
 			style={noDragStyle}

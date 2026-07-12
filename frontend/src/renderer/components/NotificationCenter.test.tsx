@@ -62,7 +62,7 @@ describe("NotificationCenter", () => {
 		const count = screen.getByText("2");
 
 		expect(bell).toHaveClass("fill-current");
-		expect(count).toHaveClass("text-[11px]");
+		expect(count).toHaveClass("text-caption");
 		expect(count).toHaveClass("text-warning");
 		expect(count).not.toHaveClass("bg-warning");
 		expect(count).not.toHaveClass("rounded-full");

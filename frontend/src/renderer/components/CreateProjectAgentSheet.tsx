@@ -129,14 +129,14 @@ export function CreateProjectAgentSheet({
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
-							<Dialog.Title className="text-[15px] font-semibold text-foreground">
+							<Dialog.Title className="text-subtitle font-semibold text-foreground">
 								{kind === "workspace" ? "Workspace agents" : "Project agents"}
 							</Dialog.Title>
-							<Dialog.Description className="mt-1 break-all text-[12px] text-muted-foreground">
+							<Dialog.Description className="mt-1 break-all text-xs text-muted-foreground">
 								{path ?? ""}
 							</Dialog.Description>
 						</div>
@@ -147,7 +147,7 @@ export function CreateProjectAgentSheet({
 								aria-label="Close project agents dialog"
 								disabled={isBusy}
 							>
-								<X className="size-4" aria-hidden="true" />
+								<X className="size-icon-base" aria-hidden="true" />
 							</button>
 						</Dialog.Close>
 					</div>
@@ -184,9 +184,9 @@ export function CreateProjectAgentSheet({
 							/>
 						</div>
 
-						{isLoadingAgents && <p className="text-[12px] leading-5 text-muted-foreground">Loading agents...</p>}
+						{isLoadingAgents && <p className="text-xs leading-row text-muted-foreground">Loading agents...</p>}
 
-						<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
+						<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
 							<span>Agent availability is cached.</span>
 							<button
 								type="button"
@@ -199,7 +199,7 @@ export function CreateProjectAgentSheet({
 						</div>
 
 						{displayError && (
-							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-row text-destructive">
 								<span>{displayError}</span>
 								<button
 									type="button"
@@ -217,7 +217,7 @@ export function CreateProjectAgentSheet({
 						</div>
 
 						{repositorySetupNeeded && (
-							<div className="rounded-md border border-border bg-surface/80 px-3 py-2.5 text-[12px] leading-5 text-muted-foreground">
+							<div className="rounded-md border border-border bg-surface/80 px-3 py-2.5 text-xs leading-body-md text-muted-foreground">
 								If this folder needs Git setup, AO will initialize it and create the first commit before starting.
 							</div>
 						)}
@@ -227,15 +227,15 @@ export function CreateProjectAgentSheet({
 								role="alert"
 								className={
 									sheetError.tone === "warning"
-										? "flex gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-[12px] leading-5"
-										: "flex gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-[12px] leading-5"
+										? "flex gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-body-md"
+										: "flex gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-xs leading-body-md"
 								}
 							>
 								<TriangleAlert
 									className={
 										sheetError.tone === "warning"
-											? "mt-0.5 size-3.5 shrink-0 text-warning"
-											: "mt-0.5 size-3.5 shrink-0 text-destructive"
+											? "mt-0.5 size-icon-sm shrink-0 text-warning"
+											: "mt-0.5 size-icon-sm shrink-0 text-destructive"
 									}
 									aria-hidden="true"
 								/>
@@ -322,14 +322,14 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className="text-[12px] font-medium text-muted-foreground">
+			<Label htmlFor={id} className="text-xs font-medium text-muted-foreground">
 				{label}
 			</Label>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
-				<SelectTrigger id={id} size="sm" className="w-full text-[13px]" aria-invalid={invalid || undefined}>
+				<SelectTrigger id={id} size="sm" className="w-full text-control" aria-invalid={invalid || undefined}>
 					<SelectValue placeholder={placeholder} />
 				</SelectTrigger>
-				<SelectContent position="popper" side="bottom" align="start" sideOffset={4} className="!max-h-80">
+				<SelectContent position="popper" side="bottom" align="start" sideOffset={4} className="max-h-select-menu-max!">
 					{options.map((agent) => (
 						<SelectItem
 							key={agent.id}
@@ -340,7 +340,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 							<span className="flex min-w-0 w-full items-center justify-between gap-4">
 								<span className="truncate">{agent.label}</span>
 								{agent.reason && (
-									<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+									<span className="inline-flex shrink-0 items-center gap-1 text-caption text-muted-foreground">
 										{agent.warning && <TriangleAlert className="size-3 text-warning" aria-hidden="true" />}
 										{agent.reason}
 									</span>

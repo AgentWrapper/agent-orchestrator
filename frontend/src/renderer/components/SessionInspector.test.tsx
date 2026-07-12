@@ -133,7 +133,7 @@ afterEach(() => {
 describe("SessionInspector PR section", () => {
 	// Scope assertions to the PR section so the card order is explicit.
 	const prSection = (title: string) =>
-		within(screen.getByText(title).closest("section.inspector-section") as HTMLElement);
+		within(screen.getByText(title).closest("[data-testid='inspector-section']") as HTMLElement);
 
 	it("renders one card per PR, ordered actionable-first, when a session owns a stack", () => {
 		renderWithQuery(<SessionInspector session={session([pr(40, "merged"), pr(41, "open"), pr(42, "draft")])} />);
@@ -173,7 +173,7 @@ describe("SessionInspector PR section", () => {
 
 describe("SessionInspector Activity section", () => {
 	const activitySection = () =>
-		within(screen.getByText("Activity").closest("section.inspector-section") as HTMLElement);
+		within(screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement);
 
 	it.each([
 		["idle", "Idle"],
@@ -223,7 +223,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("No Signal")).toBeInTheDocument();
 	});
 
@@ -254,7 +256,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText(label)).toBeInTheDocument();
 	});
 
@@ -268,7 +272,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
@@ -286,7 +292,9 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const activityRow = activitySection().getByText("Working").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Working")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
@@ -303,7 +311,9 @@ describe("SessionInspector Activity section", () => {
 		expect(activitySection().getByText(/Created worktree/)).toBeInTheDocument();
 		expect(activitySection().getByText("Opened")).toBeInTheDocument();
 		expect(activitySection().getByText("PR #7")).toBeInTheDocument();
-		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("CI Failed")).toBeInTheDocument();
 		expect(within(activityRow).getByText("Changes Requested")).toBeInTheDocument();
 	});
@@ -323,8 +333,8 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const section = screen.getByText("Activity").closest("section.inspector-section") as HTMLElement;
-		const rows = Array.from(section.querySelectorAll(".inspector-timeline__ev"), (row) =>
+		const section = screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement;
+		const rows = Array.from(section.querySelectorAll("[data-testid='inspector-timeline-event']"), (row) =>
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
@@ -414,19 +424,22 @@ describe("SessionInspector reviews tab", () => {
 		expect(await screen.findByText("claude-code")).toBeInTheDocument();
 	});
 
-	it("shows eligible and up-to-date PR review rows", async () => {
+	it("shows eligible and up-to-date open PR review rows", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),
 			reviewState(4, "up_to_date", "def456"),
+			reviewState(5, "ineligible", "ghi789"),
 		]);
 
-		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
+		expect(screen.getByText("Pull requests")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
 		expect(screen.getByText("#4")).toBeInTheDocument();
+		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
@@ -456,7 +469,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
-	it("shows one shared terminal action", async () => {
+	it("cancels the running review instead of allowing rerun", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "running", "abc123"),
 			reviewState(4, "up_to_date", "def456"),
@@ -468,11 +481,29 @@ describe("SessionInspector reviews tab", () => {
 		);
 		await openReviewsTab();
 
-		await waitFor(() => expect(screen.getAllByText("Open terminal")).toHaveLength(1));
-		expect(screen.getAllByRole("button", { name: /review/i })).toHaveLength(1);
-		await userEvent.click(screen.getByRole("button", { name: /open terminal/i }));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled());
+		expect(screen.queryByRole("button", { name: /re-run review/i })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /cancel review/i }));
 
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+		await waitFor(() => {
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/cancel", {
+				params: { path: { sessionId: "sess-1" } },
+			});
+		});
+		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+	});
+
+	it("shows cancelled review runs without marking them failed", async () => {
+		mockCommonGets([], "reviewer-pane", [
+			{ ...reviewState(3, "needs_review", "abc123"), latestRun: { ...failedReview, status: "cancelled" } },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findAllByText("Cancelled")).toHaveLength(2);
+		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
 	it("shows the reviewer identity and aggregate verdict", async () => {

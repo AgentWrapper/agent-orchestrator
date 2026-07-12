@@ -67,7 +67,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	});
 	const browserAnnotationQueue = useBrowserAnnotationQueue({
 		sessionId: session?.id,
-		sessionStatus: session?.status,
 		navUrl: browserView.navState.url,
 	});
 
@@ -176,7 +175,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
-			<div className="grid h-full place-items-center bg-background p-6 text-center font-mono text-[12px] text-passive">
+			<div className="grid h-full place-items-center bg-background p-6 text-center font-mono text-xs text-passive">
 				Session not found. It may have been cleaned up — pick another from the sidebar.
 			</div>
 		);
@@ -199,7 +198,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{hasInspector ? (
 					<>
 						<ResizableHandle
-							className="session-inspector__resize-handle focus-visible:ring-0 focus-visible:ring-offset-0"
+							className="w-1.75 cursor-col-resize touch-none bg-transparent after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border"
 							elementRef={inspectorSeparatorRef}
 						/>
 						<ResizablePanel
@@ -216,7 +215,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						>
 							{/* Stable content width while the panel animates (yyork pattern):
                   the pane clips instead of reflowing the inspector mid-collapse. */}
-							<div className="h-full min-w-[280px]">
+							<div className="h-full min-w-inspector-min">
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}

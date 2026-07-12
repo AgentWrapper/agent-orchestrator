@@ -491,6 +491,92 @@ func TestDestroyClassifiesDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestStashUncommittedClassifiesMissingManagedPathAsStale(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+
+	_, err = ws.StashUncommitted(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if !errors.Is(err, ports.ErrWorkspaceStale) {
+		t.Fatalf("stash error = %v, want ports.ErrWorkspaceStale", err)
+	}
+}
+
+func TestStashUncommittedClassifiesUnregisteredManagedPathAsStale(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "worktree list --porcelain") {
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		}
+		return nil, nil
+	}
+
+	_, err = ws.StashUncommitted(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if !errors.Is(err, ports.ErrWorkspaceStale) {
+		t.Fatalf("stash error = %v, want ports.ErrWorkspaceStale", err)
+	}
+}
+
+func TestStashUncommittedClassifiesNotGitRepositoryAsStale(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + path + "\nbranch refs/heads/feature/one\n"), nil
+		case strings.Contains(joined, "status --porcelain"):
+			return nil, commandError{args: append([]string{binary}, args...), output: "fatal: not a git repository", err: errors.New("exit status 128")}
+		default:
+			return nil, nil
+		}
+	}
+
+	_, err = ws.StashUncommitted(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if !errors.Is(err, ports.ErrWorkspaceStale) {
+		t.Fatalf("stash error = %v, want ports.ErrWorkspaceStale", err)
+	}
+}
+
+func TestStashUncommittedOutsideManagedPathIsUnsafeNotStale(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	outside := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	_, err = ws.StashUncommitted(context.Background(), ports.WorkspaceInfo{Path: outside, ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("stash error = %v, want ErrUnsafePath", err)
+	}
+	if errors.Is(err, ports.ErrWorkspaceStale) {
+		t.Fatalf("outside managed path must not be classified stale: %v", err)
+	}
+}
+
 // TestAddWorktreeRefusesBranchCheckedOutElsewhere covers Bug 3 (a): if the
 // requested branch is already checked out in another worktree of the same repo,
 // Create must surface ports.ErrWorkspaceBranchCheckedOutElsewhere so the HTTP
