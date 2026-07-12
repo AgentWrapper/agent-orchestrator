@@ -10,18 +10,41 @@ We love contributions! Join our community on Discord to get started.
 
 Get your issues verified by core contributors, ask questions, share progress, and learn from the community. New contributors are always welcome!
 
-**Why join Discord?**
+## Ways to contribute
 
-- Get your issues and PRs verified by core contributors before investing time
-- Learn from experienced contributors in daily sync calls
-- Share your progress and get feedback
-- Get help troubleshooting in real-time
-- Stay updated on the latest developments and roadmap
+- **Code** - Fix a bug, add a feature, or improve performance. Browse [open issues](https://github.com/AgentWrapper/agent-orchestrator/issues) to find something to work on.
+- **Docs** - Improve README, architecture docs, or inline documentation. Clear docs help every contributor.
+- **Bug reports** - Found a bug? Open an issue using the Bug Report template and include reproduction steps.
+- **Feature requests** - Have an idea? Open an issue using the Feature Request template.
+- **Reviews** - Review open PRs. Testing and feedback on others' work is valuable.
+- **Community** - Help answer questions on Discord, share workflows, and welcome new contributors.
 
-## Quick Start
+## Before you start
 
-1. **Join the Discord** - Connect with the community and get guidance
-2. **Read the contributor contract** - See [AGENTS.md](AGENTS.md) for repo layout, daemon/API boundaries, and coding conventions
-3. **Pick a focused problem** - Browse [open issues](https://github.com/AgentWrapper/agent-orchestrator/issues) and choose one small enough for a focused PR
-4. **Open a clear PR** - Keep changes narrow, explain user-visible impact, link issues, include tests
-5. **Iterate with contributors** - Use review feedback to tighten the PR until verified
+1. **Read [AGENTS.md](AGENTS.md)** - It covers repo layout, daemon/API boundaries, coding conventions, and hard rules.
+2. **Check [docs/architecture.md](docs/architecture.md)** - Backend mental model, lifecycle, and persistence.
+3. **Read [docs/STATUS.md](docs/STATUS.md)** - What ships on `main` today and what is in flight.
+4. **Build and test locally** - `cd backend && go build ./... && go test ./...`
+
+## Claiming work
+
+To avoid duplicate effort:
+
+1. Find an issue you want to work on.
+2. Leave a comment on the issue saying you are picking it up.
+3. If no one has claimed it, start working. If someone already claimed it, coordinate with them on Discord.
+4. If you cannot finish, leave a comment so someone else can pick it up.
+
+## Opening a pull request
+
+1. Keep changes small and focused. One concern per PR.
+2. Use the pull request template (it will appear automatically when you create a PR).
+3. Run `cd backend && go build ./... && go test ./...` before pushing.
+4. For frontend changes, also run `cd frontend && npm run typecheck`.
+5. Link the issue your PR addresses using `Closes #NNN` syntax.
+6. Explain the **what**, **why**, and **how** in the PR description.
+7. Do not include unrelated changes or formatting churn.
+
+## Code of conduct
+
+Be respectful. Be patient. Be helpful. We are all here because we care about building something useful together. If you experience or witness behavior that makes the community unwelcoming, reach out to a maintainer on Discord.
