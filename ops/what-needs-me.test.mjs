@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import http from "node:http";
+import { afterEach, describe, it } from "node:test";
 
+import {
+	childEnv,
+	emptyEnvPath,
+	listen,
+	releaseSymlinkScript,
+	repoRootFrom,
+	spawnNode,
+	waitForExit,
+} from "./main-invocation-test-helpers.mjs";
 import { renderTerminal } from "./what-needs-me.mjs";
+
+const REPO_ROOT = repoRootFrom(import.meta.url);
+let cleanup = [];
+
+afterEach(async () => {
+	await Promise.all(cleanup.splice(0).map((f) => f()));
+});
 
 describe("what-needs-me terminal view (acceptance #3)", () => {
 	const now = new Date("2026-07-07T00:00:00Z");
@@ -58,5 +75,50 @@ describe("what-needs-me terminal view (acceptance #3)", () => {
 			{ now },
 		);
 		assert.match(out, /1 thing needs your attention/);
+	});
+});
+
+describe("what-needs-me main module invocation", () => {
+	it("prints the attention view when invoked through the release current symlink", async () => {
+		const daemon = await listen(
+			http.createServer((request, response) => {
+				if (request.url === "/api/v1/sessions") {
+					response.setHeader("Content-Type", "application/json");
+					response.end(JSON.stringify({ sessions: [] }));
+					return;
+				}
+				response.writeHead(404);
+				response.end("not found");
+			}),
+			cleanup,
+		);
+		const script = await releaseSymlinkScript({
+			cleanup,
+			prefix: "ao-what-needs-me-release-",
+			repoRoot: REPO_ROOT,
+			script: "ops/what-needs-me.mjs",
+		});
+		const envFile = await emptyEnvPath(cleanup, "ao-what-needs-me-env-");
+
+		for (const nodeArgs of [[], ["--preserve-symlinks-main"]]) {
+			const { child, output } = spawnNode([...nodeArgs, script], {
+				cleanup,
+				env: childEnv(
+					{
+						AO_ENV_FILE: envFile,
+						AO_MAIN_CI_REPO: "",
+						AO_PORT: String(daemon.port),
+						AO_PROJECT_REPO: "",
+						GITHUB_TOKEN: "",
+						POLYPOWERS_REPO: "",
+					},
+					{ stripPrefixes: ["AO_", "GITHUB_", "POLYPOWERS_"] },
+				),
+			});
+
+			const result = await waitForExit({ child, output });
+			assert.equal(result.code, 0, output.stderr);
+			assert.match(output.stdout, /Nothing needs you/);
+		}
 	});
 });

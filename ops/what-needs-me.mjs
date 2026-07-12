@@ -6,10 +6,9 @@
 //
 // Vanilla rule: reads ao's public /api/v1/sessions only.
 
-import { fileURLToPath } from "node:url";
-
 import { attentionFromSessions } from "./attention-core.mjs";
 import { fetchMainCI } from "./ao-slack-notifier.mjs";
+import { isMainModule } from "./main-module.mjs";
 
 // renderTerminal builds the plain-text "what needs me" view (pure/testable).
 export function renderTerminal(sessionsPayload, { now = new Date() } = {}) {
@@ -39,7 +38,7 @@ export function renderTerminal(sessionsPayload, { now = new Date() } = {}) {
 }
 
 function isMain() {
-	return process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+	return isMainModule(import.meta.url);
 }
 
 async function main() {

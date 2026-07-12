@@ -44,7 +44,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { AgentHealthNotifier } from "./agent-health-core.mjs";
 import {
@@ -56,6 +55,7 @@ import {
 	signature,
 } from "./attention-core.mjs";
 import { loadEnvFile } from "./env-file.mjs";
+import { isMainModule } from "./main-module.mjs";
 
 const ENV_FILE = process.env.AO_ENV_FILE || "/home/orchestrator/agent-orchestrator/.env";
 loadEnvFile(ENV_FILE);
@@ -228,7 +228,7 @@ function sleep(ms, signal) {
 }
 
 function isMain() {
-	return process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+	return isMainModule(import.meta.url);
 }
 
 export function normalizeNotification(raw) {

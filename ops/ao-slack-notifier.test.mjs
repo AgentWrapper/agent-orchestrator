@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,11 +17,22 @@ import {
 	parseSSEFrames,
 	saveState,
 } from "./ao-slack-notifier.mjs";
+import {
+	childEnv,
+	emptyEnvPath,
+	listen,
+	releaseSymlinkScript,
+	repoRootFrom,
+	spawnNode,
+	waitForOutput,
+} from "./main-invocation-test-helpers.mjs";
 
 let cleanup = [];
 afterEach(async () => {
 	await Promise.all(cleanup.splice(0).map((f) => f()));
 });
+
+const REPO_ROOT = repoRootFrom(import.meta.url);
 
 async function tmpState() {
 	const dir = await mkdtemp(path.join(os.tmpdir(), "ao-slack-state-"));
@@ -1630,5 +1642,59 @@ describe("ao Slack notifier head-SHA aware cooldown (issue #190)", () => {
 		await notifier.handleNotification({ ...base, id: "ntf_2", headSha: "sha-2" }); // new head
 
 		assert.equal(posts.length, 2, "a new head re-notifies even inside the cooldown");
+	});
+});
+
+describe("ao Slack notifier main module invocation", () => {
+	it("connects to the notification stream when invoked through the release current symlink", async () => {
+		const daemon = await listen(
+			http.createServer((request, response) => {
+				if (request.url?.startsWith("/api/v1/notifications?")) {
+					response.setHeader("Content-Type", "application/json");
+					response.end(JSON.stringify({ notifications: [] }));
+					return;
+				}
+				if (request.url === "/api/v1/notifications/stream") {
+					response.writeHead(200, {
+						"Content-Type": "text/event-stream",
+						"Cache-Control": "no-cache",
+						Connection: "keep-alive",
+					});
+					response.write(": connected\n\n");
+					return;
+				}
+				response.writeHead(404);
+				response.end("not found");
+			}),
+			cleanup,
+		);
+		const script = await releaseSymlinkScript({
+			cleanup,
+			prefix: "ao-slack-release-",
+			repoRoot: REPO_ROOT,
+			script: "ops/ao-slack-notifier.mjs",
+		});
+
+		for (const nodeArgs of [[], ["--preserve-symlinks-main"]]) {
+			const stateFile = await tmpState();
+			const { child, output } = spawnNode([...nodeArgs, script], {
+				cleanup,
+				env: childEnv(
+					{
+						AO_AGENT_HEALTH_POLL_MS: "0",
+						AO_ENV_FILE: await emptyEnvPath(cleanup, "ao-slack-notifier-env-"),
+						AO_MAIN_CI_POLL_MS: "0",
+						AO_PORT: String(daemon.port),
+						AO_SESSION_ATTENTION_POLL_MS: "0",
+						AO_SLACK_NOTIFIER_STATE: stateFile,
+						SLACK_WEBHOOK_URL: "http://127.0.0.1:9/slack",
+					},
+					{ stripPrefixes: ["AO_", "POLYPOWERS_", "SLACK_"] },
+				),
+			});
+
+			await waitForOutput({ child, output, pattern: /connected to ao notification stream/ });
+			assert.equal(child.exitCode, null);
+		}
 	});
 });

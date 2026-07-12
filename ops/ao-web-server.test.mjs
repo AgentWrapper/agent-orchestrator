@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { createAoWebServer } from "./ao-web-server.mjs";
+import {
+	childEnv,
+	freePort,
+	listen as listenWithCleanup,
+	releaseSymlinkScript,
+	repoRootFrom,
+	spawnNode,
+	waitForHttp,
+} from "./main-invocation-test-helpers.mjs";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_ROOT = repoRootFrom(import.meta.url);
 
 let cleanup = [];
 
@@ -230,110 +237,32 @@ async function makeDist() {
 }
 
 async function listen(server) {
-	await new Promise((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", resolve);
-	});
-	cleanup.push(() => new Promise((resolve) => server.close(resolve)));
-	const address = server.address();
-	assert(address && typeof address === "object");
-	return {
-		host: `127.0.0.1:${address.port}`,
-		port: address.port,
-		url: `http://127.0.0.1:${address.port}`,
-	};
-}
-
-async function freePort() {
-	const server = http.createServer();
-	await new Promise((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", resolve);
-	});
-	const address = server.address();
-	assert(address && typeof address === "object");
-	const { port } = address;
-	await new Promise((resolve) => server.close(resolve));
-	return port;
+	return listenWithCleanup(server, cleanup);
 }
 
 async function startReleaseSymlinkServer(distDir, nodeArgs = []) {
-	const releaseRoot = await mkdtemp(path.join(os.tmpdir(), "ao-web-release-"));
-	const releaseDir = path.join(releaseRoot, "releases", "abc123");
-	const releaseSource = path.join(releaseDir, "source");
-	const current = path.join(releaseRoot, "current");
-	await mkdir(releaseDir, { recursive: true });
-	await symlink(REPO_ROOT, releaseSource, "dir");
-	await symlink(releaseDir, current, "dir");
-	cleanup.push(async () => {
-		await rm(current, { force: true });
-		await rm(releaseSource, { force: true });
-		await rm(releaseRoot, { recursive: true, force: true });
+	const script = await releaseSymlinkScript({
+		cleanup,
+		prefix: "ao-web-release-",
+		repoRoot: REPO_ROOT,
+		script: "ops/ao-web-server.mjs",
 	});
 
 	const port = await freePort();
-	const output = { stderr: "", stdout: "" };
-	const child = spawn(process.execPath, [...nodeArgs, path.join(current, "source", "ops", "ao-web-server.mjs")], {
-		env: childEnv({
-			AO_WEB_DIST: distDir,
-			AO_WEB_PORT: String(port),
-		}),
-		stdio: ["ignore", "pipe", "pipe"],
+	const { child, output } = spawnNode([...nodeArgs, script], {
+		cleanup,
+		env: childEnv(
+			{
+				AO_WEB_DIST: distDir,
+				AO_WEB_PORT: String(port),
+			},
+			{ stripPrefixes: ["AO_WEB_"] },
+		),
 	});
-	child.stdout.on("data", (chunk) => {
-		output.stdout += chunk.toString("utf8");
-	});
-	child.stderr.on("data", (chunk) => {
-		output.stderr += chunk.toString("utf8");
-	});
-	cleanup.push(() => stopChild(child));
 
 	const url = `http://127.0.0.1:${port}/`;
-	await waitForServer(url, { child, output });
+	await waitForHttp(url, { child, output });
 	return { child, output, url };
-}
-
-function childEnv(overrides) {
-	const env = { ...process.env };
-	for (const key of Object.keys(env)) {
-		if (key.startsWith("AO_WEB_")) delete env[key];
-	}
-	return { ...env, ...overrides };
-}
-
-async function waitForServer(url, options = {}) {
-	const deadline = Date.now() + 3000;
-	let lastError = new Error("server did not start");
-	while (Date.now() < deadline) {
-		if (options.child && (options.child.exitCode !== null || options.child.signalCode !== null)) {
-			throw new Error(
-				`server process exited before serving ${url}: exit=${options.child.exitCode} signal=${options.child.signalCode}\nstdout:\n${options.output?.stdout ?? ""}\nstderr:\n${options.output?.stderr ?? ""}`,
-			);
-		}
-		try {
-			const response = await fetch(url);
-			await response.arrayBuffer();
-			return;
-		} catch (error) {
-			lastError = error;
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-	}
-	if (options.output) {
-		lastError.message = `${lastError.message}\nstdout:\n${options.output.stdout}\nstderr:\n${options.output.stderr}`;
-	}
-	throw lastError;
-}
-
-function stopChild(child) {
-	return new Promise((resolve) => {
-		if (child.exitCode !== null || child.signalCode !== null) {
-			resolve();
-			return;
-		}
-		child.once("exit", resolve);
-		child.kill("SIGTERM");
-	});
 }
 
 async function fetchText(url) {

@@ -12,7 +12,6 @@
 
 import { spawn } from "node:child_process";
 import http from "node:http";
-import { fileURLToPath } from "node:url";
 
 import {
 	buildAoSendArgs,
@@ -25,6 +24,7 @@ import {
 import { resolveMentionUserId } from "./attention-core.mjs";
 import { loadEnvFile } from "./env-file.mjs";
 import { loadLegacyThreadMap } from "./legacy-attention-state.mjs";
+import { isMainModule } from "./main-module.mjs";
 
 const ENV_FILE = process.env.AO_ENV_FILE || "/home/orchestrator/agent-orchestrator/.env";
 
@@ -131,7 +131,7 @@ function readBody(req) {
 }
 
 function isMain() {
-	return process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+	return isMainModule(import.meta.url);
 }
 
 export function createServer({ signingSecret, threadMap, aoSend, allowedUserId, logger = console, refreshThreadMap }) {

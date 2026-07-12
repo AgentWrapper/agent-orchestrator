@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { createReadStream, realpathSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+
+import { isMainModule } from "./main-module.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DIST_DIR = path.resolve(HERE, "../frontend/dist");
@@ -271,18 +273,7 @@ function isLoopbackHost(host) {
 	return withoutPort === "localhost" || withoutPort === "127.0.0.1" || withoutPort === "::1";
 }
 
-function isMainModule() {
-	const argvPath = process.argv[1];
-	if (!argvPath) return false;
-	if (import.meta.url === pathToFileURL(argvPath).href) return true;
-	try {
-		return import.meta.url === pathToFileURL(realpathSync(argvPath)).href;
-	} catch {
-		return false;
-	}
-}
-
-if (isMainModule()) {
+if (isMainModule(import.meta.url)) {
 	const bind = process.env.AO_WEB_BIND || "127.0.0.1";
 	const port = Number(process.env.AO_WEB_PORT || "5173");
 	const publicUrl = process.env.AO_WEB_PUBLIC_URL || "";

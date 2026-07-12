@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 
 import { handleSlackRequest } from "./attention-reply-listener.mjs";
+import {
+	childEnv,
+	emptyEnvPath,
+	freePort,
+	releaseSymlinkScript,
+	repoRootFrom,
+	spawnNode,
+	waitForHttp,
+} from "./main-invocation-test-helpers.mjs";
 import { ThreadSessionMap } from "./slack-reply-core.mjs";
 
 const SECRET = "sign";
 const NOW = 1_700_000_000_000;
+const REPO_ROOT = repoRootFrom(import.meta.url);
+let cleanup = [];
+
+afterEach(async () => {
+	await Promise.all(cleanup.splice(0).map((f) => f()));
+});
 
 function signed(bodyObj) {
 	const rawBody = JSON.stringify(bodyObj);
@@ -247,5 +262,37 @@ describe("handleSlackRequest — refreshes thread map before routing (P1 fix)", 
 		});
 		assert.equal(out.status, 200);
 		assert.deepEqual(sent[0], ["send", "--session", "agent-late", "--message", "go"]);
+	});
+});
+
+describe("attention reply listener main module invocation", () => {
+	it("listens for Slack events when invoked through the release current symlink", async () => {
+		const script = await releaseSymlinkScript({
+			cleanup,
+			prefix: "ao-reply-release-",
+			repoRoot: REPO_ROOT,
+			script: "ops/attention-reply-listener.mjs",
+		});
+
+		for (const nodeArgs of [[], ["--preserve-symlinks-main"]]) {
+			const port = await freePort();
+			const envFile = await emptyEnvPath(cleanup, "ao-attention-reply-env-");
+			const { child, output } = spawnNode([...nodeArgs, script], {
+				cleanup,
+				env: childEnv(
+					{
+						AO_ATTENTION_REPLY_PORT: String(port),
+						AO_ENV_FILE: envFile,
+						SLACK_MEMBER_ID: "UNICK",
+						SLACK_SIGNING_SECRET: SECRET,
+					},
+					{ stripPrefixes: ["AO_", "POLYPOWERS_", "SLACK_"] },
+				),
+			});
+
+			const response = await waitForHttp(`http://127.0.0.1:${port}/`, { child, output });
+			assert.equal(response.status, 404);
+			assert.equal(child.exitCode, null);
+		}
 	});
 });
