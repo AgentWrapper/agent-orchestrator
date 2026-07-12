@@ -14,7 +14,7 @@
 	},
 	"scripts": {
 		"build:daemon": "node ./scripts/build-daemon.mjs",
-		"tokens": "tsx src/styles/build-tokens-css.ts",
+		"tokens": "tsx src/styles/build-tokens-css.ts && npx --yes prettier@3 --write src/styles/design-system.generated.css",
 		"pretest": "npm run tokens",
 		"predev": "npm run tokens",
 		"dev": "electron-forge start",
