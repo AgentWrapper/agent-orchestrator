@@ -44,6 +44,8 @@ function setupBridge() {
 			isLoading: false,
 		})),
 		setBounds: vi.fn(),
+		capture: vi.fn(async () => "data:image/jpeg;base64,snapshot"),
+		requestMirror: vi.fn(async () => false),
 		navigate: vi.fn(async ({ viewId }: { viewId: string }) => bridge.stateFor(viewId)),
 		clear: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		goBack: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
@@ -238,6 +240,65 @@ describe("useBrowserView", () => {
 			visible: false,
 		});
 		expect(bridge.destroy).not.toHaveBeenCalled();
+	});
+
+	it("parks the view and mirrors frames while a modal dialog is open, then restores it on close", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+
+		bridge.setBounds.mockClear();
+		const dialog = document.createElement("div");
+		dialog.setAttribute("role", "dialog");
+		dialog.setAttribute("data-state", "open");
+		await act(async () => {
+			document.body.appendChild(dialog);
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+				parked: true,
+			}),
+		);
+		expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
+		await waitFor(() => expect(result.current.mirrorUrl).toBe("data:image/jpeg;base64,snapshot"));
+
+		bridge.setBounds.mockClear();
+		await act(async () => {
+			dialog.remove();
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+		await waitFor(() => expect(result.current.mirrorUrl).toBe(""));
 	});
 
 	it("updates nav state only for the current view", async () => {

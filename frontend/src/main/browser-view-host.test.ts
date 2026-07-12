@@ -9,17 +9,22 @@ import {
 } from "./browser-view-host";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
-type EventHandler = (
-	event: { sender: { id: number; getZoomFactor?: () => number } },
-	...args: unknown[]
-) => unknown;
+type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
+
+type DisplayHandler = (request: unknown, callback: (streams: { video?: unknown }) => void) => void;
 
 function setupHost() {
 	let currentURL = "";
+	let displayHandler: DisplayHandler | null = null;
 	const webContents = {
 		id: 99,
+		mainFrame: { frameToken: "preview-frame" },
 		canGoBack: () => false,
 		canGoForward: () => false,
+		capturePage: vi.fn(async () => ({
+			isEmpty: () => false,
+			toJPEG: () => Buffer.from("snapshot"),
+		})),
 		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
@@ -48,7 +53,15 @@ function setupHost() {
 		mainWindow: {
 			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-			webContents: { id: 1, send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
+			webContents: {
+				id: 1,
+				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
+				session: {
+					setDisplayMediaRequestHandler: (handler: DisplayHandler | null) => {
+						displayHandler = handler;
+					},
+				},
+			},
 		} as never,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
@@ -63,13 +76,14 @@ function setupHost() {
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 	});
+	const rendererFrame = { processId: 5, routingId: 7 };
 	const invoke = (channel: string, ...args: unknown[]) =>
-		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<BrowserNavState>;
+		handlers.get(channel)!({ sender: { id: 1 }, senderFrame: rendererFrame }, ...args) as Promise<BrowserNavState>;
 	const emit = (channel: string, zoomFactor: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
-	return { emit, host, invoke, send, sent, view, webContents };
+	return { emit, host, invoke, rendererFrame, send, sent, view, webContents, getDisplayHandler: () => displayHandler };
 }
 
 describe("normalizeBrowserURL", () => {
@@ -122,6 +136,108 @@ describe("browser:clear", () => {
 
 		expect(webContents.loadURL).toHaveBeenLastCalledWith("about:blank");
 		expect(state.url).toBe("");
+	});
+});
+
+describe("browser:capture", () => {
+	it("returns the current page as a data URL", async () => {
+		const { invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const snapshot = await invoke("browser:capture", "1:sess-1");
+
+		expect(snapshot).toBe(`data:image/jpeg;base64,${Buffer.from("snapshot").toString("base64")}`);
+	});
+
+	it("returns an empty string for an unknown view", async () => {
+		const { invoke } = setupHost();
+
+		const snapshot = await invoke("browser:capture", "1:missing");
+
+		expect(snapshot).toBe("");
+	});
+});
+
+describe("browser:requestMirror", () => {
+	it("grants the display-media request from the frame that armed the mirror", async () => {
+		const { getDisplayHandler, invoke, rendererFrame, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const granted = await invoke("browser:requestMirror", "1:sess-1");
+		expect(granted).toBe(true);
+
+		const streams: Array<{ video?: unknown }> = [];
+		getDisplayHandler()!({ frame: rendererFrame }, (result) => streams.push(result));
+		expect(streams).toEqual([{ video: webContents.mainFrame }]);
+	});
+
+	it("denies display-media requests from a different frame", async () => {
+		const { getDisplayHandler, invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:requestMirror", "1:sess-1");
+
+		const streams: Array<{ video?: unknown }> = [];
+		getDisplayHandler()!({ frame: { processId: 9, routingId: 3 } }, (result) => streams.push(result));
+		expect(streams).toEqual([{}]);
+	});
+
+	it("denies display-media requests with no pending mirror", async () => {
+		const { getDisplayHandler, invoke, rendererFrame } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const streams: Array<{ video?: unknown }> = [];
+		getDisplayHandler()!({ frame: rendererFrame }, (result) => streams.push(result));
+		expect(streams).toEqual([{}]);
+	});
+
+	it("rejects mirror requests for views the renderer does not own", async () => {
+		const { invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const granted = await invoke("browser:requestMirror", "7:sess-1");
+		expect(granted).toBe(false);
+	});
+
+	it("expires a mirror grant that is never consumed", async () => {
+		vi.useFakeTimers();
+		try {
+			const { getDisplayHandler, invoke, rendererFrame } = setupHost();
+			await invoke("browser:ensure", "sess-1");
+			await invoke("browser:requestMirror", "1:sess-1");
+
+			vi.advanceTimersByTime(6000);
+
+			const streams: Array<{ video?: unknown }> = [];
+			getDisplayHandler()!({ frame: rendererFrame }, (result) => streams.push(result));
+			expect(streams).toEqual([{}]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("denies capture of views the renderer does not own", async () => {
+		const { invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const snapshot = await invoke("browser:capture", "7:sess-1");
+		expect(snapshot).toBe("");
+	});
+});
+
+describe("browser:setBounds parked", () => {
+	it("moves the view offscreen at full size while keeping it visible", async () => {
+		const { emit, invoke, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 12, y: 34, width: 320, height: 240 },
+			visible: true,
+			parked: true,
+		});
+
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: -10_000, y: 0, width: 320, height: 240 });
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 });
 

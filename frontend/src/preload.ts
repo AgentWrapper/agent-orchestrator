@@ -14,6 +14,7 @@ export type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
 	visible: boolean;
+	parked?: boolean;
 };
 
 export type BrowserNavigateInput = {
@@ -71,6 +72,8 @@ const api = {
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
 		clear: (viewId: string) => ipcRenderer.invoke("browser:clear", viewId) as Promise<BrowserNavState>,
+		capture: (viewId: string) => ipcRenderer.invoke("browser:capture", viewId) as Promise<string>,
+		requestMirror: (viewId: string) => ipcRenderer.invoke("browser:requestMirror", viewId) as Promise<boolean>,
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,

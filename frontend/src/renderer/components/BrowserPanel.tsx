@@ -186,8 +186,20 @@ export function BrowserPanelView({
 	browserView,
 	annotationQueue,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
-	const { viewId, navState, slotRef, navigate, goBack, goForward, reload, stop, annotationMode, setAnnotationMode } =
-		browserView;
+	const {
+		viewId,
+		navState,
+		mirrorUrl,
+		mirrorStream,
+		slotRef,
+		navigate,
+		goBack,
+		goForward,
+		reload,
+		stop,
+		annotationMode,
+		setAnnotationMode,
+	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
@@ -358,6 +370,11 @@ export function BrowserPanelView({
 			</form>
 			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
 				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+				{mirrorStream ? (
+					<MirrorVideo stream={mirrorStream} />
+				) : mirrorUrl ? (
+					<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
+				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
 					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
@@ -377,6 +394,18 @@ export function BrowserPanelView({
 			</div>
 		</div>
 	);
+}
+
+function MirrorVideo({ stream }: { stream: MediaStream }) {
+	const attach = useCallback(
+		(node: HTMLVideoElement | null) => {
+			if (node && node.srcObject !== stream) {
+				node.srcObject = stream;
+			}
+		},
+		[stream],
+	);
+	return <video autoPlay className="absolute inset-0 h-full w-full object-cover" muted playsInline ref={attach} />;
 }
 
 function StaticPreview({ url }: { url: string }) {

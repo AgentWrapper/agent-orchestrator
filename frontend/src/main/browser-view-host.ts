@@ -1,4 +1,13 @@
-import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent, Rectangle, View, WebContents } from "electron";
+import type {
+	IpcMain,
+	IpcMainEvent,
+	IpcMainInvokeEvent,
+	Rectangle,
+	Session,
+	View,
+	WebContents,
+	WebFrameMain,
+} from "electron";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -23,6 +32,7 @@ type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
 	visible: boolean;
+	parked?: boolean;
 };
 
 type BrowserNavigateInput = {
@@ -35,7 +45,9 @@ type BrowserWebContents = Pick<
 	| "id"
 	| "canGoBack"
 	| "canGoForward"
+	| "capturePage"
 	| "clearHistory"
+	| "mainFrame"
 	| "getTitle"
 	| "getURL"
 	| "goBack"
@@ -63,7 +75,9 @@ type BrowserWindowLike = {
 		removeChildView?: (view: BrowserViewLike) => void;
 	};
 	getContentBounds: () => BrowserRect;
-	webContents: Pick<WebContents, "id" | "send">;
+	webContents: Pick<WebContents, "id" | "send"> & {
+		session?: Pick<Session, "setDisplayMediaRequestHandler">;
+	};
 	isDestroyed?: () => boolean;
 };
 
@@ -157,6 +171,39 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const entries = new Map<string, BrowserEntry>();
 	const viewIdsByWebContentsId = new Map<number, string>();
 	const ipcDisposers: Array<() => void> = [];
+	let pendingMirror: { viewId: string; expires: number; frame: WebFrameMain } | null = null;
+
+	const sameFrame = (a: WebFrameMain, b: WebFrameMain | null | undefined): boolean =>
+		Boolean(b) && a.processId === b!.processId && a.routingId === b!.routingId;
+
+	const displayMediaSession = options.mainWindow.webContents.session;
+	const mirrorSupported = Boolean(displayMediaSession?.setDisplayMediaRequestHandler);
+	if (mirrorSupported) {
+		displayMediaSession!.setDisplayMediaRequestHandler((request, callback) => {
+			const pending = pendingMirror;
+			pendingMirror = null;
+			const entry =
+				pending && pending.expires > Date.now() && sameFrame(pending.frame, request.frame)
+					? entries.get(pending.viewId)
+					: undefined;
+			try {
+				if (entry) {
+					callback({ video: entry.view.webContents.mainFrame });
+				} else {
+					callback({});
+				}
+			} catch {
+				return;
+			}
+		});
+		ipcDisposers.push(() => {
+			try {
+				displayMediaSession?.setDisplayMediaRequestHandler(null);
+			} catch {
+				return;
+			}
+		});
+	}
 
 	const ensure = (viewId: string): BrowserEntry => {
 		const existing = entries.get(viewId);
@@ -183,9 +230,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return entry;
 	};
 
-	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput, zoomFactor = 1): void => {
+	const setBounds = ({ viewId, rect, visible, parked }: BrowserBoundsInput, zoomFactor = 1): void => {
 		const entry = entries.get(viewId);
 		if (!entry) return;
+		if (parked) {
+			const scaled = scaleBoundsForZoom(rect, zoomFactor);
+			const width = Math.max(1, Math.round(scaled.width));
+			const height = Math.max(1, Math.round(scaled.height));
+			entry.view.setBounds({ x: OFFSCREEN_BOUNDS.x, y: 0, width, height });
+			entry.view.setVisible?.(true);
+			return;
+		}
 		if (!visible) {
 			entry.view.setVisible?.(false);
 			entry.view.setBounds(OFFSCREEN_BOUNDS);
@@ -222,6 +277,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		await entry.view.webContents.loadURL("about:blank");
 		entry.view.webContents.clearHistory();
 		return pushNavState(options, entry);
+	};
+
+	const capture = async (viewId: string): Promise<string> => {
+		const entry = entries.get(viewId);
+		if (!entry) return "";
+		try {
+			const image = await entry.view.webContents.capturePage();
+			if (image.isEmpty()) return "";
+			return `data:image/jpeg;base64,${image.toJPEG(70).toString("base64")}`;
+		} catch {
+			return "";
+		}
 	};
 
 	const destroy = (viewId: string): void => {
@@ -315,6 +382,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => setBounds(input, event.sender.getZoomFactor()));
 	handle("browser:navigate", (_event, input: BrowserNavigateInput) => navigate(input));
 	handle("browser:clear", (_event, viewId: string) => clear(viewId));
+	handle("browser:capture", (event, viewId: string) => (isRendererOwnedViewId(event, viewId) ? capture(viewId) : ""));
+	handle("browser:requestMirror", (event, viewId: string) => {
+		if (!mirrorSupported || !isRendererOwnedViewId(event, viewId) || !entries.has(viewId)) return false;
+		const frame = event.senderFrame;
+		if (!frame) return false;
+		pendingMirror = { viewId, expires: Date.now() + 5000, frame };
+		return true;
+	});
 	handle("browser:goBack", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goBack(), true));
 	handle("browser:goForward", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goForward(), true));
 	handle("browser:reload", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.reload(), true));
