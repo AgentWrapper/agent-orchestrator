@@ -586,9 +586,7 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	if m.sessions != nil {
-		if err := m.sessions.TeardownProject(ctx, id); err != nil {
-			return RemoveResult{}, err
-		}
+		_ = m.sessions.TeardownProject(ctx, id)
 	}
 	ok, err = m.store.ArchiveProject(ctx, string(id), time.Now())
 	if err != nil {
