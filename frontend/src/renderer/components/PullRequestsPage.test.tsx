@@ -47,7 +47,7 @@ const session = (id: string, prs: PullRequestFacts[]): WorkspaceSession => ({
 
 function setWorkspaces(sessions: WorkspaceSession[]) {
 	const data: WorkspaceSummary[] = [{ id: "proj-1", name: "my-app", path: "/p", sessions }];
-	useWorkspaceQueryMock.mockReturnValue({ data, isError: false, isLoading: false });
+	useWorkspaceQueryMock.mockReturnValue({ data: { workspaces: data }, isError: false, isLoading: false });
 }
 
 function renderPage() {

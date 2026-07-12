@@ -44,7 +44,7 @@ describe("useWorkspaceQuery", () => {
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
-		expect(result.current.data).toEqual([]);
+		expect(result.current.data).toEqual({ workspaces: [] });
 		expect(getMock).not.toHaveBeenCalled();
 	});
 
@@ -100,7 +100,7 @@ describe("useWorkspaceQuery", () => {
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-		const [workspace] = result.current.data ?? [];
+		const [workspace] = result.current.data?.workspaces ?? [];
 		expect(workspace).toMatchObject({
 			id: "proj-1",
 			name: "my-app",
@@ -125,6 +125,58 @@ describe("useWorkspaceQuery", () => {
 			status: "unknown",
 			branch: "session/sess-2",
 		});
+	});
+
+	it("extracts the newest active prime and removes primes from project sessions", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "proj-1-prime-old",
+							projectId: "proj-1",
+							displayName: "Old Prime",
+							harness: "codex",
+							kind: "prime",
+							status: "terminated",
+							isTerminated: true,
+							createdAt: "2026-06-10T15:00:00Z",
+							updatedAt: "2026-06-10T15:00:00Z",
+						},
+						{
+							id: "proj-1-prime-new",
+							projectId: "proj-1",
+							displayName: "AO Prime",
+							harness: "codex",
+							kind: "prime",
+							status: "working",
+							isTerminated: false,
+							createdAt: "2026-06-10T16:00:00Z",
+							updatedAt: "2026-06-10T16:00:00Z",
+						},
+						{
+							id: "proj-1-worker",
+							projectId: "proj-1",
+							displayName: "fix bug",
+							harness: "codex",
+							kind: "worker",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T17:00:00Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const workspace = result.current.data?.workspaces[0];
+		expect(result.current.data?.primeSession).toMatchObject({ id: "proj-1-prime-new", title: "AO Prime" });
+		expect(workspace?.sessions.map((s) => s.id)).toEqual(["proj-1-worker"]);
 	});
 
 	it("maps each session's prs straight from the session list", async () => {
@@ -168,7 +220,7 @@ describe("useWorkspaceQuery", () => {
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-		const sessions = result.current.data?.[0].sessions ?? [];
+		const sessions = result.current.data?.workspaces[0].sessions ?? [];
 		expect(sessions[0].prs).toEqual([
 			{
 				number: 278,
@@ -207,7 +259,7 @@ describe("useWorkspaceQuery", () => {
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-		expect(result.current.data?.[0].sessions[0].status).toBe("merged");
+		expect(result.current.data?.workspaces[0].sessions[0].status).toBe("merged");
 	});
 
 	it("falls back to terminated for terminated sessions without a known backend status", async () => {
@@ -232,7 +284,7 @@ describe("useWorkspaceQuery", () => {
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-		expect(result.current.data?.[0].sessions[0].status).toBe("terminated");
+		expect(result.current.data?.workspaces[0].sessions[0].status).toBe("terminated");
 	});
 
 	it("surfaces a projects fetch error", async () => {

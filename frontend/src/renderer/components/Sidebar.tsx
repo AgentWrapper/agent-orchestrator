@@ -93,6 +93,7 @@ const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
+	primeSession?: WorkspaceSession;
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
@@ -119,6 +120,7 @@ function useSelection() {
 		goCapacity: (projectId: string) => void navigate({ to: "/projects/$projectId/capacity", params: { projectId } }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
+		goGlobalSession: (sessionId: string) => void navigate({ to: "/sessions/$sessionId", params: { sessionId } }),
 		goSession: (projectId: string, sessionId: string) =>
 			void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
 	};
@@ -149,6 +151,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // via group-data-[collapsible=icon] into the 48px letter rail.
 export function Sidebar({
 	daemonStatus,
+	primeSession,
 	underTopbar = true,
 	workspaceError,
 	workspaces,
@@ -321,6 +324,19 @@ export function Sidebar({
 						</SidebarMenu>
 					</SidebarGroupContent>
 				</SidebarGroup>
+				{primeSession && (
+					<SidebarGroup className="p-0 pb-3">
+						<SidebarGroupContent>
+							<SidebarMenu className="gap-1">
+								<PrimeItem
+									active={selection.activeSessionId === primeSession.id}
+									onOpen={() => selection.goGlobalSession(primeSession.id)}
+									session={primeSession}
+								/>
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				)}
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
@@ -507,6 +523,34 @@ export function Sidebar({
 }
 
 type Selection = ReturnType<typeof useSelection>;
+
+function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+	return (
+		<SidebarMenuItem>
+			<SidebarMenuButton
+				aria-current={active ? "page" : undefined}
+				aria-label={`Open ${session.title}`}
+				isActive={active}
+				onClick={onOpen}
+				tooltip={session.title}
+				className={cn(
+					"relative h-9 gap-[9px] rounded-[5px] px-2 py-0 text-[13px] font-medium text-muted-foreground transition-colors",
+					"hover:bg-interactive-hover hover:text-foreground",
+					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
+					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
+				)}
+			>
+				<OrchestratorIcon className="size-4 shrink-0" aria-hidden="true" />
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+					{session.title}
+				</span>
+				<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">
+					<SessionDot session={session} />
+				</span>
+			</SidebarMenuButton>
+		</SidebarMenuItem>
+	);
+}
 
 function ProjectItem({
 	workspace,

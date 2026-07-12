@@ -908,6 +908,25 @@ func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
 	}
 }
 
+func TestSpawnPrimeCleanPassesConfiguredDisplayName(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, PrimeDisplayName: "AO Prime"})
+
+	got, err := svc.SpawnPrime(context.Background(), "ao", true)
+	if err != nil {
+		t.Fatalf("SpawnPrime: %v", err)
+	}
+	if got.Kind != domain.KindPrime {
+		t.Fatalf("spawned kind = %q, want prime", got.Kind)
+	}
+	if fc.gotCfg.DisplayName != "AO Prime" {
+		t.Fatalf("prime display name = %q, want AO Prime", fc.gotCfg.DisplayName)
+	}
+}
+
 func TestSpawnPrimeUnknownHostProjectReturns404(t *testing.T) {
 	st := newFakeStore()
 	fc := &fakeCommander{}

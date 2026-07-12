@@ -18,7 +18,7 @@ type PanelEntry = {
 	onResize?: (size: { asPercentage: number; inPixels: number }) => void;
 };
 
-const { workspaces, panels } = vi.hoisted(() => {
+const { primeSession, workspaces, panels } = vi.hoisted(() => {
 	const worker = {
 		id: "sess-1",
 		workspaceId: "proj-1",
@@ -37,10 +37,17 @@ const { workspaces, panels } = vi.hoisted(() => {
 		kind: "orchestrator",
 		title: "orchestrate",
 	} satisfies WorkspaceSession;
+	const primeSession = {
+		...worker,
+		id: "sess-prime",
+		kind: "prime",
+		title: "AO Prime",
+		branch: "ao/agent-orchestrator-prime",
+	} satisfies WorkspaceSession;
 	const workspaces: WorkspaceSummary[] = [
 		{ id: "proj-1", name: "my-app", path: "/p", type: "main", sessions: [worker, orchestrator] },
 	];
-	return { workspaces, panels: new Map<string, PanelEntry>() };
+	return { primeSession, workspaces, panels: new Map<string, PanelEntry>() };
 });
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
@@ -101,7 +108,7 @@ vi.mock("../lib/shell-context", () => ({
 	useShell: () => ({ daemonStatus: { state: "ready" } }),
 }));
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: workspaces, isLoading: false }),
+	useWorkspaceQuery: () => ({ data: { workspaces, primeSession }, isLoading: false }),
 }));
 
 // jsdom has no layout engine, so the real react-resizable-panels would never
@@ -307,6 +314,16 @@ describe("SessionView", () => {
 		expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
 
 		// The shortcut is inactive without an inspector.
+		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		expect(useUiStore.getState().isInspectorOpen).toBe(true);
+	});
+
+	it("renders no inspector panel or handle for prime sessions", () => {
+		render(<SessionView sessionId="sess-prime" />);
+
+		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
+
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
 		expect(useUiStore.getState().isInspectorOpen).toBe(true);
 	});

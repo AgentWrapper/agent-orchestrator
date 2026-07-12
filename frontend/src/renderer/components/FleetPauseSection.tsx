@@ -42,7 +42,7 @@ export function FleetPauseSection() {
 	// draining → paused lifecycle by aggregating live draining workers from the
 	// per-project statuses the workspace query already carries.
 	const workspaces = useWorkspaceQuery();
-	const drainingWorkers = (workspaces.data ?? []).reduce(
+	const drainingWorkers = (workspaces.data?.workspaces ?? []).reduce(
 		(sum, w) => sum + (w.pauseState === "draining" ? (w.drainingWorkers ?? 0) : 0),
 		0,
 	);

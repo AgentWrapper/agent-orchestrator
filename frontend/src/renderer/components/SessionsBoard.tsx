@@ -86,7 +86,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
-	const all = workspaceQuery.data ?? [];
+	const all = workspaceQuery.data?.workspaces ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));

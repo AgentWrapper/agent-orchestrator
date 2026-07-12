@@ -182,6 +182,11 @@ export type WorkspaceRepoSummary = {
 	repo: string;
 };
 
+export type WorkspaceQueryData = {
+	workspaces: WorkspaceSummary[];
+	primeSession?: WorkspaceSession;
+};
+
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
 	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
@@ -236,6 +241,10 @@ export function isOrchestratorSession(session: WorkspaceSession): boolean {
 	return session.kind === "orchestrator" || session.id.endsWith("-orchestrator");
 }
 
+export function isPrimeSession(session: WorkspaceSession): boolean {
+	return session.kind === "prime";
+}
+
 /**
  * The project's LIVE orchestrator, if any. Terminated orchestrator rows stay in
  * the session list (the daemon returns all sessions, ordered by spawn number),
@@ -260,6 +269,16 @@ export function newestActiveOrchestrator(sessions: WorkspaceSession[]): Workspac
 	);
 }
 
+export function findFleetPrime(workspaces: WorkspaceSummary[]): WorkspaceSession | undefined {
+	const active = workspaces
+		.flatMap((workspace) => workspace.sessions)
+		.filter((session) => isPrimeSession(session) && sessionIsActive(session));
+	return active.reduce<WorkspaceSession | undefined>(
+		(newest, session) => (!newest || sessionNewer(session, newest) ? session : newest),
+		undefined,
+	);
+}
+
 function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	const aCreated = timestamp(a.createdAt);
 	const bCreated = timestamp(b.createdAt);
@@ -277,7 +296,11 @@ function timestamp(value?: string): number {
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
-	return sessions.filter((s) => !isOrchestratorSession(s));
+	return projectSessions(sessions).filter((s) => !isOrchestratorSession(s));
+}
+
+export function projectSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
+	return sessions.filter((s) => !isPrimeSession(s));
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {

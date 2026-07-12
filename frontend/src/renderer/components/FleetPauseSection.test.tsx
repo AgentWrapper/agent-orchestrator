@@ -9,7 +9,7 @@ const { getFleetPaused, pauseFleet, resumeFleet, useWorkspaceQuery } = vi.hoiste
 	pauseFleet: vi.fn(),
 	resumeFleet: vi.fn(),
 	useWorkspaceQuery: vi.fn(() => ({
-		data: [] as Array<{ id: string; pauseState?: string; drainingWorkers?: number }>,
+		data: { workspaces: [] as Array<{ id: string; pauseState?: string; drainingWorkers?: number }> },
 	})),
 }));
 
@@ -28,7 +28,7 @@ function renderSection() {
 describe("FleetPauseSection", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		useWorkspaceQuery.mockReturnValue({ data: [] });
+		useWorkspaceQuery.mockReturnValue({ data: { workspaces: [] } });
 	});
 	afterEach(() => vi.restoreAllMocks());
 
@@ -77,11 +77,13 @@ describe("FleetPauseSection", () => {
 	it("surfaces the draining lifecycle (count) while paused workers finish", async () => {
 		getFleetPaused.mockResolvedValue(true);
 		useWorkspaceQuery.mockReturnValue({
-			data: [
-				{ id: "a", pauseState: "draining", drainingWorkers: 2 },
-				{ id: "b", pauseState: "draining", drainingWorkers: 1 },
-				{ id: "c", pauseState: "paused", drainingWorkers: 0 },
-			],
+			data: {
+				workspaces: [
+					{ id: "a", pauseState: "draining", drainingWorkers: 2 },
+					{ id: "b", pauseState: "draining", drainingWorkers: 1 },
+					{ id: "c", pauseState: "paused", drainingWorkers: 0 },
+				],
+			},
 		});
 		renderSection();
 		await waitFor(() => expect(screen.getByText("Draining (3)")).toBeInTheDocument());

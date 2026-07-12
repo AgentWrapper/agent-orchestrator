@@ -14,6 +14,8 @@ ExecStart=%h/.local/bin/ao daemon
 Restart=always
 RestartSec=5s
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=AO_PRIME_PROJECT_ID=agent-orchestrator
+Environment="AO_PRIME_DISPLAY_NAME=AO Prime"
 Delegate=yes
 
 # Only signal the daemon's main process on restart. The tmux server can inherit

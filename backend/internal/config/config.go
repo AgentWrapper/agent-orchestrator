@@ -144,6 +144,9 @@ type Config struct {
 	// PrimeProjectID is the project that hosts the optional global prime
 	// orchestrator. Empty disables the prime supervisor.
 	PrimeProjectID string
+	// PrimeDisplayName is the optional fleet-scoped display name for the global
+	// prime orchestrator. Empty keeps the computed "<project> Prime" fallback.
+	PrimeDisplayName string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -174,6 +177,7 @@ func (c Config) Addr() string {
 //	AO_AGENT_HEALTH_INTERVAL agent-health probe period (Go duration >= 0, 0 disables, default 5m)
 //	AO_MODEL_REVALIDATION_INTERVAL model-pin probe period (Go duration >= 0, 0 disables, default 24h)
 //	AO_PRIME_PROJECT_ID optional project id that hosts the global prime orchestrator (default disabled)
+//	AO_PRIME_DISPLAY_NAME optional fleet-scoped prime display name (default computed from host project)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -259,6 +263,9 @@ func Load() (Config, error) {
 
 	if raw := strings.TrimSpace(os.Getenv("AO_PRIME_PROJECT_ID")); raw != "" {
 		cfg.PrimeProjectID = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv("AO_PRIME_DISPLAY_NAME")); raw != "" {
+		cfg.PrimeDisplayName = raw
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {

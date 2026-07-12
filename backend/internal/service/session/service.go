@@ -119,6 +119,7 @@ type Service struct {
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	primeLock           sync.Mutex
+	primeDisplayName    string
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -151,11 +152,14 @@ type Deps struct {
 	// IssueTitles resolves tracker issue titles for the computed session name.
 	// Left nil, names fall back to `<repoKey> #<issue>` with no slug.
 	IssueTitles issueTitles
+	// PrimeDisplayName is the optional fleet-scoped name for fresh prime
+	// spawns and clean replacements. Empty preserves the project-derived name.
+	PrimeDisplayName string
 }
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry, issueTitles: d.IssueTitles}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry, issueTitles: d.IssueTitles, primeDisplayName: strings.TrimSpace(d.PrimeDisplayName)}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -450,7 +454,7 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 	} else if len(existing) > 0 {
 		return newestSession(existing), nil
 	}
-	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime})
+	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime, DisplayName: s.primeDisplayName})
 	if err != nil {
 		return domain.Session{}, err
 	}

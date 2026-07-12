@@ -39,7 +39,7 @@ type PRRow = {
 export function PullRequestsPage() {
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
-	const sessions = (workspaceQuery.data ?? []).flatMap((w) => w.sessions);
+	const sessions = (workspaceQuery.data?.workspaces ?? []).flatMap((w) => w.sessions);
 	const prQueries = useQueries({
 		queries: sessions.map((session) => sessionScmSummaryQueryOptions(session.id)),
 	});

@@ -31,7 +31,7 @@ function renderPage() {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
-	queryClient.setQueryData(workspaceQueryKey, [workspace]);
+	queryClient.setQueryData(workspaceQueryKey, { workspaces: [workspace] });
 	render(
 		<QueryClientProvider client={queryClient}>
 			<WorkerCapacityPage projectId="ao" />

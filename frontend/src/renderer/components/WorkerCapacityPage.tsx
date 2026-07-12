@@ -66,7 +66,7 @@ function formatTime(iso?: string): string {
 export function WorkerCapacityPage({ projectId }: { projectId: string }) {
 	const query = useWorkerCapacityQuery(projectId);
 	const workspaceQuery = useWorkspaceQuery();
-	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
+	const workspace = workspaceQuery.data?.workspaces.find((item) => item.id === projectId);
 	const subtitle = workspace?.path ?? projectId;
 
 	return (

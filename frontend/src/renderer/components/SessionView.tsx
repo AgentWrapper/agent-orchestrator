@@ -10,7 +10,7 @@ import { useShell } from "../lib/shell-context";
 import { hasElectronBridge } from "../lib/runtime-environment";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import { isOrchestratorSession } from "../types/workspace";
+import { isOrchestratorSession, isPrimeSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 
 const INSPECTOR_MIN_PERCENT = 22;
@@ -40,7 +40,7 @@ type SessionViewProps = {
 // the clipped panel so nothing reflows mid-animation; split width persists.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
-	const workspaces = workspaceQuery.data ?? [];
+	const workspaces = workspaceQuery.data?.workspaces ?? [];
 	const { theme } = useUiStore();
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
@@ -51,10 +51,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
 
-	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const session = [workspaceQuery.data?.primeSession, ...workspaces.flatMap((workspace) => workspace.sessions)].find(
+		(s) => s?.id === sessionId,
+	);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
+	const isPrime = session ? isPrimeSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
-	const hasInspector = !isOrchestrator;
+	const hasInspector = !isOrchestrator && !isPrime;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const electronBridgeAvailable = hasElectronBridge();

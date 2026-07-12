@@ -127,6 +127,9 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		PRClaimer: store,
 		SCM:       scmProvider,
 		Telemetry: telemetry,
+		// Fleet-scoped prime identity: the host project owns the workspace, but
+		// not the user-facing name.
+		PrimeDisplayName: cfg.PrimeDisplayName,
 		// no_signal only makes sense for harnesses whose adapters install activity
 		// hooks directly or delegate through Claude Code hooks.
 		SignalCapable: activitydispatch.SupportsHarness,

@@ -6,6 +6,7 @@ import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
+	isPrimeSession,
 	sessionIsActive,
 	type SessionActivityState,
 	type WorkspaceSession,
@@ -68,13 +69,18 @@ export function ShellTopbar() {
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
-	const all = useWorkspaceQuery().data ?? [];
+	const workspaceData = useWorkspaceQuery().data;
+	const all = workspaceData?.workspaces ?? [];
 
 	const session = params.sessionId
-		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)
+		? [workspaceData?.primeSession, ...all.flatMap((workspace) => workspace.sessions)].find(
+				(s) => s?.id === params.sessionId,
+			)
 		: undefined;
 	const isSessionRoute = Boolean(params.sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
+	const isPrime = session ? isPrimeSession(session) : false;
+	const isTerminalOnly = isOrchestrator || isPrime;
 	// Project in scope: the session's workspace wins over the route param so the
 	// cross-project /sessions/$sessionId route still resolves a crumb. A
 	// projectId that no longer resolves (stale route after the project was
@@ -202,7 +208,7 @@ export function ShellTopbar() {
 						) : null}
 						{/* Kill control sits beside the orchestrator link for active workers —
 						    moved here from the inspector's Summary "Danger zone". */}
-						{!isOrchestrator && session && sessionIsActive(session) ? (
+						{!isTerminalOnly && session && sessionIsActive(session) ? (
 							<TopbarKillButton
 								session={session}
 								orchestratorId={orchestrator?.id}
@@ -218,7 +224,7 @@ export function ShellTopbar() {
 								}}
 							/>
 						) : null}
-						{!isOrchestrator && (
+						{!isTerminalOnly && (
 							<TopbarButton
 								aria-label="Open orchestrator"
 								disabled={isSpawning || isProjectRestarting}
@@ -231,7 +237,7 @@ export function ShellTopbar() {
 							</TopbarButton>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
-						{!isOrchestrator && (
+						{!isTerminalOnly && (
 							<TopbarButton
 								aria-label={isInspectorOpen ? "Close inspector panel" : "Open inspector panel"}
 								aria-pressed={isInspectorOpen}

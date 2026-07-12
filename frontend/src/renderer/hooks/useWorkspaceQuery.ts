@@ -2,11 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import {
+	findFleetPrime,
+	projectSessions,
 	type PRState,
 	type PullRequestFacts,
 	toAgentProvider,
 	toSessionActivity,
 	toSessionStatus,
+	type WorkspaceQueryData,
+	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
 
@@ -25,9 +29,36 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 
 export const workspaceQueryKey = ["workspaces"] as const;
 
-async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
+function toWorkspaceSession(
+	session: components["schemas"]["ControllersSessionView"],
+	project: components["schemas"]["ProjectSummary"],
+): WorkspaceSession {
+	return {
+		id: session.id,
+		terminalHandleId: session.terminalHandleId,
+		workspaceId: project.id,
+		workspaceName: project.name,
+		title: session.displayName ?? session.issueId ?? session.id,
+		issueId: session.issueId,
+		provider: toAgentProvider(session.harness),
+		kind:
+			session.kind === "orchestrator" || session.kind === "worker" || session.kind === "prime"
+				? session.kind
+				: undefined,
+		branch: session.branch ?? `session/${session.id}`,
+		status: toSessionStatus(session.status, session.isTerminated),
+		createdAt: session.createdAt,
+		updatedAt: session.updatedAt,
+		activity: toSessionActivity(session.activity),
+		previewUrl: session.previewUrl,
+		previewRevision: session.previewRevision,
+		prs: (session.prs ?? []).map(toPullRequestFacts),
+	};
+}
+
+async function fetchWorkspaces(): Promise<WorkspaceQueryData> {
 	if (!hasTrustedApiBaseUrl()) {
-		return [];
+		return { workspaces: [] };
 	}
 
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =
@@ -35,7 +66,17 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	return (projectsData?.projects ?? []).map((project) => ({
+	const projects = projectsData?.projects ?? [];
+	const sessionsByProject = new Map<string, WorkspaceSession[]>();
+	for (const project of projects) {
+		sessionsByProject.set(
+			project.id,
+			(sessionsData?.sessions ?? [])
+				.filter((session) => session.projectId === project.id)
+				.map((session) => toWorkspaceSession(session, project)),
+		);
+	}
+	const workspacesWithAllSessions: WorkspaceSummary[] = projects.map((project) => ({
 		id: project.id,
 		name: project.name,
 		kind: project.kind === "workspace" ? "workspace" : "single_repo",
@@ -44,30 +85,16 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		paused: project.paused,
 		pauseState: project.pauseState as WorkspaceSummary["pauseState"],
 		drainingWorkers: project.drainingWorkers,
-		sessions: (sessionsData?.sessions ?? [])
-			.filter((session) => session.projectId === project.id)
-			.map((session) => ({
-				id: session.id,
-				terminalHandleId: session.terminalHandleId,
-				workspaceId: project.id,
-				workspaceName: project.name,
-				title: session.displayName ?? session.issueId ?? session.id,
-				issueId: session.issueId,
-				provider: toAgentProvider(session.harness),
-				kind:
-					session.kind === "orchestrator" || session.kind === "worker" || session.kind === "prime"
-						? session.kind
-						: undefined,
-				branch: session.branch ?? `session/${session.id}`,
-				status: toSessionStatus(session.status, session.isTerminated),
-				createdAt: session.createdAt,
-				updatedAt: session.updatedAt,
-				activity: toSessionActivity(session.activity),
-				previewUrl: session.previewUrl,
-				previewRevision: session.previewRevision,
-				prs: (session.prs ?? []).map(toPullRequestFacts),
-			})),
+		sessions: sessionsByProject.get(project.id) ?? [],
 	}));
+	const primeSession = findFleetPrime(workspacesWithAllSessions);
+	return {
+		workspaces: workspacesWithAllSessions.map((workspace) => ({
+			...workspace,
+			sessions: projectSessions(workspace.sessions),
+		})),
+		primeSession,
+	};
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired

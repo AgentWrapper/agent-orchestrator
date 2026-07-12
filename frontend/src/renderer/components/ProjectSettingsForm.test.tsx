@@ -36,7 +36,7 @@ function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
 		},
 	});
 	if (workspaces) {
-		queryClient.setQueryData(workspaceQueryKey, workspaces);
+		queryClient.setQueryData(workspaceQueryKey, { workspaces });
 	}
 	render(
 		<QueryClientProvider client={queryClient}>

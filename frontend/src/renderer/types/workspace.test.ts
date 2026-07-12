@@ -3,9 +3,11 @@ import {
 	attentionZone,
 	canonicalTrackerIssueId,
 	findProjectOrchestrator,
+	findFleetPrime,
 	newestActiveOrchestrator,
 	pauseStateLabel,
 	orchestratorHealth,
+	projectSessions,
 	sessionIsActive,
 	sessionNeedsAttention,
 	toAgentProvider,
@@ -208,6 +210,37 @@ describe("sessionNeedsAttention", () => {
 	it("is false for statuses that don't need the user", () => {
 		expect(sessionNeedsAttention(sessionWith({ status: "working" }))).toBe(false);
 		expect(sessionNeedsAttention(sessionWith({ status: "mergeable" }))).toBe(false);
+	});
+});
+
+describe("findFleetPrime", () => {
+	it("selects the newest active prime across projects", () => {
+		const older = sessionWith({ id: "ao-prime-1", kind: "prime", status: "idle", createdAt: "2026-01-01T00:00:00Z" });
+		const newer = sessionWith({
+			id: "ao-prime-2",
+			kind: "prime",
+			status: "working",
+			createdAt: "2026-01-02T00:00:00Z",
+		});
+		const worker = sessionWith({ id: "ao-worker-1", kind: "worker", status: "working" });
+
+		expect(findFleetPrime([{ id: "ao", name: "AO", path: "/ao", sessions: [older, worker, newer] }])).toBe(newer);
+	});
+
+	it("ignores terminated primes", () => {
+		const dead = sessionWith({ id: "ao-prime-1", kind: "prime", status: "terminated" });
+
+		expect(findFleetPrime([{ id: "ao", name: "AO", path: "/ao", sessions: [dead] }])).toBeUndefined();
+	});
+});
+
+describe("projectSessions", () => {
+	it("removes fleet prime sessions from project child lists", () => {
+		const prime = sessionWith({ id: "ao-prime", kind: "prime", status: "working" });
+		const orchestrator = sessionWith({ id: "ao-orchestrator", kind: "orchestrator", status: "working" });
+		const worker = sessionWith({ id: "ao-worker", kind: "worker", status: "working" });
+
+		expect(projectSessions([prime, orchestrator, worker])).toEqual([orchestrator, worker]);
 	});
 });
 

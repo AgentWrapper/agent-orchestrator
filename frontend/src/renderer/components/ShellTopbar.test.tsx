@@ -92,7 +92,7 @@ function renderTopbar(session: WorkspaceSession) {
 			sessions: [session],
 		},
 	];
-	useWorkspaceQueryMock.mockReturnValue({ data, isError: false, isLoading: false });
+	useWorkspaceQueryMock.mockReturnValue({ data: { workspaces: data }, isError: false, isLoading: false });
 	paramsMock.projectId = session.workspaceId;
 	paramsMock.sessionId = session.id;
 	return render(
@@ -125,7 +125,7 @@ beforeEach(() => {
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	useWorkspaceQueryMock.mockReset();
-	useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
+	useWorkspaceQueryMock.mockReturnValue({ data: { workspaces: [] }, isError: false, isLoading: false });
 });
 
 describe("ShellTopbar status pill", () => {
@@ -168,6 +168,23 @@ describe("ShellTopbar status pill", () => {
 		first.unmount();
 		renderTopbar(sessionWith({ activity: { state: "unknown", lastActivityAt: "" } }));
 		expect(screen.getByText("Unknown")).toBeInTheDocument();
+	});
+
+	it("suppresses worker-only controls for the fleet prime", () => {
+		renderTopbar(
+			sessionWith({
+				id: "prime-1",
+				kind: "prime",
+				title: "AO Prime",
+				branch: "ao/agent-orchestrator-prime",
+				activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
+			}),
+		);
+
+		expect(screen.getByText("Working")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Kill session" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open orchestrator" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
 	});
 });
 

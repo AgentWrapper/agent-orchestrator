@@ -13,6 +13,12 @@
 			"model": "opus"
 		}
 	},
+	"prime": {
+		"agent": "claude-code",
+		"agentConfig": {
+			"model": "opus"
+		}
+	},
 	"projectPrefix": "ao",
 	"trackerIntake": {
 		"enabled": true,

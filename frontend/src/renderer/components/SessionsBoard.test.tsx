@@ -28,7 +28,7 @@ function renderBoard() {
 
 beforeEach(() => {
 	navigateMock.mockReset();
-	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	workspaceQueryMock.mockReset().mockReturnValue({ data: { workspaces: [] }, isError: false });
 });
 
 describe("SessionsBoard", () => {

@@ -144,7 +144,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
-	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
+	const workspace = workspaceQuery.data?.workspaces.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const projectPrefix = config.projectPrefix ?? config.sessionPrefix ?? "";

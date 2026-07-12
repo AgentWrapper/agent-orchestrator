@@ -20,7 +20,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
 import { useUiStore } from "../stores/ui-store";
-import type { WorkspaceSummary } from "../types/workspace";
+import type { WorkspaceQueryData, WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -38,6 +38,18 @@ function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
 }
 
+export function applyWorkspaceUpdate(
+	current: WorkspaceQueryData | undefined,
+	updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[],
+): WorkspaceQueryData {
+	const nextWorkspaces = updater(current?.workspaces ?? []);
+	const primeSession =
+		current?.primeSession && nextWorkspaces.some((workspace) => workspace.id === current.primeSession?.workspaceId)
+			? current.primeSession
+			: undefined;
+	return { workspaces: nextWorkspaces, primeSession };
+}
+
 const isLinux =
 	typeof navigator !== "undefined" &&
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
@@ -53,7 +65,8 @@ function ShellLayout() {
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
-	const workspaces = workspaceQuery.data ?? [];
+	const workspaces = workspaceQuery.data?.workspaces ?? [];
+	const primeSession = workspaceQuery.data?.primeSession;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogEndpointRef = useRef<number | string | undefined>(undefined);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
@@ -68,7 +81,9 @@ function ShellLayout() {
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
-			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current = []) => updater(current));
+			queryClient.setQueryData<WorkspaceQueryData>(workspaceQueryKey, (current) =>
+				applyWorkspaceUpdate(current, updater),
+			);
 		},
 		[queryClient],
 	);
@@ -280,6 +295,7 @@ function ShellLayout() {
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
+						primeSession={primeSession}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>

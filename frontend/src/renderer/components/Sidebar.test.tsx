@@ -59,6 +59,19 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
+const primeSession: WorkspaceSession = {
+	id: "proj-1-prime",
+	workspaceId: "proj-1",
+	workspaceName: "Project One",
+	title: "AO Prime",
+	provider: "codex",
+	kind: "prime",
+	branch: "ao/proj-prime",
+	status: "working",
+	updatedAt: "2026-07-12T00:00:00Z",
+	prs: [],
+};
+
 type CreateProjectHandler = (input: {
 	path: string;
 	workerAgent: string;
@@ -75,12 +88,14 @@ function renderSidebar({
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
 	seedAgents = true,
 	workspaces = [workspace],
+	primeSession,
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
+	primeSession?: WorkspaceSession;
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -109,6 +124,7 @@ function renderSidebar({
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
+					primeSession={primeSession}
 					workspaces={workspaces}
 				/>
 			</SidebarProvider>
@@ -194,6 +210,25 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("renders the active prime above projects and opens its cross-project session route", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ primeSession, workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const primeButton = screen.getByLabelText("Open AO Prime");
+		const projectButton = screen.getByLabelText("Open Project One dashboard");
+		expect(primeButton.compareDocumentPosition(projectButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+		await user.click(primeButton);
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/sessions/$sessionId", params: { sessionId: "proj-1-prime" } });
+	});
+
+	it("does not render prime sessions as project child sessions", () => {
+		renderSidebar({ primeSession, workspaces: [{ ...workspace, sessions: [session, primeSession] }] });
+
+		expect(screen.getByLabelText("Open AO Prime")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Rename AO Prime")).not.toBeInTheDocument();
+	});
+
 	it("confirms project removal before calling the remove handler", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();

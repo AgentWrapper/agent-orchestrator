@@ -1846,6 +1846,21 @@ func TestSpawn_DerivesPrimeLaunchTitleFromProject(t *testing.T) {
 	}
 }
 
+func TestSpawn_UsesExplicitPrimeLaunchTitle(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao", DisplayName: "Agent Orchestrator", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessClaudeCode}}}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "ao", Kind: domain.KindPrime, DisplayName: "AO Prime"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := agent.lastLaunch.LaunchTitle; got != "AO Prime" {
+		t.Fatalf("prime launch title = %q, want AO Prime", got)
+	}
+}
+
 func TestSpawn_InCommandHarnessDoesNotPostStartPrompt(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
