@@ -21,16 +21,15 @@ func projectServer(t *testing.T, status int, respBody string) (*httptest.Server,
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.method = r.Method
 		capture.path = r.URL.Path
-		capture.body, _ = io.ReadAll(r.Body)
-		if !strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
-			http.NotFound(w, r)
-			return
-		}
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read request body: %v", err)
 		}
-		capture.body = string(data)
+		capture.body = data
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, respBody)

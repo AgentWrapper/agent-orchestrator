@@ -87,7 +87,7 @@ type Service struct {
 	store               Store
 	prClaimer           ports.PRClaimer
 	scm                 scmProvider
-	tracker   ports.Tracker
+	tracker             ports.Tracker
 	clock               func() time.Time
 	telemetry           ports.EventSink
 	orchestratorLocksMu sync.Mutex

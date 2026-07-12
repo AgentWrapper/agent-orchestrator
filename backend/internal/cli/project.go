@@ -102,13 +102,13 @@ type projectConfig struct {
 	Env               map[string]string   `json:"env,omitempty"`
 	Symlinks          []string            `json:"symlinks,omitempty"`
 	PostCreate        []string            `json:"postCreate,omitempty"`
-	AgentRules        string            `json:"agentRules,omitempty"`
-	AgentRulesFile    string            `json:"agentRulesFile,omitempty"`
-	OrchestratorRules string            `json:"orchestratorRules,omitempty"`
+	AgentRules        string              `json:"agentRules,omitempty"`
+	AgentRulesFile    string              `json:"agentRulesFile,omitempty"`
+	OrchestratorRules string              `json:"orchestratorRules,omitempty"`
 	AgentConfig       agentConfig         `json:"agentConfig,omitempty"`
 	Worker            roleOverride        `json:"worker,omitempty"`
 	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
-	TrackerIntake trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
