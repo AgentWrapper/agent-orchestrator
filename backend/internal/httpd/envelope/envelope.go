@@ -86,6 +86,8 @@ func httpStatus(k apierr.Kind) (int, string) {
 		return http.StatusNotFound, "not_found"
 	case apierr.KindConflict:
 		return http.StatusConflict, "conflict"
+	case apierr.KindForbidden:
+		return http.StatusForbidden, "forbidden"
 	case apierr.KindInternal:
 		return http.StatusInternalServerError, "internal"
 	default:

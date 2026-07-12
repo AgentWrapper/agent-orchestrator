@@ -20,6 +20,8 @@ const (
 	KindNotFound
 	// KindConflict is a state/uniqueness clash; it maps to 409.
 	KindConflict
+	// KindForbidden is an authorization or authority failure; it maps to 403.
+	KindForbidden
 )
 
 // Error is the structured error every service returns. Code is a stable machine
@@ -58,6 +60,11 @@ func NotFound(code, message string) *Error {
 // Conflict is a 409-class error.
 func Conflict(code, message string, details map[string]any) *Error {
 	return New(KindConflict, code, message, details)
+}
+
+// Forbidden is a 403-class error.
+func Forbidden(code, message string, details map[string]any) *Error {
+	return New(KindForbidden, code, message, details)
 }
 
 // Internal is a 500-class error.

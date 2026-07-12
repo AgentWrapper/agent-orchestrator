@@ -70,7 +70,7 @@ func titleForIntent(intent Intent) string {
 	case domain.NotificationOrchestratorReplaced:
 		return fmt.Sprintf("%s was replaced", sessionLabel(intent))
 	case domain.NotificationOrchestratorReplacementCapped:
-		return fmt.Sprintf("%s replacement paused", sessionLabel(intent))
+		return fmt.Sprintf("%s replacement backing off", sessionLabel(intent))
 	case domain.NotificationDuplicatePR:
 		return fmt.Sprintf("Duplicate %s for the same issue", prLabel(intent))
 	case domain.NotificationWorkerDiedUnfinished:
@@ -119,9 +119,9 @@ func bodyForIntent(intent Intent) string {
 		return "AO replaced an unresponsive project orchestrator."
 	case domain.NotificationOrchestratorReplacementCapped:
 		if intent.SessionKind == domain.KindPrime {
-			return "AO stopped replacing the prime orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline."
+			return "AO exhausted the prime orchestrator fast replacement window and is retrying with backoff. Inspect the harness, auth, and hook pipeline."
 		}
-		return "AO stopped replacing this project orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline."
+		return "AO exhausted this project orchestrator's fast replacement window and is retrying with backoff. Inspect the harness, auth, and hook pipeline."
 	case domain.NotificationDuplicatePR:
 		return duplicatePRBody(intent)
 	case domain.NotificationWorkerDiedUnfinished:

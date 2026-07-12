@@ -253,6 +253,7 @@ func TestLoadInvalid(t *testing.T) {
 		{"bad telemetry events", map[string]string{"AO_TELEMETRY_EVENTS": "maybe"}},
 		{"bad telemetry metrics", map[string]string{"AO_TELEMETRY_METRICS": "maybe"}},
 		{"bad telemetry remote", map[string]string{"AO_TELEMETRY_REMOTE": "otlp"}},
+		{"overlong prime display name", map[string]string{"AO_PRIME_DISPLAY_NAME": "this prime display name is too long"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

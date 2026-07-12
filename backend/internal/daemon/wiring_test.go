@@ -696,6 +696,17 @@ func (f *fakeOrchestratorEnsurer) SpawnPrime(_ context.Context, projectID domain
 	}, nil
 }
 
+func (f *fakeOrchestratorEnsurer) ActivePrime(_ context.Context) (domain.Session, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, sess := range f.sessions {
+		if sess.Kind == domain.KindPrime && !sess.IsTerminated {
+			return sess, true, nil
+		}
+	}
+	return domain.Session{}, false, nil
+}
+
 func (f *fakeOrchestratorEnsurer) WakeIdle(_ context.Context, id domain.SessionID, message string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1115,7 +1126,7 @@ func TestEnsureOrchestratorsReplacesExitedOrchestratorRow(t *testing.T) {
 	}
 }
 
-func TestEnsureOrchestratorsCapsReplacementStormAndNotifies(t *testing.T) {
+func TestEnsureOrchestratorsBacksOffReplacementStormAndKeepsRetrying(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
 	staleActivity := domain.Activity{
@@ -1140,15 +1151,89 @@ func TestEnsureOrchestratorsCapsReplacementStormAndNotifies(t *testing.T) {
 	tracker := newOrchestratorWakeTracker()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	for i := 0; i < orchestratorMaxReplacementsPerWindow+2; i++ {
+	for i := 0; i < orchestratorMaxReplacementsPerWindow; i++ {
 		ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now.Add(time.Duration(i)*time.Minute), log)
 	}
 
 	if len(sessions.cleanCalls) != orchestratorMaxReplacementsPerWindow {
-		t.Fatalf("clean replacements = %d, want cap %d", len(sessions.cleanCalls), orchestratorMaxReplacementsPerWindow)
+		t.Fatalf("clean replacements = %d, want fast-window replacements %d", len(sessions.cleanCalls), orchestratorMaxReplacementsPerWindow)
 	}
+	ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now.Add(time.Duration(orchestratorMaxReplacementsPerWindow)*time.Minute), log)
 	if len(notifier.intents) != orchestratorMaxReplacementsPerWindow+1 {
 		t.Fatalf("notifications = %#v, want one per replacement plus one cap alert", notifier.intents)
+	}
+	if got := notifier.intents[len(notifier.intents)-1]; got.Type != domain.NotificationOrchestratorReplacementCapped {
+		t.Fatalf("last notification = %#v, want replacement cap alert", got)
+	}
+	if len(sessions.cleanCalls) != orchestratorMaxReplacementsPerWindow {
+		t.Fatalf("clean replacements after cap alert = %d, want still at fast-window cap", len(sessions.cleanCalls))
+	}
+
+	ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now.Add(time.Duration(orchestratorMaxReplacementsPerWindow)*time.Minute+orchestratorReplacementInitialBackoff+time.Second), log)
+	if len(sessions.cleanCalls) != orchestratorMaxReplacementsPerWindow+1 {
+		t.Fatalf("clean replacements after backoff = %d, want retry after backoff", len(sessions.cleanCalls))
+	}
+	if len(notifier.intents) != orchestratorMaxReplacementsPerWindow+2 {
+		t.Fatalf("notifications after backoff = %#v, want replacement notification after cap alert", notifier.intents)
+	}
+	if got := notifier.intents[len(notifier.intents)-1]; got.Type != domain.NotificationOrchestratorReplaced {
+		t.Fatalf("last notification after backoff = %#v, want replacement", got)
+	}
+}
+
+func TestEnsureOrchestratorsFreshReplacementDoesNotResetStormWindow(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "mer"}}}
+	staleActivity := domain.Activity{
+		State:          domain.ActivityIdle,
+		LastActivityAt: now.Add(-orchestratorUnhealthyReplacementThreshold - time.Minute),
+	}
+	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:        "mer-orch",
+			ProjectID: "mer",
+			Kind:      domain.KindOrchestrator,
+			Harness:   domain.HarnessCodex,
+			Activity:  staleActivity,
+		},
+		Status: domain.StatusNoSignal,
+	}}}
+	notifier := &fakeOrchestratorNotifier{}
+	tracker := newOrchestratorWakeTracker()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now, log)
+	if len(sessions.cleanCalls) != 1 {
+		t.Fatalf("clean replacements after first stale session = %d, want 1", len(sessions.cleanCalls))
+	}
+
+	// The first replacement is fresh enough to look healthy on the next tick. That
+	// must not erase the replacement window; an immediate crash loop after startup
+	// still needs to hit the fast-window cap.
+	ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now.Add(30*time.Second), log)
+	if len(sessions.cleanCalls) != 1 {
+		t.Fatalf("fresh replacement tick should not replace again, clean replacements = %d", len(sessions.cleanCalls))
+	}
+
+	for i := range sessions.sessions {
+		if sessions.sessions[i].ProjectID == "mer" && sessions.sessions[i].Kind == domain.KindOrchestrator && !sessions.sessions[i].IsTerminated {
+			sessions.sessions[i].Status = domain.StatusNoSignal
+			sessions.sessions[i].Activity = staleActivity
+		}
+	}
+	sessions.replStatus = domain.StatusNoSignal
+	sessions.replActivity = staleActivity
+
+	for i := 1; i < orchestratorMaxReplacementsPerWindow; i++ {
+		ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now.Add(time.Duration(i)*time.Minute), log)
+	}
+	if len(sessions.cleanCalls) != orchestratorMaxReplacementsPerWindow {
+		t.Fatalf("clean replacements before cap = %d, want %d", len(sessions.cleanCalls), orchestratorMaxReplacementsPerWindow)
+	}
+
+	ensureOrchestrators(context.Background(), projects, sessions, notifier, tracker, now.Add(time.Duration(orchestratorMaxReplacementsPerWindow)*time.Minute), log)
+	if len(sessions.cleanCalls) != orchestratorMaxReplacementsPerWindow {
+		t.Fatalf("clean replacements after cap tick = %d, want still capped at %d", len(sessions.cleanCalls), orchestratorMaxReplacementsPerWindow)
 	}
 	if got := notifier.intents[len(notifier.intents)-1]; got.Type != domain.NotificationOrchestratorReplacementCapped {
 		t.Fatalf("last notification = %#v, want replacement cap alert", got)
@@ -1562,6 +1647,97 @@ func TestEnsurePrimeStillWarnsOnUnexpectedEnsureError(t *testing.T) {
 	}
 }
 
+func TestEnsurePrimeSkipsPausedHostProject(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:        "ao-prime",
+			ProjectID: "ao",
+			Kind:      domain.KindPrime,
+		},
+	}}}
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
+		ID:         "ao",
+		PauseState: projectsvc.PauseStatePaused,
+		Config:     domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}}}
+
+	wakes := newOrchestratorWakeTracker()
+	ensurePrime(context.Background(), "ao", projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if len(sessions.primeCalls) != 0 {
+		t.Fatalf("prime calls = %v, want none while prime host project is paused", sessions.primeCalls)
+	}
+	if len(sessions.sends) != 0 {
+		t.Fatalf("prime sends = %v, want none while prime host project is paused", sessions.sends)
+	}
+	if len(sessions.pauseSends) != 1 || sessions.pauseSends[0].id != "ao-prime" || !strings.Contains(sessions.pauseSends[0].message, "PAUSED") {
+		t.Fatalf("pause notice = %#v, want one pause notice to active prime", sessions.pauseSends)
+	}
+
+	ensurePrime(context.Background(), "ao", projects, sessions, nil, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(sessions.pauseSends) != 1 {
+		t.Fatalf("pause notice should be sent once per active prime, sends=%#v", sessions.pauseSends)
+	}
+}
+
+func TestEnsurePrimeSendsResumeNoticeAfterPausedHostResumes(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	pausedProjects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
+		ID:         "ao",
+		PauseState: projectsvc.PauseStatePaused,
+		Config:     domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}}}
+	runningProjects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
+		ID:     "ao",
+		Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}}}
+	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:        "ao-prime",
+			ProjectID: "ao",
+			Kind:      domain.KindPrime,
+			Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		},
+		Status: domain.StatusIdle,
+	}}}
+	wakes := newOrchestratorWakeTracker()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ensurePrime(context.Background(), "ao", pausedProjects, sessions, nil, wakes, now, log)
+	ensurePrime(context.Background(), "ao", runningProjects, sessions, nil, wakes, now.Add(30*time.Second), log)
+
+	if len(sessions.pauseSends) != 2 {
+		t.Fatalf("pause/resume sends = %#v, want two notices", sessions.pauseSends)
+	}
+	if got := sessions.pauseSends[1]; got.id != "ao-prime" || !strings.Contains(got.message, "RESUMED") {
+		t.Fatalf("resume notice = %#v, want resume notice to active prime", got)
+	}
+}
+
+func TestEnsurePrimeDisabledClearsPausedMarkerWithoutResumeNotice(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao"}}}
+	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:        "ao-prime",
+			ProjectID: "ao",
+			Kind:      domain.KindPrime,
+		},
+	}}}
+	wakes := newOrchestratorWakeTracker()
+	wakes.primePausedNotified["ao"] = "ao-prime"
+
+	ensurePrime(context.Background(), "ao", projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, ok := wakes.primePausedNotified["ao"]; ok {
+		t.Fatalf("disabled prime should clear paused marker, got %#v", wakes.primePausedNotified)
+	}
+	if len(sessions.pauseSends) != 0 {
+		t.Fatalf("disabled prime must not send resume notice, sends=%#v", sessions.pauseSends)
+	}
+}
+
 func TestEnsurePrimeReplacesStaleNoSignalPrime(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
@@ -1596,7 +1772,7 @@ func TestEnsurePrimeReplacesStaleNoSignalPrime(t *testing.T) {
 	}
 }
 
-func TestEnsurePrimeCapsReplacementStormAndNotifies(t *testing.T) {
+func TestEnsurePrimeBacksOffReplacementStormAndKeepsRetrying(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{ID: "ao", Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}}}}}
 	staleActivity := domain.Activity{
@@ -1621,17 +1797,32 @@ func TestEnsurePrimeCapsReplacementStormAndNotifies(t *testing.T) {
 	tracker := newOrchestratorWakeTracker()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	for i := 0; i < orchestratorMaxReplacementsPerWindow+2; i++ {
+	for i := 0; i < orchestratorMaxReplacementsPerWindow; i++ {
 		ensurePrime(context.Background(), "ao", projects, sessions, notifier, tracker, now.Add(time.Duration(i)*time.Minute), log)
 	}
 
 	if len(sessions.primeClean) != orchestratorMaxReplacementsPerWindow {
-		t.Fatalf("prime clean replacements = %d, want cap %d", len(sessions.primeClean), orchestratorMaxReplacementsPerWindow)
+		t.Fatalf("prime clean replacements = %d, want fast-window replacements %d", len(sessions.primeClean), orchestratorMaxReplacementsPerWindow)
 	}
+	ensurePrime(context.Background(), "ao", projects, sessions, notifier, tracker, now.Add(time.Duration(orchestratorMaxReplacementsPerWindow)*time.Minute), log)
 	if len(notifier.intents) != orchestratorMaxReplacementsPerWindow+1 {
 		t.Fatalf("notifications = %#v, want one per replacement plus one cap alert", notifier.intents)
 	}
 	if got := notifier.intents[len(notifier.intents)-1]; got.Type != domain.NotificationOrchestratorReplacementCapped {
 		t.Fatalf("last notification = %#v, want replacement cap alert", got)
+	}
+	if len(sessions.primeClean) != orchestratorMaxReplacementsPerWindow {
+		t.Fatalf("prime clean replacements after cap alert = %d, want still at fast-window cap", len(sessions.primeClean))
+	}
+
+	ensurePrime(context.Background(), "ao", projects, sessions, notifier, tracker, now.Add(time.Duration(orchestratorMaxReplacementsPerWindow)*time.Minute+orchestratorReplacementInitialBackoff+time.Second), log)
+	if len(sessions.primeClean) != orchestratorMaxReplacementsPerWindow+1 {
+		t.Fatalf("prime clean replacements after backoff = %d, want retry after backoff", len(sessions.primeClean))
+	}
+	if len(notifier.intents) != orchestratorMaxReplacementsPerWindow+2 {
+		t.Fatalf("notifications after backoff = %#v, want replacement notification after cap alert", notifier.intents)
+	}
+	if got := notifier.intents[len(notifier.intents)-1]; got.Type != domain.NotificationOrchestratorReplaced {
+		t.Fatalf("last notification after backoff = %#v, want replacement", got)
 	}
 }

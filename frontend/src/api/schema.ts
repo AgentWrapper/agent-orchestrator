@@ -1370,7 +1370,7 @@ export interface components {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
             instructionsFile?: string;
-            /** @description Orchestrator role only. Positive Go duration string such as 15m; empty uses the daemon default. */
+            /** @description Orchestrator and prime roles only. Positive Go duration string such as 15m; empty uses the daemon default. */
             wakeInterval?: string;
             /** @enum {string} */
             workspace?: "worktree" | "in-place";
@@ -1546,7 +1546,7 @@ export interface components {
             harness?: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             issueId?: string;
             /** @enum {string} */
-            kind?: "worker" | "orchestrator" | "prime";
+            kind?: "worker" | "orchestrator";
             /** @description Model override for this session only. */
             model?: string;
             projectId: string;
@@ -3263,6 +3263,15 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

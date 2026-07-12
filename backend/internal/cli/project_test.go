@@ -5,11 +5,62 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+func TestProjectConfigMirrorJSONFieldsMatchDomain(t *testing.T) {
+	assertJSONFieldsMatch(t, reflect.TypeOf(projectConfig{}), reflect.TypeOf(domain.ProjectConfig{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(roleOverride{}), reflect.TypeOf(domain.RoleOverride{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(agentConfig{}), reflect.TypeOf(domain.AgentConfig{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(harnessModel{}), reflect.TypeOf(domain.HarnessModel{}))
+}
+
+func assertJSONFieldsMatch(t *testing.T, mirror, canonical reflect.Type) {
+	t.Helper()
+	mirrorFields := jsonFieldNames(mirror)
+	canonicalFields := jsonFieldNames(canonical)
+	var missing, extra []string
+	for field := range canonicalFields {
+		if !mirrorFields[field] {
+			missing = append(missing, field)
+		}
+	}
+	for field := range mirrorFields {
+		if !canonicalFields[field] {
+			extra = append(extra, field)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Fatalf("%s mirror JSON fields drifted from %s: missing=%v extra=%v", mirror.Name(), canonical.Name(), missing, extra)
+	}
+}
+
+func jsonFieldNames(typ reflect.Type) map[string]bool {
+	fields := map[string]bool{}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		tag := field.Tag.Get("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		fields[name] = true
+	}
+	return fields
+}
 
 type projectCapture struct {
 	method string
@@ -47,7 +98,7 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
-			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md"},"prime":{"agent":"claude-code","instructionsFile":".claude/prime-orchestrator-policy.md","wakeInterval":"20m"},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
 			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
 		default:
@@ -94,6 +145,19 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 		strings.Join(got.Config.TrackerIntake.ExcludeLabels, ",") != "no-ao" ||
 		got.Config.TrackerIntake.MaxConcurrent != 3 {
 		t.Fatalf("flag update did not preserve existing config: %#v", got.Config)
+	}
+	var raw map[string]map[string]any
+	if err := json.Unmarshal(requests[1].body, &raw); err != nil {
+		t.Fatalf("decode raw request: %v\nbody=%s", err, requests[1].body)
+	}
+	prime, ok := raw["config"]["prime"].(map[string]any)
+	if !ok {
+		t.Fatalf("flag update dropped prime config: %s", requests[1].body)
+	}
+	if prime["agent"] != "claude-code" ||
+		prime["instructionsFile"] != ".claude/prime-orchestrator-policy.md" ||
+		prime["wakeInterval"] != "20m" {
+		t.Fatalf("prime config = %#v, want stored prime preserved", prime)
 	}
 }
 
@@ -525,6 +589,32 @@ func TestBuildProjectConfigReviewersConfigJSON(t *testing.T) {
 	}
 	if err := domainCfg.Validate(); err != nil {
 		t.Fatalf("known reviewer rejected by validator: %v", err)
+	}
+}
+
+func TestBuildProjectConfigPrimeFlags(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{
+		primeAgent:            "claude-code",
+		primeInstructionsFile: ".claude/prime-orchestrator-policy.md",
+		primeWakeInterval:     "20m",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Prime.Agent != "claude-code" ||
+		got.Prime.InstructionsFile != ".claude/prime-orchestrator-policy.md" ||
+		got.Prime.WakeInterval != "20m" {
+		t.Fatalf("prime config = %#v", got.Prime)
+	}
+
+	domainCfg := marshalToDomainConfig(t, got)
+	if domainCfg.Prime.Harness != domain.HarnessClaudeCode ||
+		domainCfg.Prime.InstructionsFile != ".claude/prime-orchestrator-policy.md" ||
+		domainCfg.Prime.WakeInterval != "20m" {
+		t.Fatalf("domain decode prime = %#v, want configured prime role", domainCfg.Prime)
+	}
+	if err := domainCfg.Validate(); err != nil {
+		t.Fatalf("prime config rejected by validator: %v", err)
 	}
 }
 

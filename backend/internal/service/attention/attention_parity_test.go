@@ -431,8 +431,9 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			}},
 		},
 		{
-			// Phase 2: replacement-capped is an operator-attention item (auto-repair
-			// gave up; a human must intervene). It deep-links to the dead role session.
+			// Phase 2: replacement-capped is an operator-attention item
+			// (auto-replacement is backing off; a human should inspect the
+			// harness). It deep-links to the dead role session.
 			name: "orchestrator_replacement_capped notification surfaces with the session deep link",
 			build: func() *parityFakeAttentionService {
 				return &parityFakeAttentionService{
@@ -440,8 +441,8 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 						{NotificationRecord: domain.NotificationRecord{
 							ID: "n-capped", ProjectID: "ao", SessionID: "orch-1",
 							Type: domain.NotificationOrchestratorReplacementCapped, Status: domain.NotificationUnread,
-							Title:     "orchestrator replacement paused",
-							Body:      "AO stopped replacing this project orchestrator after repeated failures.",
+							Title:     "orchestrator replacement backing off",
+							Body:      "AO exhausted this project orchestrator's fast replacement window and is retrying with backoff.",
 							CreatedAt: now,
 						}},
 					},
@@ -453,6 +454,23 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				prURL:     "",
 				deepLink:  "/projects/ao/sessions/orch-1",
 			}},
+		},
+		{
+			name: "orchestrator_replaced notification is informational and does not surface",
+			build: func() *parityFakeAttentionService {
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-replaced", ProjectID: "ao", SessionID: "ao-prime-replacement",
+							Type: domain.NotificationOrchestratorReplaced, Status: domain.NotificationUnread,
+							Title:     "prime replaced",
+							Body:      "AO replaced the prime orchestrator.",
+							CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: nil,
 		},
 		{
 			// Phase 2 negative: informational / non-operator-attention notification

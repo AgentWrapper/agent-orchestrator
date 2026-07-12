@@ -1841,8 +1841,8 @@ func TestSpawn_DerivesPrimeLaunchTitleFromProject(t *testing.T) {
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "ao", Kind: domain.KindPrime}); err != nil {
 		t.Fatal(err)
 	}
-	if got := agent.lastLaunch.LaunchTitle; got != "Agent Orchestr Prime" {
-		t.Fatalf("prime launch title = %q, want capped title preserving role suffix", got)
+	if got := agent.lastLaunch.LaunchTitle; got != "AO Prime" {
+		t.Fatalf("prime launch title = %q, want short project-prefix title", got)
 	}
 }
 
@@ -4798,6 +4798,117 @@ func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
 	}
 	if ws.stashCalls != 0 || lcm.terminated["s2"] != 0 || rt.destroyed != 0 {
 		t.Fatalf("adopt should be a no-op: stash=%d term=%d destroy=%d", ws.stashCalls, lcm.terminated["s2"], rt.destroyed)
+	}
+}
+
+func TestReconcileLive_PrimePaneAliveButAgentExitedTerminatesForReplacement(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{
+		aliveByHandle:        map[string]bool{"ao-prime": true},
+		processAliveByHandle: map[string]bool{"ao-prime": false},
+	}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/ao-prime"}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	rec := domain.SessionRecord{
+		ID:           "ao-prime",
+		ProjectID:    "ao",
+		Kind:         domain.KindPrime,
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/prime/root", WorkspacePath: "/wt/prime", RuntimeHandleID: "ao-prime",
+		},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if lcm.terminated["ao-prime"] != 1 {
+		t.Fatalf("MarkTerminated(ao-prime) = %d, want 1", lcm.terminated["ao-prime"])
+	}
+	if ws.stashCalls != 1 {
+		t.Fatalf("StashUncommitted calls = %d, want 1", ws.stashCalls)
+	}
+	if rows := st.worktrees["ao-prime"]; len(rows) != 1 {
+		t.Fatalf("session_worktrees marker for prime = %+v, want one restore marker", rows)
+	}
+	if len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "ao-prime" {
+		t.Fatalf("destroyed runtime handles = %v, want [ao-prime]", rt.destroyedIDs)
+	}
+}
+
+func TestReconcileLive_WorkerPaneAliveButAgentExitedTerminatesForRestore(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{
+		aliveByHandle:        map[string]bool{"worker": true},
+		processAliveByHandle: map[string]bool{"worker": false},
+	}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/worker"}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	rec := domain.SessionRecord{
+		ID:           "worker",
+		ProjectID:    "ao",
+		Kind:         domain.KindWorker,
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/worker/root", WorkspacePath: "/wt/worker", RuntimeHandleID: "worker",
+		},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if lcm.terminated["worker"] != 1 {
+		t.Fatalf("MarkTerminated(worker) = %d, want 1", lcm.terminated["worker"])
+	}
+	if ws.stashCalls != 1 {
+		t.Fatalf("StashUncommitted calls = %d, want 1", ws.stashCalls)
+	}
+	if rows := st.worktrees["worker"]; len(rows) != 1 {
+		t.Fatalf("session_worktrees marker for worker = %+v, want one restore marker", rows)
+	}
+	if len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "worker" {
+		t.Fatalf("destroyed runtime handles = %v, want [worker]", rt.destroyedIDs)
+	}
+}
+
+func TestReconcileLive_PaneAliveAgentExitedDestroysRuntimeWhenStashFails(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{
+		aliveByHandle:        map[string]bool{"worker": true},
+		processAliveByHandle: map[string]bool{"worker": false},
+	}
+	ws := &fakeWorkspace{stashErr: errors.New("dirty check failed")}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	rec := domain.SessionRecord{
+		ID:           "worker",
+		ProjectID:    "ao",
+		Kind:         domain.KindWorker,
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/worker/root", WorkspacePath: "/wt/worker", RuntimeHandleID: "worker",
+		},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if lcm.terminated["worker"] != 1 {
+		t.Fatalf("MarkTerminated(worker) = %d, want 1", lcm.terminated["worker"])
+	}
+	if rows := st.worktrees["worker"]; len(rows) != 0 {
+		t.Fatalf("stash failure must not create restore markers, got %+v", rows)
+	}
+	if len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "worker" {
+		t.Fatalf("destroyed runtime handles = %v, want [worker]", rt.destroyedIDs)
 	}
 }
 

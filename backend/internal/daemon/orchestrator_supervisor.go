@@ -19,6 +19,8 @@ const (
 	orchestratorUnhealthyReplacementThreshold = 5 * time.Minute
 	orchestratorReplacementWindow             = time.Hour
 	orchestratorMaxReplacementsPerWindow      = 3
+	orchestratorReplacementInitialBackoff     = 30 * time.Second
+	orchestratorReplacementMaxBackoff         = 15 * time.Minute
 )
 
 type orchestratorProjectLister interface {
@@ -28,6 +30,7 @@ type orchestratorProjectLister interface {
 type orchestratorEnsurer interface {
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
+	ActivePrime(ctx context.Context) (domain.Session, bool, error)
 	WakeIdle(ctx context.Context, id domain.SessionID, message string) (bool, error)
 	// ActiveOrchestrator returns a project's live orchestrator without spawning
 	// one, so a paused project can be messaged without creating a fresh session.
@@ -43,7 +46,8 @@ type orchestratorWakeTracker struct {
 	// told the fleet is paused, so the notice is sent once per (project,
 	// orchestrator) — re-sent if the orchestrator is replaced mid-pause, and
 	// cleared (after a resume notice) when the project resumes or disappears.
-	pausedNotified map[domain.ProjectID]domain.SessionID
+	pausedNotified      map[domain.ProjectID]domain.SessionID
+	primePausedNotified map[domain.ProjectID]domain.SessionID
 }
 
 type orchestratorWakeState struct {
@@ -54,15 +58,18 @@ type orchestratorWakeState struct {
 }
 
 type orchestratorReplacementState struct {
-	attempts       []time.Time
-	cappedNotified bool
+	attempts        []time.Time
+	cappedNotified  bool
+	nextAllowedAt   time.Time
+	backoffExponent int
 }
 
 func newOrchestratorWakeTracker() *orchestratorWakeTracker {
 	return &orchestratorWakeTracker{
-		projects:       make(map[domain.ProjectID]orchestratorWakeState),
-		replacements:   make(map[domain.ProjectID]orchestratorReplacementState),
-		pausedNotified: make(map[domain.ProjectID]domain.SessionID),
+		projects:            make(map[domain.ProjectID]orchestratorWakeState),
+		replacements:        make(map[domain.ProjectID]orchestratorReplacementState),
+		pausedNotified:      make(map[domain.ProjectID]domain.SessionID),
+		primePausedNotified: make(map[domain.ProjectID]domain.SessionID),
 	}
 }
 
@@ -190,11 +197,11 @@ func ensureOrchestrators(ctx context.Context, projects orchestratorProjectLister
 			continue
 		}
 		if replace, reason := shouldReplaceUnhealthyOrchestrator(orchestrator, now); replace {
-			allowed, cappedNow, count := wakes.reserveReplacement(project.ID, now)
+			allowed, cappedNow, count, nextAllowedAt := wakes.reserveReplacement(project.ID, now)
 			if !allowed {
 				if cappedNow {
 					emitOrchestratorSupervisorNotification(ctx, notifier, domain.NotificationOrchestratorReplacementCapped, project.ID, orchestrator, now, log)
-					log.Warn("orchestrator-supervisor: replacement limit reached; leaving unhealthy orchestrator for human intervention", "project", project.ID, "session", orchestrator.ID, "reason", reason, "replacement_attempts", count)
+					log.Warn("orchestrator-supervisor: replacement fast window exhausted; backing off before retry", "project", project.ID, "session", orchestrator.ID, "reason", reason, "replacement_attempts", count, "next_allowed_at", nextAllowedAt)
 				}
 				continue
 			}
@@ -257,14 +264,53 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 	if primeProjectID == "" {
 		return
 	}
-	projectConfig, hasProjectConfig := primeProjectConfig(ctx, primeProjectID, projects, log)
+	projectSummary, hasProjectConfig := primeProjectSummary(ctx, primeProjectID, projects, log)
 	if !hasProjectConfig {
+		delete(wakes.primePausedNotified, primeProjectID)
 		log.Debug("prime-supervisor: prime host project config unavailable; skipping ensure", "project", primeProjectID)
 		return
 	}
-	if hasProjectConfig && projectConfig.Prime.Harness == "" {
+	projectConfig := projectSummary.Config.WithDefaults()
+	if projectConfig.Prime.Harness == "" {
+		delete(wakes.primePausedNotified, primeProjectID)
 		log.Debug("prime-supervisor: prime disabled; configure project prime.agent to enable", "project", primeProjectID)
 		return
+	}
+	if projectSummary.PauseState != "" && projectSummary.PauseState != projectsvc.PauseStateRunning {
+		prime, ok, err := sessions.ActivePrime(ctx)
+		switch {
+		case err != nil:
+			if ctx.Err() == nil {
+				log.Warn("prime-supervisor: paused prime lookup failed; will retry", "project", primeProjectID, "err", err)
+			}
+		case !ok:
+			delete(wakes.primePausedNotified, primeProjectID)
+		case wakes.primePausedNotified[primeProjectID] != prime.ID:
+			if err := sessions.Send(ctx, prime.ID, primePausedMessage(primeProjectID)); err == nil {
+				wakes.primePausedNotified[primeProjectID] = prime.ID
+			} else if ctx.Err() == nil {
+				log.Warn("prime-supervisor: send pause notice failed; will retry", "project", primeProjectID, "session", prime.ID, "err", err)
+			}
+		}
+		log.Debug("prime-supervisor: prime host project paused; skipping prime spawn/wake", "project", primeProjectID, "pause_state", projectSummary.PauseState)
+		return
+	}
+	if _, wasPaused := wakes.primePausedNotified[primeProjectID]; wasPaused {
+		prime, ok, err := sessions.ActivePrime(ctx)
+		switch {
+		case err != nil:
+			if ctx.Err() == nil {
+				log.Warn("prime-supervisor: resume lookup failed; will retry", "project", primeProjectID, "err", err)
+			}
+		case !ok:
+			delete(wakes.primePausedNotified, primeProjectID)
+		default:
+			if err := sessions.Send(ctx, prime.ID, primeResumedMessage(primeProjectID)); err == nil {
+				delete(wakes.primePausedNotified, primeProjectID)
+			} else if ctx.Err() == nil {
+				log.Warn("prime-supervisor: send resume notice failed; will retry", "project", primeProjectID, "session", prime.ID, "err", err)
+			}
+		}
 	}
 	wakeInterval := primeWakeInterval(primeProjectID, projectConfig, log)
 	prime, err := sessions.SpawnPrime(ctx, primeProjectID, false)
@@ -276,11 +322,11 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 		return
 	}
 	if replace, reason := shouldReplaceUnhealthyPrime(prime, now); replace {
-		allowed, cappedNow, count := wakes.reserveReplacement(primeProjectID, now)
+		allowed, cappedNow, count, nextAllowedAt := wakes.reserveReplacement(primeProjectID, now)
 		if !allowed {
 			if cappedNow {
 				emitOrchestratorSupervisorNotification(ctx, notifier, domain.NotificationOrchestratorReplacementCapped, primeProjectID, prime, now, log)
-				log.Warn("prime-supervisor: replacement limit reached; leaving unhealthy prime for human intervention", "project", primeProjectID, "session", prime.ID, "reason", reason, "replacement_attempts", count)
+				log.Warn("prime-supervisor: replacement fast window exhausted; backing off before retry", "project", primeProjectID, "session", prime.ID, "reason", reason, "replacement_attempts", count, "next_allowed_at", nextAllowedAt)
 			}
 			return
 		}
@@ -318,25 +364,25 @@ func ensurePrime(ctx context.Context, primeProjectID domain.ProjectID, projects 
 	}
 }
 
-func primeProjectConfig(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, log *slog.Logger) (domain.ProjectConfig, bool) {
+func primeProjectSummary(ctx context.Context, primeProjectID domain.ProjectID, projects orchestratorProjectLister, log *slog.Logger) (projectsvc.Summary, bool) {
 	if projects == nil {
-		return domain.ProjectConfig{}, false
+		return projectsvc.Summary{}, false
 	}
 	summaries, err := projects.List(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Warn("prime-supervisor: list projects for prime config failed; skipping ensure", "project", primeProjectID, "err", err)
 		}
-		return domain.ProjectConfig{}, false
+		return projectsvc.Summary{}, false
 	}
 	for _, project := range summaries {
 		if project.ID != primeProjectID {
 			continue
 		}
-		return project.Config.WithDefaults(), true
+		return project, true
 	}
 	log.Debug("prime-supervisor: prime host project not found; skipping ensure", "project", primeProjectID)
-	return domain.ProjectConfig{}, false
+	return projectsvc.Summary{}, false
 }
 
 func primeWakeInterval(primeProjectID domain.ProjectID, projectConfig domain.ProjectConfig, log *slog.Logger) time.Duration {
@@ -454,7 +500,7 @@ func activityOlderThan(session domain.Session, now time.Time, threshold time.Dur
 	return now.Sub(at) > threshold
 }
 
-func (w *orchestratorWakeTracker) reserveReplacement(projectID domain.ProjectID, now time.Time) (bool, bool, int) {
+func (w *orchestratorWakeTracker) reserveReplacement(projectID domain.ProjectID, now time.Time) (bool, bool, int, time.Time) {
 	if w.replacements == nil {
 		w.replacements = make(map[domain.ProjectID]orchestratorReplacementState)
 	}
@@ -472,13 +518,41 @@ func (w *orchestratorWakeTracker) reserveReplacement(projectID domain.ProjectID,
 		// themselves instead of crash-looping the supervisor.
 		state.attempts = append(state.attempts, now)
 		state.cappedNotified = false
+		state.nextAllowedAt = time.Time{}
+		state.backoffExponent = 0
 		w.replacements[projectID] = state
-		return true, false, len(state.attempts)
+		return true, false, len(state.attempts), time.Time{}
 	}
-	cappedNow := !state.cappedNotified
-	state.cappedNotified = true
+	if !state.cappedNotified {
+		state.cappedNotified = true
+		state.nextAllowedAt = now.Add(orchestratorReplacementBackoff(0))
+		state.backoffExponent = 0
+		w.replacements[projectID] = state
+		return false, true, len(state.attempts), state.nextAllowedAt
+	}
+	if now.Before(state.nextAllowedAt) {
+		w.replacements[projectID] = state
+		return false, false, len(state.attempts), state.nextAllowedAt
+	}
+	state.attempts = append(state.attempts, now)
+	state.backoffExponent++
+	state.nextAllowedAt = now.Add(orchestratorReplacementBackoff(state.backoffExponent))
 	w.replacements[projectID] = state
-	return false, cappedNow, len(state.attempts)
+	return true, false, len(state.attempts), state.nextAllowedAt
+}
+
+func orchestratorReplacementBackoff(exponent int) time.Duration {
+	if exponent < 0 {
+		exponent = 0
+	}
+	delay := orchestratorReplacementInitialBackoff
+	for i := 0; i < exponent; i++ {
+		delay *= 2
+		if delay >= orchestratorReplacementMaxBackoff {
+			return orchestratorReplacementMaxBackoff
+		}
+	}
+	return delay
 }
 
 func emitOrchestratorSupervisorNotification(ctx context.Context, notifier notificationSink, typ domain.NotificationType, projectID domain.ProjectID, session domain.Session, now time.Time, log *slog.Logger) {
@@ -514,4 +588,12 @@ func orchestratorPausedMessage(projectID domain.ProjectID) string {
 
 func orchestratorResumedMessage(projectID domain.ProjectID) string {
 	return "Fleet is RESUMED for project " + string(projectID) + ". Continue your normal supervision loop: dispatch and check worker sessions, issues, PRs, and merge/deploy gates as usual."
+}
+
+func primePausedMessage(projectID domain.ProjectID) string {
+	return "Prime host project " + string(projectID) + " is PAUSED. Spawn nothing new and idle your fleet supervision loop until the host project is resumed."
+}
+
+func primeResumedMessage(projectID domain.ProjectID) string {
+	return "Prime host project " + string(projectID) + " is RESUMED. Continue your normal fleet supervision loop across all projects."
 }

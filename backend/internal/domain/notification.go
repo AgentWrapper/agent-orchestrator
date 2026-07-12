@@ -19,7 +19,7 @@ const (
 	NotificationPRClosedUnmerged NotificationType = "pr_closed_unmerged"
 	// NotificationOrchestratorReplaced means AO replaced an unresponsive project orchestrator.
 	NotificationOrchestratorReplaced NotificationType = "orchestrator_replaced"
-	// NotificationOrchestratorReplacementCapped means AO stopped replacing an unhealthy orchestrator after hitting its replacement limit.
+	// NotificationOrchestratorReplacementCapped means AO backed off replacement after an unhealthy supervised role exhausted its fast replacement window.
 	NotificationOrchestratorReplacementCapped NotificationType = "orchestrator_replacement_capped"
 	// NotificationDuplicatePR means a second open PR was observed for a tracker
 	// issue that already has a different open PR. It is a loud, operator-facing

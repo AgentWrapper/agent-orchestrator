@@ -170,7 +170,7 @@ type operatorAttentionNotificationMetadata struct {
 // operator copy they demand, and reports whether that type is an
 // operator-attention event at all. Only types a human must act on belong in the
 // projection; informational types (pr_merged, model_recovered, routine
-// worker_died_unfinished, orchestrator_replaced, …) are excluded so the
+// worker_died_unfinished, …) are excluded so the
 // projection stays a "what needs me" surface, not a notification mirror.
 //
 // This is the durable-notification half of the JS notifier's
@@ -197,8 +197,8 @@ func operatorAttentionNotificationMetadataFor(t domain.NotificationType) (operat
 		}, true
 	case domain.NotificationOrchestratorReplacementCapped:
 		return operatorAttentionNotificationMetadata{
-			action:        "Auto-replacement is paused; inspect the orchestrator's harness, auth, and hook pipeline, then restart or replace it.",
-			defaultReason: "AO stopped replacing this orchestrator after repeated failures.",
+			action:        "Auto-replacement is backed off; inspect the supervised role's harness, auth, and hook pipeline.",
+			defaultReason: "AO exhausted the fast replacement window and is retrying with backoff.",
 		}, true
 	default:
 		return operatorAttentionNotificationMetadata{}, false

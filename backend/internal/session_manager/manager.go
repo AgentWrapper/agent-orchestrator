@@ -1746,7 +1746,22 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 		}
 		if alive {
-			return nil // adopt: the session survived the crash.
+			running, err := m.runtime.IsRunningCommand(ctx, handle, "")
+			if err != nil {
+				m.logger.Warn("reconcile: launch-process probe failed for alive runtime; adopting session", "sessionID", rec.ID, "handle", handle.ID, "error", err)
+				return nil
+			}
+			if running {
+				return nil // adopt: the session survived the crash.
+			}
+			m.logger.Warn("reconcile: runtime pane is alive but launched agent exited; treating session as dead", "sessionID", rec.ID, "handle", handle.ID)
+			// Boot reconciliation is kind-agnostic: an exited agent in a live
+			// inspection pane is dead for supervisors and workers alike. Destroy the
+			// pane before any stash/reensure path can return so the restore/relaunch
+			// path does not collide with the old runtime handle.
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				m.logger.Warn("reconcile: destroy exited-agent runtime failed", "sessionID", rec.ID, "handle", handle.ID, "error", err)
+			}
 		}
 	}
 	// Runtime is gone: capture uncommitted work first.
@@ -2806,10 +2821,7 @@ func launchTitle(project domain.ProjectRecord, cfg ports.SpawnConfig) string {
 		return capRunes(title, maxSessionDisplayNameRunes)
 	}
 	if cfg.Kind == domain.KindPrime {
-		name := normalizeDisplayName(project.DisplayName)
-		if name == "" {
-			name = normalizeDisplayName(project.ID)
-		}
+		name := primeDisplayPrefix(project)
 		if name == "" {
 			name = string(cfg.ProjectID)
 		}
@@ -2819,6 +2831,14 @@ func launchTitle(project domain.ProjectRecord, cfg ports.SpawnConfig) string {
 		return workerDisplayName(project, cfg.IssueID, cfg.IssueTitle)
 	}
 	return ""
+}
+
+func primeDisplayPrefix(project domain.ProjectRecord) string {
+	name := normalizeDisplayName(sessionPrefix(project))
+	if len([]rune(name)) <= 3 {
+		return strings.ToUpper(name)
+	}
+	return name
 }
 
 // workerDisplayName builds `<repoKey> #<issue> <slug>`, dropping whichever

@@ -17,6 +17,11 @@ func TestErrorKindAndCode(t *testing.T) {
 		t.Fatalf("typed error = (%q, %q), want (not_found, SESSION_NOT_FOUND)", kind, code)
 	}
 
+	kind, code = ErrorKindAndCode(apierr.Forbidden("PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are supervisor-only", nil))
+	if kind != "forbidden" || code != "PRIME_MANUAL_SPAWN_FORBIDDEN" {
+		t.Fatalf("forbidden error = (%q, %q), want (forbidden, PRIME_MANUAL_SPAWN_FORBIDDEN)", kind, code)
+	}
+
 	kind, code = ErrorKindAndCode(errors.New("boom"))
 	if kind != "internal" || code != "" {
 		t.Fatalf("raw error = (%q, %q), want (internal, empty)", kind, code)

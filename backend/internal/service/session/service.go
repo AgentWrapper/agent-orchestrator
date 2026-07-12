@@ -173,6 +173,13 @@ func NewWithDeps(d Deps) *Service {
 
 // Spawn creates a session and returns the API-facing read model.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	return s.spawn(ctx, cfg, false)
+}
+
+func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime bool) (domain.Session, error) {
+	if cfg.Kind == domain.KindPrime && !allowPrime {
+		return domain.Session{}, apierr.Forbidden("PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the env-gated supervisor", nil)
+	}
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.Session{}, err
@@ -454,7 +461,7 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 	} else if len(existing) > 0 {
 		return newestSession(existing), nil
 	}
-	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime, DisplayName: s.primeDisplayName})
+	sess, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime, DisplayName: s.primeDisplayName}, true)
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -462,6 +469,21 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 		s.emitOrchestratorReplacementVerificationFailed(project, sess, err)
 	}
 	return sess, nil
+}
+
+// ActivePrime returns the newest active fleet prime without spawning one.
+func (s *Service) ActivePrime(ctx context.Context) (domain.Session, bool, error) {
+	s.primeLock.Lock()
+	defer s.primeLock.Unlock()
+
+	existing, err := s.activePrimeSessions(ctx)
+	if err != nil {
+		return domain.Session{}, false, err
+	}
+	if len(existing) == 0 {
+		return domain.Session{}, false, nil
+	}
+	return newestSession(existing), true, nil
 }
 
 func (s *Service) activePrimeSessions(ctx context.Context) ([]domain.Session, error) {

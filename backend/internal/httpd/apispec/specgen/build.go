@@ -769,6 +769,7 @@ func sessionOperations() []operation {
 			resps: []respUnit{
 				{http.StatusCreated, controllers.SessionResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},

@@ -159,10 +159,11 @@ type RoleOverride struct {
 	// top-level ProjectConfig.Workspace (and ultimately the worktree default);
 	// see ResolveWorkspaceMode.
 	Workspace WorkspaceMode `json:"workspace,omitempty" enum:"worktree,in-place"`
-	// WakeInterval controls how long an orchestrator may sit at waiting_input
-	// before the daemon sends a supervision-loop nudge. It is consumed only for
-	// the orchestrator role; empty means use DefaultOrchestratorWakeInterval.
-	WakeInterval string `json:"wakeInterval,omitempty" description:"Orchestrator role only. Positive Go duration string such as 15m; empty uses the daemon default."`
+	// WakeInterval controls how long a supervised orchestrator-like role may sit
+	// at waiting_input before the daemon sends a supervision-loop nudge. It is
+	// consumed for orchestrator and prime roles; empty means use the daemon
+	// default.
+	WakeInterval string `json:"wakeInterval,omitempty" description:"Orchestrator and prime roles only. Positive Go duration string such as 15m; empty uses the daemon default."`
 	// InstructionsFile is an optional path to a file whose contents the daemon
 	// appends to this role's built-in system prompt at spawn and restore. It
 	// lets a project carry its own standing policy per role (orchestrator vs

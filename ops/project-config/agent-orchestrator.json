@@ -17,7 +17,8 @@
 		"agent": "claude-code",
 		"agentConfig": {
 			"model": "opus"
-		}
+		},
+		"instructionsFile": ".claude/prime-orchestrator-policy.md"
 	},
 	"projectPrefix": "ao",
 	"trackerIntake": {

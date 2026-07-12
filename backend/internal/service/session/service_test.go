@@ -876,6 +876,42 @@ func TestSpawnPrimeNoCleanReturnsNewestActivePrimeGlobally(t *testing.T) {
 	}
 }
 
+func TestActivePrimeReturnsNewestWithoutSpawning(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["ao-prime-old"] = domain.SessionRecord{
+		ID:        "ao-prime-old",
+		ProjectID: "ao",
+		Kind:      domain.KindPrime,
+		CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	st.sessions["mer-prime-new"] = domain.SessionRecord{
+		ID:        "mer-prime-new",
+		ProjectID: "mer",
+		Kind:      domain.KindPrime,
+		CreatedAt: time.Unix(200, 0).UTC(),
+	}
+	st.sessions["ao-prime-dead"] = domain.SessionRecord{
+		ID:           "ao-prime-dead",
+		ProjectID:    "ao",
+		Kind:         domain.KindPrime,
+		IsTerminated: true,
+		CreatedAt:    time.Unix(300, 0).UTC(),
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, ok, err := svc.ActivePrime(context.Background())
+	if err != nil {
+		t.Fatalf("ActivePrime: %v", err)
+	}
+	if !ok || got.ID != "mer-prime-new" {
+		t.Fatalf("ActivePrime = (%q, %v), want newest active prime mer-prime-new", got.ID, ok)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be called by ActivePrime")
+	}
+}
+
 func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
 	st := newFakeStore()
 	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
@@ -925,6 +961,22 @@ func TestSpawnPrimeCleanPassesConfiguredDisplayName(t *testing.T) {
 	}
 	if fc.gotCfg.DisplayName != "AO Prime" {
 		t.Fatalf("prime display name = %q, want AO Prime", fc.gotCfg.DisplayName)
+	}
+}
+
+func TestSpawnRejectsManualPrimeKind(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ao", Kind: domain.KindPrime})
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindForbidden || e.Code != "PRIME_MANUAL_SPAWN_FORBIDDEN" {
+		t.Fatalf("err = %v, want forbidden PRIME_MANUAL_SPAWN_FORBIDDEN", err)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be invoked for manual prime spawns")
 	}
 }
 

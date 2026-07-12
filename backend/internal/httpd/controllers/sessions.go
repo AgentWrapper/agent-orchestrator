@@ -142,6 +142,10 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
+	if in.Kind == domain.KindPrime {
+		envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the env-gated supervisor", nil)
+		return
+	}
 	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, Model: in.Model, DisplayName: displayName, Force: in.Force})
 	if err != nil {
 		envelope.WriteError(w, r, err)

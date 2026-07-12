@@ -160,6 +160,7 @@ type projectConfig struct {
 	AgentConfig   agentConfig         `json:"agentConfig,omitempty"`
 	Worker        roleOverride        `json:"worker,omitempty"`
 	Orchestrator  roleOverride        `json:"orchestrator,omitempty"`
+	Prime         roleOverride        `json:"prime,omitempty"`
 	WorkerMix     []workerMixEntry    `json:"workerMix,omitempty"`
 	Reviewers     []reviewerConfig    `json:"reviewers,omitempty"`
 	TrackerIntake trackerIntakeConfig `json:"trackerIntake,omitempty"`
@@ -193,8 +194,11 @@ type projectSetConfigOptions struct {
 	permission                   string
 	workerAgent                  string
 	orchestratorAgent            string
+	primeAgent                   string
 	workerInstructionsFile       string
 	orchestratorInstructionsFile string
+	primeInstructionsFile        string
+	primeWakeInterval            string
 	env                          []string
 	symlink                      []string
 	postCreate                   []string
@@ -420,8 +424,11 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Harness override for orchestrator sessions")
+	f.StringVar(&opts.primeAgent, "prime-agent", "", "Harness override that enables env-gated prime sessions")
 	f.StringVar(&opts.workerInstructionsFile, "worker-instructions-file", "", "Path to append to worker system prompts (relative to project root, or absolute)")
 	f.StringVar(&opts.orchestratorInstructionsFile, "orchestrator-instructions-file", "", "Path to append to orchestrator system prompts (relative to project root, or absolute)")
+	f.StringVar(&opts.primeInstructionsFile, "prime-instructions-file", "", "Path to append to prime system prompts (relative to project root, or absolute)")
+	f.StringVar(&opts.primeWakeInterval, "prime-wake-interval", "", "Prime supervision wake interval as a Go duration")
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
@@ -506,6 +513,15 @@ func applyProjectConfigFlagPatch(base *projectConfig, patch projectConfig, cmd *
 	if flags.Changed("orchestrator-instructions-file") {
 		base.Orchestrator.InstructionsFile = patch.Orchestrator.InstructionsFile
 	}
+	if flags.Changed("prime-agent") {
+		base.Prime.Agent = patch.Prime.Agent
+	}
+	if flags.Changed("prime-instructions-file") {
+		base.Prime.InstructionsFile = patch.Prime.InstructionsFile
+	}
+	if flags.Changed("prime-wake-interval") {
+		base.Prime.WakeInterval = patch.Prime.WakeInterval
+	}
 	if !trackerConfigFlagChanged(cmd) {
 		return
 	}
@@ -563,6 +579,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		AgentConfig:     agentConfig{Model: opts.model, Permissions: opts.permission},
 		Worker:          roleOverride{Agent: opts.workerAgent, InstructionsFile: opts.workerInstructionsFile},
 		Orchestrator:    roleOverride{Agent: opts.orchestratorAgent, InstructionsFile: opts.orchestratorInstructionsFile},
+		Prime:           roleOverride{Agent: opts.primeAgent, InstructionsFile: opts.primeInstructionsFile, WakeInterval: opts.primeWakeInterval},
 		TrackerIntake: trackerIntakeConfig{
 			Enabled:       opts.trackerIntake,
 			Provider:      trackerProviderForFlags(opts),

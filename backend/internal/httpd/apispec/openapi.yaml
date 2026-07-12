@@ -1212,6 +1212,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -3472,8 +3478,8 @@ components:
         instructionsFile:
           type: string
         wakeInterval:
-          description: Orchestrator role only. Positive Go duration string such as
-            15m; empty uses the daemon default.
+          description: Orchestrator and prime roles only. Positive Go duration string
+            such as 15m; empty uses the daemon default.
           type: string
         workspace:
           enum:
@@ -3958,7 +3964,6 @@ components:
           enum:
           - worker
           - orchestrator
-          - prime
           type: string
         model:
           description: Model override for this session only.

@@ -141,12 +141,12 @@ describe("ao Slack notifier notification formatting", () => {
 				type: "orchestrator_replacement_capped",
 				sessionId: "mer-orch",
 				projectId: "mer",
-				title: "mer-orch replacement paused",
+				title: "mer-orch replacement backing off",
 			},
 			"U123",
 		);
 
-		assert.equal(msg, "<@U123> 🚨 *orchestrator_replacement_capped* [mer] mer-orch: mer-orch replacement paused");
+		assert.equal(msg, "<@U123> 🚨 *orchestrator_replacement_capped* [mer] mer-orch: mer-orch replacement backing off");
 	});
 
 	it("mentions duplicate_pr notifications loudly", () => {

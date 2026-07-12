@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -63,6 +64,9 @@ const (
 	// DefaultMetricsZombieSustainTicks is how many consecutive ticks the zombie
 	// count must stay above zero before the zombies alert fires.
 	DefaultMetricsZombieSustainTicks = 2
+	// MaxPrimeDisplayNameLen mirrors the session display-name cap enforced by
+	// the API and session manager.
+	MaxPrimeDisplayNameLen = 20
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -265,6 +269,9 @@ func Load() (Config, error) {
 		cfg.PrimeProjectID = raw
 	}
 	if raw := strings.TrimSpace(os.Getenv("AO_PRIME_DISPLAY_NAME")); raw != "" {
+		if utf8.RuneCountInString(raw) > MaxPrimeDisplayNameLen {
+			return Config{}, fmt.Errorf("AO_PRIME_DISPLAY_NAME must be %d characters or fewer", MaxPrimeDisplayNameLen)
+		}
 		cfg.PrimeDisplayName = raw
 	}
 

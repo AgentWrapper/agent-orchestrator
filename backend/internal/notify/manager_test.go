@@ -133,8 +133,8 @@ func TestManagerNotifyPrimeReplacementCappedUsesPrimeBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
-	if got := st.rows[0]; got.Body != "AO stopped replacing the prime orchestrator after repeated failures. Inspect the harness, auth, and hook pipeline." {
-		t.Fatalf("body = %q, want prime replacement cap copy", got.Body)
+	if got := st.rows[0]; got.Title != "ao Prime replacement backing off" || got.Body != "AO exhausted the prime orchestrator fast replacement window and is retrying with backoff. Inspect the harness, auth, and hook pipeline." {
+		t.Fatalf("notification = (%q, %q), want prime replacement cap copy", got.Title, got.Body)
 	}
 }
 
