@@ -11,7 +11,7 @@ import (
 )
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
-	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", nil, map[string]string{
 		"FOO":        "bar",
 		EnvSessionID: "hacked", // a project must not override AO-internal vars
 		EnvProjectID: "hacked",
