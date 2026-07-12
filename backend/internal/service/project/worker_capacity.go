@@ -8,9 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/modelhealth"
 )
 
 // WorkerCapacityStore is the read surface needed to assemble the worker mix
@@ -25,15 +28,47 @@ type HealthSnapshotter interface {
 	Snapshot() agenthealth.Snapshot
 }
 
+// ModelHealthSnapshotter returns exact configured-model reachability verdicts.
+type ModelHealthSnapshotter interface {
+	Snapshot() []modelhealth.Verdict
+}
+
+// CandidateHealthSnapshotter returns reactive launch-failure state for exact
+// worker-mix buckets.
+type CandidateHealthSnapshotter interface {
+	WorkerMixHealthSnapshot() []candidatehealth.Status
+}
+
+// WorkerCapacityOption wires optional health projections.
+type WorkerCapacityOption func(*WorkerCapacityService)
+
+// WithModelHealth includes exact model reachability in bucket health.
+func WithModelHealth(snapshotter ModelHealthSnapshotter) WorkerCapacityOption {
+	return func(s *WorkerCapacityService) { s.modelHealth = snapshotter }
+}
+
+// WithCandidateHealth includes reactive launch-failure state in bucket health.
+func WithCandidateHealth(snapshotter CandidateHealthSnapshotter) WorkerCapacityOption {
+	return func(s *WorkerCapacityService) { s.candidateHealth = snapshotter }
+}
+
 // WorkerCapacityService builds the project-scoped worker mix/capacity read model.
 type WorkerCapacityService struct {
-	store  WorkerCapacityStore
-	health HealthSnapshotter
+	store           WorkerCapacityStore
+	health          HealthSnapshotter
+	modelHealth     ModelHealthSnapshotter
+	candidateHealth CandidateHealthSnapshotter
 }
 
 // NewWorkerCapacity returns a dashboard read service.
-func NewWorkerCapacity(store WorkerCapacityStore, health HealthSnapshotter) *WorkerCapacityService {
-	return &WorkerCapacityService{store: store, health: health}
+func NewWorkerCapacity(store WorkerCapacityStore, health HealthSnapshotter, opts ...WorkerCapacityOption) *WorkerCapacityService {
+	s := &WorkerCapacityService{store: store, health: health}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
 }
 
 // WorkerCapacity is the project-scoped worker-capacity dashboard read model.
@@ -60,6 +95,7 @@ type WorkerCapacityBucket struct {
 	RealizedPercent   float64             `json:"realizedPercent"`
 	Health            agenthealth.Health  `json:"health"`
 	Down              bool                `json:"down"`
+	BlockedBy         string              `json:"blockedBy,omitempty" enum:"harness_auth,model,launch_failure"`
 	DownCapacityShare *float64            `json:"downCapacityShare,omitempty"`
 	Reason            string              `json:"reason,omitempty"`
 	Remedy            string              `json:"remedy,omitempty"`
@@ -101,6 +137,8 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 	for _, h := range snapshot.Harnesses {
 		healthByID[h.ID] = h
 	}
+	modelByBucket := s.modelHealthByBucket(id)
+	candidateByBucket := s.candidateHealthByBucket()
 
 	capacity := WorkerCapacity{
 		ProjectID: id,
@@ -138,15 +176,7 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 			targetCapacity := float64(*capacity.Cap) * float64(target) / 100
 			bucket.TargetCapacity = &targetCapacity
 		}
-		if h, ok := healthByID[string(key.Harness)]; ok {
-			bucket.Health = h.Health
-			bucket.Reason = h.Reason
-			bucket.Remedy = h.Remedy
-		} else {
-			bucket.Health = agenthealth.HealthUnknown
-			bucket.Reason = "no health snapshot for this harness"
-		}
-		bucket.Down = bucket.Health.Actionable()
+		s.applyBucketHealth(&bucket, key, healthByID, modelByBucket, candidateByBucket)
 		if bucket.Down && capacity.Cap != nil {
 			share := float64(*capacity.Cap) * float64(target) / 100
 			bucket.DownCapacityShare = &share
@@ -177,6 +207,71 @@ func (s *WorkerCapacityService) WorkerCapacity(ctx context.Context, id domain.Pr
 	capacity.Harnesses = capacityHarnesses(mix, healthByID)
 	capacity.State = capacityState(capacity)
 	return capacity, nil
+}
+
+func (s *WorkerCapacityService) modelHealthByBucket(projectID domain.ProjectID) map[domain.BucketKey]modelhealth.Verdict {
+	out := map[domain.BucketKey]modelhealth.Verdict{}
+	if s == nil || s.modelHealth == nil {
+		return out
+	}
+	for _, verdict := range s.modelHealth.Snapshot() {
+		if verdict.Pin.ProjectID != projectID || verdict.Status != agentsvc.ModelStatusUnreachable {
+			continue
+		}
+		key := domain.BucketKey{Harness: verdict.Pin.Harness, Model: strings.TrimSpace(verdict.Pin.Model)}
+		out[key] = verdict
+	}
+	return out
+}
+
+func (s *WorkerCapacityService) candidateHealthByBucket() map[domain.BucketKey]candidatehealth.Status {
+	out := map[domain.BucketKey]candidatehealth.Status{}
+	if s == nil || s.candidateHealth == nil {
+		return out
+	}
+	for _, status := range s.candidateHealth.WorkerMixHealthSnapshot() {
+		c := status.Candidate.Normalized()
+		if !status.Down || c.Surface != "worker_mix" {
+			continue
+		}
+		out[domain.BucketKey{Harness: domain.AgentHarness(c.Harness), Model: strings.TrimSpace(c.Model)}] = status
+	}
+	return out
+}
+
+func (s *WorkerCapacityService) applyBucketHealth(bucket *WorkerCapacityBucket, key domain.BucketKey, healthByID map[string]agenthealth.HarnessHealth, modelByBucket map[domain.BucketKey]modelhealth.Verdict, candidateByBucket map[domain.BucketKey]candidatehealth.Status) {
+	if h, ok := healthByID[string(key.Harness)]; ok {
+		bucket.Health = h.Health
+		bucket.Reason = h.Reason
+		bucket.Remedy = h.Remedy
+	} else {
+		bucket.Health = agenthealth.HealthUnknown
+		bucket.Reason = "no health snapshot for this harness"
+	}
+	if bucket.Health.Actionable() {
+		bucket.Down = true
+		bucket.BlockedBy = "harness_auth"
+		return
+	}
+	if verdict, ok := modelByBucket[key]; ok {
+		bucket.Down = true
+		bucket.BlockedBy = "model"
+		bucket.Reason = strings.TrimSpace(verdict.Reason)
+		if bucket.Reason == "" {
+			bucket.Reason = "configured model is unreachable"
+		}
+		return
+	}
+	if status, ok := candidateByBucket[key]; ok {
+		bucket.Down = true
+		bucket.BlockedBy = "launch_failure"
+		bucket.Reason = strings.TrimSpace(status.Reason)
+		if bucket.Reason == "" {
+			bucket.Reason = "last exact candidate launch failed"
+		}
+		return
+	}
+	bucket.Down = false
 }
 
 func targetMix(cfg domain.ProjectConfig) domain.WorkerMix {

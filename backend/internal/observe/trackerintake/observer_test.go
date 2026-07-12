@@ -229,7 +229,47 @@ func TestPollRespawnsWhenOnlyNonWorkerSessionIsAttachedToIssue(t *testing.T) {
 		t.Fatalf("spawn call = %+v, want worker for %s", spawner.calls[0], issueID)
 	}
 	if len(notifications.intents) != 1 || notifications.intents[0].Type != domain.NotificationWorkerDiedUnfinished {
-		t.Fatalf("notifications = %+v, want worker death notification before respawn", notifications.intents)
+		t.Fatalf("notifications = %+v, want worker death notification after successful respawn", notifications.intents)
+	}
+}
+
+func TestPollDoesNotEmitReplacementNotificationWhenRespawnAdmissionFails(t *testing.T) {
+	issueID := domain.IssueID("github:acme/demo#12")
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:           "demo-worker-1",
+			ProjectID:    "demo",
+			IssueID:      issueID,
+			Kind:         domain.KindWorker,
+			DisplayName:  "demo #12 fix-login",
+			IsTerminated: true,
+			Activity:     domain.Activity{State: domain.ActivityExited},
+			UpdatedAt:    time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Fix login",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		issueID: apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
+	notifications := &fakeNotificationSink{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %+v, want replacement attempt", spawner.calls)
+	}
+	if len(notifications.intents) != 0 {
+		t.Fatalf("notifications = %+v, want none because replacement did not start", notifications.intents)
 	}
 }
 
@@ -747,9 +787,9 @@ func TestPollAppliesLabelFilters(t *testing.T) {
 	}
 }
 
-func TestPollHonorsMaxConcurrentAgainstLiveWorkers(t *testing.T) {
-	// One live worker already exists; cap is 2, so only ONE more may spawn even
-	// though two more issues are eligible.
+func TestPollLetsSpawnEnforceMaxConcurrentAgainstLiveWorkers(t *testing.T) {
+	// Intake does not compute live capacity. The session manager admits the
+	// first issue and returns WORKER_CONCURRENCY_CAP for the second.
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -768,23 +808,25 @@ func TestPollHonorsMaxConcurrentAgainstLiveWorkers(t *testing.T) {
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "first", State: domain.IssueOpen, Assignees: []string{"alice"}},
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "second", State: domain.IssueOpen, Assignees: []string{"alice"}},
 	}}
-	spawner := &fakeSpawner{}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#2": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
 
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 1 {
-		t.Fatalf("spawn calls = %d, want 1 (cap of 2 minus 1 live worker)", len(spawner.calls))
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want admitted issue then cap collision", len(spawner.calls))
 	}
 	if spawner.calls[0].IssueID != "github:acme/demo#1" {
 		t.Fatalf("first spawn issue = %q, want github:acme/demo#1", spawner.calls[0].IssueID)
 	}
 }
 
-func TestPollDefersNormalIssuesWhenAlreadyAtMaxConcurrent(t *testing.T) {
-	// Two live cap-consuming workers already exist and the cap is 2: normal issues are
-	// deferred. The tracker is still queried so later nopool issues in the result
-	// set can escape the cap.
+func TestPollDefersNormalIssuesAfterSpawnReportsMaxConcurrent(t *testing.T) {
+	// The session manager reports a full normal pool. Intake records that result
+	// and avoids further normal-pool attempts in this pass while still allowing a
+	// later nopool issue to bypass the pool.
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -802,14 +844,21 @@ func TestPollDefersNormalIssuesWhenAlreadyAtMaxConcurrent(t *testing.T) {
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "eligible", State: domain.IssueOpen, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "urgent", State: domain.IssueOpen, Assignees: []string{"alice"}, Labels: []string{"nopool", "agent:fugu"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "still capped", State: domain.IssueOpen, Assignees: []string{"alice"}},
 	}}
-	spawner := &fakeSpawner{}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#1": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
 
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 0 {
-		t.Fatalf("spawn calls = %d, want 0 (already at cap)", len(spawner.calls))
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want capped normal issue plus nopool issue", len(spawner.calls))
+	}
+	if spawner.calls[1].IssueID != "github:acme/demo#2" || !spawner.calls[1].IntakePoolBypass {
+		t.Fatalf("second spawn = %+v, want nopool issue after cap collision", spawner.calls[1])
 	}
 	if len(tracker.repos) != 1 {
 		t.Fatalf("tracker queried %d times, want 1 so nopool issues can be discovered", len(tracker.repos))
@@ -859,25 +908,6 @@ func TestPollDefersWithoutBackoffWhenSpawnHitsConcurrencyCap(t *testing.T) {
 	}
 	if len(tracker.repos) != 2 {
 		t.Fatalf("tracker calls after second poll = %d, want 2 (cap collision must not enter failure backoff)", len(tracker.repos))
-	}
-}
-
-func TestLiveWorkersByProjectIgnoresTerminatedAndNonWorkers(t *testing.T) {
-	sessions := []domain.SessionRecord{
-		{ID: "a", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#1"},
-		{ID: "b", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#2", IsTerminated: true},
-		{ID: "c", ProjectID: "demo", Kind: domain.KindOrchestrator, IssueID: "github:acme/demo#3"},
-		{ID: "d", ProjectID: "demo", Kind: domain.KindWorker},
-		{ID: "manual", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "47"},
-		{ID: "urgent", ProjectID: "demo", Kind: domain.KindWorker, IssueID: "github:acme/demo#4", Metadata: domain.SessionMetadata{IntakePoolBypass: true}},
-		{ID: "e", ProjectID: "other", Kind: domain.KindWorker, IssueID: "github:acme/other#1"},
-	}
-	counts := liveWorkersByProject(sessions)
-	if counts["demo"] != 3 {
-		t.Fatalf("demo cap-consuming live workers = %d, want 3 (nopool sessions do not consume cap)", counts["demo"])
-	}
-	if counts["other"] != 1 {
-		t.Fatalf("other live workers = %d, want 1", counts["other"])
 	}
 }
 
@@ -1160,14 +1190,11 @@ func mixIssues(repo string, n int) []domain.Issue {
 	return issues
 }
 
-// TestPollWorkerMixConvergesWithinPass proves the acceptance criteria: with a
-// weighted mix configured, intake picks a provider-matched harness+model per
-// spawn (deficit-based) so the realized distribution over a single pass matches
-// the target apportionment (60/30/10 over 10 spawns -> 6/3/1). It also confirms
-// the codex/fugu buckets carry no explicit model (the manager resolves the
-// provider default) while the claude bucket carries its pinned opus model — no
-// claude model ever lands on a codex spawn.
-func TestPollWorkerMixConvergesWithinPass(t *testing.T) {
+// TestPollWorkerMixDelegatesOrdinaryAllocation proves intake is not an
+// allocator: ordinary issue spawns leave harness/model empty and the session
+// manager applies concurrency, D'Hondt selection, exact candidate health, and
+// persistence atomically.
+func TestPollWorkerMixDelegatesOrdinaryAllocation(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
@@ -1189,38 +1216,17 @@ func TestPollWorkerMixConvergesWithinPass(t *testing.T) {
 	if len(spawner.calls) != 10 {
 		t.Fatalf("spawn calls = %d, want 10", len(spawner.calls))
 	}
-	counts := map[domain.AgentHarness]int{}
-	models := map[domain.AgentHarness]string{}
 	for _, c := range spawner.calls {
-		counts[c.Harness]++
-		models[c.Harness] = c.Model
-	}
-	want := map[domain.AgentHarness]int{
-		domain.HarnessCodex:      6,
-		domain.HarnessCodexFugu:  3,
-		domain.HarnessClaudeCode: 1,
-	}
-	for h, w := range want {
-		if counts[h] != w {
-			t.Fatalf("harness %s = %d, want %d (all=%v)", h, counts[h], w, counts)
+		if c.Harness != "" || c.Model != "" {
+			t.Fatalf("ordinary intake spawn should delegate allocation, got harness=%q model=%q", c.Harness, c.Model)
 		}
-	}
-	if models[domain.HarnessClaudeCode] != "opus" {
-		t.Fatalf("claude bucket model = %q, want opus", models[domain.HarnessClaudeCode])
-	}
-	if models[domain.HarnessCodex] != "" {
-		t.Fatalf("codex bucket model = %q, want empty (manager resolves provider default)", models[domain.HarnessCodex])
-	}
-	if models[domain.HarnessCodexFugu] != "" {
-		t.Fatalf("fugu bucket model = %q, want empty (manager resolves provider default)", models[domain.HarnessCodexFugu])
 	}
 }
 
-// TestPollWorkerMixBiasesTowardUnderservedBucket proves selection is
-// deficit-based against the ALREADY-running fleet, not a fresh count: with a
-// 50/50 mix and two codex workers already live, the next two intake spawns both
-// go to fugu to rebalance toward the target ratio.
-func TestPollWorkerMixBiasesTowardUnderservedBucket(t *testing.T) {
+// TestPollWorkerMixDoesNotReadRunningBuckets proves intake no longer performs a
+// second running-bucket projection. Existing live workers are observed only for
+// issue dedupe/retry; allocation stays inside session_manager.Spawn.
+func TestPollWorkerMixDoesNotReadRunningBuckets(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -1248,15 +1254,16 @@ func TestPollWorkerMixBiasesTowardUnderservedBucket(t *testing.T) {
 		t.Fatalf("spawn calls = %d, want 2", len(spawner.calls))
 	}
 	for i, c := range spawner.calls {
-		if c.Harness != domain.HarnessCodexFugu {
-			t.Fatalf("spawn %d harness = %q, want fugu (rebalancing against 2 live codex)", i, c.Harness)
+		if c.Harness != "" || c.Model != "" {
+			t.Fatalf("spawn %d should delegate allocation, got harness=%q model=%q", i, c.Harness, c.Model)
 		}
 	}
 }
 
-// TestPollWorkerMixRespectsConcurrencyCap proves the cap (#49) still bounds the
-// mixed spawns: with maxConcurrent=2 and no live workers, only two of the four
-// eligible issues spawn this pass, and both come from the mix.
+// TestPollWorkerMixRespectsConcurrencyCap proves intake treats the session
+// manager's cap decision as authoritative: it attempts ordinary spawns until
+// Spawn returns WORKER_CONCURRENCY_CAP, then defers further ordinary issues
+// without entering failure backoff.
 func TestPollWorkerMixRespectsConcurrencyCap(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
@@ -1270,17 +1277,19 @@ func TestPollWorkerMixRespectsConcurrencyCap(t *testing.T) {
 		},
 	}}}
 	tracker := &fakeTracker{issues: mixIssues("acme/demo", 4)}
-	spawner := &fakeSpawner{}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#3": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
 
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 2 {
-		t.Fatalf("spawn calls = %d, want 2 (cap)", len(spawner.calls))
+	if len(spawner.calls) != 3 {
+		t.Fatalf("spawn calls = %d, want 2 successes then one cap collision", len(spawner.calls))
 	}
-	for i, c := range spawner.calls {
-		if c.Harness == "" {
-			t.Fatalf("spawn %d harness empty; mix must have selected one", i)
+	for i, c := range spawner.calls[:2] {
+		if c.Harness != "" || c.Model != "" {
+			t.Fatalf("spawn %d should delegate allocation, got harness=%q model=%q", i, c.Harness, c.Model)
 		}
 	}
 }
@@ -1301,19 +1310,21 @@ func TestPollRoutingLabelOverridesWorkerMixWithinCap(t *testing.T) {
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen},
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "capped", State: domain.IssueOpen},
 	}}
-	spawner := &fakeSpawner{}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#3": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
 
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 2 {
-		t.Fatalf("spawn calls = %d, want 2 within cap", len(spawner.calls))
+	if len(spawner.calls) != 3 {
+		t.Fatalf("spawn calls = %d, want pinned, ordinary, then cap collision", len(spawner.calls))
 	}
 	if spawner.calls[0].Harness != domain.HarnessClaudeCode {
 		t.Fatalf("pinned issue harness = %q, want claude-code", spawner.calls[0].Harness)
 	}
-	if spawner.calls[1].Harness != domain.HarnessCodex {
-		t.Fatalf("mixed issue harness = %q, want codex", spawner.calls[1].Harness)
+	if spawner.calls[1].Harness != "" || spawner.calls[1].Model != "" {
+		t.Fatalf("ordinary issue should delegate allocation, got harness=%q model=%q", spawner.calls[1].Harness, spawner.calls[1].Model)
 	}
 }
 
@@ -1344,8 +1355,8 @@ func TestPollRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
 	if spawner.calls[0].Harness != domain.HarnessCodex {
 		t.Fatalf("pinned issue harness = %q, want codex", spawner.calls[0].Harness)
 	}
-	if spawner.calls[1].Harness != domain.HarnessCodexFugu {
-		t.Fatalf("mixed issue harness = %q, want fugu because pinned codex consumed its bucket", spawner.calls[1].Harness)
+	if spawner.calls[1].Harness != "" || spawner.calls[1].Model != "" {
+		t.Fatalf("ordinary issue should delegate allocation, got harness=%q model=%q", spawner.calls[1].Harness, spawner.calls[1].Model)
 	}
 }
 
@@ -1376,8 +1387,8 @@ func TestPollNoPoolRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
 	if spawner.calls[0].Harness != domain.HarnessCodex || !spawner.calls[0].IntakePoolBypass {
 		t.Fatalf("nopool pinned issue = harness %q bypass %t, want codex bypass", spawner.calls[0].Harness, spawner.calls[0].IntakePoolBypass)
 	}
-	if spawner.calls[1].Harness != domain.HarnessCodexFugu {
-		t.Fatalf("mixed issue harness = %q, want fugu because nopool pinned codex still counts for mix balance", spawner.calls[1].Harness)
+	if spawner.calls[1].Harness != "" || spawner.calls[1].Model != "" {
+		t.Fatalf("ordinary issue should delegate allocation, got harness=%q model=%q", spawner.calls[1].Harness, spawner.calls[1].Model)
 	}
 }
 
@@ -1400,15 +1411,18 @@ func TestPollNoPoolBypassesMaxConcurrentWithoutOpeningNormalCapacity(t *testing.
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "urgent", State: domain.IssueOpen, Labels: []string{"nopool", "agent:fugu"}},
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "normal still capped", State: domain.IssueOpen},
 	}}
-	spawner := &fakeSpawner{}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#1": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+		"github:acme/demo#3": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
 
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 1 {
-		t.Fatalf("spawn calls = %d, want only the nopool issue despite cap", len(spawner.calls))
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %d, want capped normal issue plus nopool issue", len(spawner.calls))
 	}
-	call := spawner.calls[0]
+	call := spawner.calls[1]
 	if call.IssueID != "github:acme/demo#2" || call.Harness != domain.HarnessCodexFugu {
 		t.Fatalf("nopool spawn = issue %q harness %q, want issue #2 on codex-fugu", call.IssueID, call.Harness)
 	}
@@ -1440,10 +1454,9 @@ func TestPollNoMixKeepsSingleDefault(t *testing.T) {
 	}
 }
 
-// TestPollWorkerMixFailedSpawnDoesNotConsumeBucket proves a failed spawn does
-// not shift the running distribution: when the first codex pick fails, the retry
-// budget is not "used up" on that bucket — the next successful spawn still lands
-// on the bucket the deficit selector would have chosen without the failure.
+// TestPollWorkerMixFailedSpawnDoesNotConsumeBucket proves intake no longer owns
+// the bucket ledger at all: a failed ordinary spawn has no harness/model selected
+// by intake for a later issue to account against.
 func TestPollWorkerMixFailedSpawnDoesNotConsumeBucket(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
@@ -1467,10 +1480,10 @@ func TestPollWorkerMixFailedSpawnDoesNotConsumeBucket(t *testing.T) {
 	if len(spawner.calls) != 2 {
 		t.Fatalf("spawn calls = %d, want 2 (both attempted)", len(spawner.calls))
 	}
-	if spawner.calls[0].Harness != domain.HarnessCodex {
-		t.Fatalf("first pick = %q, want codex", spawner.calls[0].Harness)
+	if spawner.calls[0].Harness != "" || spawner.calls[0].Model != "" {
+		t.Fatalf("first ordinary spawn should delegate allocation, got harness=%q model=%q", spawner.calls[0].Harness, spawner.calls[0].Model)
 	}
-	if spawner.calls[1].Harness != domain.HarnessCodex {
-		t.Fatalf("second pick = %q, want codex (failed spawn must not consume the codex bucket)", spawner.calls[1].Harness)
+	if spawner.calls[1].Harness != "" || spawner.calls[1].Model != "" {
+		t.Fatalf("second ordinary spawn should delegate allocation, got harness=%q model=%q", spawner.calls[1].Harness, spawner.calls[1].Model)
 	}
 }

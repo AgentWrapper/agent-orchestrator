@@ -173,8 +173,6 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 	seen := seenIssueIDs(enabledProjects, sessions, openPRs)
 	issueSessions := issueSessionsByProject(enabledProjects, sessions)
-	liveByProject := liveWorkersByProject(sessions)
-	runningByProject := runningWorkerBucketsByProject(sessions)
 	for _, project := range enabledProjects {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -183,7 +181,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 			o.logger.Debug("tracker intake: project in failure backoff", "project", project.ID, "until", until)
 			continue
 		}
-		if failed := o.pollProject(ctx, project, seen, issueSessions[domain.ProjectID(project.ID)], liveByProject[project.ID], runningByProject[project.ID]); failed {
+		if failed := o.pollProject(ctx, project, seen, issueSessions[domain.ProjectID(project.ID)]); failed {
 			o.backoffUntil[project.ID] = now.Add(o.failureBackoff)
 		} else {
 			delete(o.backoffUntil, project.ID)
@@ -194,7 +192,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, sessionsByIssue map[domain.IssueID][]domain.SessionRecord, liveWorkers int, running map[domain.BucketKey]int) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, sessionsByIssue map[domain.IssueID][]domain.SessionRecord) (failed bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled {
 		return false
@@ -221,23 +219,8 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
 		return true
 	}
-	// A configured worker mix distributes intake spawns across weighted
-	// agent/model buckets exactly like an orchestrator-driven spawn (#62): each
-	// pick is deficit-based against the running fleet so the realized harness/
-	// model distribution converges on the target ratio. Selecting the harness
-	// here (rather than leaving it to the session manager) keeps intake's choice
-	// observable and lets convergence account for the sessions spawned earlier in
-	// this same pass. Passing an explicit harness also short-circuits the
-	// manager's own mix block, so the two never double-select. Provider-matched
-	// models and the never-fable-by-default guard (#61/#66) still resolve in the
-	// manager from the selected harness. An empty mix leaves harness/model unset
-	// so back-compat single-default behavior is unchanged.
-	mix := project.Config.WorkerMix
-	if len(mix) > 0 && running == nil {
-		running = make(map[domain.BucketKey]int)
-	}
-	spawnedThisPass := 0
 	var spawnFailed bool
+	normalPoolFull := false
 	for _, issue := range issues {
 		if ctx.Err() != nil {
 			return true
@@ -253,6 +236,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		sessionsForIssue := sessionsByIssue[issueID]
+		var postSpawnIntent *ports.NotificationIntent
 		var retry retryDecision
 		if seen[issueID] {
 			if _, _, ok := latestTerminatedWorker(sessionsForIssue); !ok {
@@ -265,12 +249,13 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 				spawnFailed = true
 				continue
 			}
-			if retry.intent != nil {
+			if retry.intent != nil && !retry.spawn {
 				o.emitNotification(ctx, *retry.intent)
 			}
 			if retry.done || !retry.spawn {
 				continue
 			}
+			postSpawnIntent = retry.intent
 		} else {
 			var err error
 			retry, err = o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
@@ -279,7 +264,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 				spawnFailed = true
 				continue
 			}
-			if retry.intent != nil {
+			if retry.intent != nil && !retry.spawn {
 				o.emitNotification(ctx, *retry.intent)
 			}
 			if retry.done {
@@ -289,10 +274,11 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			if !retry.spawn {
 				continue
 			}
+			postSpawnIntent = retry.intent
 		}
 		bypassPool := domain.IssueLabelsBypassWorkerPool(issue.Labels)
-		if !bypassPool && cfg.MaxConcurrent > 0 && liveWorkers+spawnedThisPass >= cfg.MaxConcurrent {
-			o.logger.Debug("tracker intake: reached concurrency cap, deferring issue", "project", project.ID, "issue", issueID, "cap", cfg.MaxConcurrent)
+		if normalPoolFull && !bypassPool {
+			o.logger.Debug("tracker intake: normal worker pool already full, deferring issue", "project", project.ID, "issue", issueID)
 			continue
 		}
 		spawnCfg := ports.SpawnConfig{
@@ -304,38 +290,25 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			Branch:           retry.adoptBranch,
 			IntakePoolBypass: bypassPool,
 		}
-		var pickKey domain.BucketKey
-		havePick := false
 		if harness, ok := domain.RoutingHarnessForIssueLabels(issue.Labels); ok {
 			spawnCfg.Harness = harness
-			pickKey = domain.BucketKey{Harness: harness}
-			havePick = true
-		} else if len(mix) > 0 {
-			if pick, ok := mix.Select(running); ok {
-				spawnCfg.Harness = pick.Harness
-				spawnCfg.Model = pick.Model
-				pickKey = domain.BucketKey{Harness: pick.Harness, Model: strings.TrimSpace(pick.Model)}
-				havePick = true
-			}
 		}
 		if _, err := o.spawner.Spawn(ctx, spawnCfg); err != nil {
 			if isWorkerConcurrencyCap(err) {
-				o.logger.Debug("tracker intake: spawn reached concurrency cap, deferring remaining issues", "project", project.ID, "issue", issueID, "err", err)
-				break
+				o.logger.Debug("tracker intake: spawn reached concurrency cap, deferring normal-pool issues", "project", project.ID, "issue", issueID, "err", err)
+				if !bypassPool {
+					normalPoolFull = true
+				}
+				continue
 			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
 			spawnFailed = true
 			continue
 		}
-		if havePick {
-			// Only a spawned (persisted) session shifts the running distribution,
-			// so a failed spawn must not consume the bucket it would have used.
-			running[pickKey]++
+		if postSpawnIntent != nil {
+			o.emitNotification(ctx, *postSpawnIntent)
 		}
 		seen[issueID] = true
-		if !bypassPool {
-			spawnedThisPass++
-		}
 	}
 	return spawnFailed
 }
@@ -693,51 +666,6 @@ func issueSessionsByProject(projects []domain.ProjectRecord, sessions []domain.S
 		}
 	}
 	return out
-}
-
-// liveWorkersByProject counts live (non-terminated) worker sessions that consume
-// the normal per-project MaxConcurrent cap. nopool sessions bypass that pool,
-// but still participate in worker-mix balancing via runningWorkerBucketsByProject.
-func liveWorkersByProject(sessions []domain.SessionRecord) map[string]int {
-	counts := make(map[string]int)
-	for _, sess := range sessions {
-		if sess.IsTerminated {
-			continue
-		}
-		if sess.Kind != domain.KindWorker {
-			continue
-		}
-		if sess.Metadata.IntakePoolBypass {
-			continue
-		}
-		counts[string(sess.ProjectID)]++
-	}
-	return counts
-}
-
-// runningWorkerBucketsByProject tallies live (non-terminated) worker sessions
-// per project by agent/model bucket — the running distribution the worker-mix
-// selector balances against. It mirrors the session manager's own
-// runningWorkerBuckets exactly: only worker sessions, terminated rows excluded,
-// and a bucket keyed by harness plus the trimmed model recorded at spawn, so an
-// intake pick and the session it persists land in the same bucket. Unlike the
-// concurrency-cap tally it counts every worker (not just canonical intake ids):
-// the mix balances the whole fleet, so an orchestrator-spawned worker still
-// biases intake's next pick toward the under-served buckets.
-func runningWorkerBucketsByProject(sessions []domain.SessionRecord) map[string]map[domain.BucketKey]int {
-	byProject := make(map[string]map[domain.BucketKey]int)
-	for _, sess := range sessions {
-		if sess.IsTerminated || sess.Kind != domain.KindWorker {
-			continue
-		}
-		buckets := byProject[string(sess.ProjectID)]
-		if buckets == nil {
-			buckets = make(map[domain.BucketKey]int)
-			byProject[string(sess.ProjectID)] = buckets
-		}
-		buckets[domain.BucketKey{Harness: sess.Harness, Model: strings.TrimSpace(sess.Metadata.Model)}]++
-	}
-	return byProject
 }
 
 // CanonicalIssueID stores tracker issue ids in sessions.issue_id with the

@@ -5,8 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/modelhealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
@@ -26,6 +29,14 @@ func (s workerCapacityStore) ListSessions(context.Context, domain.ProjectID) ([]
 type workerCapacityHealth struct{ snapshot agenthealth.Snapshot }
 
 func (h workerCapacityHealth) Snapshot() agenthealth.Snapshot { return h.snapshot }
+
+type workerCapacityModelHealth []modelhealth.Verdict
+
+func (h workerCapacityModelHealth) Snapshot() []modelhealth.Verdict { return h }
+
+type workerCapacityCandidateHealth []candidatehealth.Status
+
+func (h workerCapacityCandidateHealth) WorkerMixHealthSnapshot() []candidatehealth.Status { return h }
 
 func TestWorkerCapacityReportsMixAllocationAndDegradedCapacity(t *testing.T) {
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
@@ -82,6 +93,62 @@ func TestWorkerCapacityReportsMixAllocationAndDegradedCapacity(t *testing.T) {
 	}
 	if got.Buckets[1].Agent != domain.HarnessClaudeCode || !got.Buckets[1].Down || got.Buckets[1].DownCapacityShare == nil || *got.Buckets[1].DownCapacityShare != 3 {
 		t.Fatalf("claude bucket = %#v", got.Buckets[1])
+	}
+	if got.Buckets[1].BlockedBy != "harness_auth" {
+		t.Fatalf("claude blockedBy = %q, want harness_auth", got.Buckets[1].BlockedBy)
+	}
+}
+
+func TestWorkerCapacityMarksExactModelUnreachable(t *testing.T) {
+	pin := modelhealth.Pin{ProjectID: "ao", Scope: "workerMix[0]", Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"}
+	svc := project.NewWorkerCapacity(workerCapacityStore{
+		project: domain.ProjectRecord{
+			ID: "ao",
+			Config: domain.ProjectConfig{
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 5},
+				WorkerMix:     domain.WorkerMix{{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100}},
+			},
+		},
+	}, workerCapacityHealth{snapshot: agenthealth.Snapshot{
+		Harnesses: []agenthealth.HarnessHealth{{ID: string(domain.HarnessCodex), Label: "Codex", Health: agenthealth.HealthHealthy}},
+	}}, project.WithModelHealth(workerCapacityModelHealth{{
+		Pin:    pin,
+		Status: agentsvc.ModelStatusUnreachable,
+		Reason: "model unavailable",
+	}}))
+
+	got, err := svc.WorkerCapacity(context.Background(), "ao")
+	if err != nil {
+		t.Fatalf("WorkerCapacity: %v", err)
+	}
+	if len(got.Buckets) != 1 || !got.Buckets[0].Down || got.Buckets[0].BlockedBy != "model" || got.Buckets[0].Reason != "model unavailable" {
+		t.Fatalf("bucket = %#v, want exact model down", got.Buckets)
+	}
+}
+
+func TestWorkerCapacityMarksReactiveLaunchFailure(t *testing.T) {
+	svc := project.NewWorkerCapacity(workerCapacityStore{
+		project: domain.ProjectRecord{
+			ID: "ao",
+			Config: domain.ProjectConfig{
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 5},
+				WorkerMix:     domain.WorkerMix{{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100}},
+			},
+		},
+	}, workerCapacityHealth{snapshot: agenthealth.Snapshot{
+		Harnesses: []agenthealth.HarnessHealth{{ID: string(domain.HarnessCodex), Label: "Codex", Health: agenthealth.HealthHealthy}},
+	}}, project.WithCandidateHealth(workerCapacityCandidateHealth{{
+		Candidate: candidatehealth.Candidate{Surface: "worker_mix", Harness: string(domain.HarnessCodex), Model: "gpt-5.5-codex"},
+		Down:      true,
+		Reason:    "launch command failed",
+	}}))
+
+	got, err := svc.WorkerCapacity(context.Background(), "ao")
+	if err != nil {
+		t.Fatalf("WorkerCapacity: %v", err)
+	}
+	if len(got.Buckets) != 1 || !got.Buckets[0].Down || got.Buckets[0].BlockedBy != "launch_failure" || got.Buckets[0].Reason != "launch command failed" {
+		t.Fatalf("bucket = %#v, want reactive launch failure down", got.Buckets)
 	}
 }
 

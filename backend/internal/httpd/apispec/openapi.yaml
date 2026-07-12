@@ -4148,6 +4148,12 @@ components:
           type: integer
         agent:
           type: string
+        blockedBy:
+          enum:
+          - harness_auth
+          - model
+          - launch_failure
+          type: string
         down:
           type: boolean
         downCapacityShare:

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -94,30 +95,10 @@ func (c *AgentsController) configuredModelPins(ctx context.Context) []agentsvc.M
 }
 
 func pinsFromConfig(cfg domain.ProjectConfig) []agentsvc.ModelPin {
-	var pins []agentsvc.ModelPin
-	add := func(h domain.AgentHarness, model string) {
-		model = strings.TrimSpace(model)
-		if h == "" || model == "" {
-			return
-		}
-		if !domain.ClassifyModelProvider(model).CompatibleWith(h.ModelProvider()) {
-			return
-		}
-		pins = append(pins, agentsvc.ModelPin{Harness: h, Model: model})
-	}
-	addConfig := func(defaultHarness domain.AgentHarness, cfg domain.AgentConfig) {
-		add(defaultHarness, cfg.Model)
-		for h, hm := range cfg.ModelByHarness {
-			add(h, hm.Model)
-		}
-	}
-	addConfig(cfg.Worker.Harness, cfg.AgentConfig)
-	addConfig(cfg.Orchestrator.Harness, cfg.AgentConfig)
-	addConfig(cfg.Worker.Harness, cfg.Worker.AgentConfig)
-	addConfig(cfg.Orchestrator.Harness, cfg.Orchestrator.AgentConfig)
-	for _, bucket := range cfg.WorkerMix {
-		add(bucket.Harness, bucket.Model)
-		addConfig(bucket.Harness, cfg.AgentConfig)
+	resolved := agentconfig.ConfiguredModelPins(cfg)
+	pins := make([]agentsvc.ModelPin, 0, len(resolved))
+	for _, pin := range resolved {
+		pins = append(pins, agentsvc.ModelPin{Harness: pin.Harness, Model: pin.Model})
 	}
 	return pins
 }

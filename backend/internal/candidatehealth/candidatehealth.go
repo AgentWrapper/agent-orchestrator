@@ -121,6 +121,15 @@ type downState struct {
 	changedAt time.Time
 }
 
+// Status is the read-only projection of one candidate's reactive health.
+type Status struct {
+	Candidate Candidate
+	Down      bool
+	Reason    string
+	ChangedAt time.Time
+	Skipped   int
+}
+
 // attemptCanceled reports whether the caller's attempt context was actually
 // canceled. Candidate-side probes can also wrap context.Canceled or
 // context.DeadlineExceeded, so the returned error's identity alone is not enough
@@ -182,6 +191,23 @@ func (t *Tracker) IsDown(c Candidate) bool {
 	defer t.mu.Unlock()
 	_, ok := t.down[c]
 	return ok
+}
+
+// Snapshot returns the current down candidates and skip debits.
+func (t *Tracker) Snapshot() []Status {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]Status, 0, len(t.down))
+	for c, down := range t.down {
+		out = append(out, Status{
+			Candidate: c,
+			Down:      true,
+			Reason:    down.reason,
+			ChangedAt: down.changedAt,
+			Skipped:   t.skipped[c],
+		})
+	}
+	return out
 }
 
 // ForEachSkipped invokes fn for every candidate with a non-zero skip debit —
