@@ -175,16 +175,6 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	}
 
 	if runtime.GOOS == "windows" {
-		for _, name := range []string{"codex.exe", "codex.cmd", "codex"} {
-			path, err := exec.LookPath(name)
-			if err == nil && path != "" {
-				return resolveNativeWindowsCodex(path), nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
 		candidates := []string{}
 		if appData := os.Getenv("APPDATA"); appData != "" {
 			shim := filepath.Join(appData, "npm", "codex.cmd")
@@ -200,6 +190,16 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 		for _, candidate := range candidates {
 			if fileExists(candidate) {
 				return resolveNativeWindowsCodex(candidate), nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+
+		for _, name := range []string{"codex.exe", "codex.cmd", "codex"} {
+			path, err := exec.LookPath(name)
+			if err == nil && path != "" && !isWindowsAppsPath(path) {
+				return resolveNativeWindowsCodex(path), nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
@@ -348,4 +348,8 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 var fileExists = func(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func isWindowsAppsPath(path string) bool {
+	return strings.Contains(strings.ToLower(filepath.ToSlash(path)), "windowsapps")
 }
