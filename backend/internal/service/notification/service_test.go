@@ -43,13 +43,14 @@ func TestListUnreadAddsTargets(t *testing.T) {
 		{ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 		{ID: "n3", SessionID: "model-1", ProjectID: "mer", Type: domain.NotificationModelUnreachable, Title: "model unreachable", Status: domain.NotificationUnread, CreatedAt: time.Now()},
+		{ID: "n4", SessionID: "mer-2", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/2", Type: domain.NotificationWorkerRetryExhausted, Title: "worker retry exhausted", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 	}}
 	mgr := New(Deps{Store: st})
 	got, err := mgr.ListUnread(context.Background(), ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListUnread: %v", err)
 	}
-	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" || got[2].Target.Kind != TargetNone || got[2].Target.SessionID != "" {
+	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" || got[2].Target.Kind != TargetNone || got[2].Target.SessionID != "" || got[3].Target.Kind != TargetPR || got[3].Target.PRURL == "" {
 		t.Fatalf("targets = %+v", got)
 	}
 	if got[0].Subject.Kind != domain.NotificationSubjectSession || got[0].Subject.ID != "mer-1" {
@@ -60,6 +61,9 @@ func TestListUnreadAddsTargets(t *testing.T) {
 	}
 	if got[2].Subject.Kind != domain.NotificationSubjectModel || got[2].Subject.ID != "model-1" {
 		t.Fatalf("model subject = %+v", got[2].Subject)
+	}
+	if got[3].Subject.Kind != domain.NotificationSubjectSession || got[3].Subject.ID != "mer-2" {
+		t.Fatalf("worker subject = %+v", got[3].Subject)
 	}
 }
 

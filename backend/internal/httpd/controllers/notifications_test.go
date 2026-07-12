@@ -232,7 +232,7 @@ func TestNotificationsAPI_StreamCreatedNotifications(t *testing.T) {
 		t.Fatalf("project filter = %q", stream.gotProject)
 	}
 
-	stream.ch <- domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs input", Status: domain.NotificationUnread, CreatedAt: time.Now()}
+	stream.ch <- domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationWorkerRetryExhausted, Title: "worker retry exhausted", Status: domain.NotificationUnread, CreatedAt: time.Now()}
 	reader := bufio.NewReader(resp.Body)
 	eventLine, err := reader.ReadString('\n')
 	if err != nil {
@@ -242,7 +242,10 @@ func TestNotificationsAPI_StreamCreatedNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(eventLine) != "event: notification_created" || !strings.Contains(dataLine, `"id":"ntf_1"`) {
+	if strings.TrimSpace(eventLine) != "event: notification_created" ||
+		!strings.Contains(dataLine, `"id":"ntf_1"`) ||
+		!strings.Contains(dataLine, `"subject":{"kind":"session","id":"mer-1"}`) ||
+		!strings.Contains(dataLine, `"target":{"kind":"pr","sessionId":"mer-1","prUrl":"https://github.com/o/r/pull/1"}`) {
 		t.Fatalf("eventLine=%q dataLine=%q", eventLine, dataLine)
 	}
 }

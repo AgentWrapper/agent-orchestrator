@@ -197,7 +197,8 @@ func TestNotificationsTypedSubjectMigrationBackfillsExistingRows(t *testing.T) {
 			('sess', 'ao-1', 'ao', '', 'needs_input', 'session', 'unread', '2026-07-12T00:00:00Z', ''),
 			('pr', 'ao-2', 'ao', 'https://github.com/o/r/pull/1', 'ready_to_merge', 'pr', 'unread', '2026-07-12T00:01:00Z', 'sha-pr'),
 			('model', 'ao-model-codex', 'ao', '', 'model_unreachable', 'model', 'unread', '2026-07-12T00:02:00Z', ''),
-			('main', 'main-ci', 'ao', '', 'main_ci_red', 'main', 'unread', '2026-07-12T00:03:00Z', 'sha-main')
+			('main', 'main-ci', 'ao', '', 'main_ci_red', 'main', 'unread', '2026-07-12T00:03:00Z', 'sha-main'),
+			('worker-pr', 'ao-3', 'ao', 'https://github.com/o/r/pull/2', 'worker_retry_exhausted', 'worker', 'unread', '2026-07-12T00:04:00Z', '')
 	`); err != nil {
 		t.Fatalf("seed notifications: %v", err)
 	}
@@ -220,10 +221,11 @@ func TestNotificationsTypedSubjectMigrationBackfillsExistingRows(t *testing.T) {
 		t.Fatalf("iterate migrated notifications: %v", err)
 	}
 	want := map[string][3]string{
-		"main":  {"", "project", "ao"},
-		"model": {"", "model", "ao-model-codex"},
-		"pr":    {"ao-2", "pr", "https://github.com/o/r/pull/1"},
-		"sess":  {"ao-1", "session", "ao-1"},
+		"main":      {"", "project", "ao"},
+		"model":     {"", "model", "ao-model-codex"},
+		"pr":        {"ao-2", "pr", "https://github.com/o/r/pull/1"},
+		"sess":      {"ao-1", "session", "ao-1"},
+		"worker-pr": {"ao-3", "session", "ao-3"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("migrated rows = %+v, want %+v", got, want)
@@ -232,6 +234,13 @@ func TestNotificationsTypedSubjectMigrationBackfillsExistingRows(t *testing.T) {
 		if got[id] != wantRow {
 			t.Fatalf("%s migrated row = %+v, want %+v", id, got[id], wantRow)
 		}
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, session_id, project_id, pr_url, type, subject_kind, subject_id, title, status, created_at)
+		VALUES ('future', '', 'ao', '', 'future_notification', 'project', 'ao', 'future', 'unread', '2026-07-12T00:05:00Z')
+	`); err != nil {
+		t.Fatalf("seed future notification after up migration: %v", err)
 	}
 
 	downTo(t, db, 45)
@@ -243,6 +252,13 @@ func TestNotificationsTypedSubjectMigrationBackfillsExistingRows(t *testing.T) {
 	}
 	if mainSession != "main-ci-ao" {
 		t.Fatalf("main session after down = %q, want project-scoped synthetic id", mainSession)
+	}
+	var futureRows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE id = 'future'`).Scan(&futureRows); err != nil {
+		t.Fatalf("count future notification after down migration: %v", err)
+	}
+	if futureRows != 0 {
+		t.Fatalf("future notification rows after down = %d, want 0", futureRows)
 	}
 }
 

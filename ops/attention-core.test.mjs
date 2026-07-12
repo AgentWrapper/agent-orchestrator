@@ -123,7 +123,9 @@ describe("normalizeEvent", () => {
 				title: "main is red",
 			},
 		});
+		assert.equal(rec.sessionId, "main");
 		assert.equal(signature(rec), "ao/project:ao#main_ci_red");
+		assert.match(renderDigest([rec], { now: new Date("2026-07-12T00:00:00Z") }), /`main`/);
 	});
 
 	it("returns null for uninteresting events", () => {

@@ -30,12 +30,14 @@ SELECT
     pr_url,
     type,
     CASE
+        WHEN type IN ('worker_died_unfinished', 'worker_retry_exhausted') THEN 'session'
         WHEN type IN ('model_unreachable', 'model_recovered') THEN 'model'
         WHEN type = 'main_ci_red' THEN 'project'
         WHEN pr_url != '' THEN 'pr'
         ELSE 'session'
     END,
     CASE
+        WHEN type IN ('worker_died_unfinished', 'worker_retry_exhausted') THEN session_id
         WHEN type IN ('model_unreachable', 'model_recovered') THEN session_id
         WHEN type = 'main_ci_red' THEN project_id
         WHEN pr_url != '' THEN pr_url

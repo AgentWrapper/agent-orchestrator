@@ -167,6 +167,8 @@ func (r NotificationRecord) WithInferredSubject() NotificationRecord {
 			r.SubjectID = string(r.ProjectID)
 		case NotificationSubjectPR:
 			r.SubjectID = r.PRURL
+		case NotificationSubjectModel:
+			r.SubjectID = string(r.ProjectID)
 		}
 	}
 	if r.SubjectKind == NotificationSubjectProject || r.SubjectKind == NotificationSubjectModel {

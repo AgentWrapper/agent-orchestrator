@@ -242,7 +242,7 @@ func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationR
 
 func notificationTargetFromRecord(rec domain.NotificationRecord) NotificationTarget {
 	rec = rec.WithInferredSubject()
-	if rec.SubjectKind == domain.NotificationSubjectPR && rec.PRURL != "" {
+	if rec.PRURL != "" {
 		return NotificationTarget{Kind: "pr", SessionID: string(rec.SessionID), PRURL: rec.PRURL}
 	}
 	if rec.SubjectKind == domain.NotificationSubjectSession {
