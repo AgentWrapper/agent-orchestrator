@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createReadStream } from "node:fs";
+import { createReadStream, realpathSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -271,7 +271,18 @@ function isLoopbackHost(host) {
 	return withoutPort === "localhost" || withoutPort === "127.0.0.1" || withoutPort === "::1";
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isMainModule() {
+	const argvPath = process.argv[1];
+	if (!argvPath) return false;
+	if (import.meta.url === pathToFileURL(argvPath).href) return true;
+	try {
+		return import.meta.url === pathToFileURL(realpathSync(argvPath)).href;
+	} catch {
+		return false;
+	}
+}
+
+if (isMainModule()) {
 	const bind = process.env.AO_WEB_BIND || "127.0.0.1";
 	const port = Number(process.env.AO_WEB_PORT || "5173");
 	const publicUrl = process.env.AO_WEB_PUBLIC_URL || "";

@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { createAoWebServer } from "./ao-web-server.mjs";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let cleanup = [];
 
@@ -195,6 +199,24 @@ describe("ao web production server", () => {
 		assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
 		assert.equal(daemonHit, false);
 	});
+
+	it("starts when invoked through the release current symlink", async () => {
+		const distDir = await makeDist();
+		const server = await startReleaseSymlinkServer(distDir);
+
+		const response = await fetchText(server.url);
+		assert.equal(response.status, 200);
+		assert.match(response.body, /<div id="root"><\/div>/);
+	});
+
+	it("starts through the release symlink when Node preserves the main symlink", async () => {
+		const distDir = await makeDist();
+		const server = await startReleaseSymlinkServer(distDir, ["--preserve-symlinks-main"]);
+
+		const response = await fetchText(server.url);
+		assert.equal(response.status, 200);
+		assert.match(response.body, /<div id="root"><\/div>/);
+	});
 });
 
 async function makeDist() {
@@ -220,6 +242,98 @@ async function listen(server) {
 		port: address.port,
 		url: `http://127.0.0.1:${address.port}`,
 	};
+}
+
+async function freePort() {
+	const server = http.createServer();
+	await new Promise((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const address = server.address();
+	assert(address && typeof address === "object");
+	const { port } = address;
+	await new Promise((resolve) => server.close(resolve));
+	return port;
+}
+
+async function startReleaseSymlinkServer(distDir, nodeArgs = []) {
+	const releaseRoot = await mkdtemp(path.join(os.tmpdir(), "ao-web-release-"));
+	const releaseDir = path.join(releaseRoot, "releases", "abc123");
+	const releaseSource = path.join(releaseDir, "source");
+	const current = path.join(releaseRoot, "current");
+	await mkdir(releaseDir, { recursive: true });
+	await symlink(REPO_ROOT, releaseSource, "dir");
+	await symlink(releaseDir, current, "dir");
+	cleanup.push(async () => {
+		await rm(current, { force: true });
+		await rm(releaseSource, { force: true });
+		await rm(releaseRoot, { recursive: true, force: true });
+	});
+
+	const port = await freePort();
+	const output = { stderr: "", stdout: "" };
+	const child = spawn(process.execPath, [...nodeArgs, path.join(current, "source", "ops", "ao-web-server.mjs")], {
+		env: childEnv({
+			AO_WEB_DIST: distDir,
+			AO_WEB_PORT: String(port),
+		}),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	child.stdout.on("data", (chunk) => {
+		output.stdout += chunk.toString("utf8");
+	});
+	child.stderr.on("data", (chunk) => {
+		output.stderr += chunk.toString("utf8");
+	});
+	cleanup.push(() => stopChild(child));
+
+	const url = `http://127.0.0.1:${port}/`;
+	await waitForServer(url, { child, output });
+	return { child, output, url };
+}
+
+function childEnv(overrides) {
+	const env = { ...process.env };
+	for (const key of Object.keys(env)) {
+		if (key.startsWith("AO_WEB_")) delete env[key];
+	}
+	return { ...env, ...overrides };
+}
+
+async function waitForServer(url, options = {}) {
+	const deadline = Date.now() + 3000;
+	let lastError = new Error("server did not start");
+	while (Date.now() < deadline) {
+		if (options.child && (options.child.exitCode !== null || options.child.signalCode !== null)) {
+			throw new Error(
+				`server process exited before serving ${url}: exit=${options.child.exitCode} signal=${options.child.signalCode}\nstdout:\n${options.output?.stdout ?? ""}\nstderr:\n${options.output?.stderr ?? ""}`,
+			);
+		}
+		try {
+			const response = await fetch(url);
+			await response.arrayBuffer();
+			return;
+		} catch (error) {
+			lastError = error;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+	}
+	if (options.output) {
+		lastError.message = `${lastError.message}\nstdout:\n${options.output.stdout}\nstderr:\n${options.output.stderr}`;
+	}
+	throw lastError;
+}
+
+function stopChild(child) {
+	return new Promise((resolve) => {
+		if (child.exitCode !== null || child.signalCode !== null) {
+			resolve();
+			return;
+		}
+		child.once("exit", resolve);
+		child.kill("SIGTERM");
+	});
 }
 
 async function fetchText(url) {
