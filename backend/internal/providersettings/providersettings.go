@@ -18,6 +18,11 @@ type State struct {
 	MinimaxAPIKey string `json:"minimaxApiKey,omitempty"`
 }
 
+type persistedState struct {
+	MinimaxAPIKey      string `json:"minimaxApiKey,omitempty"`
+	MinimaxAPIKeySnake string `json:"minimax_api_key,omitempty"`
+}
+
 // Path returns the app-wide provider settings file under the AO data dir.
 func Path(dataDir string) string {
 	return filepath.Join(dataDir, "provider-settings.json")
@@ -32,9 +37,13 @@ func Load(path string) (State, error) {
 	if err != nil {
 		return State{}, fmt.Errorf("read provider settings: %w", err)
 	}
-	var state State
-	if err := json.Unmarshal(data, &state); err != nil {
+	var raw persistedState
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return State{}, fmt.Errorf("parse provider settings: %w", err)
+	}
+	state := State{MinimaxAPIKey: strings.TrimSpace(raw.MinimaxAPIKey)}
+	if state.MinimaxAPIKey == "" {
+		state.MinimaxAPIKey = strings.TrimSpace(raw.MinimaxAPIKeySnake)
 	}
 	return state, nil
 }
