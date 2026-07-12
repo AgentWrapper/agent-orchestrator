@@ -12,7 +12,9 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
@@ -285,6 +287,109 @@ func TestPollDoesNotEmitAdoptionNotificationWhenRespawnAdmissionFails(t *testing
 	got := notifications.intents[0]
 	if got.AdoptsOpenPR || got.PRURL != "https://github.com/acme/demo/pull/99" {
 		t.Fatalf("notification = %+v, want orphan PR URL without AdoptsOpenPR", got)
+	}
+}
+
+func TestPollPublishesAdoptionNotificationAfterDeferredObservationWithRealDedupeStore(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	issueID := domain.IssueID("github:acme/demo#12")
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID:            "demo",
+		Path:          "/repo/demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		RegisteredAt:  now,
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	worker, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID:    "demo",
+		IssueID:      issueID,
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		DisplayName:  "demo #12 fix-login",
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited, LastActivityAt: now},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatalf("seed worker: %v", err)
+	}
+	if err := store.WriteSCMObservation(ctx, domain.PullRequest{
+		URL:          "https://github.com/acme/demo/pull/99",
+		SessionID:    worker.ID,
+		Number:       99,
+		SourceBranch: "ao/demo-1/root",
+		TargetBranch: "main",
+		UpdatedAt:    now,
+		ObservedAt:   now,
+	}, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatalf("seed PR: %v", err)
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title: "Fix login",
+		State: domain.IssueOpen,
+	}}}
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		issueID: apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
+	publisher := &recordingNotificationPublisher{}
+	nextID := 0
+	notifications := notify.New(notify.Deps{
+		Store:     store,
+		Publisher: publisher,
+		Clock:     func() time.Time { return now },
+		NewID: func() string {
+			nextID++
+			return fmt.Sprintf("ntf_%d", nextID)
+		},
+	})
+	observer := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), Notifications: notifications, Clock: func() time.Time { return now }})
+
+	if err := observer.Poll(ctx); err != nil {
+		t.Fatalf("first Poll() error = %v", err)
+	}
+	if len(publisher.records) != 1 {
+		t.Fatalf("published after deferral = %+v, want one observation notification", publisher.records)
+	}
+	if !strings.Contains(publisher.records[0].Body, "orphaned PR") || strings.Contains(publisher.records[0].Body, "dispatching a replacement to adopt") {
+		t.Fatalf("first body = %q, want orphan observation without adoption claim", publisher.records[0].Body)
+	}
+	if _, ok, err := store.MarkNotificationRead(ctx, publisher.records[0].ID); err != nil || !ok {
+		t.Fatalf("mark first notification read ok=%v err=%v", ok, err)
+	}
+
+	delete(spawner.failErrByIssue, issueID)
+	if err := observer.Poll(ctx); err != nil {
+		t.Fatalf("second Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn calls = %+v, want deferred attempt then successful adoption attempt", spawner.calls)
+	}
+	if len(publisher.records) != 2 {
+		t.Fatalf("published after successful adoption = %+v, want second adoption notification", publisher.records)
+	}
+	got := publisher.records[1]
+	if got.Type != domain.NotificationWorkerDiedUnfinished || got.SessionID != worker.ID || got.PRURL != "https://github.com/acme/demo/pull/99" {
+		t.Fatalf("second notification = %+v", got)
+	}
+	if !strings.Contains(got.Body, "dispatching a replacement to adopt https://github.com/acme/demo/pull/99") {
+		t.Fatalf("second body = %q, want adoption dispatch notification", got.Body)
+	}
+	rows, err := store.ListUnreadNotifications(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != got.ID {
+		t.Fatalf("unread rows = %+v, want only second adoption notification", rows)
 	}
 }
 
@@ -1075,6 +1180,15 @@ type fakeNotificationSink struct {
 
 func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
 	f.intents = append(f.intents, intent)
+	return nil
+}
+
+type recordingNotificationPublisher struct {
+	records []domain.NotificationRecord
+}
+
+func (p *recordingNotificationPublisher) Publish(_ context.Context, rec domain.NotificationRecord) error {
+	p.records = append(p.records, rec)
 	return nil
 }
 

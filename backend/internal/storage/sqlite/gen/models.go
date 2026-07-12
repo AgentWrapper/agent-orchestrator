@@ -180,7 +180,6 @@ type Session struct {
 	ActivityState         domain.ActivityState
 	ActivityLastAt        time.Time
 	IsTerminated          bool
-	TerminalFailureReason string
 	Branch                string
 	WorkspacePath         string
 	RuntimeHandleID       string
@@ -197,6 +196,7 @@ type Session struct {
 	RuntimeToken          string
 	WorkspaceMode         string
 	PendingDecision       string
+	TerminalFailureReason string
 }
 
 type SessionWorktree struct {

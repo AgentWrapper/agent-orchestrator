@@ -35,4 +35,5 @@ FROM notifications
 WHERE session_id = ?
   AND type = ?
   AND type IN ('worker_died_unfinished', 'worker_retry_exhausted')
+  AND (type != 'worker_died_unfinished' OR body = ?)
 LIMIT 1;

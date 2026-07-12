@@ -74,6 +74,7 @@ func (s *Store) getPersistentNotificationByDedupe(ctx context.Context, rec domai
 	row, err := s.qw.GetWorkerTerminalNotificationByDedupe(ctx, gen.GetWorkerTerminalNotificationByDedupeParams{
 		SessionID: rec.SessionID,
 		Type:      rec.Type,
+		Body:      rec.Body,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NotificationRecord{}, false, nil

@@ -137,6 +137,54 @@ func TestNotificationStore_WorkerTerminalDedupeSurvivesRead(t *testing.T) {
 	}
 }
 
+func TestNotificationStore_WorkerDiedUnfinishedDedupeAllowsDistinctBodiesAfterRead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	observed := domain.NotificationRecord{
+		ID:        "ntf_observed",
+		SessionID: sess.ID,
+		ProjectID: sess.ProjectID,
+		PRURL:     "https://github.com/acme/demo/pull/99",
+		Type:      domain.NotificationWorkerDiedUnfinished,
+		Title:     "worker died with unfinished work: issue #12",
+		Body:      "demo #12 fix-login terminated before issue #12 landed with an orphaned PR https://github.com/acme/demo/pull/99; ao will dispatch a clean replacement if retry capacity remains.",
+		Status:    domain.NotificationUnread,
+		CreatedAt: now,
+	}
+	if _, inserted, err := s.CreateNotification(ctx, observed); err != nil || !inserted {
+		t.Fatalf("CreateNotification observed inserted=%v err=%v", inserted, err)
+	}
+	if _, ok, err := s.MarkNotificationRead(ctx, observed.ID); err != nil || !ok {
+		t.Fatalf("MarkNotificationRead observed ok=%v err=%v", ok, err)
+	}
+	duplicateObserved := observed
+	duplicateObserved.ID = "ntf_observed_again"
+	duplicateObserved.CreatedAt = now.Add(time.Minute)
+	if _, inserted, err := s.CreateNotification(ctx, duplicateObserved); err != nil || inserted {
+		t.Fatalf("duplicate observed inserted=%v err=%v, want false nil", inserted, err)
+	}
+	adopting := observed
+	adopting.ID = "ntf_adopting"
+	adopting.Body = "demo #12 fix-login terminated before issue #12 landed with an open PR; ao is dispatching a replacement to adopt https://github.com/acme/demo/pull/99."
+	adopting.CreatedAt = now.Add(2 * time.Minute)
+	if _, inserted, err := s.CreateNotification(ctx, adopting); err != nil || !inserted {
+		t.Fatalf("CreateNotification adopting inserted=%v err=%v, want true nil", inserted, err)
+	}
+	rows, err := s.ListUnreadNotifications(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != adopting.ID {
+		t.Fatalf("rows = %+v, want only adopting notification unread", rows)
+	}
+}
+
 func TestNotificationStore_SensitiveReadyDoesNotDedupeRoutineReady(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
