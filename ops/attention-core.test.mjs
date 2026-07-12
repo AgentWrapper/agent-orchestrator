@@ -128,6 +128,19 @@ describe("normalizeEvent", () => {
 		assert.match(renderDigest([rec], { now: new Date("2026-07-12T00:00:00Z") }), /`main`/);
 	});
 
+	it("keeps worker terminal notifications session-scoped even when they include a PR URL", () => {
+		const rec = normalizeEvent({
+			type: "worker_retry_exhausted",
+			notification: {
+				projectId: "ao",
+				sessionId: "agent-7",
+				prUrl: "https://github.example/pr/7",
+				title: "worker retry cap exhausted",
+			},
+		});
+		assert.equal(signature(rec), "ao/session:agent-7#worker_retry_exhausted");
+	});
+
 	it("returns null for uninteresting events", () => {
 		assert.equal(normalizeEvent({ type: "pr_check_recorded", payload: { name: "backend" } }), null);
 		assert.equal(normalizeEvent(null), null);

@@ -12,6 +12,7 @@ import {
 	digestContentKey,
 	fetchMainCI,
 	loadState,
+	normalizeNotification,
 	notificationKey,
 	parsePollMs,
 	parseSSEFrames,
@@ -192,6 +193,29 @@ describe("ao Slack notifier notification formatting", () => {
 		);
 
 		assert.equal(msg, "<@U123> 🚨 *worker_retry_exhausted* [ao] agent-6: worker retry cap exhausted: issue #155");
+	});
+
+	it("keeps retry cap notifications session-scoped when a fallback payload has a PR URL", () => {
+		const n = normalizeNotification({
+			type: "worker_retry_exhausted",
+			sessionId: "agent-6",
+			projectId: "ao",
+			prUrl: "https://github.example/pr/6",
+		});
+		assert.equal(n.subjectKind, "session");
+		assert.equal(n.subjectId, "agent-6");
+	});
+
+	it("shows model subjects when sessionId is empty", () => {
+		const msg = describeSlackMessage({
+			type: "model_unreachable",
+			sessionId: "",
+			projectId: "ao",
+			subject: { kind: "model", id: "ao-workerMix-0-model-codex" },
+			title: "gpt-5 model unreachable",
+		});
+
+		assert.equal(msg, "🧠 *model_unreachable* [ao] ao-workerMix-0-model-codex: gpt-5 model unreachable");
 	});
 
 	it("accepts the SSE envelope shape from older tests", () => {

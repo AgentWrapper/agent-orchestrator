@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/modelhealth"
 )
 
 func enrich(intent Intent) (domain.NotificationRecord, error) {
@@ -217,18 +218,13 @@ func modelDetail(intent Intent) string {
 }
 
 func modelSubjectID(intent Intent) string {
-	parts := []string{}
-	if intent.ModelScope != "" {
-		parts = append(parts, strings.TrimSpace(intent.ModelScope))
-	}
-	if intent.ModelHarness != "" {
-		parts = append(parts, string(intent.ModelHarness))
-	}
-	if intent.Model != "" {
-		parts = append(parts, strings.TrimSpace(intent.Model))
-	}
-	if len(parts) > 0 {
-		return strings.Join(parts, "/")
+	if intent.ModelScope != "" || intent.ModelHarness != "" || intent.Model != "" {
+		return modelhealth.NotificationSubjectID(modelhealth.Pin{
+			ProjectID: intent.ProjectID,
+			Scope:     intent.ModelScope,
+			Harness:   intent.ModelHarness,
+			Model:     intent.Model,
+		})
 	}
 	if intent.ProjectID != "" {
 		return string(intent.ProjectID)

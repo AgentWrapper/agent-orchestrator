@@ -52,6 +52,25 @@ SELECT
     head_sha
 FROM notifications;
 
+UPDATE notifications_next
+SET status = 'read'
+WHERE status = 'unread'
+  AND EXISTS (
+    SELECT 1
+    FROM notifications_next AS newer
+    WHERE newer.status = 'unread'
+      AND newer.subject_kind = notifications_next.subject_kind
+      AND newer.subject_id = notifications_next.subject_id
+      AND newer.type = notifications_next.type
+      AND newer.pr_url = notifications_next.pr_url
+      AND newer.sensitive = notifications_next.sensitive
+      AND newer.head_sha = notifications_next.head_sha
+      AND (
+        newer.created_at > notifications_next.created_at
+        OR (newer.created_at = notifications_next.created_at AND newer.id > notifications_next.id)
+      )
+  );
+
 DROP INDEX IF EXISTS idx_notifications_unread_dedupe;
 DROP INDEX IF EXISTS idx_notifications_status;
 DROP INDEX IF EXISTS idx_notifications_worker_terminal_dedupe;
@@ -63,13 +82,13 @@ ALTER TABLE notifications_next RENAME TO notifications;
 CREATE INDEX idx_notifications_status
     ON notifications(status, created_at DESC);
 CREATE UNIQUE INDEX idx_notifications_unread_dedupe
-    ON notifications(subject_kind, subject_id, type, pr_url, sensitive, head_sha)
+    ON notifications(subject_kind, COALESCE(NULLIF(subject_id, ''), session_id), type, pr_url, sensitive, head_sha)
     WHERE status = 'unread';
 CREATE UNIQUE INDEX idx_notifications_worker_died_unfinished_dedupe
-    ON notifications(subject_kind, subject_id, type, body)
+    ON notifications(subject_kind, COALESCE(NULLIF(subject_id, ''), session_id), type, body)
     WHERE type = 'worker_died_unfinished';
 CREATE UNIQUE INDEX idx_notifications_worker_retry_exhausted_dedupe
-    ON notifications(subject_kind, subject_id, type)
+    ON notifications(subject_kind, COALESCE(NULLIF(subject_id, ''), session_id), type)
     WHERE type = 'worker_retry_exhausted';
 -- +goose StatementEnd
 

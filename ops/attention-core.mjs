@@ -31,10 +31,11 @@ export const ATTENTION_KINDS = new Set([
 	"daemon_unhealthy", // the daemon health probe is failing
 	"no_signal", // a session whose activity hook went silent (stuck/dead)
 	"main_ci_red", // main-branch CI is failing and merges/deploys are frozen
+	"worker_retry_exhausted", // worker respawn is capped and needs operator action
 ]);
 
 // Informational kinds we forward but never @mention.
-export const INFO_KINDS = new Set(["pr_merged", "pr_closed_unmerged", "heartbeat"]);
+export const INFO_KINDS = new Set(["pr_merged", "pr_closed_unmerged", "heartbeat", "worker_died_unfinished"]);
 
 const ICONS = {
 	needs_input: "🖐️",
@@ -44,6 +45,8 @@ const ICONS = {
 	daemon_unhealthy: "❤️‍🩹",
 	no_signal: "🛰️",
 	main_ci_red: "🚨",
+	worker_retry_exhausted: "🚨",
+	worker_died_unfinished: "🧯",
 	ready_to_merge: "🟢",
 	pr_merged: "🚀",
 	pr_closed_unmerged: "🗑️",
@@ -84,7 +87,15 @@ export function normalizeEvent(raw, { sensitivePaths } = {}) {
 			: (n.sessionId ?? n.session ?? raw.sessionId ?? "");
 	const subjectKind =
 		subject.kind ??
-		(rawKind === "main_ci_red" ? "project" : url ? "pr" : sessionId ? "session" : "");
+		(rawKind === "main_ci_red"
+			? "project"
+			: rawKind === "worker_died_unfinished" || rawKind === "worker_retry_exhausted"
+				? "session"
+				: url
+					? "pr"
+					: sessionId
+						? "session"
+						: "");
 	const subjectId =
 		subject.id ??
 		(subjectKind === "project" ? projectId : subjectKind === "pr" ? url : subjectKind === "session" ? sessionId : "");

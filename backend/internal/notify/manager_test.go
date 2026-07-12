@@ -441,7 +441,7 @@ func TestManagerNotifyModelUnreachable(t *testing.T) {
 	if got.Type != domain.NotificationModelUnreachable || got.PRURL != "" || got.Title != "gpt-5.5-codex model unreachable" {
 		t.Fatalf("stored notification = %+v", got)
 	}
-	if got.SessionID != "" || got.SubjectKind != domain.NotificationSubjectModel || got.SubjectID != "workerMix[0].model/codex/gpt-5.5-codex" {
+	if got.SessionID != "" || got.SubjectKind != domain.NotificationSubjectModel || got.SubjectID != "ao-workerMix-0-model-codex-gpt-5-5-codex" {
 		t.Fatalf("subject/session = %q/%q session:%q, want model subject with no legacy session", got.SubjectKind, got.SubjectID, got.SessionID)
 	}
 	if !strings.Contains(got.Body, "400 model not available") {

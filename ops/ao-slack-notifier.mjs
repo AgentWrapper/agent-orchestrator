@@ -137,6 +137,8 @@ const INTERESTING = new Set([
 	"worker_died_unfinished",
 	"worker_retry_exhausted",
 	"main_ci_red",
+	"model_unreachable",
+	"model_recovered",
 ]);
 const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal", "main_ci_red"]);
 const ICONS = {
@@ -151,6 +153,8 @@ const ICONS = {
 	worker_died_unfinished: "🧯",
 	worker_retry_exhausted: "🚨",
 	main_ci_red: "🚨",
+	model_unreachable: "🧠",
+	model_recovered: "🧠",
 };
 
 export function digestContentKey(records) {
@@ -240,7 +244,17 @@ export function normalizeNotification(raw) {
 	const prUrl = n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "";
 	const projectId = n.projectId ?? n.project ?? raw.projectId ?? "";
 	const sessionId = n.sessionId ?? n.session ?? raw.sessionId ?? "";
-	const subjectKind = subject.kind ?? (type === "main_ci_red" ? "project" : prUrl ? "pr" : sessionId ? "session" : "");
+	const subjectKind =
+		subject.kind ??
+		(type === "main_ci_red"
+			? "project"
+			: type === "worker_died_unfinished" || type === "worker_retry_exhausted"
+				? "session"
+				: prUrl
+					? "pr"
+					: sessionId
+						? "session"
+						: "");
 	const subjectId =
 		subject.id ?? (subjectKind === "project" ? projectId : subjectKind === "pr" ? prUrl : subjectKind === "session" ? sessionId : "");
 	return {
@@ -359,7 +373,7 @@ export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
 	const label = notificationLabel(n);
 	const icon = ICONS[label] ?? "📌";
 	const proj = n.projectId ? `[${n.projectId}] ` : "";
-	const displaySubject = n.sessionId || (n.type === "main_ci_red" ? "main" : "");
+	const displaySubject = n.sessionId || (n.type === "main_ci_red" ? "main" : n.subjectId || "");
 	const sess = displaySubject ? `${displaySubject}: ` : "";
 	const title = n.title || n.body;
 	const text = `${icon} *${label}* ${proj}${sess}${title} ${n.prUrl}`.trim();
