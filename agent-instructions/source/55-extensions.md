@@ -3,14 +3,40 @@
 - **Tracking:** GitHub-only (no `.beads/` here — skills degrade
   automatically; the issue is the sole tracker).
 - **Build/test gates:** backend is Go — `npm run ci:backend` (runs `go build`,
-  `go vet`, `go test -race`, and the CI-pinned `golangci-lint` over `./...`);
-  frontend is npm-lockfile-managed Vite under
-  `frontend/` (`frontend/package-lock.json` is authoritative; use
-  `npm --prefix frontend ci` / `npm --prefix frontend run ...`, even though an
-  upstream `pnpm-workspace.yaml` is present).
+  `go vet`, `go test -race`, and the CI-pinned `golangci-lint` over `./...`).
   Run `npm run format:check` before push for changed-file Prettier parity; set
   `BASE_REF=origin/<branch>` when the PR base is not the default branch. Upstream
   CI workflows are the remote gate.
+- **Frontend gates — the frontend is an npm project, not pnpm.**
+  `frontend/package.json` + `frontend/package-lock.json` are authoritative: the
+  lockfile decides which package manager a project uses. Two upstream file names
+  are cited below purely as file names — the first does not exist in this tree at
+  all, and the second is an Electron packaging settings file, which decides
+  nothing about which manager to run:
+
+  - `frontend/pnpm-lock.yaml`
+  - `frontend/pnpm-workspace.yaml`
+
+  No agent should reach for pnpm here.
+
+  The four frontend gate commands, run from the repo root:
+
+  ```bash
+  npm ci --prefix frontend --allow-git=all --ignore-scripts   # install
+  npm test --prefix frontend                                  # vitest
+  npm run typecheck --prefix frontend                         # tsc --noEmit
+  npm run build:web --prefix frontend                         # production web bundle
+  ```
+
+  The install flags are narrow and deliberate: this host's npm defaults
+  `allow-git=none`, while Electron's lockfile pins a transitive git dependency,
+  so `--allow-git=all` is passed **on the command line only** (never written into
+  repo or global npm config), and `--ignore-scripts` keeps the install
+  side-effect free. Frontend dependencies are **not preinstalled** in a fresh
+  worktree — which is never the same thing as "unavailable". Run the install
+  above before reporting any frontend tooling or test blocker (see the
+  verification contract: reviewer claims are evidence candidates, never facts).
+
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —
   a bad change here takes down the whole fleet; a human reviews those merges.

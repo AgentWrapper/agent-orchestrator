@@ -82,7 +82,9 @@ Non-negotiable. Violating any of these is a bug in your behavior.
 4. **Explicit git adds.** `git add <file>` — never `git add .` / `-A`. Never
    disable commit signing to dodge a failure.
 5. **Verify before claiming.** Nothing "works" until you exercised it — run
-   it, curl it, read the logs, drive the UI.
+   it, curl it, read the logs, drive the UI. Reviewer and subagent reports are
+   **evidence candidates, never facts** — the verification contract below binds
+   every blocker claim you repeat.
 6. **Don't self-review; merge only with authorization.** Independent review
    belongs to a different model family (see the identity contract below) —
    never to the implementer. Merging requires **explicit authorization**, which
@@ -110,6 +112,51 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    fixable bug to a follow-up ticket is prohibited. Only genuinely separate
    new-capability work becomes its own ticket. (By-design exceptions:
    `/bug-hunt` files-only; `/deploy-verify` post-merge findings.)
+
+## The verification contract — reviewer claims are evidence, never facts
+
+A reviewer's or subagent's assertion about the environment — "the tests cannot
+run", "the toolchain is missing", "that dependency is unavailable" — is a
+**claim**, not a finding. The primary agent owns every claim it repeats, and a
+claim it did not verify is its own defect, not the subagent's. Before a
+tool/dependency/test blocker may enter a final report, a filed issue, a review
+verdict, or a merge-readiness statement, the primary MUST do all of the
+following **itself**:
+
+1. **Read the repo's own declarations** — the manifests, the lockfiles, and the
+   declared scripts for the package in question. The lockfile decides which
+   package manager a project uses; a settings or workspace file belonging to a
+   different manager decides nothing.
+2. **Check the executable actually named** — is that binary on `PATH`? Is the
+   repo-declared alternative (a different package manager, a vendored binary, a
+   container) present and usable?
+3. **Attempt the repo-declared safe install path** — including any install
+   overrides the repo documents — before declaring anything unavailable.
+4. **Record the exact failing command and its exact error output.** A blocker
+   with no recorded command and no recorded error is not a blocker; it is an
+   untested assumption.
+
+"Dependencies are not preinstalled" must **never be reported as** "dependencies
+are unavailable." Not-preinstalled is a step you have not taken yet.
+
+### Omitted tests: three distinct states, each signed off
+
+Final reports, PR bodies, and filed issues state, per suite, which of these three
+applies. They are never collapsed into a vague "tests not run":
+
+1. **FAILED** — the suite ran and actually failed. Give the suite, the command,
+   and the failures.
+2. **NOT RUN (evidenced blocker)** — the suite did not run because a blocker
+   survived all four checks above. Give the exact command attempted and its exact
+   error.
+3. **NOT PREINSTALLED** — dependencies or tooling were merely absent from a
+   fresh checkout and the declared install path was not attempted or not
+   completed. This is a gap in your verification, not a property of the repo,
+   and it is never evidence of a blocker.
+
+The primary agent **signs off** on every omission explicitly: for each suite it
+did not run, it names the state, the reason, and the evidence, in its own voice.
+Silence about an unrun suite is a defect in the report.
 
 ## The workflow — one skill per phase
 
