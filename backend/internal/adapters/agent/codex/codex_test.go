@@ -122,6 +122,28 @@ func TestResolveCodexBinaryFindsNVMInstallWhenPathIsSparse(t *testing.T) {
 	}
 }
 
+
+func TestIsWindowsAppsPath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"WindowsApps exe", "C:\\Program Files\\WindowsApps\\OpenAI.Codex_1.0\\app\\resources\\codex.exe", true},
+		{"npm codex.cmd", "C:\\Users\\user\\AppData\\Roaming\\npm\\codex.cmd", false},
+		{"cargo codex", "C:\\Users\\user\\.cargo\\bin\\codex.exe", false},
+		{"lowercase windowsApps", "c:\\program files\\windowsapps\\test\\codex.exe", true},
+		{"forward slashes", "C:/Program Files/WindowsApps/OpenAI.Codex/codex.exe", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isWindowsAppsPath(tt.path); got != tt.want {
+				t.Fatalf("isWindowsAppsPath(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
