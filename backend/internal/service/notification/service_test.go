@@ -52,6 +52,15 @@ func TestListUnreadAddsTargets(t *testing.T) {
 	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" || got[2].Target.Kind != TargetNone || got[2].Target.SessionID != "" {
 		t.Fatalf("targets = %+v", got)
 	}
+	if got[0].Subject.Kind != domain.NotificationSubjectSession || got[0].Subject.ID != "mer-1" {
+		t.Fatalf("session subject = %+v", got[0].Subject)
+	}
+	if got[1].Subject.Kind != domain.NotificationSubjectPR || got[1].Subject.ID != "https://github.com/o/r/pull/1" {
+		t.Fatalf("pr subject = %+v", got[1].Subject)
+	}
+	if got[2].Subject.Kind != domain.NotificationSubjectModel || got[2].Subject.ID != "model-1" {
+		t.Fatalf("model subject = %+v", got[2].Subject)
+	}
 }
 
 func TestListUnreadPassesTypeFilterAndNormalizesLimit(t *testing.T) {

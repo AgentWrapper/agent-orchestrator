@@ -251,6 +251,95 @@ func TestNotificationStore_ModelAlertPersistsWithoutPR(t *testing.T) {
 	}
 }
 
+func TestNotificationStore_NonSessionSubjectsPersistWithoutSyntheticSession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "ao")
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, rec := range []domain.NotificationRecord{
+		{
+			ID:          "ntf_model",
+			ProjectID:   "ao",
+			Type:        domain.NotificationModelUnreachable,
+			SubjectKind: domain.NotificationSubjectModel,
+			SubjectID:   "codex/gpt-5.5-codex",
+			Title:       "gpt-5.5-codex model unreachable",
+			Status:      domain.NotificationUnread,
+			CreatedAt:   now,
+		},
+		{
+			ID:          "ntf_main",
+			ProjectID:   "ao",
+			Type:        domain.NotificationMainCIRed,
+			SubjectKind: domain.NotificationSubjectProject,
+			SubjectID:   "ao",
+			Title:       "main is red",
+			Status:      domain.NotificationUnread,
+			CreatedAt:   now.Add(time.Minute),
+		},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("CreateNotification %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
+	}
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want 2", rows)
+	}
+	for _, row := range rows {
+		if row.SessionID != "" {
+			t.Fatalf("row %s session_id = %q, want empty legacy session for non-session subject", row.ID, row.SessionID)
+		}
+		if row.SubjectKind == "" || row.SubjectID == "" {
+			t.Fatalf("row %s subject = %q/%q, want typed subject", row.ID, row.SubjectKind, row.SubjectID)
+		}
+	}
+}
+
+func TestNotificationStore_DedupeUsesTypedSubject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "ao")
+	now := time.Now().UTC().Truncate(time.Second)
+	first := domain.NotificationRecord{
+		ID:          "ntf_model_codex",
+		ProjectID:   "ao",
+		Type:        domain.NotificationModelUnreachable,
+		SubjectKind: domain.NotificationSubjectModel,
+		SubjectID:   "codex/gpt-5.5-codex",
+		Title:       "codex model unreachable",
+		Status:      domain.NotificationUnread,
+		CreatedAt:   now,
+	}
+	if _, inserted, err := s.CreateNotification(ctx, first); err != nil || !inserted {
+		t.Fatalf("CreateNotification first inserted=%v err=%v", inserted, err)
+	}
+	otherSubject := first
+	otherSubject.ID = "ntf_model_claude"
+	otherSubject.SubjectID = "claude/sonnet"
+	otherSubject.Title = "claude model unreachable"
+	otherSubject.CreatedAt = now.Add(time.Minute)
+	if _, inserted, err := s.CreateNotification(ctx, otherSubject); err != nil || !inserted {
+		t.Fatalf("CreateNotification different subject inserted=%v err=%v, want distinct row", inserted, err)
+	}
+	duplicate := first
+	duplicate.ID = "ntf_model_codex_again"
+	duplicate.CreatedAt = now.Add(2 * time.Minute)
+	if _, inserted, err := s.CreateNotification(ctx, duplicate); err != nil || inserted {
+		t.Fatalf("CreateNotification duplicate inserted=%v err=%v, want dedupe on same subject", inserted, err)
+	}
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want two distinct subject rows", rows)
+	}
+}
+
 func TestNotificationStore_MarkReadMissing(t *testing.T) {
 	s := newTestStore(t)
 	_, ok, err := s.MarkNotificationRead(context.Background(), "missing")

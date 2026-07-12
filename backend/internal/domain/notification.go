@@ -85,6 +85,30 @@ func (s NotificationStatus) Valid() bool {
 	}
 }
 
+// NotificationSubjectKind identifies the durable entity a notification is about.
+type NotificationSubjectKind string
+
+const (
+	// NotificationSubjectSession means the notification belongs to an AO session.
+	NotificationSubjectSession NotificationSubjectKind = "session"
+	// NotificationSubjectProject means the notification belongs to a project-level condition.
+	NotificationSubjectProject NotificationSubjectKind = "project"
+	// NotificationSubjectPR means the notification belongs to a pull request.
+	NotificationSubjectPR NotificationSubjectKind = "pr"
+	// NotificationSubjectModel means the notification belongs to a configured model pin.
+	NotificationSubjectModel NotificationSubjectKind = "model"
+)
+
+// Valid reports whether k is a supported notification subject kind.
+func (k NotificationSubjectKind) Valid() bool {
+	switch k {
+	case NotificationSubjectSession, NotificationSubjectProject, NotificationSubjectPR, NotificationSubjectModel:
+		return true
+	default:
+		return false
+	}
+}
+
 // NotificationRecord is the durable notification persistence shape.
 type NotificationRecord struct {
 	ID           string
@@ -92,6 +116,8 @@ type NotificationRecord struct {
 	ProjectID    ProjectID
 	PRURL        string
 	Type         NotificationType
+	SubjectKind  NotificationSubjectKind
+	SubjectID    string
 	Title        string
 	Body         string
 	Sensitive    bool
@@ -110,9 +136,49 @@ var (
 	ErrInvalidNotificationRecord = errors.New("invalid notification record")
 )
 
+// WithInferredSubject fills the typed subject from legacy session/pr fields when
+// a caller has not set it yet. It also clears the legacy session id for durable
+// project/model rows so new rows do not depend on synthetic session ids.
+func (r NotificationRecord) WithInferredSubject() NotificationRecord {
+	if r.SubjectKind == "" {
+		switch {
+		case r.Type == NotificationModelUnreachable || r.Type == NotificationModelRecovered:
+			r.SubjectKind = NotificationSubjectModel
+			r.SubjectID = string(r.SessionID)
+		case r.Type == NotificationMainCIRed:
+			r.SubjectKind = NotificationSubjectProject
+			r.SubjectID = string(r.ProjectID)
+		case r.PRURL != "":
+			r.SubjectKind = NotificationSubjectPR
+			r.SubjectID = r.PRURL
+		default:
+			r.SubjectKind = NotificationSubjectSession
+			r.SubjectID = string(r.SessionID)
+		}
+	}
+	if r.SubjectID == "" {
+		switch r.SubjectKind {
+		case NotificationSubjectSession:
+			r.SubjectID = string(r.SessionID)
+		case NotificationSubjectProject:
+			r.SubjectID = string(r.ProjectID)
+		case NotificationSubjectPR:
+			r.SubjectID = r.PRURL
+		}
+	}
+	if r.SubjectKind == NotificationSubjectProject || r.SubjectKind == NotificationSubjectModel {
+		r.SessionID = ""
+	}
+	return r
+}
+
 // Validate checks the required fields and enum values for a stored notification.
 func (r NotificationRecord) Validate() error {
-	if r.SessionID == "" || r.ProjectID == "" || r.Title == "" || r.CreatedAt.IsZero() {
+	r = r.WithInferredSubject()
+	if r.ProjectID == "" || r.Title == "" || r.CreatedAt.IsZero() || r.SubjectID == "" {
+		return ErrInvalidNotificationRecord
+	}
+	if !r.SubjectKind.Valid() {
 		return ErrInvalidNotificationRecord
 	}
 	if !r.Type.Valid() {

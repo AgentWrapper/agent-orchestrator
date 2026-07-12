@@ -131,7 +131,8 @@ func notifyModelHealthTransition(ctx context.Context, notifier notificationSink,
 	}
 	pin := tr.Current.Pin
 	intent := ports.NotificationIntent{
-		SessionID:    modelNotificationSessionID(pin),
+		SubjectKind:  domain.NotificationSubjectModel,
+		SubjectID:    modelNotificationSubjectID(pin),
 		ProjectID:    pin.ProjectID,
 		ModelHarness: pin.Harness,
 		Model:        pin.Model,
@@ -152,11 +153,11 @@ func notifyModelHealthTransition(ctx context.Context, notifier notificationSink,
 
 var modelNotificationRe = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
-func modelNotificationSessionID(pin modelhealth.Pin) domain.SessionID {
+func modelNotificationSubjectID(pin modelhealth.Pin) string {
 	key := modelNotificationRe.ReplaceAllString(pin.Key(), "-")
 	key = strings.Trim(key, "-")
 	if key == "" {
 		key = string(pin.ProjectID)
 	}
-	return domain.SessionID(key)
+	return key
 }

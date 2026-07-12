@@ -76,6 +76,7 @@ function notification(overrides: Partial<NotificationDTO> = {}): NotificationDTO
 		prUrl: "",
 		headSha: "",
 		type: "needs_input",
+		subject: { kind: "session", id: "mer-1" },
 		title: "checkout-flow needs input",
 		body: "The agent is waiting for your response.",
 		sensitive: false,

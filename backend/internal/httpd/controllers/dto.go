@@ -612,21 +612,28 @@ type NotificationTarget struct {
 	PRURL     string `json:"prUrl,omitempty"`
 }
 
+// NotificationSubject is the durable entity a notification is about.
+type NotificationSubject struct {
+	Kind string `json:"kind" enum:"session,project,pr,model"`
+	ID   string `json:"id"`
+}
+
 // NotificationResponse is one stored notification returned by the API.
 type NotificationResponse struct {
-	ID           string             `json:"id"`
-	SessionID    string             `json:"sessionId"`
-	ProjectID    string             `json:"projectId"`
-	PRURL        string             `json:"prUrl"`
-	Type         string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,orchestrator_replaced,orchestrator_replacement_capped,duplicate_pr,worker_died_unfinished,worker_retry_exhausted,model_unreachable,model_recovered,main_ci_red"`
-	Title        string             `json:"title"`
-	Body         string             `json:"body"`
-	Sensitive    bool               `json:"sensitive"`
-	ChangedPaths []string           `json:"changedPaths"`
-	HeadSHA      string             `json:"headSha"`
-	Status       string             `json:"status" enum:"unread,read"`
-	CreatedAt    time.Time          `json:"createdAt"`
-	Target       NotificationTarget `json:"target"`
+	ID           string              `json:"id"`
+	SessionID    string              `json:"sessionId"`
+	ProjectID    string              `json:"projectId"`
+	PRURL        string              `json:"prUrl"`
+	Type         string              `json:"type"`
+	Subject      NotificationSubject `json:"subject"`
+	Title        string              `json:"title"`
+	Body         string              `json:"body"`
+	Sensitive    bool                `json:"sensitive"`
+	ChangedPaths []string            `json:"changedPaths"`
+	HeadSHA      string              `json:"headSha"`
+	Status       string              `json:"status" enum:"unread,read"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	Target       NotificationTarget  `json:"target"`
 }
 
 // ListNotificationsResponse is the body of GET /api/v1/notifications.

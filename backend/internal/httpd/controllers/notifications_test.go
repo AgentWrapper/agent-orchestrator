@@ -96,7 +96,11 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 			Status       string   `json:"status"`
 			Sensitive    bool     `json:"sensitive"`
 			ChangedPaths []string `json:"changedPaths"`
-			Target       struct {
+			Subject      struct {
+				Kind string `json:"kind"`
+				ID   string `json:"id"`
+			} `json:"subject"`
+			Target struct {
 				Kind      string `json:"kind"`
 				SessionID string `json:"sessionId"`
 			} `json:"target"`
@@ -105,6 +109,9 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	mustJSON(t, body, &resp)
 	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" || resp.Notifications[0].Target.Kind != "session" || !resp.Notifications[0].Sensitive || len(resp.Notifications[0].ChangedPaths) != 1 {
 		t.Fatalf("resp = %+v", resp)
+	}
+	if resp.Notifications[0].Subject.Kind != "session" || resp.Notifications[0].Subject.ID != "mer-1" {
+		t.Fatalf("subject = %+v", resp.Notifications[0].Subject)
 	}
 }
 

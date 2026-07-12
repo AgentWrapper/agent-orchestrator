@@ -20,6 +20,7 @@ var _ notificationsvc.Store = (*Store)(nil)
 // CreateNotification inserts one unread notification. It returns created=false
 // when a matching dedupe row already exists.
 func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
+	rec = rec.WithInferredSubject()
 	if err := rec.Validate(); err != nil {
 		return domain.NotificationRecord{}, false, err
 	}
@@ -41,6 +42,8 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		ProjectID:    rec.ProjectID,
 		PRURL:        rec.PRURL,
 		Type:         rec.Type,
+		SubjectKind:  string(rec.SubjectKind),
+		SubjectID:    rec.SubjectID,
 		Title:        rec.Title,
 		Body:         rec.Body,
 		Sensitive:    rec.Sensitive,
@@ -72,9 +75,10 @@ func (s *Store) getPersistentNotificationByDedupe(ctx context.Context, rec domai
 		return domain.NotificationRecord{}, false, nil
 	}
 	row, err := s.qw.GetWorkerTerminalNotificationByDedupe(ctx, gen.GetWorkerTerminalNotificationByDedupeParams{
-		SessionID: rec.SessionID,
-		Type:      rec.Type,
-		Body:      rec.Body,
+		SubjectKind: string(rec.SubjectKind),
+		SubjectID:   rec.SubjectID,
+		Type:        rec.Type,
+		Body:        rec.Body,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NotificationRecord{}, false, nil
@@ -144,7 +148,7 @@ func (s *Store) MarkAllNotificationsRead(ctx context.Context, excludeTypes []dom
 	return notificationsFromGen(rows), nil
 }
 
-const notificationColumns = "id, session_id, project_id, pr_url, type, title, body, status, created_at, sensitive, changed_paths, head_sha"
+const notificationColumns = "id, session_id, project_id, pr_url, type, subject_kind, subject_id, title, body, status, created_at, sensitive, changed_paths, head_sha"
 
 const listUnreadNotificationsByTypes = "SELECT " + notificationColumns + " FROM notifications WHERE status = 'unread' AND type IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT ?"
 
@@ -176,6 +180,8 @@ func scanNotificationRows(rows *sql.Rows) ([]domain.NotificationRecord, error) {
 			&row.ProjectID,
 			&row.PRURL,
 			&row.Type,
+			&row.SubjectKind,
+			&row.SubjectID,
 			&row.Title,
 			&row.Body,
 			&row.Status,
@@ -211,11 +217,12 @@ func encodeNotificationTypes(types []domain.NotificationType) string {
 
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	row, err := s.qw.GetUnreadNotificationByDedupe(ctx, gen.GetUnreadNotificationByDedupeParams{
-		SessionID: rec.SessionID,
-		Type:      rec.Type,
-		PRURL:     rec.PRURL,
-		Sensitive: rec.Sensitive,
-		HeadSha:   rec.HeadSHA,
+		SubjectKind: string(rec.SubjectKind),
+		SubjectID:   rec.SubjectID,
+		Type:        rec.Type,
+		PRURL:       rec.PRURL,
+		Sensitive:   rec.Sensitive,
+		HeadSha:     rec.HeadSHA,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NotificationRecord{}, false, nil
@@ -238,6 +245,8 @@ func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 		ProjectID:    row.ProjectID,
 		PRURL:        row.PRURL,
 		Type:         row.Type,
+		SubjectKind:  domain.NotificationSubjectKind(row.SubjectKind),
+		SubjectID:    row.SubjectID,
 		Title:        row.Title,
 		Body:         row.Body,
 		Sensitive:    row.Sensitive,

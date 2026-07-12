@@ -2383,6 +2383,21 @@ components:
       required:
       - paused
       type: object
+    ControllersNotificationSubject:
+      properties:
+        id:
+          type: string
+        kind:
+          enum:
+          - session
+          - project
+          - pr
+          - model
+          type: string
+      required:
+      - kind
+      - id
+      type: object
     ControllersSessionPRFinalReviewSummary:
       properties:
         githubReviewId:
@@ -3025,24 +3040,13 @@ components:
           - unread
           - read
           type: string
+        subject:
+          $ref: '#/components/schemas/ControllersNotificationSubject'
         target:
           $ref: '#/components/schemas/NotificationTarget'
         title:
           type: string
         type:
-          enum:
-          - needs_input
-          - ready_to_merge
-          - pr_merged
-          - pr_closed_unmerged
-          - orchestrator_replaced
-          - orchestrator_replacement_capped
-          - duplicate_pr
-          - worker_died_unfinished
-          - worker_retry_exhausted
-          - model_unreachable
-          - model_recovered
-          - main_ci_red
           type: string
       required:
       - id
@@ -3050,6 +3054,7 @@ components:
       - projectId
       - prUrl
       - type
+      - subject
       - title
       - body
       - sensitive

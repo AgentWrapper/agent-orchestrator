@@ -45,6 +45,9 @@ func TestManagerNotifyPersistsThenPublishes(t *testing.T) {
 	if got := st.rows[0]; got.ID != "ntf_1" || got.CreatedAt != now || got.Status != domain.NotificationUnread || got.Title != "checkout-flow needs input" {
 		t.Fatalf("stored notification = %+v", got)
 	}
+	if got := st.rows[0]; got.SubjectKind != domain.NotificationSubjectSession || got.SubjectID != "mer-1" {
+		t.Fatalf("subject = %q/%q, want session mer-1", got.SubjectKind, got.SubjectID)
+	}
 	select {
 	case got := <-ch:
 		if got.ID != "ntf_1" {
@@ -276,6 +279,9 @@ func TestManagerNotifyMainCIRed(t *testing.T) {
 	if got.Type != domain.NotificationMainCIRed || got.HeadSHA != "fee462ed3aabb" {
 		t.Fatalf("record = %+v", got)
 	}
+	if got.SessionID != "" || got.SubjectKind != domain.NotificationSubjectProject || got.SubjectID != "ao" {
+		t.Fatalf("subject/session = %q/%q session:%q, want project ao with no legacy session", got.SubjectKind, got.SubjectID, got.SessionID)
+	}
 }
 
 func TestManagerNotifyWorkerRetryExhaustedNamesOrphanedPR(t *testing.T) {
@@ -416,7 +422,6 @@ func TestManagerNotifyModelUnreachable(t *testing.T) {
 
 	err := mgr.Notify(context.Background(), Intent{
 		Type:         domain.NotificationModelUnreachable,
-		SessionID:    "ao-model-codex-gpt-5-5-codex",
 		ProjectID:    "ao",
 		ModelHarness: domain.HarnessCodex,
 		Model:        "gpt-5.5-codex",
@@ -432,6 +437,9 @@ func TestManagerNotifyModelUnreachable(t *testing.T) {
 	got := st.rows[0]
 	if got.Type != domain.NotificationModelUnreachable || got.PRURL != "" || got.Title != "gpt-5.5-codex model unreachable" {
 		t.Fatalf("stored notification = %+v", got)
+	}
+	if got.SessionID != "" || got.SubjectKind != domain.NotificationSubjectModel || got.SubjectID != "workerMix[0].model/codex/gpt-5.5-codex" {
+		t.Fatalf("subject/session = %q/%q session:%q, want model subject with no legacy session", got.SubjectKind, got.SubjectID, got.SessionID)
 	}
 	if !strings.Contains(got.Body, "400 model not available") {
 		t.Fatalf("body = %q, want reason", got.Body)

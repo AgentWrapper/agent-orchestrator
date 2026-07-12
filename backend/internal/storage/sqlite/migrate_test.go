@@ -146,6 +146,40 @@ func TestMainCIRedMigrationPreservesWorkerTerminalDedupeIndex(t *testing.T) {
 	assertWorkerTerminalDedupeIndex(t, db)
 }
 
+func TestNotificationsMigrationUsesTypedSubjectsAndOpenTypeSchema(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	assertSQLiteColumn(t, db, "notifications", "subject_kind")
+	assertSQLiteColumn(t, db, "notifications", "subject_id")
+
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read notifications schema: %v", err)
+	}
+	if strings.Contains(schema, "type IN") {
+		t.Fatalf("notifications.type still has a closed SQL enum CHECK; schema:\n%s", schema)
+	}
+
+	if _, err := db.Exec(`INSERT INTO projects (id, path, registered_at) VALUES ('ao', '/tmp/ao', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (id, project_id, type, title, status, created_at, subject_kind, subject_id)
+		VALUES ('future-type', 'ao', 'future_notification_type', 'future', 'unread', '2026-07-12T00:00:00Z', 'project', 'ao')
+	`); err != nil {
+		t.Fatalf("insert future notification type through SQL schema: %v", err)
+	}
+}
+
 func downTo(t *testing.T, db *sql.DB, version int64) {
 	t.Helper()
 	gooseMu.Lock()

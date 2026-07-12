@@ -93,15 +93,21 @@ func normalizeLimit(limit int) int {
 }
 
 func notificationFromRecord(rec domain.NotificationRecord) Notification {
-	return Notification{NotificationRecord: rec, Target: targetForRecord(rec)}
+	rec = rec.WithInferredSubject()
+	return Notification{
+		NotificationRecord: rec,
+		Subject:            Subject{Kind: rec.SubjectKind, ID: rec.SubjectID},
+		Target:             targetForRecord(rec),
+	}
 }
 
 func targetForRecord(rec domain.NotificationRecord) Target {
-	if rec.PRURL != "" {
+	rec = rec.WithInferredSubject()
+	if rec.SubjectKind == domain.NotificationSubjectPR && rec.PRURL != "" {
 		return Target{Kind: TargetPR, SessionID: rec.SessionID, PRURL: rec.PRURL}
 	}
-	if rec.Type == domain.NotificationModelUnreachable || rec.Type == domain.NotificationModelRecovered {
-		return Target{Kind: TargetNone}
+	if rec.SubjectKind == domain.NotificationSubjectSession {
+		return Target{Kind: TargetSession, SessionID: rec.SessionID}
 	}
-	return Target{Kind: TargetSession, SessionID: rec.SessionID}
+	return Target{Kind: TargetNone}
 }
