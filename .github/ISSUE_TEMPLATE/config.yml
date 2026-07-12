@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discord Community
+    url: https://discord.com/invite/UZv7JjxbwG
+    about: Ask questions and get help from the community on Discord.
+  - name: Documentation
+    url: https://ao-agents.com/docs
+    about: Read the documentation for installation, usage, and architecture.
