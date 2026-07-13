@@ -378,7 +378,7 @@ export function BrowserPanelView({
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
 					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
-						<p>Enter a dev-server URL to preview it here.</p>
+						<p>Enter a URL or click one in the terminal.</p>
 					</div>
 				) : null}
 				{navState.error ? (

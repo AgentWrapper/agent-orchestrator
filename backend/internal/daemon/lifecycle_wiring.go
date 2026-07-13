@@ -115,11 +115,16 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	if err != nil {
 		logSCMProviderDisabled(log, err)
 	}
+	tracker, err := newGitHubTracker()
+	if err != nil {
+		logTrackerDisabled(log, err)
+	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:   mgr,
 		Store:     store,
 		PRClaimer: store,
 		SCM:       scmProvider,
+		Tracker:   tracker,
 		Telemetry: telemetry,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.

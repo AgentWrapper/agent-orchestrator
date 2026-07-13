@@ -212,6 +212,7 @@ type fakeCommander struct {
 	spawnErr        error
 	spawnRecord     domain.SessionRecord
 	spawned         bool
+	spawnedCfg      ports.SpawnConfig
 	killsAtSpawn    int
 }
 
@@ -220,6 +221,7 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 		return domain.SessionRecord{}, f.spawnErr
 	}
 	f.spawned = true
+	f.spawnedCfg = cfg
 	f.killsAtSpawn = len(f.retired)
 	if f.spawnRecord.ID != "" {
 		return f.spawnRecord, nil
@@ -409,6 +411,99 @@ func TestSpawnEmitsFirstSessionOnboardingAndDuration(t *testing.T) {
 	}
 	if got := sink.events[1].Payload["since_first_project_ms"]; got != int64(2000) {
 		t.Fatalf("since_first_project_ms = %#v, want 2000", got)
+	}
+}
+
+type fakeTracker struct {
+	issue domain.Issue
+	err   error
+	ids   []domain.TrackerID
+}
+
+func (f *fakeTracker) Get(_ context.Context, id domain.TrackerID) (domain.Issue, error) {
+	f.ids = append(f.ids, id)
+	if f.err != nil {
+		return domain.Issue{}, f.err
+	}
+	return f.issue, nil
+}
+
+func (f *fakeTracker) List(context.Context, domain.TrackerRepo, domain.ListFilter) ([]domain.Issue, error) {
+	return nil, nil
+}
+
+func (f *fakeTracker) Preflight(context.Context) error { return nil }
+
+func TestSpawnEnrichesIssueContextFromTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/repo#42"},
+		Title:     "Fix generated prompts",
+		Body:      "Prompt files should include standing instructions.",
+		State:     domain.IssueInProgress,
+		URL:       "https://github.com/acme/repo/issues/42",
+		Labels:    []string{"bug", "prompts"},
+		Assignees: []string{"dev"},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 || tracker.ids[0].Provider != domain.TrackerProviderGitHub || tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker ids = %+v, want github acme/repo#42", tracker.ids)
+	}
+	issueContext := fc.spawnedCfg.IssueContext
+	for _, want := range []string{
+		"Issue: acme/repo#42",
+		"Title: Fix generated prompts",
+		"State: in_progress",
+		"URL: https://github.com/acme/repo/issues/42",
+		"Labels: bug, prompts",
+		"Assignees: dev",
+		"Body:\nPrompt files should include standing instructions.",
+	} {
+		if !strings.Contains(issueContext, want) {
+			t.Fatalf("IssueContext missing %q:\n%s", want, issueContext)
+		}
+	}
+}
+
+func TestSpawnIssueContextFetchFailureFallsBack(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{err: errors.New("tracker unavailable")}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1", len(tracker.ids))
+	}
+	if fc.spawnedCfg.IssueContext != "" {
+		t.Fatalf("IssueContext = %q, want fallback empty context", fc.spawnedCfg.IssueContext)
+	}
+}
+
+func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "not-an-issue"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 0 {
+		t.Fatalf("tracker calls = %d, want 0", len(tracker.ids))
+	}
+	if fc.spawnedCfg.IssueContext != "" {
+		t.Fatalf("IssueContext = %q, want empty", fc.spawnedCfg.IssueContext)
 	}
 }
 

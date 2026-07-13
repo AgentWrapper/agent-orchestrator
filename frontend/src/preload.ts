@@ -44,8 +44,13 @@ const api = {
 	app: {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
 		chooseDirectory: (title?: string) => ipcRenderer.invoke("app:chooseDirectory", title) as Promise<string | null>,
+		openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url) as Promise<void>,
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
+	},
+	terminal: {
+		saveDroppedFile: (input: { name: string; bytes: Uint8Array }) =>
+			ipcRenderer.invoke("terminal:saveDroppedFile", input) as Promise<string>,
 	},
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>

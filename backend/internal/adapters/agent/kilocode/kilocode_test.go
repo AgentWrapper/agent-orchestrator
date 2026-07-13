@@ -30,19 +30,47 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 		Permissions:      ports.PermissionModeBypassPermissions,
 		Prompt:           "-fix this",
 		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
-		SystemPrompt:     "ignored",
+		SystemPrompt:     "follow AO rules",
+		SessionID:        "sess-1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Kilo has no system-prompt flag, so SystemPrompt/SystemPromptFile are
-	// dropped; the prompt is delivered via --prompt. bypass-permissions prepends
-	// an `env KILO_CONFIG_CONTENT=...` assignment (the TUI has no permission flag).
+	// Kilo has no system-prompt flag, so AO injects a generated agent through
+	// KILO_CONFIG_CONTENT and selects it with --agent. bypass-permissions shares
+	// that env payload because the TUI has no permission flag.
 	want := []string{
-		"env", `KILO_CONFIG_CONTENT={"permission":{"*":"allow"}}`,
+		"env", `KILO_CONFIG_CONTENT={"permission":{"*":"allow"},"agent":{"ao-sess-1":{"prompt":"follow AO rules"}}}`,
 		"kilocode",
+		"--agent", "ao-sess-1",
 		"--prompt", "-fix this",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandReadsSystemPromptFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kilocode"}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "system.md")
+	if err := os.WriteFile(file, []byte("file rules\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: file,
+		SessionID:        "sess/file",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"env", `KILO_CONFIG_CONTENT={"agent":{"ao-sess-file":{"prompt":"file rules\n"}}}`,
+		"kilocode",
+		"--agent", "ao-sess-file",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
@@ -303,6 +331,33 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	want := []string{
 		"env", `KILO_CONFIG_CONTENT={"permission":{"*":"allow"}}`,
 		"kilocode",
+		"--session", "ses_abc123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandReappliesSystemPromptAgent(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kilocode"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPrompt: "restore AO rules",
+		Session: ports.SessionRef{
+			ID:       "sess-1",
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "ses_abc123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"env", `KILO_CONFIG_CONTENT={"agent":{"ao-sess-1":{"prompt":"restore AO rules"}}}`,
+		"kilocode",
+		"--agent", "ao-sess-1",
 		"--session", "ses_abc123",
 	}
 	if !reflect.DeepEqual(cmd, want) {

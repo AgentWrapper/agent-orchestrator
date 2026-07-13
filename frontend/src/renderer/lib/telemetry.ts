@@ -1,5 +1,6 @@
 import posthog from "posthog-js/dist/module.full.no-external";
 import { aoBridge } from "./bridge";
+import { isLoopbackHostname } from "./loopback";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
@@ -70,13 +71,10 @@ async function hashedTelemetryID(value: unknown): Promise<string | undefined> {
 function isLocalURL(value: string): boolean {
 	try {
 		const url = new URL(value);
-		const hostname = url.hostname.replace(/^\[(.*)\]$/, "$1");
 		return (
 			url.protocol === "file:" ||
 			(url.protocol === "app:" && url.host === "renderer") ||
-			hostname === "localhost" ||
-			hostname === "127.0.0.1" ||
-			hostname === "::1"
+			isLoopbackHostname(url.hostname)
 		);
 	} catch {
 		return false;

@@ -1,9 +1,9 @@
 // Package amp implements the Amp agent adapter: launching new interactive Amp
 // sessions and resuming sessions when a native Amp thread id is known.
 //
-// Amp activity hooks and SessionInfo derivation will likely require an
-// Amp-specific TypeScript plugin, similar to opencode. Until that integration
-// exists, hook installation and SessionInfo are intentionally no-ops.
+// AO injects standing session instructions through a workspace-local Amp
+// TypeScript plugin. Activity hooks and SessionInfo derivation will likely
+// require more Amp-specific plugin work, so SessionInfo remains a no-op.
 package amp
 
 import (
@@ -59,9 +59,9 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // by default and configures permissions via settings and the Plugin API, not
 // CLI flags. So cfg.Permissions is intentionally not translated to argv because
 // Amp does not document that flag, and relying on hidden or permissively parsed
-// options would make launches version-fragile.
-// SystemPrompt and SystemPromptFile are likewise ignored until Amp exposes a
-// supported instruction mechanism.
+// options would make launches version-fragile. Amp also has no documented
+// per-run system-prompt flag, so standing instructions are installed by
+// GetAgentHooks as a workspace-local plugin.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

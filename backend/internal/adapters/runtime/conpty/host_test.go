@@ -455,6 +455,114 @@ func TestResize(t *testing.T) {
 	}
 }
 
+// resizeSnapshot returns a copy of the fakePTY's recorded resizes.
+func (f *fakePTY) resizeSnapshot() []ResizePayload {
+	f.resizeMu.Lock()
+	defer f.resizeMu.Unlock()
+	return append([]ResizePayload(nil), f.resizes...)
+}
+
+// waitResizes polls until the fakePTY has recorded at least n resizes (or 2s).
+func (f *fakePTY) waitResizes(t *testing.T, n int) []ResizePayload {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		if got := f.resizeSnapshot(); len(got) >= n {
+			return got
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout: got %d resizes, want >= %d", len(f.resizeSnapshot()), n)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// syncResize sends a resize then a status round-trip on the same conn. Because a
+// connection's messages are handled by one goroutine in order, draining the
+// status response guarantees the resize has already been processed.
+func syncResize(t *testing.T, c *testClient, cols, rows int) {
+	t.Helper()
+	payload, _ := json.Marshal(ResizePayload{Cols: cols, Rows: rows})
+	if err := c.send(MsgResize, payload); err != nil {
+		t.Fatalf("send resize: %v", err)
+	}
+	if err := c.send(MsgStatusReq, nil); err != nil {
+		t.Fatalf("send status: %v", err)
+	}
+	c.readFrame(t) // status response — proves the resize was processed
+}
+
+// TestResizeLargestWins: with two clients on one PTY, the shared grid follows
+// the LARGEST client — a smaller client attaching or resizing must not shrink
+// the PTY — and when the large client leaves, the grid falls back to the
+// remaining largest client. This is the fix for the phone stripping down the
+// desktop's terminal (both attach to the same session's single PTY).
+func TestResizeLargestWins(t *testing.T) {
+	f := startServe(t, 110)
+	defer f.cancel()
+
+	big := newTestClient(t, f.addr)
+	defer big.close()
+	small := newTestClient(t, f.addr)
+	defer small.close()
+
+	// Big client sizes the PTY up.
+	syncResize(t, big, 200, 50)
+	got := f.pty.waitResizes(t, 1)
+	if got[0].Cols != 200 || got[0].Rows != 50 {
+		t.Fatalf("first resize = %+v, want {200 50}", got[0])
+	}
+
+	// Small client asks for a smaller grid: the shared PTY must NOT shrink, so no
+	// additional resize is issued (the max is unchanged).
+	syncResize(t, small, 45, 22)
+	if got := f.pty.resizeSnapshot(); len(got) != 1 {
+		t.Fatalf("small client changed the grid: resizes = %+v, want just [{200 50}]", got)
+	}
+
+	// The big client leaves: the grid falls back to the remaining (small) client.
+	big.close()
+	got = f.pty.waitResizes(t, 2)
+	last := got[len(got)-1]
+	if last.Cols != 45 || last.Rows != 22 {
+		t.Fatalf("after big client left, resize = %+v, want {45 22}", last)
+	}
+}
+
+// TestResizeMatchesSingleLargestClient: with a wide-but-short client and a
+// narrow-but-tall one, the PTY must match ONE client's grid exactly (the larger
+// by area) — never an independent per-axis max. A synthesized wide-AND-tall grid
+// (120x48 here) has no client behind it and mis-renders for both: the desktop
+// grows phantom rows, the phone phantom columns. This is the regression that made
+// the desktop terminal "also get weird" while co-viewing.
+func TestResizeMatchesSingleLargestClient(t *testing.T) {
+	f := startServe(t, 111)
+	defer f.cancel()
+
+	wide := newTestClient(t, f.addr) // desktop-like: wide, short (area 3600)
+	defer wide.close()
+	tall := newTestClient(t, f.addr) // phone-like: narrow, tall (area 2640)
+	defer tall.close()
+
+	syncResize(t, wide, 120, 30)
+	f.pty.waitResizes(t, 1)
+	// The smaller-area client asks for MORE rows than the wide one; a per-axis max
+	// would bump the grid to 120x48. Area-based selection must keep it at 120x30.
+	syncResize(t, tall, 55, 48)
+
+	got := f.pty.resizeSnapshot()
+	last := got[len(got)-1]
+	if last.Cols != 120 || last.Rows != 30 {
+		t.Fatalf("grid = %+v, want the larger single client {120 30}", last)
+	}
+	for _, r := range got {
+		if r.Cols == 120 && r.Rows == 48 {
+			t.Fatal("PTY was sized to a synthesized per-axis-max grid {120 48}; it must match one client exactly")
+		}
+	}
+}
+
 // TestGetOutputReq: MsgGetOutputReq returns MsgGetOutputRes with ring.Tail(n).
 func TestGetOutputReq(t *testing.T) {
 	f := startServe(t, 104)

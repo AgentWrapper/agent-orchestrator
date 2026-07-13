@@ -9,31 +9,29 @@
 // hook commands) and Devin picks them up via its compat layer. This makes Devin
 // a Tier B (Claude-compat) adapter, mirroring the grok adapter.
 //
-// Launch starts interactive Devin. Prompted worker tasks are delivered after
-// startup through the runtime pane instead of `-p <prompt>` because Devin's
-// print mode is not usable for normal implementation work: it cannot request
-// interactive write/edit approvals and may render as a blank session. Permission
-// handling uses `--permission-mode`, whose valid values are `normal` (aliases:
-// auto) and `dangerous` (aliases: yolo, bypass). AO's four permission modes are
-// mapped onto these two: Default emits no flag (defer to the user's
-// ~/.config/devin/config.json), AcceptEdits/Auto map to `auto`, and
+// Launch starts interactive Devin. Prompted worker tasks are passed after `--`
+// so Devin starts in interactive implementation mode with the task already
+// loaded. AO intentionally avoids `-p/--print`, which is non-interactive.
+// Permission handling uses `--permission-mode`; Default emits no flag (defer to
+// Devin's config), AcceptEdits maps to `accept-edits`, Auto maps to `auto`, and
 // BypassPermissions maps to `dangerous`.
 //
-// Restore prefers the hook-captured native session id via `-r <id>`. Devin
-// session ids are listed by `devin list --format json`; AO captures the native
-// id through the Claude-compat hook payloads (SessionStart) into session
-// metadata, the same path grok uses.
+// Restore prefers a native session id from AO session metadata via `-r <id>`
+// when one is available.
 package devin
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -76,12 +74,10 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds `devin [--permission-mode <mode>]`.
-// Prompt is delivered after the interactive session starts.
+// GetLaunchCommand builds `devin [--permission-mode <mode>] [-- <prompt>]`.
 //
-// Permission values come from `devin --permission-mode -h`:
-// `normal` (alias auto) and `dangerous` (aliases yolo, bypass). Default omits
-// the flag so Devin uses its config (default mode is auto/normal).
+// The `-- <prompt>` form starts an interactive session. Do not use `-p`, which
+// is Devin's non-interactive print mode.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.devinBinary(ctx)
 	if err != nil {
@@ -90,40 +86,50 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	if prompt := strings.TrimSpace(cfg.Prompt); prompt != "" {
+		cmd = append(cmd, "--", prompt)
+	}
 
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Devin should receive prompted tasks
-// after the interactive terminal session has started. Avoiding `devin -p`
-// keeps worker sessions capable of implementation work and permission prompts.
+// GetPromptDeliveryStrategy reports that prompted Devin sessions receive the
+// initial task in argv via `-- <prompt>`.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	return ports.PromptDeliveryAfterStart, nil
+	return ports.PromptDeliveryInCommand, nil
 }
 
-// GetAgentHooks reuses the Claude Code hook installer because Devin for Terminal
-// has a documented Claude Code compatibility layer.
-//
-// Official docs (https://docs.devin.ai/cli, Configuration Import / Extensibility):
-// Devin reads configuration from `.claude/` including "Commands, custom
-// subagents, hooks"; its "Lifecycle hooks (Claude Code compatible)" are stored
-// in `.devin/hooks.v1.json`. The binary itself ships a
-// `config-importers/.../claude` + `agent-ext/hooks/importers/claude` layer that
-// converts Claude hooks (SessionStart, UserPromptSubmit, Stop, PermissionRequest,
-// SessionEnd, ...) on load.
-//
-// This means Devin picks up the .claude/settings.local.json (and the AO hook
-// commands we install there) in the worktree. The installed commands are
-// "ao hooks claude-code <evt>", so the existing CLI hook dispatcher routes them
-// to claude derive logic (Devin is grouped with claude-code in cli/hooks.go).
-func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
+// PreLaunch records the AO worktree as trusted before Devin starts. Devin keeps
+// its own trusted_workspaces.json for the blocking "do you trust this folder?"
+// prompt; the Claude-compatible trust bit is also written because Devin imports
+// some Claude Code configuration.
+func (p *Plugin) PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return (&claudecode.Plugin{}).GetAgentHooks(ctx, cfg)
+	if cfg.WorkspacePath == "" {
+		return nil
+	}
+	nativePath, err := devinTrustedWorkspacesPath()
+	if err != nil {
+		return err
+	}
+	if err := ensureDevinNativeWorkspaceTrusted(nativePath, cfg.WorkspacePath); err != nil {
+		return err
+	}
+	cfgPath, err := devinClaudeConfigPath()
+	if err != nil {
+		return err
+	}
+	return ensureDevinWorkspaceTrusted(cfgPath, cfg.WorkspacePath)
+}
+
+// GetAgentHooks installs Devin's AO-managed workspace hook configuration.
+func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
+	return devinHooks.Install(ctx, cfg.WorkspacePath)
 }
 
 // GetRestoreCommand builds `devin [--permission-mode <mode>] -r <agentSessionId>`
@@ -150,10 +156,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
-// SessionInfo reads hook-derived metadata. Since we delegate hook install to
-// claude hooks (via compat), the keys in the metadata map are the claude ones
-// ("title", "summary", "agentSessionId"). We surface them under the normalized
-// SessionInfo.
+// SessionInfo reads metadata under AO's normalized keys
+// ("title", "summary", "agentSessionId").
 func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
@@ -183,20 +187,142 @@ func (p *Plugin) devinBinary(ctx context.Context) (string, error) {
 	return binary, nil
 }
 
-// appendApprovalFlags maps AO's four permission modes onto Devin's two native
-// permission values (`auto`/normal and `dangerous`/bypass), per
-// `devin --permission-mode -h`.
+// appendApprovalFlags maps AO's permission modes onto Devin's native permission
+// values.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
-		// No flag: defer to ~/.config/devin/config.json (default mode is auto).
+		// No flag: defer to Devin's config.
 	case ports.PermissionModeAcceptEdits:
-		// Devin has no dedicated accept-edits flag; auto prompts for writes,
-		// which is the safest non-default mapping.
-		*cmd = append(*cmd, "--permission-mode", "auto")
+		*cmd = append(*cmd, "--permission-mode", "accept-edits")
 	case ports.PermissionModeAuto:
 		*cmd = append(*cmd, "--permission-mode", "auto")
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--permission-mode", "dangerous")
 	}
+}
+
+func devinClaudeConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("devin: resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".claude.json"), nil
+}
+
+func devinTrustedWorkspacesPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("devin: resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", "devin", "cli", "trusted_workspaces.json"), nil
+}
+
+// devinTrustMu serializes trust-file writes within the daemon process.
+var devinTrustMu sync.Mutex
+
+type devinTrustedWorkspaces struct {
+	TrustedPaths []string `json:"trusted_paths"`
+}
+
+func ensureDevinNativeWorkspaceTrusted(configPath, workspacePath string) error {
+	devinTrustMu.Lock()
+	defer devinTrustMu.Unlock()
+
+	root := devinTrustedWorkspaces{}
+	data, err := os.ReadFile(configPath)
+	switch {
+	case err == nil:
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &root); err != nil {
+				return fmt.Errorf("devin: parse %s: %w", configPath, err)
+			}
+		}
+	case os.IsNotExist(err):
+		// Treat as empty config; we'll create it.
+	default:
+		return fmt.Errorf("devin: read %s: %w", configPath, err)
+	}
+
+	for _, path := range root.TrustedPaths {
+		if path == workspacePath {
+			return nil
+		}
+	}
+	root.TrustedPaths = append(root.TrustedPaths, workspacePath)
+
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return fmt.Errorf("devin: encode %s: %w", configPath, err)
+	}
+	return writeDevinTrustFile(configPath, out)
+}
+
+func ensureDevinWorkspaceTrusted(configPath, workspacePath string) error {
+	devinTrustMu.Lock()
+	defer devinTrustMu.Unlock()
+
+	root := map[string]any{}
+	data, err := os.ReadFile(configPath)
+	switch {
+	case err == nil:
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &root); err != nil {
+				return fmt.Errorf("devin: parse %s: %w", configPath, err)
+			}
+		}
+	case os.IsNotExist(err):
+		// Treat as empty config; we'll create it.
+	default:
+		return fmt.Errorf("devin: read %s: %w", configPath, err)
+	}
+
+	projects, _ := root["projects"].(map[string]any)
+	if projects == nil {
+		projects = map[string]any{}
+		root["projects"] = projects
+	}
+
+	entry, _ := projects[workspacePath].(map[string]any)
+	if entry == nil {
+		entry = map[string]any{}
+		projects[workspacePath] = entry
+	}
+
+	if trusted, ok := entry["hasTrustDialogAccepted"].(bool); ok && trusted {
+		return nil
+	}
+	entry["hasTrustDialogAccepted"] = true
+
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return fmt.Errorf("devin: encode %s: %w", configPath, err)
+	}
+
+	return writeDevinTrustFile(configPath, out)
+}
+
+func writeDevinTrustFile(configPath string, out []byte) error {
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("devin: create config dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".claude.json.tmp-*")
+	if err != nil {
+		return fmt.Errorf("devin: create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(out); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("devin: write temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("devin: close temp config: %w", err)
+	}
+	if err := os.Rename(tmpName, configPath); err != nil {
+		return fmt.Errorf("devin: replace config: %w", err)
+	}
+	return nil
 }

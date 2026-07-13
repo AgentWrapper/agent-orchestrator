@@ -3,7 +3,7 @@ package domain
 import "time"
 
 // ActivityState is how busy the agent is, reported via the agent's CLI hook
-// callbacks (see docs/agent/README.md), not inferred from transcript/JSONL
+// callbacks, not inferred from transcript/JSONL
 type ActivityState string
 
 // Activity states. WaitingInput and Blocked are sticky (see IsSticky).

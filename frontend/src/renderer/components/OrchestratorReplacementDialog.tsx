@@ -45,7 +45,7 @@ export function OrchestratorReplacementDialog({
 							<Dialog.Title className="text-sm font-medium text-foreground">
 								Orchestrator replacement failed
 							</Dialog.Title>
-							<Dialog.Description className="mt-2 text-control leading-row text-muted-foreground">
+							<Dialog.Description className="mt-2 text-[13px] leading-5 text-muted-foreground">
 								{error ?? "The project orchestrator could not be replaced."}
 							</Dialog.Description>
 						</div>
