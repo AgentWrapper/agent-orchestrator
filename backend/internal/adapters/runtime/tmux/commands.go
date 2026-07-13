@@ -45,8 +45,9 @@ func hasSessionArgs(id string) []string {
 
 // exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
 // selection commands (-t) target only the session with that precise name.
-// Only kill-session and has-session support this prefix; pane-targeting
-// commands (send-keys, capture-pane, set-option) use a plain session name.
+// Session-selection commands like kill-session, has-session, and list-panes
+// support this prefix; pane-targeting commands (send-keys, capture-pane,
+// set-option) use a plain session name.
 func exactSessionTarget(id string) string {
 	return "=" + id
 }

@@ -80,13 +80,18 @@ func killSessionsByPID(ctx context.Context, pids []int, grace time.Duration) {
 	if len(pids) == 0 {
 		return
 	}
-	signalSessions(ctx, pids, "-TERM")
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace+5*time.Second)
+	defer cancel()
+
+	signalSessions(cleanupCtx, pids, "-TERM")
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
 	select {
-	case <-ctx.Done():
+	case <-cleanupCtx.Done():
 		return
-	case <-time.After(grace):
+	case <-timer.C:
 	}
-	signalSessions(ctx, pids, "-KILL")
+	signalSessions(cleanupCtx, pids, "-KILL")
 }
 
 // signalSessions sends a pkill signal flag (e.g. "-TERM") to every process in
