@@ -31,7 +31,7 @@ const (
 	// defaultReapGrace is how long Destroy waits between SIGTERM and SIGKILL when
 	// reaping a pane's leftover background processes, giving them a chance to
 	// exit cleanly (release ports) before being forced (issue #2523).
-	defaultReapGrace = 2 * time.Second
+	defaultReapGrace = 5 * time.Second
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -84,12 +84,19 @@ func killSessionsByPID(ctx context.Context, pids []int, grace time.Duration) {
 	defer cancel()
 
 	signalSessions(cleanupCtx, pids, "-TERM")
+	if !sessionsHaveProcesses(cleanupCtx, pids) {
+		return
+	}
+
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	select {
 	case <-cleanupCtx.Done():
 		return
 	case <-timer.C:
+	}
+	if !sessionsHaveProcesses(cleanupCtx, pids) {
+		return
 	}
 	signalSessions(cleanupCtx, pids, "-KILL")
 }
@@ -100,6 +107,23 @@ func signalSessions(ctx context.Context, pids []int, sig string) {
 	for _, pid := range pids {
 		_ = exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
 	}
+}
+
+// sessionsHaveProcesses reports whether any process remains in the pane
+// sessions. `pgrep` exit 1 means no matches; other failures are treated as
+// survivors so Destroy stays conservative and still attempts SIGKILL.
+func sessionsHaveProcesses(ctx context.Context, pids []int) bool {
+	for _, pid := range pids {
+		err := exec.CommandContext(ctx, "pgrep", "-s", strconv.Itoa(pid)).Run()
+		if err == nil || ctx.Err() != nil {
+			return true
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return true
+		}
+	}
+	return false
 }
 
 type execRunner struct{}
