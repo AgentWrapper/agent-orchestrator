@@ -285,9 +285,6 @@ func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 		"--tracker-intake",
 		"--tracker-repo", "acme/demo",
 		"--tracker-assignee", "alice",
-		"--tracker-label", "agent-ok",
-		"--tracker-label", "needs-agent",
-		"--tracker-exclude-label", "agent:noauto",
 		"--tracker-max-concurrent", "4",
 	)
 	if err != nil {
@@ -303,9 +300,7 @@ func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 	if !got.Config.TrackerIntake.Enabled || got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Repo != "acme/demo" || got.Config.TrackerIntake.Assignee != "alice" {
 		t.Fatalf("tracker intake request = %#v", got.Config.TrackerIntake)
 	}
-	if strings.Join(got.Config.TrackerIntake.Labels, ",") != "agent-ok,needs-agent" ||
-		strings.Join(got.Config.TrackerIntake.ExcludeLabels, ",") != "agent:noauto" ||
-		got.Config.TrackerIntake.MaxConcurrent != 4 {
+	if got.Config.TrackerIntake.MaxConcurrent != 4 || len(got.Config.TrackerIntake.Labels) != 0 || len(got.Config.TrackerIntake.ExcludeLabels) != 0 {
 		t.Fatalf("tracker intake request = %#v", got.Config.TrackerIntake)
 	}
 }
@@ -479,13 +474,9 @@ func TestProjectSetConfig_DaemonRoleWakeJSON(t *testing.T) {
 
 func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 	got, err := buildProjectConfig(projectSetConfigOptions{
-		trackerIntake:   true,
-		trackerRepo:     "acme/demo",
-		trackerAssignee: "alice",
-		trackerLabels:   []string{"agent-ok", "needs-agent"},
-		trackerExcludeLabels: []string{
-			"agent:noauto",
-		},
+		trackerIntake:        true,
+		trackerRepo:          "acme/demo",
+		trackerAssignee:      "alice",
 		trackerMaxConcurrent: 4,
 	})
 	if err != nil {
@@ -494,9 +485,7 @@ func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 	if !got.TrackerIntake.Enabled || got.TrackerIntake.Provider != "github" || got.TrackerIntake.Repo != "acme/demo" || got.TrackerIntake.Assignee != "alice" {
 		t.Fatalf("tracker intake config = %#v", got.TrackerIntake)
 	}
-	if strings.Join(got.TrackerIntake.Labels, ",") != "agent-ok,needs-agent" ||
-		strings.Join(got.TrackerIntake.ExcludeLabels, ",") != "agent:noauto" ||
-		got.TrackerIntake.MaxConcurrent != 4 {
+	if got.TrackerIntake.MaxConcurrent != 4 || len(got.TrackerIntake.Labels) != 0 || len(got.TrackerIntake.ExcludeLabels) != 0 {
 		t.Fatalf("tracker intake config = %#v", got.TrackerIntake)
 	}
 }

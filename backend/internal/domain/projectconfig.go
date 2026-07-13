@@ -172,8 +172,9 @@ type RoleOverride struct {
 	// lets a project carry its own standing policy per role (orchestrator vs
 	// worker) without smuggling it through the shared repo instruction context
 	// that every session loads. A relative path resolves against the project
-	// root; an absolute path is used as-is. A missing/unreadable file never
-	// blocks a spawn — the daemon logs a warning and spawns without it.
+	// root; an absolute path is used as-is. When configured, an invalid,
+	// missing, unreadable, oversized, or empty file blocks the role from
+	// launching with incomplete authority instructions.
 	InstructionsFile string `json:"instructionsFile,omitempty"`
 }
 

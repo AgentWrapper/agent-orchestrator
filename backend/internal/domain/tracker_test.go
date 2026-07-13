@@ -5,31 +5,7 @@ import (
 	"testing"
 )
 
-// The opt-out taxonomy (issue #80) is materialized by WithDefaults when intake
-// is enabled and the project left ExcludeLabels unset. The list is the
-// authoritative set Nick pinned: no-ao, deferred, charter, charter-audit,
-// human-review. "charter" prefix-matches charter:* at filter time (observer),
-// so charter:* is not enumerated here.
-func TestDefaultOptOutLabels(t *testing.T) {
-	want := []string{"no-ao", "deferred", "charter", "charter-audit", "human-review"}
-	if !reflect.DeepEqual(DefaultOptOutLabels, want) {
-		t.Fatalf("DefaultOptOutLabels = %v, want %v", DefaultOptOutLabels, want)
-	}
-}
-
-func TestStandardIssueLabelsAreSingleSourceForOptOutTaxonomy(t *testing.T) {
-	var got []string
-	for _, label := range StandardIssueLabels() {
-		if label.Kind == IssueLabelKindOptOut {
-			got = append(got, label.Name)
-		}
-	}
-	if !reflect.DeepEqual(got, DefaultOptOutLabels) {
-		t.Fatalf("opt-out standard labels = %v, want %v", got, DefaultOptOutLabels)
-	}
-}
-
-func TestStandardIssueLabelsIncludesRoutingAndPoolEscape(t *testing.T) {
+func TestStandardIssueLabelsIncludesTypesStatusesAndRoutingWithoutAdmissionControls(t *testing.T) {
 	got := map[string]IssueLabelKind{}
 	for _, label := range StandardIssueLabels() {
 		got[label.Name] = label.Kind
@@ -44,25 +20,24 @@ func TestStandardIssueLabelsIncludesRoutingAndPoolEscape(t *testing.T) {
 		"agent:codex":  IssueLabelKindRouting,
 		"agent:fugu":   IssueLabelKindRouting,
 		"agent:claude": IssueLabelKindRouting,
-		"nopool":       IssueLabelKindPoolEscape,
+		"deferred":     IssueLabelKindStatus,
+		"human-review": IssueLabelKindStatus,
 	} {
 		if got[name] != kind {
 			t.Fatalf("standard label %q kind = %q, want %q", name, got[name], kind)
 		}
 	}
+	for _, forbidden := range []string{"no-ao", "nopool"} {
+		if _, ok := got[forbidden]; ok {
+			t.Fatalf("standard labels still advertise admission control %q", forbidden)
+		}
+	}
 }
 
-func TestTrackerIntakeWithDefaultsMaterializesOptOut(t *testing.T) {
-	// Enabled + unset ExcludeLabels → the default opt-out taxonomy is filled in
-	// (opt-out-by-default). The materialized slice must be a copy, not an alias
-	// of the package-level DefaultOptOutLabels, so a later append can't mutate
-	// the shared default.
+func TestTrackerIntakeWithDefaultsDoesNotMaterializeLabelAdmissionRules(t *testing.T) {
 	got := TrackerIntakeConfig{Enabled: true}.WithDefaults()
-	if !reflect.DeepEqual(got.ExcludeLabels, DefaultOptOutLabels) {
-		t.Fatalf("ExcludeLabels = %v, want %v", got.ExcludeLabels, DefaultOptOutLabels)
-	}
-	if len(got.ExcludeLabels) > 0 && &got.ExcludeLabels[0] == &DefaultOptOutLabels[0] {
-		t.Fatal("WithDefaults aliased the shared DefaultOptOutLabels slice; expected a copy")
+	if got.ExcludeLabels != nil || got.Labels != nil {
+		t.Fatalf("WithDefaults materialized label admission fields: %#v", got)
 	}
 }
 
@@ -92,14 +67,11 @@ func TestTrackerIntakeWithDefaultsDisabledLeavesExcludeLabelsNil(t *testing.T) {
 	}
 }
 
-func TestTrackerIntakeWithDefaultsEnablesRespawnPolicy(t *testing.T) {
+func TestTrackerIntakeWithDefaultsUsesZeroRespawnRetries(t *testing.T) {
 	got := TrackerIntakeConfig{Enabled: true}.WithDefaults()
 	policy := got.EffectiveRespawnPolicy()
-	if !policy.IsEnabled() {
-		t.Fatal("respawn policy should default on when intake is enabled")
-	}
-	if policy.EffectiveMaxRetries() != DefaultWorkerRespawnMaxRetries {
-		t.Fatalf("respawn max retries = %d, want %d", policy.EffectiveMaxRetries(), DefaultWorkerRespawnMaxRetries)
+	if policy.EffectiveMaxRetries() != 0 || DefaultWorkerRespawnMaxRetries != 0 {
+		t.Fatalf("default respawn retries = %d (constant %d), want 0", policy.EffectiveMaxRetries(), DefaultWorkerRespawnMaxRetries)
 	}
 	if got.Respawn != nil {
 		t.Fatalf("WithDefaults should not persist materialized respawn defaults, got %#v", got.Respawn)
@@ -124,30 +96,25 @@ func TestTrackerIntakeRespawnPolicyCanDisableOrSetZeroRetries(t *testing.T) {
 	}
 }
 
-func TestTrackerIntakeValidateNoLongerRequiresAssignee(t *testing.T) {
-	// Issue #80 flips intake to opt-out-by-default: the work gate is opt-out
-	// labels only, so an assignee is no longer required to enable intake. The
-	// backlog-drain protection that once justified the requirement is now carried
-	// by the default opt-out labels + MaxConcurrent cap.
-	cfg := TrackerIntakeConfig{Enabled: true}.WithDefaults()
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate rejected enabled intake without assignee: %v", err)
+func TestTrackerIntakeValidateRequiresOneAssignmentGateAndFiniteCap(t *testing.T) {
+	for _, cfg := range []TrackerIntakeConfig{
+		{Enabled: true, MaxConcurrent: 2},
+		{Enabled: true, Assignee: "none", MaxConcurrent: 2},
+		{Enabled: true, Assignee: "*"},
+		{Enabled: true, Assignee: "*", MaxConcurrent: -1},
+	} {
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("Validate accepted unsafe intake config: %#v", cfg)
+		}
 	}
-}
-
-func TestTrackerIntakeValidateStillRejectsPaddedLabels(t *testing.T) {
-	// Internal spaces are legal (GitHub labels like "good first issue"); only
-	// leading/trailing padding is rejected, and that guard still applies to
-	// exclude labels after the assignee requirement was dropped.
-	cfg := TrackerIntakeConfig{Enabled: true, ExcludeLabels: []string{" no-ao"}}
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate accepted an exclude label with leading whitespace")
+	if err := (TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 2}).Validate(); err != nil {
+		t.Fatalf("Validate rejected assignment-gated bounded intake: %v", err)
 	}
 }
 
 func TestTrackerIntakeValidateRejectsNegativeRespawnRetries(t *testing.T) {
 	negative := -1
-	cfg := TrackerIntakeConfig{Enabled: true, Respawn: &TrackerRespawnPolicy{MaxRetries: &negative}}
+	cfg := TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 2, Respawn: &TrackerRespawnPolicy{MaxRetries: &negative}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate accepted negative respawn max retries")
 	}

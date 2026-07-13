@@ -64,13 +64,15 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 example, `--workspace in-place` changes only the workspace mode. Use
 `--config-json` when replacing the full project config is intentional, or
 `--clear` to remove all config. Repeatable collection flags such as `--env`,
-`--symlink`, `--post-create`, `--tracker-label`, and
-`--tracker-exclude-label` replace that field's stored collection with the values
-passed in the command. If issue intake is enabled, disabling it must be explicit:
+`--symlink`, and `--post-create` replace that field's stored collection with the
+values passed in the command. Enabled issue intake requires
+`--tracker-assignee` (`*` means any assigned issue) and a positive
+`--tracker-max-concurrent`; assignment is the sole admission signal. Disabling
+intake must be explicit:
 set `trackerIntake.enabled=false` in the replacement JSON or pass
 `--tracker-intake=false` with another config flag. Omitting `trackerIntake` from
-an enabled project is rejected so stale writers cannot silently erase intake caps
-and filters. A one-field replacement such as
+an enabled project is rejected so stale writers cannot silently erase intake
+authorization or its cap. A one-field replacement such as
 `{"trackerIntake":{"enabled":false}}` clears every other config key; use it only
 when that is intentional. Use the first-class pause/resume control for
 intentional fleet pauses when available.

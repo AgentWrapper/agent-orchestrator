@@ -1599,7 +1599,15 @@ export interface components {
         TrackerIntakeConfig: {
             assignee?: string;
             enabled?: boolean;
+            /**
+             * @deprecated
+             * @description Ignored compatibility field; assignment is the sole admission signal. Park work by unassigning it.
+             */
             excludeLabels?: string[];
+            /**
+             * @deprecated
+             * @description Ignored compatibility field; assignment is the sole admission signal. Park work by unassigning it.
+             */
             labels?: string[];
             maxConcurrent?: number;
             /** @enum {string} */

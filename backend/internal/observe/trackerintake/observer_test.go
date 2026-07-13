@@ -24,8 +24,9 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-				Enabled:  true,
-				Assignee: "alice",
+				Enabled:       true,
+				Assignee:      "alice",
+				MaxConcurrent: 32,
 			}},
 		}},
 	}
@@ -76,7 +77,7 @@ func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}},
 		}},
 		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12"}},
 	}
@@ -105,7 +106,7 @@ func TestPollSkipsIssueWithOpenLinkedPRWithLiveDriver(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}},
 		}},
 		// The worker session is still live and its PR is open — a genuine driver.
 		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", Kind: domain.KindWorker}},
@@ -138,15 +139,16 @@ func TestPollSkipsIssueWithOpenLinkedPRWithLiveDriver(t *testing.T) {
 	}
 }
 
-func TestPollRespawnDisabledEscalatesWithoutReplacement(t *testing.T) {
+func TestPollDefaultZeroRespawnEscalatesWithoutReplacement(t *testing.T) {
 	issueID := domain.IssueID("github:acme/demo#12")
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-				Enabled: true,
-				Respawn: &domain.TrackerRespawnPolicy{Disabled: true},
+				Enabled:       true,
+				Assignee:      "*",
+				MaxConcurrent: 32,
 			}},
 		}},
 		sessions: []domain.SessionRecord{{
@@ -161,9 +163,10 @@ func TestPollRespawnDisabledEscalatesWithoutReplacement(t *testing.T) {
 		}},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Fix login",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 	notifications := &fakeNotificationSink{}
@@ -172,7 +175,7 @@ func TestPollRespawnDisabledEscalatesWithoutReplacement(t *testing.T) {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 0 {
-		t.Fatalf("spawn calls = %+v, want none when respawn is disabled", spawner.calls)
+		t.Fatalf("spawn calls = %+v, want none when default retry count is zero", spawner.calls)
 	}
 	if len(notifications.intents) != 1 {
 		t.Fatalf("notifications = %d, want 1", len(notifications.intents))
@@ -191,8 +194,10 @@ func TestPollRespawnsWhenOnlyNonWorkerSessionIsAttachedToIssue(t *testing.T) {
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-				Enabled: true,
-				Respawn: &domain.TrackerRespawnPolicy{MaxRetries: &maxRetries},
+				Enabled:       true,
+				Assignee:      "*",
+				MaxConcurrent: 32,
+				Respawn:       &domain.TrackerRespawnPolicy{MaxRetries: &maxRetries},
 			}},
 		}},
 		sessions: []domain.SessionRecord{
@@ -215,9 +220,10 @@ func TestPollRespawnsWhenOnlyNonWorkerSessionIsAttachedToIssue(t *testing.T) {
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Fix login",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 	notifications := &fakeNotificationSink{}
@@ -242,7 +248,8 @@ func TestPollDoesNotEmitAdoptionNotificationWhenRespawnAdmissionFails(t *testing
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32,
+				Respawn: &domain.TrackerRespawnPolicy{MaxRetries: retryLimit(2)}}},
 		}},
 		sessions: []domain.SessionRecord{{
 			ID:           "demo-worker-1",
@@ -264,9 +271,10 @@ func TestPollDoesNotEmitAdoptionNotificationWhenRespawnAdmissionFails(t *testing
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Fix login",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
 		issueID: apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
@@ -305,7 +313,8 @@ func TestPollPublishesAdoptionNotificationAfterDeferredObservationWithRealDedupe
 		Path:          "/repo/demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		RegisteredAt:  now,
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32,
+			Respawn: &domain.TrackerRespawnPolicy{MaxRetries: retryLimit(2)}}},
 	}); err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
@@ -335,9 +344,10 @@ func TestPollPublishesAdoptionNotificationAfterDeferredObservationWithRealDedupe
 		t.Fatalf("seed PR: %v", err)
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Fix login",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
 		issueID: apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
@@ -400,7 +410,7 @@ func TestPollDoesNotRespawnWhenLiveWorkerAlreadyReplacedDeadWorker(t *testing.T)
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32}},
 		}},
 		sessions: []domain.SessionRecord{
 			{
@@ -423,9 +433,10 @@ func TestPollDoesNotRespawnWhenLiveWorkerAlreadyReplacedDeadWorker(t *testing.T)
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Fix login",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 	notifications := &fakeNotificationSink{}
@@ -463,7 +474,8 @@ func TestPollRespawnsClaimModeWhenDeadWorkerHasOrphanedOpenPR(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32,
+				Respawn: &domain.TrackerRespawnPolicy{MaxRetries: retryLimit(2)}}},
 		}},
 		sessions: []domain.SessionRecord{{
 			ID:           "demo-1",
@@ -480,9 +492,10 @@ func TestPollRespawnsClaimModeWhenDeadWorkerHasOrphanedOpenPR(t *testing.T) {
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Has an orphaned open PR",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Has an orphaned open PR",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 	notifications := &fakeNotificationSink{}
@@ -520,8 +533,9 @@ func TestPollEscalatesWhenOrphanedOpenPRCannotBeAdoptedInPlace(t *testing.T) {
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{
-				Workspace:     domain.WorkspaceModeInPlace,
-				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+				Workspace: domain.WorkspaceModeInPlace,
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32,
+					Respawn: &domain.TrackerRespawnPolicy{MaxRetries: retryLimit(2)}},
 			},
 		}},
 		sessions: []domain.SessionRecord{{
@@ -539,9 +553,10 @@ func TestPollEscalatesWhenOrphanedOpenPRCannotBeAdoptedInPlace(t *testing.T) {
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Has an orphaned open PR",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Has an orphaned open PR",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 	notifications := &fakeNotificationSink{}
@@ -569,7 +584,8 @@ func TestPollEscalatesWhenOrphanedOpenPRHasNoSourceBranch(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32,
+				Respawn: &domain.TrackerRespawnPolicy{MaxRetries: retryLimit(2)}}},
 		}},
 		sessions: []domain.SessionRecord{{
 			ID:           "demo-1",
@@ -586,9 +602,10 @@ func TestPollEscalatesWhenOrphanedOpenPRHasNoSourceBranch(t *testing.T) {
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Has an orphaned open PR",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Has an orphaned open PR",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 	notifications := &fakeNotificationSink{}
@@ -623,8 +640,10 @@ func TestPollEscalatesWhenOrphanedOpenPRExceedsRetryCap(t *testing.T) {
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-				Enabled: true,
-				Respawn: &domain.TrackerRespawnPolicy{MaxRetries: &maxRetries},
+				Enabled:       true,
+				Assignee:      "*",
+				MaxConcurrent: 32,
+				Respawn:       &domain.TrackerRespawnPolicy{MaxRetries: &maxRetries},
 			}},
 		}},
 		// Two workers died on the issue (deadCount=2 > cap=1); the latest left an
@@ -639,9 +658,10 @@ func TestPollEscalatesWhenOrphanedOpenPRExceedsRetryCap(t *testing.T) {
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title: "Repeatedly dying with an open PR",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Repeatedly dying with an open PR",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 	notifications := &fakeNotificationSink{}
@@ -674,7 +694,7 @@ func TestPollFailsWhenOpenPRReadFails(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}},
 		}},
 		openPRsErr: errors.New("boom"),
 	}
@@ -703,10 +723,8 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{
 			{ID: "off", RepoOriginURL: "https://github.com/acme/off.git"},
-			// A "broad" project (enabled, no assignee) is no longer ineligible —
-			// issue #80 made that a valid opt-out-by-default config. Its pickup
-			// behavior is covered by TestPollAppliesDefaultOptOutLabels.
-			{ID: "missing-origin", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
+			// Valid intake still fails later when no repository scope can be derived.
+			{ID: "missing-origin", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}}},
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
@@ -729,8 +747,8 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 
 func TestPollContinuesAfterTrackerAndSpawnFailures(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{
-		{ID: "bad", RepoOriginURL: "https://github.com/acme/bad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
-		{ID: "good", RepoOriginURL: "https://github.com/acme/good.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
+		{ID: "bad", RepoOriginURL: "https://github.com/acme/bad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}}},
+		{ID: "good", RepoOriginURL: "https://github.com/acme/good.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}}},
 	}}
 	tracker := &fakeTracker{
 		failRepos: map[string]error{"acme/bad": errors.New("rate limited")},
@@ -759,7 +777,7 @@ func TestPollBacksOffProjectAfterFailure(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}},
 	}}}
 	tracker := &fakeTracker{failRepos: map[string]error{"acme/demo": errors.New("rate limited")}}
 	observer := New(singleResolver(tracker), store, &fakeSpawner{}, Config{
@@ -795,7 +813,7 @@ func TestPollSkipsNonOpenIssueStates(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "already active", State: domain.IssueInProgress, Assignees: []string{"alice"}},
@@ -815,7 +833,7 @@ func TestPollAppliesLocalEligibilityFilter(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", MaxConcurrent: 32}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "unassigned", State: domain.IssueOpen},
@@ -841,54 +859,34 @@ func TestIssueMatchesConfigAssigneeSpecialValues(t *testing.T) {
 	if issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "*"}) {
 		t.Fatal("unassigned issue should not match assignee=*")
 	}
-	if !issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
-		t.Fatal("unassigned issue should match assignee=none")
+	if issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
+		t.Fatal("assignee=none must never authorize unassigned work")
 	}
 	if issueMatchesConfig(assigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
 		t.Fatal("assigned issue should not match assignee=none")
 	}
 }
 
-func TestIssueMatchesConfigLabelFilters(t *testing.T) {
+func TestIssueMatchesConfigIgnoresLabelsForAdmission(t *testing.T) {
 	withLabels := func(labels ...string) domain.Issue {
 		return domain.Issue{Assignees: []string{"alice"}, Labels: labels}
 	}
-	// Include rule: only issues carrying an included label match.
-	includeCfg := domain.TrackerIntakeConfig{Assignee: "alice", Labels: []string{"agent-ok"}}
-	if !issueMatchesConfig(withLabels("Agent-OK"), includeCfg) {
-		t.Fatal("issue with included label (case-insensitive) should match")
-	}
-	if issueMatchesConfig(withLabels("other"), includeCfg) {
-		t.Fatal("issue without any included label should not match")
-	}
-	if issueMatchesConfig(withLabels(), includeCfg) {
-		t.Fatal("issue with no labels should not match an include rule")
-	}
-	// Exclude rule wins over everything else.
-	excludeCfg := domain.TrackerIntakeConfig{Assignee: "alice", ExcludeLabels: []string{"agent:noauto"}}
-	if issueMatchesConfig(withLabels("Agent:NoAuto"), excludeCfg) {
-		t.Fatal("issue with excluded label should never match")
-	}
-	if !issueMatchesConfig(withLabels("something"), excludeCfg) {
-		t.Fatal("issue without the excluded label should match")
-	}
-	// Exclusion beats inclusion when both apply.
-	bothCfg := domain.TrackerIntakeConfig{Assignee: "alice", Labels: []string{"agent-ok"}, ExcludeLabels: []string{"agent:noauto"}}
-	if issueMatchesConfig(withLabels("agent-ok", "agent:noauto"), bothCfg) {
-		t.Fatal("exclusion must win over inclusion")
-	}
-	if !issueMatchesConfig(withLabels("agent-ok"), bothCfg) {
-		t.Fatal("included-only issue should match when not excluded")
+	cfg := domain.TrackerIntakeConfig{Assignee: "alice", Labels: []string{"agent-ok"}, ExcludeLabels: []string{"no-ao"}}
+	for _, issue := range []domain.Issue{withLabels(), withLabels("other"), withLabels("no-ao"), withLabels("agent-ok", "human-review")} {
+		if !issueMatchesConfig(issue, cfg) {
+			t.Fatalf("assigned issue rejected because of labels: %#v", issue.Labels)
+		}
 	}
 }
 
-func TestPollAppliesLabelFilters(t *testing.T) {
+func TestPollIgnoresLegacyLabelAdmissionFields(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
 			Enabled:       true,
 			Assignee:      "alice",
+			MaxConcurrent: 4,
 			Labels:        []string{"agent-ok"},
 			ExcludeLabels: []string{"agent:noauto"},
 		}},
@@ -903,8 +901,8 @@ func TestPollAppliesLabelFilters(t *testing.T) {
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#3" {
-		t.Fatalf("spawn calls = %+v, want only eligible issue #3", spawner.calls)
+	if len(spawner.calls) != 3 {
+		t.Fatalf("spawn calls = %+v, want all three assigned issues regardless of labels", spawner.calls)
 	}
 }
 
@@ -945,9 +943,8 @@ func TestPollLetsSpawnEnforceMaxConcurrentAgainstLiveWorkers(t *testing.T) {
 }
 
 func TestPollDefersNormalIssuesAfterSpawnReportsMaxConcurrent(t *testing.T) {
-	// The session manager reports a full normal pool. Intake records that result
-	// and avoids further normal-pool attempts in this pass while still allowing a
-	// later nopool issue to bypass the pool.
+	// Once the session manager reports a full pool, intake defers every remaining
+	// issue in this pass; labels cannot create an admission bypass.
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
@@ -975,14 +972,11 @@ func TestPollDefersNormalIssuesAfterSpawnReportsMaxConcurrent(t *testing.T) {
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 2 {
-		t.Fatalf("spawn calls = %d, want capped normal issue plus nopool issue", len(spawner.calls))
-	}
-	if spawner.calls[1].IssueID != "github:acme/demo#2" || !spawner.calls[1].IntakePoolBypass {
-		t.Fatalf("second spawn = %+v, want nopool issue after cap collision", spawner.calls[1])
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want only the first cap collision", len(spawner.calls))
 	}
 	if len(tracker.repos) != 1 {
-		t.Fatalf("tracker queried %d times, want 1 so nopool issues can be discovered", len(tracker.repos))
+		t.Fatalf("tracker queried %d times, want one deterministic list pass", len(tracker.repos))
 	}
 }
 
@@ -1037,12 +1031,13 @@ func TestPollDefersWithoutBackoffWhenWorkerMixBucketDown(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"},
-		Title: "first",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"},
+		Title:     "first",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
 		"github:acme/demo#1": apierr.Conflict("WORKER_MIX_BUCKET_DOWN", "session: worker mix bucket is down", nil),
@@ -1240,41 +1235,23 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func retryLimit(n int) *int { return &n }
+
 // TestIssueMatchesConfigExcludePrefix covers the scoped-label prefix rule from
 // issue #80: an exclude entry "charter" opts out the whole charter:* family
 // (charter, charter:C03) without enumerating each one, while a distinct label
 // like charter-audit (hyphen, not colon) is NOT swept up by the "charter"
 // prefix — it must be listed separately.
-func TestIssueMatchesConfigExcludePrefix(t *testing.T) {
+func TestIssueMatchesConfigIgnoresLegacyScopedExclusions(t *testing.T) {
 	withLabels := func(labels ...string) domain.Issue {
 		return domain.Issue{Assignees: []string{"alice"}, Labels: labels}
 	}
 	cfg := domain.TrackerIntakeConfig{Assignee: "alice", ExcludeLabels: []string{"charter"}}
 
-	if issueMatchesConfig(withLabels("charter"), cfg) {
-		t.Fatal("exact label charter should be excluded")
-	}
-	if issueMatchesConfig(withLabels("charter:C03"), cfg) {
-		t.Fatal("scoped label charter:C03 should be excluded by the charter prefix")
-	}
-	if issueMatchesConfig(withLabels("Charter:C03"), cfg) {
-		t.Fatal("prefix match must be case-insensitive")
-	}
-	if !issueMatchesConfig(withLabels("charter-audit"), cfg) {
-		t.Fatal("charter-audit (hyphen) must NOT be swept up by the charter: prefix")
-	}
-	if !issueMatchesConfig(withLabels("chartering"), cfg) {
-		t.Fatal("chartering must NOT match the charter prefix (prefix requires a ':' boundary)")
-	}
-
-	// Multi-segment entries keep their full scope: "agent:noauto" excludes
-	// "agent:noauto:beta" but a bare "agent" scope must not.
-	multi := domain.TrackerIntakeConfig{Assignee: "alice", ExcludeLabels: []string{"agent:noauto"}}
-	if issueMatchesConfig(withLabels("agent:noauto:beta"), multi) {
-		t.Fatal("agent:noauto must exclude the agent:noauto:* family")
-	}
-	if !issueMatchesConfig(withLabels("agent:other"), multi) {
-		t.Fatal("agent:noauto must NOT exclude a different agent:* scope")
+	for _, issue := range []domain.Issue{withLabels("charter"), withLabels("charter:C03"), withLabels("Charter:C03"), withLabels("charter-audit")} {
+		if !issueMatchesConfig(issue, cfg) {
+			t.Fatalf("legacy exclusion changed assignment admission: %#v", issue.Labels)
+		}
 	}
 }
 
@@ -1282,29 +1259,16 @@ func TestIssueMatchesConfigExcludePrefix(t *testing.T) {
 // scoped-prefix-match paths fold identically. The long-s (ſ) folds to "s" under
 // EqualFold, so an entry "scope" must exclude both "ſcope" (exact) and "ſcope:x"
 // (scoped prefix) — the two case-insensitive paths cannot disagree.
-func TestIssueHasExcludedLabelFoldConsistency(t *testing.T) {
-	if !issueHasExcludedLabel([]string{"ſcope"}, "scope") {
-		t.Fatal("exact fold match should hold for ſcope vs scope")
-	}
-	if !issueHasExcludedLabel([]string{"ſcope:x"}, "scope") {
-		t.Fatal("scoped-prefix fold match should hold for ſcope:x vs scope")
-	}
-}
-
-// TestPollAppliesDefaultOptOutLabels proves opt-out-by-default: a project that
-// enables intake without configuring ExcludeLabels still skips issues carrying
-// any of the default opt-out labels, and works everything else.
-func TestPollAppliesDefaultOptOutLabels(t *testing.T) {
+func TestPollUsesAssignmentRegardlessOfStatusLabels(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		// No Assignee, no ExcludeLabels: pure opt-out-by-default.
-		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 4}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "opted out", State: domain.IssueOpen, Labels: []string{"no-ao"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "charter family", State: domain.IssueOpen, Labels: []string{"charter:C03"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "deferred", State: domain.IssueOpen, Labels: []string{"deferred"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "legacy no-ao", State: domain.IssueOpen, Labels: []string{"no-ao"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "charter family", State: domain.IssueOpen, Labels: []string{"charter:C03"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "deferred", State: domain.IssueOpen, Labels: []string{"deferred"}, Assignees: []string{"alice"}},
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#4"}, Title: "plain unlabeled", State: domain.IssueOpen},
 	}}
 	spawner := &fakeSpawner{}
@@ -1312,10 +1276,8 @@ func TestPollAppliesDefaultOptOutLabels(t *testing.T) {
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	// #1 no-ao, #2 charter:C03 (prefix), #3 deferred are all default opt-outs;
-	// only the unlabeled #4 is worked.
-	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#4" {
-		t.Fatalf("spawn calls = %+v, want only the unlabeled issue #4", spawner.calls)
+	if len(spawner.calls) != 3 {
+		t.Fatalf("spawn calls = %+v, want all assigned issues regardless of labels", spawner.calls)
 	}
 }
 
@@ -1327,13 +1289,14 @@ func TestPollPicksUpSensitiveUnlabeledIssue(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#7"},
-		Title: "Refactor backend/internal/daemon session lifecycle",
-		Body:  "Touches backend/internal/session_manager and backend/internal/lifecycle.",
-		State: domain.IssueOpen,
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#7"},
+		Title:     "Refactor backend/internal/daemon session lifecycle",
+		Body:      "Touches backend/internal/session_manager and backend/internal/lifecycle.",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 
@@ -1350,9 +1313,10 @@ func mixIssues(repo string, n int) []domain.Issue {
 	issues := make([]domain.Issue, 0, n)
 	for i := 1; i <= n; i++ {
 		issues = append(issues, domain.Issue{
-			ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: fmt.Sprintf("%s#%d", repo, i)},
-			Title: fmt.Sprintf("issue %d", i),
-			State: domain.IssueOpen,
+			ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: fmt.Sprintf("%s#%d", repo, i)},
+			Title:     fmt.Sprintf("issue %d", i),
+			State:     domain.IssueOpen,
+			Assignees: []string{"alice"},
 		})
 	}
 	return issues
@@ -1367,7 +1331,7 @@ func TestPollWorkerMixDelegatesOrdinaryAllocation(t *testing.T) {
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{
-			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32},
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Weight: 60},
 				{Harness: domain.HarnessCodexFugu, Weight: 30},
@@ -1400,7 +1364,7 @@ func TestPollWorkerMixDoesNotReadRunningBuckets(t *testing.T) {
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{
-				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32},
 				WorkerMix: domain.WorkerMix{
 					{Harness: domain.HarnessCodex, Weight: 50},
 					{Harness: domain.HarnessCodexFugu, Weight: 50},
@@ -1437,7 +1401,7 @@ func TestPollWorkerMixRespectsConcurrencyCap(t *testing.T) {
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{
-			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 2},
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 2},
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Weight: 50},
 				{Harness: domain.HarnessCodexFugu, Weight: 50},
@@ -1467,16 +1431,16 @@ func TestPollRoutingLabelOverridesWorkerMixWithinCap(t *testing.T) {
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{
-			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 2},
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 2},
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Weight: 100},
 			},
 		},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "pinned", State: domain.IssueOpen, Labels: []string{"agent:claude"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "capped", State: domain.IssueOpen},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "pinned", State: domain.IssueOpen, Labels: []string{"agent:claude"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "capped", State: domain.IssueOpen, Assignees: []string{"alice"}},
 	}}
 	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
 		"github:acme/demo#3": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
@@ -1501,7 +1465,7 @@ func TestPollRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{
-			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32},
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Weight: 50},
 				{Harness: domain.HarnessCodexFugu, Weight: 50},
@@ -1509,8 +1473,8 @@ func TestPollRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
 		},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "pinned codex", State: domain.IssueOpen, Labels: []string{"agent:codex"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "pinned codex", State: domain.IssueOpen, Labels: []string{"agent:codex"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen, Assignees: []string{"alice"}},
 	}}
 	spawner := &fakeSpawner{}
 
@@ -1528,12 +1492,12 @@ func TestPollRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
 	}
 }
 
-func TestPollNoPoolRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
+func TestPollLegacyNoPoolLabelOnlyRoutesWithinCapacity(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{
-			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32},
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Weight: 50},
 				{Harness: domain.HarnessCodexFugu, Weight: 50},
@@ -1541,8 +1505,8 @@ func TestPollNoPoolRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
 		},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "urgent pinned codex", State: domain.IssueOpen, Labels: []string{"nopool", "agent:codex"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "urgent pinned codex", State: domain.IssueOpen, Labels: []string{"nopool", "agent:codex"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "mixed", State: domain.IssueOpen, Assignees: []string{"alice"}},
 	}}
 	spawner := &fakeSpawner{}
 
@@ -1552,21 +1516,21 @@ func TestPollNoPoolRoutingLabelCountsAgainstWorkerMixWithinPass(t *testing.T) {
 	if len(spawner.calls) != 2 {
 		t.Fatalf("spawn calls = %d, want 2", len(spawner.calls))
 	}
-	if spawner.calls[0].Harness != domain.HarnessCodex || !spawner.calls[0].IntakePoolBypass {
-		t.Fatalf("nopool pinned issue = harness %q bypass %t, want codex bypass", spawner.calls[0].Harness, spawner.calls[0].IntakePoolBypass)
+	if spawner.calls[0].Harness != domain.HarnessCodex {
+		t.Fatalf("legacy nopool pinned issue harness = %q, want codex routing only", spawner.calls[0].Harness)
 	}
 	if spawner.calls[1].Harness != "" || spawner.calls[1].Model != "" {
 		t.Fatalf("ordinary issue should delegate allocation, got harness=%q model=%q", spawner.calls[1].Harness, spawner.calls[1].Model)
 	}
 }
 
-func TestPollNoPoolBypassesMaxConcurrentWithoutOpeningNormalCapacity(t *testing.T) {
+func TestPollLegacyNoPoolCannotBypassMaxConcurrent(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{
-				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, MaxConcurrent: 1},
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 1},
 				WorkerMix:     domain.WorkerMix{{Harness: domain.HarnessCodex, Weight: 100}},
 			},
 		}},
@@ -1575,9 +1539,9 @@ func TestPollNoPoolBypassesMaxConcurrentWithoutOpeningNormalCapacity(t *testing.
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "normal capped", State: domain.IssueOpen},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "urgent", State: domain.IssueOpen, Labels: []string{"nopool", "agent:fugu"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "normal still capped", State: domain.IssueOpen},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "normal capped", State: domain.IssueOpen, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "urgent", State: domain.IssueOpen, Labels: []string{"nopool", "agent:fugu"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "normal still capped", State: domain.IssueOpen, Assignees: []string{"alice"}},
 	}}
 	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
 		"github:acme/demo#1": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
@@ -1587,15 +1551,8 @@ func TestPollNoPoolBypassesMaxConcurrentWithoutOpeningNormalCapacity(t *testing.
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 2 {
-		t.Fatalf("spawn calls = %d, want capped normal issue plus nopool issue", len(spawner.calls))
-	}
-	call := spawner.calls[1]
-	if call.IssueID != "github:acme/demo#2" || call.Harness != domain.HarnessCodexFugu {
-		t.Fatalf("nopool spawn = issue %q harness %q, want issue #2 on codex-fugu", call.IssueID, call.Harness)
-	}
-	if !call.IntakePoolBypass {
-		t.Fatal("nopool spawn did not carry IntakePoolBypass")
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want only the first cap collision", len(spawner.calls))
 	}
 }
 
@@ -1606,7 +1563,7 @@ func TestPollNoMixKeepsSingleDefault(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32}},
 	}}}
 	tracker := &fakeTracker{issues: mixIssues("acme/demo", 1)}
 	spawner := &fakeSpawner{}
@@ -1630,7 +1587,7 @@ func TestPollWorkerMixFailedSpawnDoesNotConsumeBucket(t *testing.T) {
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{
-			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true},
+			TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32},
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Weight: 50},
 				{Harness: domain.HarnessCodexFugu, Weight: 50},

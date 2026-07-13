@@ -12,6 +12,7 @@
 		"agentConfig": {
 			"model": "opus"
 		},
+		"instructionsFile": ".claude/orchestrator-policy.md",
 		"wakeBackoff": {
 			"base": "15m",
 			"enabled": true,
@@ -32,16 +33,14 @@
 	},
 	"projectPrefix": "ao",
 	"trackerIntake": {
+		"assignee": "*",
 		"enabled": true,
-		"excludeLabels": [
-			"no-ao",
-			"deferred",
-			"charter",
-			"charter-audit",
-			"human-review"
-		],
-		"maxConcurrent": 8,
-		"provider": "github"
+		"maxConcurrent": 2,
+		"provider": "github",
+		"respawn": {
+			"disabled": true,
+			"maxRetries": 0
+		}
 	},
 	"worker": {
 		"agent": "codex",

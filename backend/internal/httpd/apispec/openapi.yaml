@@ -4066,10 +4066,16 @@ components:
         enabled:
           type: boolean
         excludeLabels:
+          deprecated: true
+          description: Ignored compatibility field; assignment is the sole admission
+            signal. Park work by unassigning it.
           items:
             type: string
           type: array
         labels:
+          deprecated: true
+          description: Ignored compatibility field; assignment is the sole admission
+            signal. Park work by unassigning it.
           items:
             type: string
           type: array

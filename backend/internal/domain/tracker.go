@@ -18,12 +18,10 @@ type IssueLabelKind string
 const (
 	// IssueLabelKindType identifies issue type labels such as bug, feature, and task.
 	IssueLabelKindType IssueLabelKind = "type"
-	// IssueLabelKindOptOut identifies labels that exclude issues from automated intake.
-	IssueLabelKindOptOut IssueLabelKind = "opt-out"
+	// IssueLabelKindStatus identifies informational workflow-state labels.
+	IssueLabelKindStatus IssueLabelKind = "status"
 	// IssueLabelKindRouting identifies labels that pin a ticket to a specific agent harness.
 	IssueLabelKindRouting IssueLabelKind = "routing"
-	// IssueLabelKindPoolEscape identifies labels that bypass the normal worker pool cap.
-	IssueLabelKindPoolEscape IssueLabelKind = "pool-escape"
 )
 
 // IssueLabelSpec is the canonical metadata for one GitHub label ao expects on
@@ -39,15 +37,13 @@ var standardIssueLabels = []IssueLabelSpec{
 	{Name: "bug", Kind: IssueLabelKindType, Color: "d73a4a", Description: "Something isn't working"},
 	{Name: "feature", Kind: IssueLabelKindType, Color: "a2eeef", Description: "New capability"},
 	{Name: "task", Kind: IssueLabelKindType, Color: "0e8a16", Description: "Non-feature work item"},
-	{Name: "no-ao", Kind: IssueLabelKindOptOut, Color: "000000", Description: "Opt OUT of ao auto-pickup entirely — ao never works this"},
-	{Name: "deferred", Kind: IssueLabelKindOptOut, Color: "cfd3d7", Description: "Opt-out: parked for future; not for auto-pickup now"},
-	{Name: "charter", Kind: IssueLabelKindOptOut, Color: "c2e0c6", Description: "Opt-out: charter-managed work, handled outside auto-pickup"},
-	{Name: "charter-audit", Kind: IssueLabelKindOptOut, Color: "c2e0c6", Description: "Opt-out: charter audit work, handled outside auto-pickup"},
-	{Name: "human-review", Kind: IssueLabelKindOptOut, Color: "b60205", Description: "Opt-out: parked for human review; not for auto-pickup"},
+	{Name: "deferred", Kind: IssueLabelKindStatus, Color: "cfd3d7", Description: "Informational status: deferred for future consideration"},
+	{Name: "charter", Kind: IssueLabelKindStatus, Color: "c2e0c6", Description: "Informational status: charter-managed work"},
+	{Name: "charter-audit", Kind: IssueLabelKindStatus, Color: "c2e0c6", Description: "Informational status: charter audit work"},
+	{Name: "human-review", Kind: IssueLabelKindStatus, Color: "b60205", Description: "Informational status: human review requested"},
 	{Name: "agent:codex", Kind: IssueLabelKindRouting, Color: "1d76db", Description: "Route this ticket to codex (gpt-5.5-codex), within pool cap"},
 	{Name: "agent:fugu", Kind: IssueLabelKindRouting, Color: "5319e7", Description: "Route this ticket to codex-fugu (fugu-ultra), within pool cap"},
 	{Name: "agent:claude", Kind: IssueLabelKindRouting, Color: "d4a017", Description: "Route this ticket to claude-code (opus), within pool cap"},
-	{Name: "nopool", Kind: IssueLabelKindPoolEscape, Color: "e11d21", Description: "Launch outside the pool/cap limits"},
 }
 
 // StandardIssueLabels returns the canonical label set ao-native repos should
@@ -55,27 +51,6 @@ var standardIssueLabels = []IssueLabelSpec{
 func StandardIssueLabels() []IssueLabelSpec {
 	return append([]IssueLabelSpec(nil), standardIssueLabels...)
 }
-
-func standardIssueLabelNames(kind IssueLabelKind) []string {
-	var out []string
-	for _, label := range standardIssueLabels {
-		if label.Kind == kind {
-			out = append(out, label.Name)
-		}
-	}
-	return out
-}
-
-// DefaultOptOutLabels is the opt-out taxonomy every ao-native repo carries by
-// default (issue #80): intake works every open issue EXCEPT those bearing one of
-// these labels. It is materialized into TrackerIntakeConfig.ExcludeLabels by
-// WithDefaults when intake is enabled and the project left ExcludeLabels unset.
-//
-// "charter" is a scoped-label prefix: the intake filter treats it as excluding
-// both the bare "charter" label and the whole "charter:*" family (e.g.
-// charter:C03), so charter sub-labels never need enumerating. "charter-audit"
-// is a distinct label (hyphen, not a "charter:" scope) and is listed on its own.
-var DefaultOptOutLabels = standardIssueLabelNames(IssueLabelKindOptOut)
 
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub) and is parsed by the adapter.
@@ -144,14 +119,13 @@ type ListFilter struct {
 	Limit    int             `json:"limit,omitempty"`
 }
 
-// DefaultWorkerRespawnMaxRetries is the number of clean replacement workers
-// tracker intake may launch after the original worker for an issue dies.
-const DefaultWorkerRespawnMaxRetries = 2
+// DefaultWorkerRespawnMaxRetries keeps automatic replacement disabled unless an
+// operator explicitly configures a positive bounded retry count.
+const DefaultWorkerRespawnMaxRetries = 0
 
 // TrackerRespawnPolicy controls clean worker retry behavior for tracker intake.
-// Disabled=false and MaxRetries=nil is the default-on policy: retry twice after
-// the original worker dies. MaxRetries is a pointer so an explicit JSON zero can
-// mean "notify but do not respawn" instead of being confused with "unset".
+// MaxRetries is a pointer so an explicit JSON zero can mean "notify but do not
+// respawn" instead of being confused with "unset". The unset default is zero.
 type TrackerRespawnPolicy struct {
 	Disabled   bool `json:"disabled,omitempty"`
 	MaxRetries *int `json:"maxRetries,omitempty"`
@@ -182,11 +156,8 @@ func (p TrackerRespawnPolicy) EffectiveMaxRetries() int {
 }
 
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
-// Intake is opt-out-by-default (issue #80): once enabled it works every open
-// issue that carries none of the ExcludeLabels (which default to
-// DefaultOptOutLabels). An assignee is an optional additional narrowing filter,
-// not a requirement; the MaxConcurrent cap plus the opt-out labels are what keep
-// enabling intake from draining an entire backlog.
+// Assignment is the sole admission signal: enabled intake requires an assignee
+// selector and a finite positive concurrency cap.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
@@ -194,34 +165,25 @@ type TrackerIntakeConfig struct {
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
-	// Assignee narrows eligible issues to one assignee. Provider-specific values
-	// such as "*" are passed through unchanged.
+	// Assignee authorizes eligible issues. "*" means any assigned issue. Empty
+	// and "none" are invalid when intake is enabled.
 	Assignee string `json:"assignee,omitempty"`
-	// Labels, when non-empty, narrows eligible issues to those carrying at least
-	// one of the listed labels (case-insensitive). An empty list imposes no
-	// label requirement. Applied client-side alongside the assignee rule.
-	Labels []string `json:"labels,omitempty"`
-	// ExcludeLabels rejects any issue carrying at least one of the listed labels
-	// (case-insensitive), even if it satisfies the assignee and Labels rules.
-	// Each entry matches a label exactly OR as a scoped-label prefix ("charter"
-	// excludes "charter:C03"; see observer.go). Exclusion wins over inclusion.
-	//
-	// This is the opt-out work gate (issue #80). A nil slice (never set) is
-	// materialized to the DefaultOptOutLabels taxonomy by WithDefaults; a
-	// non-nil slice — including an explicit empty one, in memory — is honored
-	// verbatim. (omitempty is retained so the OpenAPI request field stays
-	// optional; JSON persistence therefore collapses an empty slice back to the
-	// defaults, i.e. clearing the list restores the default opt-out protection.)
-	ExcludeLabels []string `json:"excludeLabels,omitempty"`
+	// Labels is retained only for persisted-config compatibility. Intake ignores
+	// it; labels never grant or veto admission.
+	Labels []string `json:"labels,omitempty" deprecated:"true" description:"Ignored compatibility field; assignment is the sole admission signal. Park work by unassigning it."`
+	// ExcludeLabels is retained only for persisted-config compatibility. Intake
+	// ignores it; park work by unassigning it.
+	ExcludeLabels []string `json:"excludeLabels,omitempty" deprecated:"true" description:"Ignored compatibility field; assignment is the sole admission signal. Park work by unassigning it."`
 	// MaxConcurrent caps fresh worker spawn admission against the number of live
-	// worker sessions for this project. Zero means no cap. When at the cap the
+	// worker sessions for this project. Enabled intake requires a positive cap.
+	// When at the cap the
 	// intake loop defers remaining eligible issues to a later tick (they are
 	// never permanently dropped), and manual spawn requests are rejected before
 	// durable spawn state is created. Lifecycle restore/re-adoption paths do not
 	// terminate saved work to enforce this admission cap retroactively.
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 	// Respawn controls clean replacement workers for unfinished issues whose
-	// previous worker sessions terminated. Defaults to enabled with two retries.
+	// previous worker sessions terminated. Defaults to zero retries.
 	Respawn *TrackerRespawnPolicy `json:"respawn,omitempty"`
 }
 
@@ -234,17 +196,11 @@ func (c TrackerIntakeConfig) EffectiveRespawnPolicy() TrackerRespawnPolicy {
 	return c.Respawn.WithDefaults()
 }
 
-// WithDefaults fills the provider and the opt-out taxonomy only when intake is
-// enabled. Disabled intake leaves the zero value untouched so empty project
-// configs still store as NULL. An unset ExcludeLabels (nil) is materialized to
-// DefaultOptOutLabels — opt-out-by-default; a non-nil slice (including an
-// explicit empty one) is honored verbatim.
+// WithDefaults fills the provider only when intake is enabled. Disabled intake
+// leaves the zero value untouched so empty project configs still store as NULL.
 func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
 	if c.Enabled && c.Provider == "" {
 		c.Provider = TrackerProviderGitHub
-	}
-	if c.Enabled && c.ExcludeLabels == nil {
-		c.ExcludeLabels = append([]string(nil), DefaultOptOutLabels...)
 	}
 	return c
 }
@@ -264,29 +220,15 @@ func (c TrackerIntakeConfig) Validate() error {
 	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
 		return err
 	}
-	// Issue #80: intake is opt-out-by-default, so an assignee is no longer
-	// required to enable it — the work gate is the opt-out labels (materialized
-	// by WithDefaults) plus the MaxConcurrent cap, which together replace the
-	// backlog-drain protection the assignee requirement used to provide. Assignee
-	// remains an optional additional narrowing filter when set.
-	for i, label := range c.Labels {
-		if err := validateNoWhitespaceField(fmt.Sprintf("trackerIntake.labels[%d]", i), label); err != nil {
-			return err
-		}
-		if strings.TrimSpace(label) == "" {
-			return fmt.Errorf("trackerIntake.labels[%d]: must not be empty", i)
-		}
+	assignee := strings.TrimSpace(c.Assignee)
+	if assignee == "" {
+		return fmt.Errorf("trackerIntake.assignee: required when intake is enabled")
 	}
-	for i, label := range c.ExcludeLabels {
-		if err := validateNoWhitespaceField(fmt.Sprintf("trackerIntake.excludeLabels[%d]", i), label); err != nil {
-			return err
-		}
-		if strings.TrimSpace(label) == "" {
-			return fmt.Errorf("trackerIntake.excludeLabels[%d]: must not be empty", i)
-		}
+	if strings.EqualFold(assignee, "none") {
+		return fmt.Errorf("trackerIntake.assignee: %q would authorize unassigned issues", c.Assignee)
 	}
-	if c.MaxConcurrent < 0 {
-		return fmt.Errorf("trackerIntake.maxConcurrent: must not be negative")
+	if c.MaxConcurrent <= 0 {
+		return fmt.Errorf("trackerIntake.maxConcurrent: must be positive when intake is enabled")
 	}
 	if c.Respawn != nil && c.Respawn.MaxRetries != nil && *c.Respawn.MaxRetries < 0 {
 		return fmt.Errorf("trackerIntake.respawn.maxRetries: must not be negative")

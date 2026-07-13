@@ -26,17 +26,22 @@ const BASE_CONFIG = {
 	env: { POLYPOWERS_REPO: "polymath-ventures/agent-orchestrator" },
 	agentConfig: { permissions: "bypass-permissions" },
 	worker: { agent: "codex", agentConfig: { model: "gpt-5.5" } },
-	orchestrator: { agent: "claude-code", agentConfig: { model: "opus" } },
+	orchestrator: {
+		agent: "claude-code",
+		agentConfig: { model: "opus" },
+		instructionsFile: ".claude/orchestrator-policy.md",
+	},
 	workerMix: [
 		{ agent: "codex", model: "gpt-5.5", weight: 55 },
 		{ agent: "codex-fugu", model: "fugu-ultra", weight: 27 },
 		{ agent: "claude-code", model: "opus", weight: 18 },
 	],
 	trackerIntake: {
+		assignee: "*",
 		enabled: true,
 		provider: "github",
-		excludeLabels: ["no-ao", "deferred"],
-		maxConcurrent: 8,
+		maxConcurrent: 2,
+		respawn: { disabled: true, maxRetries: 0 },
 	},
 };
 

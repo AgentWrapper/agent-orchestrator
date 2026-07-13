@@ -147,15 +147,12 @@ describe("CreateProjectAgentSheet", () => {
 		});
 	});
 
-	it("allows submit with intake enabled and no assignee (opt-out-by-default)", async () => {
+	it("submits safe assignment-gated intake defaults", async () => {
 		const onSubmit = renderSheet();
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "codex");
 
 		await userEvent.click(screen.getByLabelText("Enable issue intake"));
-		// Issue #80: an assignee is no longer required — intake is opt-out-by-default,
-		// so the button is enabled with intake on and no assignee. The compact sheet
-		// leaves excludeLabels unset; the daemon materializes the default taxonomy.
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeEnabled();
 
 		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
@@ -166,7 +163,7 @@ describe("CreateProjectAgentSheet", () => {
 			orchestratorAgent: "codex",
 			permissions: "bypass-permissions",
 			model: "opus",
-			trackerIntake: { enabled: true, provider: "github" },
+			trackerIntake: { enabled: true, provider: "github", assignee: "*", maxConcurrent: 2 },
 		});
 	});
 

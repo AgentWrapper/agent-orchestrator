@@ -184,15 +184,3 @@ func TestRoutingHarnessForIssueLabels(t *testing.T) {
 		})
 	}
 }
-
-func TestIssueLabelsBypassWorkerPool(t *testing.T) {
-	if !IssueLabelsBypassWorkerPool([]string{"feature", "NoPool"}) {
-		t.Fatal("nopool label should bypass worker pool")
-	}
-	if IssueLabelsBypassWorkerPool([]string{"no-pool"}) {
-		t.Fatal("only exact nopool label should bypass worker pool")
-	}
-	if IssueLabelsBypassWorkerPool([]string{" nopool "}) {
-		t.Fatal("whitespace-padded label should not bypass worker pool")
-	}
-}

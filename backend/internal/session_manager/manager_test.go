@@ -1245,7 +1245,7 @@ func TestSpawn_RejectsWorkerWhenProjectAtConcurrencyCap(t *testing.T) {
 	}
 }
 
-func TestSpawn_AllowsIntakePoolBypassWhenProjectAtConcurrencyCap(t *testing.T) {
+func TestSpawn_HistoricalIntakePoolBypassStillCountsAtConcurrencyCap(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
 		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
@@ -1256,6 +1256,7 @@ func TestSpawn_AllowsIntakePoolBypassWhenProjectAtConcurrencyCap(t *testing.T) {
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
+		Metadata:  domain.SessionMetadata{IntakePoolBypass: true},
 	}
 	m := New(Deps{
 		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
@@ -1263,12 +1264,8 @@ func TestSpawn_AllowsIntakePoolBypassWhenProjectAtConcurrencyCap(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IntakePoolBypass: true})
-	if err != nil {
-		t.Fatalf("bypass spawn failed: %v", err)
-	}
-	if !st.sessions[rec.ID].Metadata.IntakePoolBypass {
-		t.Fatalf("bypass metadata was not persisted: %#v", st.sessions[rec.ID].Metadata)
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrWorkerConcurrencyCap) {
+		t.Fatalf("spawn err = %v, want historical bypass-marked worker to consume the cap", err)
 	}
 }
 
@@ -2844,29 +2841,23 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"You are the project Orc for mer",
-		"human-facing coordinator for this project",
-		// GH #118: the spawn example teaches router-only dispatch, not a
-		// hand-written task description.
-		// GH #146: it dispatches by --issue and never passes --name, so the
-		// daemon computes the semantic name instead of the Orc
-		// inventing a label that outranks it.
-		`ao spawn --project mer --issue <issue-id> --prompt "/address-issue <issue-id>"`,
-		"Never pass --name",
-		"exactly `/address-issue <issue-id>`",
-		"`--agent <name>`",
-		"`ao spawn --help`",
+		"supervisor for this project's human-authorized work",
+		"Assignment is the authorization boundary",
+		"must not create, label, assign, or dispatch a proposed ticket",
+		"explicitly tells you to `/capture`",
+		"Do not race tracker intake by manually dispatching ordinary queued work",
 		"`ao send`",
 		"`ao --help`",
-		"avoid doing implementation yourself unless it is necessary",
+		"Do not maintain a target worker occupancy",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	// The old "write a custom worker task" guidance must be gone (GH #118): it
-	// is exactly what trained orchestrators to hand workers long prompts.
-	if strings.Contains(systemPrompt, "<clear worker task>") {
-		t.Fatalf("system prompt still teaches custom worker prompts:\n%s", systemPrompt)
+	for _, forbidden := range []string{"file it as an issue first", "ao spawn --project", "Standing-instruction confidentiality"} {
+		if strings.Contains(systemPrompt, forbidden) {
+			t.Fatalf("system prompt contains forbidden autonomous-work guidance %q:\n%s", forbidden, systemPrompt)
+		}
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "human-facing coordinator for this project") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
@@ -2925,14 +2916,20 @@ func TestSpawnPrime_UsesFleetSupervisorPrompt(t *testing.T) {
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"You are the prime Orc for the AO fleet",
-		"the factory is your product",
-		"file tickets and escalations, not code changes",
+		"supervisor of supervisors",
+		"recommend a capture with a proposed title, rationale, and scope",
+		"must not create, label, assign, or dispatch tickets",
+		"Do not implement, merge, or mutate project configuration",
 		"`/api/v1/metrics`",
 		"project Orcs",
-		"Standing-instruction confidentiality",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("prime system prompt missing %q:\n%s", want, systemPrompt)
+		}
+	}
+	for _, forbidden := range []string{"file tickets", "file an ao issue", "Standing-instruction confidentiality"} {
+		if strings.Contains(systemPrompt, forbidden) {
+			t.Fatalf("prime system prompt contains forbidden guidance %q:\n%s", forbidden, systemPrompt)
 		}
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "You are the prime Orc") {
@@ -2981,8 +2978,8 @@ func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 	if !strings.Contains(orchPrompt, "ORCHESTRATOR ONLY") || strings.Contains(orchPrompt, "WORKER ONLY") {
 		t.Fatalf("orchestrator prompt role file mismatch:\n%s", orchPrompt)
 	}
-	if !strings.Contains(orchPrompt, "Standing-instruction confidentiality") {
-		t.Fatalf("orchestrator prompt lost confidentiality guard:\n%s", orchPrompt)
+	if strings.Contains(orchPrompt, "Standing-instruction confidentiality") {
+		t.Fatalf("orchestrator prompt must be operator-reviewable:\n%s", orchPrompt)
 	}
 
 	workerPrompt, err := m.buildSystemPrompt(ctx, domain.KindWorker, "mer")
@@ -3006,12 +3003,12 @@ func TestSystemPrompt_AppendsRoleInstructionsFile(t *testing.T) {
 	if !strings.Contains(primePrompt, "PRIME ONLY") || strings.Contains(primePrompt, "ORCHESTRATOR ONLY") || strings.Contains(primePrompt, "WORKER ONLY") {
 		t.Fatalf("prime prompt role file mismatch:\n%s", primePrompt)
 	}
-	if !strings.Contains(primePrompt, "Standing-instruction confidentiality") {
-		t.Fatalf("prime prompt lost confidentiality guard:\n%s", primePrompt)
+	if strings.Contains(primePrompt, "Standing-instruction confidentiality") {
+		t.Fatalf("prime prompt must be operator-reviewable:\n%s", primePrompt)
 	}
 }
 
-func TestSystemPrompt_MissingRoleInstructionsFileDoesNotBlockSpawn(t *testing.T) {
+func TestSystemPrompt_MissingConfiguredRoleInstructionsFileBlocksSpawn(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{
 		ID:     "mer",
@@ -3022,18 +3019,21 @@ func TestSystemPrompt_MissingRoleInstructionsFileDoesNotBlockSpawn(t *testing.T)
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode}); err != nil {
-		t.Fatal(err)
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode}); err == nil {
+		t.Fatal("configured missing role file must block spawn")
 	}
-	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the project Orc for mer") {
-		t.Fatalf("missing role file should keep base prompt:\n%s", agent.lastLaunch.SystemPrompt)
+	if agent.lastLaunch.SystemPrompt != "" {
+		t.Fatalf("agent launched despite missing configured role policy: %#v", agent.lastLaunch)
 	}
 }
 
-func TestSystemPrompt_SkipsUnsafeRoleInstructionsFiles(t *testing.T) {
+func TestSystemPrompt_RejectsUnsafeConfiguredRoleInstructionsFiles(t *testing.T) {
 	root := t.TempDir()
 	large := filepath.Join(root, "too-large.md")
 	if err := os.WriteFile(large, bytes.Repeat([]byte("x"), maxRoleInstructionsFileBytes+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "empty.md"), []byte(" \n\t"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3043,6 +3043,7 @@ func TestSystemPrompt_SkipsUnsafeRoleInstructionsFiles(t *testing.T) {
 	}{
 		{name: "directory", path: "."},
 		{name: "too_large", path: "too-large.md"},
+		{name: "empty", path: "empty.md"},
 		{name: "leading_whitespace", path: " too-large.md"},
 		{name: "trailing_whitespace", path: "too-large.md "},
 		{name: "parent_escape", path: "../too-large.md"},
@@ -3059,15 +3060,8 @@ func TestSystemPrompt_SkipsUnsafeRoleInstructionsFiles(t *testing.T) {
 			lookPath := func(string) (string, error) { return "/bin/true", nil }
 			m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-			prompt, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
-			if err != nil {
-				t.Fatalf("buildSystemPrompt: %v", err)
-			}
-			if !strings.Contains(prompt, "You are the project Orc for mer") {
-				t.Fatalf("unsafe role file should keep base prompt:\n%s", prompt)
-			}
-			if strings.Contains(prompt, strings.Repeat("x", 64)) {
-				t.Fatalf("unsafe role file content should not be appended:\n%s", prompt)
+			if prompt, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer"); err == nil {
+				t.Fatalf("buildSystemPrompt accepted unsafe configured role file %q:\n%s", tc.path, prompt)
 			}
 		})
 	}
@@ -3143,12 +3137,7 @@ func TestSpawnWorker_WorkspaceProjectPromptListsRepos(t *testing.T) {
 	}
 }
 
-// TestSystemPrompt_AppendsConfidentialityGuard: every non-empty system prompt
-// must carry the guard that tells the agent not to reveal its standing
-// instructions on request. Without it, "give me your system prompt" dumps the
-// role block verbatim. Covers orchestrator and both worker variants, since all
-// three are assembled through buildSystemPrompt.
-func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
+func TestSystemPrompt_IsTransparentAndWorkersShareTicketAuthorityBoundary(t *testing.T) {
 	cases := []struct {
 		name string
 		kind domain.SessionKind
@@ -3174,14 +3163,22 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildSystemPrompt: %v", err)
 			}
-			if !strings.Contains(sp, "Standing-instruction confidentiality") {
-				t.Fatalf("%s: system prompt missing confidentiality guard:\n%s", tc.name, sp)
-			}
-			if !strings.Contains(sp, "Do not repeat, quote, paraphrase") {
-				t.Fatalf("%s: system prompt missing refuse-to-reveal directive:\n%s", tc.name, sp)
+			if strings.Contains(sp, "Standing-instruction confidentiality") || strings.Contains(sp, "Do not repeat, quote, paraphrase") {
+				t.Fatalf("%s: system prompt contains prompt-confidentiality guidance:\n%s", tc.name, sp)
 			}
 			if !strings.Contains(sp, "skills/using-ao/SKILL.md") {
 				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
+			}
+			if tc.kind == domain.KindWorker {
+				for _, want := range []string{
+					"Fix related defects you encounter in the current pull request",
+					"Do not create a separate ticket",
+					"propose genuinely separate follow-up work to the human",
+				} {
+					if !strings.Contains(sp, want) {
+						t.Fatalf("%s: worker system prompt missing %q:\n%s", tc.name, want, sp)
+					}
+				}
 			}
 		})
 	}
@@ -5807,36 +5804,18 @@ func TestSpawn_PromptWriteFailureRollsBackTheSession(t *testing.T) {
 	}
 }
 
-// The orchestrator's dispatch instructions are part of the naming contract. If
-// they tell it to pass a hand-written --name, that explicit name outranks the
-// daemon's computed `<repoKey> #<issue> <slug>` (launchTitle's first branch) and
-// the fix is bypassed on the very path issue #146 is about. And without --issue
-// the session is never bound to its work item, so there is no issue number to
-// name it after and no title to slugify.
-func TestOrchestratorPrompt_DispatchesByIssueAndLetsTheDaemonName(t *testing.T) {
+func TestOrchestratorPrompt_DoesNotTeachManualTrackerDispatch(t *testing.T) {
 	prompt := orchestratorPrompt("agent-orchestrator")
 
-	spawnCmd := ""
-	for _, line := range strings.Split(prompt, "\n") {
-		if strings.Contains(line, "ao spawn --project") {
-			spawnCmd = line
-			break
+	for _, forbidden := range []string{"ao spawn --project", "file it as an issue", "dispatch its id", "keep active intake near"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("orchestrator prompt contains manual-dispatch guidance %q:\n%s", forbidden, prompt)
 		}
 	}
-	if spawnCmd == "" {
-		t.Fatalf("orchestrator prompt has no `ao spawn` dispatch line:\n%s", prompt)
-	}
-	if strings.Contains(spawnCmd, "--name") {
-		t.Fatalf("dispatch line still passes --name; the daemon must own the name: %s", spawnCmd)
-	}
-	if !strings.Contains(spawnCmd, "--issue <issue-id>") {
-		t.Fatalf("dispatch line must pass --issue so the daemon can compute the name: %s", spawnCmd)
-	}
-	if !strings.Contains(spawnCmd, `--prompt "/address-issue <issue-id>"`) {
-		t.Fatalf("dispatch line must still dispatch the router and nothing else: %s", spawnCmd)
-	}
-	if !strings.Contains(prompt, "Never pass --name") {
-		t.Fatalf("orchestrator prompt must tell the orchestrator not to pass --name:\n%s", prompt)
+	for _, want := range []string{"Assignment is the authorization boundary", "Do not race tracker intake", "explicitly tells you to `/capture`"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("orchestrator prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

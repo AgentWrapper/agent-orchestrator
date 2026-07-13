@@ -8,7 +8,7 @@ import (
 )
 
 func intakeEnabled(assignee string) domain.ProjectConfig {
-	return domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: assignee}}
+	return domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: assignee, MaxConcurrent: 32}}
 }
 
 // TestPollSkipsPausedProject: a paused project dispatches nothing on the next

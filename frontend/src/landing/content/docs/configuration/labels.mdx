@@ -1,30 +1,28 @@
 ---
 title: Issue labels
-description: Configure the GitHub labels AO uses to opt out, route agents, and bypass intake pool limits.
+description: Use informational status labels and route assigned AO tickets to worker harnesses.
 ---
 
-AO acts on a small, explicit GitHub label taxonomy during tracker intake.
+Labels never authorize or veto tracker intake. Assignment is the sole admission
+signal: assigned issues are eligible, unassigned issues are inert. Park an issue
+by unassigning it.
 
-## Opt-out labels
+## Status labels
 
-Opt-out labels are the work gate. They are configured per project in tracker
-intake settings; when a project leaves the list unset, AO uses the global
-default below. Any matching label wins over routing and pool-escape labels.
+These labels are informational. They do not change daemon admission.
 
-| Label           | Meaning                                             |
-| --------------- | --------------------------------------------------- |
-| `no-ao`         | Never dispatch automatically.                       |
-| `deferred`      | Parked for future work.                             |
-| `charter`       | Excludes the bare label and the `charter:*` family. |
-| `charter-audit` | Audit work handled outside intake.                  |
-| `human-review`  | Needs a person before automation.                   |
+| Label           | Meaning                            |
+| --------------- | ---------------------------------- |
+| `deferred`      | Deferred for future consideration. |
+| `charter`       | Charter-managed work.              |
+| `charter-audit` | Charter audit work.                |
+| `human-review`  | Human review requested.            |
 
 ## Agent routing labels
 
-Routing labels pin one ticket to a specific worker harness. They bypass the
-weighted worker mix for that ticket, but they still consume normal project
-capacity unless `nopool` is also present. A pinned harness does not substitute to
-another harness if unavailable.
+Routing labels select a worker harness only after assignment admits the ticket.
+Every routed worker consumes normal project capacity, and a pinned harness does
+not substitute to another harness if unavailable.
 
 | Label              | Harness                                  |
 | ------------------ | ---------------------------------------- |
@@ -33,10 +31,5 @@ another harness if unavailable.
 | `agent:codex-fugu` | Accepted optional alias for `codex-fugu` |
 | `agent:claude`     | `claude-code`                            |
 
-## Pool escape labels
-
-Pool escape labels change only capacity treatment.
-
-| Label    | Meaning                                            |
-| -------- | -------------------------------------------------- |
-| `nopool` | Launch this ticket outside the project intake cap. |
+There is no label-based capacity escape. Legacy `nopool` labels are ignored for
+admission and capacity accounting.

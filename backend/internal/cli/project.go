@@ -213,8 +213,6 @@ type projectSetConfigOptions struct {
 	trackerIntake                bool
 	trackerRepo                  string
 	trackerAssignee              string
-	trackerLabels                []string
-	trackerExcludeLabels         []string
 	trackerMaxConcurrent         int
 	trackerIntakeSet             bool
 	autonomousMergeSet           bool
@@ -442,10 +440,8 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
 	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
 	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
-	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Optional GitHub issue assignee filter for intake eligibility (empty = any; intake is opt-out-by-default)")
-	f.StringArrayVar(&opts.trackerLabels, "tracker-label", nil, "Only intake issues carrying this label (repeatable; any-match)")
-	f.StringArrayVar(&opts.trackerExcludeLabels, "tracker-exclude-label", nil, "Never intake issues carrying this label (repeatable; wins over --tracker-label)")
-	f.IntVar(&opts.trackerMaxConcurrent, "tracker-max-concurrent", 0, "Cap live workers per project (0 = no cap)")
+	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Required authorization selector when intake is enabled (* = any assigned issue; none is invalid)")
+	f.IntVar(&opts.trackerMaxConcurrent, "tracker-max-concurrent", 0, "Required positive live-worker cap when intake is enabled")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -545,12 +541,6 @@ func applyProjectConfigFlagPatch(base *projectConfig, patch projectConfig, cmd *
 	if flags.Changed("tracker-assignee") {
 		base.TrackerIntake.Assignee = patch.TrackerIntake.Assignee
 	}
-	if flags.Changed("tracker-label") {
-		base.TrackerIntake.Labels = patch.TrackerIntake.Labels
-	}
-	if flags.Changed("tracker-exclude-label") {
-		base.TrackerIntake.ExcludeLabels = patch.TrackerIntake.ExcludeLabels
-	}
 	if flags.Changed("tracker-max-concurrent") {
 		base.TrackerIntake.MaxConcurrent = patch.TrackerIntake.MaxConcurrent
 	}
@@ -593,8 +583,6 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 			Provider:      trackerProviderForFlags(opts),
 			Repo:          opts.trackerRepo,
 			Assignee:      opts.trackerAssignee,
-			Labels:        opts.trackerLabels,
-			ExcludeLabels: opts.trackerExcludeLabels,
 			MaxConcurrent: opts.trackerMaxConcurrent,
 		},
 	}
@@ -609,8 +597,6 @@ func trackerConfigFlagChanged(cmd *cobra.Command) bool {
 		"tracker-intake",
 		"tracker-repo",
 		"tracker-assignee",
-		"tracker-label",
-		"tracker-exclude-label",
 		"tracker-max-concurrent",
 	} {
 		if cmd.Flags().Changed(name) {
@@ -652,8 +638,7 @@ func configWithExplicitTrackerIntakeEnabled(config projectConfig, enabled bool) 
 }
 
 func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" ||
-		len(opts.trackerLabels) > 0 || len(opts.trackerExcludeLabels) > 0 || opts.trackerMaxConcurrent != 0 {
+	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" || opts.trackerMaxConcurrent != 0 {
 		return "github"
 	}
 	return ""

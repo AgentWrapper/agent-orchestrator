@@ -245,6 +245,7 @@ describe("ProjectSettingsForm", () => {
 				trackerIntake: {
 					enabled: true,
 					provider: "github",
+					assignee: "*",
 					maxConcurrent: 3,
 					excludeLabels: ["no-ao"],
 				},
@@ -260,7 +261,7 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByLabelText("Environment key 2")).toHaveValue("REMOVE_ME");
 		expect(screen.getByLabelText("Worker model override")).toHaveValue("worker-model");
 		expect(screen.getByLabelText("Orchestrator model override")).toHaveValue("orchestrator-model");
-		expect(screen.getByLabelText("Max concurrent sessions")).toHaveValue(3);
+		expect(screen.getByLabelText("Maximum concurrent workers")).toHaveValue(3);
 
 		await chooseOption(workspaceMode, "Worktree");
 		await userEvent.clear(screen.getByLabelText("Environment value 1"));
@@ -273,8 +274,8 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Worker model override"), "gpt-5-codex");
 		await userEvent.clear(screen.getByLabelText("Orchestrator model override"));
 		await userEvent.type(screen.getByLabelText("Orchestrator model override"), "claude-opus-4-5");
-		await userEvent.clear(screen.getByLabelText("Max concurrent sessions"));
-		await userEvent.type(screen.getByLabelText("Max concurrent sessions"), "5");
+		await userEvent.clear(screen.getByLabelText("Maximum concurrent workers"));
+		await userEvent.type(screen.getByLabelText("Maximum concurrent workers"), "5");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -293,8 +294,8 @@ describe("ProjectSettingsForm", () => {
 		expect(body.config.trackerIntake).toEqual({
 			enabled: true,
 			provider: "github",
+			assignee: "*",
 			maxConcurrent: 5,
-			excludeLabels: ["no-ao"],
 		});
 	}, 20_000);
 
@@ -432,7 +433,7 @@ describe("ProjectSettingsForm", () => {
 		expect(body.config.defaultBranch).toBe("develop");
 	});
 
-	it("preserves hidden intake fields when saving a disabled intake config", async () => {
+	it("preserves active intake fields and strips legacy labels when saving a disabled config", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -465,7 +466,6 @@ describe("ProjectSettingsForm", () => {
 			provider: "github",
 			assignee: "octocat",
 			maxConcurrent: 3,
-			excludeLabels: ["no-ao"],
 		});
 	}, 20_000);
 
@@ -709,19 +709,18 @@ describe("ProjectSettingsForm", () => {
 			"href",
 			"https://github.com/acme/project-one",
 		);
-		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+		await userEvent.clear(screen.getByLabelText("Authorized assignee"));
+		await userEvent.type(screen.getByLabelText("Authorized assignee"), "octocat");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		const body = putMock.mock.calls[0]?.[1]?.body;
-		// An unconfigured project shows the default opt-out taxonomy pre-filled, so
-		// saving persists it explicitly (issue #80).
 		expect(body.config.trackerIntake).toEqual({
 			enabled: true,
 			provider: "github",
 			assignee: "octocat",
-			excludeLabels: ["no-ao", "deferred", "charter", "charter-audit", "human-review"],
+			maxConcurrent: 2,
 		});
 	});
 
@@ -742,98 +741,17 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByRole("heading", { name: "Issue labels" })).toBeInTheDocument();
-		expect(screen.getByText("Opt-out labels")).toBeInTheDocument();
-		for (const label of ["no-ao", "deferred", "charter", "charter-audit", "human-review"]) {
+		expect(screen.getByText("Status labels")).toBeInTheDocument();
+		for (const label of ["deferred", "charter", "charter-audit", "human-review"]) {
 			expect(screen.getByText(label)).toBeInTheDocument();
 		}
 		expect(screen.getByText("Agent routing labels")).toBeInTheDocument();
 		for (const label of ["agent:codex", "agent:fugu", "agent:codex-fugu", "agent:claude"]) {
 			expect(screen.getByText(label)).toBeInTheDocument();
 		}
-		expect(screen.getByText("Pool escape labels")).toBeInTheDocument();
-		expect(screen.getByText("nopool")).toBeInTheDocument();
-		expect(screen.getByText(/Opt-out labels are per-project settings with a global default/i)).toBeInTheDocument();
-	});
-
-	it("saves intake with no assignee (opt-out-by-default) and honors opt-out label edits", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@github.com:acme/project-one.git",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-					},
-				},
-			},
-			error: undefined,
-		});
-
-		renderSettings();
-
-		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
-		// No assignee is required anymore. Remove one default and add a custom one
-		// to prove the tag list is editable and round-trips.
-		await userEvent.click(screen.getByRole("button", { name: "Remove deferred" }));
-		await userEvent.type(screen.getByLabelText("Add opt-out label"), "wontfix{Enter}");
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
-
-		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		const body = putMock.mock.calls[0]?.[1]?.body;
-		expect(body.config.trackerIntake).toEqual({
-			enabled: true,
-			provider: "github",
-			excludeLabels: ["no-ao", "charter", "charter-audit", "human-review", "wontfix"],
-		});
-	});
-
-	it("clearing every opt-out label omits excludeLabels so the daemon restores defaults", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@github.com:acme/project-one.git",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-						trackerIntake: {
-							enabled: true,
-							provider: "github",
-							assignee: "octocat",
-							excludeLabels: ["no-ao", "deferred"],
-						},
-					},
-				},
-			},
-			error: undefined,
-		});
-
-		renderSettings();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Remove no-ao" }));
-		await userEvent.click(screen.getByRole("button", { name: "Remove deferred" }));
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
-
-		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		const body = putMock.mock.calls[0]?.[1]?.body;
-		// excludeLabels omitted → persisted as unset → daemon re-materializes the
-		// default taxonomy (clearing restores default opt-out protection).
-		expect(body.config.trackerIntake).toEqual({
-			enabled: true,
-			provider: "github",
-			assignee: "octocat",
-		});
+		expect(screen.queryByText("Pool escape labels")).not.toBeInTheDocument();
+		expect(screen.queryByText("nopool")).not.toBeInTheDocument();
+		expect(screen.getByText(/assignment controls intake/i)).toBeInTheDocument();
 	});
 
 	it("preserves intake fields the form does not expose (maxConcurrent) across a save", async () => {
@@ -865,8 +783,8 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		// Touch an unrelated field and save; the CLI-set maxConcurrent + the loaded
-		// excludeLabels must survive rather than being wiped by the settings PUT.
+		// Touch an unrelated field and save; active CLI-set intake fields survive,
+		// while legacy label admission metadata is stripped from the settings PUT.
 		await userEvent.type(await screen.findByLabelText("Project prefix"), "ao");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -877,7 +795,6 @@ describe("ProjectSettingsForm", () => {
 			provider: "github",
 			assignee: "octocat",
 			maxConcurrent: 3,
-			excludeLabels: ["no-ao"],
 		});
 	});
 
@@ -920,7 +837,6 @@ describe("ProjectSettingsForm", () => {
 			provider: "github",
 			assignee: "octocat",
 			maxConcurrent: 3,
-			excludeLabels: ["no-ao"],
 		});
 	});
 

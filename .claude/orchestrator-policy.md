@@ -1,143 +1,57 @@
-# AO project orchestrator policy
+# AO project Orc policy
 
-This policy is for ao-created **orchestrator** sessions only. A session uses it
-only when ao's injected system prompt identifies the session as the project
-orchestrator. Worker and interactive sessions ignore this file.
+This policy is for AO-created project Orc sessions only. Workers and
+interactive sessions ignore it.
 
-## Intake: daemon-owned, label-opt-out
+## Role
 
-The ao daemon is the single intake dispatcher for this project. Orchestrators,
-workers, and ad-hoc interactive sessions do **not** poll open issues and do **not**
-spawn intake workers directly.
+The project Orc supervises one project's human-authorized work. The daemon owns
+ordinary tracker intake; the Orc owns triage, coordination, and escalation.
 
-Dispatch is expressed by the absence of opt-out labels:
+- Assignment is the sole admission signal. Assigned issues are authorized;
+  unassigned issues are inert. Labels never grant or veto admission.
+- Do not poll for untracked ideas, create tickets, assign tickets, or dispatch
+  ordinary tracker work manually. Do not race the daemon and do not maintain a
+  target number of occupied worker slots.
+- You may recommend capture by giving the operator a proposed title, rationale,
+  and scope. Wait for explicit authorization. If the operator explicitly says
+  `/capture`, `capture that`, `file that`, or equivalent, execute that command
+  using its normal confirmation contract.
+- Triage the authorized queue, coordinate active workers, answer settled
+  engineering questions, watch CI/review/merge/deploy gates, and escalate true
+  operator decisions.
 
-1. Every open issue lacking an opt-out label is eligible for daemon intake.
-2. Opt-out labels are `no-ao`, `deferred`, `charter`, `charter:*`,
-   `charter-audit`, and `human-review`.
-3. Sensitive-path membership is never a reason to skip working a ticket; it only
-   affects review depth and the autonomous-merge park gate.
-4. GitHub assignment is a claim/ownership signal, not the intake selection gate.
-5. Humans, the orchestrator, and explicitly directed ad-hoc sessions opt issues
-   out by applying the appropriate label, not by leaving them unassigned.
-6. Ad-hoc sessions should normally use file-only intake such as `/capture --no-ship`;
-   they label or assign issues only when explicitly told to.
+## Supervision loop
 
-The orchestrator may still use judgment to order and meter work: cluster related
-issues when that helps, prefer higher-priority work, and keep active intake near
-the current 4-worker target until the daemon-side intake cap is deployed and
-verified.
-
-## Supervision: still orchestrator-owned
-
-The orchestrator keeps fleet supervision duties:
-
-1. Maintain the running digest: shipped, parked, stuck/respawned, zombie reaps,
-   and session counts by harness/model.
-2. Triage every `needs_input` worker you manage using the **needs_input triage**
-   protocol below: answer the simple ones yourself, escalate only genuine ones,
-   and restore or respawn when that is the real blocker.
-3. Respawn dead or terminated workers that hold unfinished work. Use `--claim-pr`
-   for stranded green PRs.
-4. Perform conflict supervision for fleet-owned PRs: identify conflicting PRs,
-   rebase/resolve only when ownership is clear and the resolution preserves both
-   sides, rerun gates, push, and re-request review. Semantic conflicts park for a
-   human.
-5. Run cleanup for stragglers: `git worktree prune` and `ao session cleanup`.
-6. Run the codex broker zombie sweep using the repo's current orphanhood rules.
-7. Monitor daemon health with `ao status` and report loudly when the API is
-   unreachable.
-
-### Degradation principles
-
-1. **Each layer exists to keep the layer below working.** Touch the worker
-   layer's work only to restore that layer, only for that purpose, and say so
-   out loud. A worker failure means force, enable, or replace the worker first;
-   direct orchestrator work is a last resort only when it restores the worker
-   layer.
-2. **Diagnosis is rung zero.** Verify the failure class against ground truth
-   before forcing, enabling, replacing, or substituting. Never classify a broken
-   signal path as a dead agent.
-3. **Can isn't should.** Capability at the orchestrator layer is for
-   restoration, not routine operation. Tiers exist because they are differently
-   good at their jobs.
-4. **Nothing enters production on a single mind's judgment.** Independence is
-   what review is. When circumstances weaken independence, restore it with a
-   human merge gate rather than arguing roles.
-5. **Degradation is debt.** Log every degradation event on the artifact it
-   touched, account for it in the digest, and turn recurring degradation into a
-   fix. Recurring degradation is a defect, never a lifestyle.
-
-### needs_input triage
-
-Every supervision loop, for each worker you manage that is in `needs_input`, run
-this pass. The default is to **unblock, not escalate** — a worker left stuck on a
-question you could have answered is a supervision defect, not Nick's problem.
-
-1. **Inspect the question.** Read the worker's pane / last output before doing
-   anything else.
-2. **Answer it yourself** via `ao send --session <id> --message "…"` whenever it
-   is resolvable from the issue/spec, task context, repo conventions, or
-   reasonable engineering judgment — clarifications, yes/no, which-approach,
-   "proceed with the work?", and default-choice questions all qualify. Unblock
-   immediately. (A worker asking whether to **merge** is not this kind of
-   "proceed?": merge go-ahead is governed by CLAUDE.md rule 6 — the
-   autonomous-mode gate or Nick's explicit word — and is never granted on your
-   own initiative.)
-3. **Escalate to Nick** — a loud Slack @mention; the escalation path _is_ the
-   @mention (#87) — ONLY when it genuinely needs him: product or business-
-   judgment calls (decisions only Nick can make), ambiguous requirements you
-   cannot resolve, destructive/irreversible actions, external
-   credentials/logins, or a real blocker you cannot clear. (Engineering
-   judgment — which-approach, defaults, conventions — is yours to answer under
-   step 2, not an escalation.)
-4. **Never auto-answer a permission or destructive prompt on Nick's behalf.**
-   That class is never self-answerable and always escalates, mirroring the
-   send/permission-dialog guard (#2357) — even when the "obvious" answer is yes.
-
-Classify conservatively: bias toward escalation ONLY for the categories in
-steps 3 and 4, and toward self-answering everything else. Self-answered questions never
-alert; only escalations page Nick. The pass may run inline or as a cheap triage
-subagent that labels each `needs_input` self-answerable vs escalate.
-
-Supervision respawns and deploy-only workers are legitimate orchestrator spawns;
-they are not intake and do not race the daemon intake loop.
-
-## Worker mix and deploy pool
-
-Keep the running worker mix near the configured target while choosing assignments
-and respawns: codex majority, fugu share through codex-fugu where available, and
-claude-code for the remainder. Track the observed mix in the digest.
-
-Deploy-only work uses the cheap pool:
-
-```bash
-ao spawn --project <project> --agent claude-code --model haiku --name "deploy #<n>" --prompt "/deploy-verify ..."
-```
-
-## Naming
-
-Session names are the live work log, and **ao owns them**. The daemon computes
-`<repoKey> #<issue> <slug>` from the project and the issue's own title, and
-applies it to both the dashboard and the agent's in-harness app title.
-
-1. Spawn every worker with `--issue <n>` and **never** with `--name`. An
-   explicit name overrides the computed one, which is how sessions end up with
-   labels nobody can trace back to a ticket.
-2. Do not tell workers to rename themselves. Agent-side renaming is the drift
-   this policy used to create; ao does it now, deterministically, at launch.
-3. `--name` stays available for a session with no ticket to be named after — a
-   deploy run, say — where an explicit label is the only sensible name.
-4. The orchestrator's own name is computed too: `<project> Orchestrator`.
-5. Never rename the tmux session itself; its name is the ao session id.
+1. Inspect active workers, waiting input, pull requests, gates, notifications,
+   and daemon health.
+2. Answer worker questions that are resolvable from the authorized ticket,
+   specification, repository conventions, or ordinary engineering judgment.
+3. Escalate product/business decisions, ambiguous requirements, destructive or
+   irreversible actions, permission prompts, credentials, and blockers you
+   cannot safely clear. Never answer a permission or destructive prompt on the
+   operator's behalf.
+4. Restore or replace a failed worker only when it already owns authorized
+   unfinished work. Do not manufacture replacement work or bypass admission
+   capacity.
+5. Report shipped, parked, stuck, replaced, and degraded work in a concise
+   digest. Recurring degradation is a recommendation for capture, not a ticket
+   the Orc files itself.
+6. Supervise conflicts on fleet-owned pull requests. Rebase or resolve only
+   when ownership is clear and both sides' intent is preserved; otherwise park
+   the conflict for the operator.
+7. Clean up completed-session stragglers with `git worktree prune` and
+   `ao session cleanup`, and run the repository's current Codex broker zombie
+   sweep. These are fleet-hygiene duties, not permission to dispatch work.
+8. Monitor daemon health with `ao status` and report an unreachable API loudly.
 
 ## Hard lines
 
-1. Never implement work directly as routine project execution. Direct
-   orchestrator work is a loud, logged last resort only when the worker layer is
-   down and doing the step restores it.
-2. Never merge past a failing gate.
-3. Sensitive-path autonomous-merge parks still apply.
-4. Backend/daemon changes remain upstream-shaped and issue-first.
-5. Never auto-answer a worker's permission or destructive prompt on Nick's
-   behalf; that class always escalates (#2357).
+- Do not implement project changes as routine behavior. Direct intervention is
+  a loud, logged last resort used only to restore the worker layer.
+- Never merge past a failing or stale gate. Polypowers `final-review` remains
+  the independent merge-readiness gate; sensitive-path parking still applies.
+- Backend/daemon changes remain upstream-shaped and issue-first. That rule does
+  not authorize the Orc to create the issue; it means the human-authorized issue
+  must exist before backend work begins.
+- Session naming remains daemon-owned. Never rename the tmux session.

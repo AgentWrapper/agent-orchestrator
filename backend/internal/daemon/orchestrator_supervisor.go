@@ -646,11 +646,11 @@ func emitOrchestratorSupervisorNotification(ctx context.Context, notifier notifi
 }
 
 func orchestratorWakeMessage(projectID domain.ProjectID) string {
-	return "Continue your supervision loop for project " + string(projectID) + ". Check worker sessions, waiting input, open issues, pull requests, merge/deploy gates, and post any needed digest or escalation."
+	return "Continue supervising human-authorized work for project " + string(projectID) + ". Check active workers, waiting input, pull requests, merge/deploy gates, and post any needed recommendation, digest, or escalation. Do not create tickets or target worker occupancy."
 }
 
 func primeWakeMessage() string {
-	return "Continue your fleet supervision loop. Check all projects, project orchestrators, worker sessions, waiting input, open issues, pull requests, merge/deploy gates, metrics, resource alerts, zombies, cost and usage, and post any needed ticket, recommendation, digest, or escalation."
+	return "Continue your supervisor-of-supervisors loop. Check project Orc health, workers, gates, metrics, resource alerts, zombies, cost and usage, and post any needed recommendation, digest, or escalation. Do not create or dispatch tickets."
 }
 
 func orchestratorPausedMessage(projectID domain.ProjectID) string {
@@ -658,7 +658,7 @@ func orchestratorPausedMessage(projectID domain.ProjectID) string {
 }
 
 func orchestratorResumedMessage(projectID domain.ProjectID) string {
-	return "Fleet is RESUMED for project " + string(projectID) + ". Continue your normal supervision loop: dispatch and check worker sessions, issues, PRs, and merge/deploy gates as usual."
+	return "Fleet is RESUMED for project " + string(projectID) + ". Continue supervising the human-authorized queue, active workers, pull requests, and merge/deploy gates. Ordinary intake remains daemon-owned; do not create tickets or target worker occupancy."
 }
 
 func primePausedMessage(projectID domain.ProjectID) string {
@@ -666,5 +666,5 @@ func primePausedMessage(projectID domain.ProjectID) string {
 }
 
 func primeResumedMessage(projectID domain.ProjectID) string {
-	return "Prime host project " + string(projectID) + " is RESUMED. Continue your normal fleet supervision loop across all projects."
+	return "Prime host project " + string(projectID) + " is RESUMED. Continue supervising project Orcs and fleet health across all projects; recommend action without creating or dispatching tickets."
 }

@@ -41,7 +41,7 @@ func TestLabelsSyncCreatesOnlyMissingStandardLabels(t *testing.T) {
 			t.Fatalf("created existing label %q; created labels = %v", unexpected, created)
 		}
 	}
-	for _, want := range []string{"feature", "task", "deferred", "charter", "charter-audit", "human-review", "agent:fugu", "agent:claude", "nopool"} {
+	for _, want := range []string{"feature", "task", "deferred", "charter", "charter-audit", "human-review", "agent:fugu", "agent:claude"} {
 		if !contains(created, want) {
 			t.Fatalf("missing create call for %q; created labels = %v", want, created)
 		}
@@ -72,8 +72,8 @@ func TestLabelsSyncJSONReportsCreatedAndExisting(t *testing.T) {
 	if len(got.Created) != 0 {
 		t.Fatalf("created = %v, want none", got.Created)
 	}
-	if len(got.Existing) != len(got.Labels) || len(got.Labels) != 12 {
-		t.Fatalf("existing/labels counts = %d/%d, want 12/12", len(got.Existing), len(got.Labels))
+	if len(got.Existing) != len(got.Labels) || len(got.Labels) != 10 {
+		t.Fatalf("existing/labels counts = %d/%d, want 10/10", len(got.Existing), len(got.Labels))
 	}
 }
 

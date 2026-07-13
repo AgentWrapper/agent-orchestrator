@@ -52,8 +52,6 @@ type BucketKey struct {
 // means the single Worker.Harness behavior is used unchanged (back-compat).
 type WorkerMix []WorkerMixEntry
 
-const poolEscapeIssueLabel = "nopool"
-
 var issueRoutingLabelHarnesses = map[string]AgentHarness{
 	"agent:codex":      HarnessCodex,
 	"agent:fugu":       HarnessCodexFugu,
@@ -146,18 +144,4 @@ func RoutingHarnessForIssueLabels(labels []string) (AgentHarness, bool) {
 		}
 	}
 	return "", false
-}
-
-// IssueLabelsBypassWorkerPool reports whether a ticket is allowed to spawn
-// outside the project's normal intake pool/cap.
-func IssueLabelsBypassWorkerPool(labels []string) bool {
-	for _, label := range labels {
-		if label != strings.TrimSpace(label) {
-			continue
-		}
-		if strings.EqualFold(label, poolEscapeIssueLabel) {
-			return true
-		}
-	}
-	return false
 }

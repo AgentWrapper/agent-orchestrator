@@ -1246,7 +1246,7 @@ func TestEnsureOrchestratorsWakesIdleWaitingOrchestrator(t *testing.T) {
 	if len(sessions.sends) != 1 {
 		t.Fatalf("sends = %#v, want one wake", sessions.sends)
 	}
-	if sessions.sends[0].id != "mer-orch" || !strings.Contains(strings.ToLower(sessions.sends[0].message), "continue your supervision loop") {
+	if sessions.sends[0].id != "mer-orch" || !strings.Contains(strings.ToLower(sessions.sends[0].message), "continue supervising human-authorized work") {
 		t.Fatalf("wake send = %#v, want supervision nudge to mer-orch", sessions.sends[0])
 	}
 }
@@ -1464,6 +1464,30 @@ func TestEnsureOrchestratorsBacksOffReplacementStormAndKeepsRetrying(t *testing.
 	}
 	if got := notifier.intents[len(notifier.intents)-1]; got.Type != domain.NotificationOrchestratorReplaced {
 		t.Fatalf("last notification after backoff = %#v, want replacement", got)
+	}
+}
+
+func TestDaemonRoleMessagesPreserveHumanTicketAuthority(t *testing.T) {
+	messages := map[string]string{
+		"orc wake":      orchestratorWakeMessage("mer"),
+		"orc resumed":   orchestratorResumedMessage("mer"),
+		"prime wake":    primeWakeMessage(),
+		"prime resumed": primeResumedMessage("ao"),
+	}
+	for name, message := range messages {
+		t.Run(name, func(t *testing.T) {
+			for _, forbidden := range []string{"post any needed ticket", "dispatch and check", "as usual"} {
+				if strings.Contains(message, forbidden) {
+					t.Fatalf("message contains autonomous-work guidance %q: %s", forbidden, message)
+				}
+			}
+			if !strings.Contains(message, "supervis") {
+				t.Fatalf("message must reinforce supervision role: %s", message)
+			}
+			if !strings.Contains(message, "not create") && !strings.Contains(message, "without creating") {
+				t.Fatalf("message must reinforce ticket authority boundary: %s", message)
+			}
+		})
 	}
 }
 
@@ -2001,7 +2025,7 @@ func TestEnsurePrimeWakesIdlePrime(t *testing.T) {
 	if len(sessions.sends) != 1 {
 		t.Fatalf("sends = %#v, want one prime wake", sessions.sends)
 	}
-	if sessions.sends[0].id != "ao-prime" || !strings.Contains(strings.ToLower(sessions.sends[0].message), "fleet supervision loop") {
+	if sessions.sends[0].id != "ao-prime" || !strings.Contains(strings.ToLower(sessions.sends[0].message), "supervisor-of-supervisors loop") {
 		t.Fatalf("wake send = %#v, want fleet supervision nudge to ao-prime", sessions.sends[0])
 	}
 }
@@ -2215,7 +2239,7 @@ func TestEnsurePrimeWakesIdlePrimeDespitePausedHostProject(t *testing.T) {
 	if len(sessions.sends) != 1 {
 		t.Fatalf("sends = %#v, want one prime wake despite paused host project", sessions.sends)
 	}
-	if sessions.sends[0].id != "ao-prime" || !strings.Contains(strings.ToLower(sessions.sends[0].message), "fleet supervision loop") {
+	if sessions.sends[0].id != "ao-prime" || !strings.Contains(strings.ToLower(sessions.sends[0].message), "supervisor-of-supervisors loop") {
 		t.Fatalf("wake send = %#v, want fleet supervision nudge to ao-prime", sessions.sends[0])
 	}
 }

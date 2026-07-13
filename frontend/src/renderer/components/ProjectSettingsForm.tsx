@@ -16,7 +16,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
-import { buildIntake, DEFAULT_OPT_OUT_LABELS, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeIsValid } from "./IntakeFields";
 import { ModelAvailabilityField, modelAvailabilityStatusLabel } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -38,30 +38,24 @@ const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
 
 const ISSUE_LABEL_GROUPS = [
 	{
-		title: "Opt-out labels",
-		scope: "Per-project with a global default.",
+		title: "Status labels",
+		scope: "Informational only; assignment controls intake.",
 		labels: [
-			{ name: "no-ao", meaning: "Never dispatch automatically." },
-			{ name: "deferred", meaning: "Parked for future work." },
-			{ name: "charter", meaning: "Excludes charter and charter:* work." },
-			{ name: "charter-audit", meaning: "Audit work handled outside intake." },
-			{ name: "human-review", meaning: "Needs a person before automation." },
+			{ name: "deferred", meaning: "Deferred for future consideration." },
+			{ name: "charter", meaning: "Charter-managed work." },
+			{ name: "charter-audit", meaning: "Charter audit work." },
+			{ name: "human-review", meaning: "Human review requested." },
 		],
 	},
 	{
 		title: "Agent routing labels",
-		scope: "Per ticket; consumes the normal project pool unless nopool is also present.",
+		scope: "Per assigned ticket; always consumes normal project capacity.",
 		labels: [
 			{ name: "agent:codex", meaning: "Dispatch on codex." },
 			{ name: "agent:fugu", meaning: "Dispatch on codex-fugu." },
 			{ name: "agent:codex-fugu", meaning: "Accepted optional alias for codex-fugu." },
 			{ name: "agent:claude", meaning: "Dispatch on claude-code." },
 		],
-	},
-	{
-		title: "Pool escape labels",
-		scope: "Per ticket; bypasses the normal project pool cap.",
-		labels: [{ name: "nopool", meaning: "Launch outside MaxConcurrent capacity." }],
 	},
 ] as const;
 
@@ -167,9 +161,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
 		intakeMaxConcurrent: intake.maxConcurrent ? String(intake.maxConcurrent) : "",
-		// Unconfigured projects show the default opt-out taxonomy the daemon would
-		// apply anyway, so the list is visible and editable rather than implicit.
-		intakeOptOutLabels: intake.excludeLabels ?? [...DEFAULT_OPT_OUT_LABELS],
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -206,7 +197,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		repo: form.intakeRepo,
 		assignee: form.intakeAssignee,
 		maxConcurrent: form.intakeMaxConcurrent,
-		optOutLabels: form.intakeOptOutLabels,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) => {
 		if (patch.enabled !== undefined) {
@@ -216,9 +206,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
 			intakeRepo: patch.repo ?? f.intakeRepo,
-			intakeAssignee: patch.assignee ?? f.intakeAssignee,
-			intakeMaxConcurrent: patch.maxConcurrent ?? f.intakeMaxConcurrent,
-			intakeOptOutLabels: patch.optOutLabels ?? f.intakeOptOutLabels,
+			intakeAssignee:
+				patch.assignee ?? (patch.enabled === true && f.intakeAssignee.trim() === "" ? "*" : f.intakeAssignee),
+			intakeMaxConcurrent:
+				patch.maxConcurrent ??
+				(patch.enabled === true && f.intakeMaxConcurrent.trim() === "" ? "2" : f.intakeMaxConcurrent),
 		}));
 	};
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
@@ -261,8 +253,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					form.workerMix.length > 0
 						? form.workerMix.map((r) => ({ agent: r.agent, model: r.model || undefined, weight: r.weight }))
 						: undefined,
-				// Pass the loaded intake as base so fields the form doesn't expose
-				// (labels, maxConcurrent) survive the save instead of being wiped.
+				// Pass the loaded intake as base for compatibility fields; buildIntake
+				// deliberately strips legacy label admission controls.
 				trackerIntake: buildIntake(intakeForm, intake, {
 					explicitDisable: intakeDisableRequested,
 				}),
@@ -323,6 +315,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				}
 				if (!mixIsValid(form.workerMix)) {
 					setValidationError("Worker mix percentages must sum to 100% and every row needs an agent.");
+					return;
+				}
+				if (!intakeIsValid(intakeForm)) {
+					setValidationError("Enabled tracker intake requires an assignee and a positive concurrency cap.");
 					return;
 				}
 				if (staleBuild) {
@@ -579,8 +575,8 @@ function LabelReferenceCard() {
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
 				<p className="text-[12px] leading-5 text-muted-foreground">
-					Opt-out labels are per-project settings with a global default. Routing and pool-escape labels are read from
-					each ticket during dispatch.
+					Assignment controls admission. Status labels are informational; routing labels select a harness only after an
+					assigned ticket is admitted, and every worker consumes normal capacity.
 				</p>
 				{ISSUE_LABEL_GROUPS.map((group) => (
 					<section key={group.title} className="flex flex-col gap-2">

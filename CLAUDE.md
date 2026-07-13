@@ -179,9 +179,11 @@ Silence about an unrun suite is a defect in the report.
 Features go through OpenSpec; bugs go to the tracker; keep spec-implementation
 and bug-fix sessions separate.
 
-**Selection rule:** work every open issue lacking an opt-out label (`no-ao`,
-`deferred`, `charter`, `charter:*`, `charter-audit`, `human-review`);
-sensitive-path membership is never a reason to skip working a ticket.
+**Selection rule:** assignment is the sole admission signal. Work assigned open
+issues; leave unassigned issues inert, and park work by unassigning it. Status,
+charter, and routing labels are informational or choose a harness only — they
+never grant or veto admission. Sensitive-path membership is never a reason to
+skip working an assigned ticket.
 
 **Start here (routing entry points):**
 
@@ -445,8 +447,10 @@ blocking, attached commands that run to completion in view.
   back to the previous release pointer, refreshes the stable CLI symlink and
   unit files, restarts daemon/web/notifier/reply services, and reruns the same
   daemon readiness/API/session/web checks.
-- **Pool:** deploy-only work runs on the cheap haiku pool:
-  `ao spawn --model haiku`.
+- **Execution:** `/deploy-verify` runs in the merging worker or the operator's
+  current session. It does not spawn a cap-exempt deploy worker; if the operator
+  explicitly starts a separate deploy session, that worker consumes an ordinary
+  configured worker slot.
 
 ### Session naming — ao owns it
 

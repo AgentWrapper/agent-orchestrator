@@ -1,45 +1,24 @@
-import { Info, X } from "lucide-react";
-import { useState } from "react";
+import { Info } from "lucide-react";
 import type { components } from "../../api/schema";
 import { Label } from "./ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
-// DEFAULT_OPT_OUT_LABELS mirrors the backend domain.DefaultOptOutLabels
-// taxonomy (issue #80). The daemon materializes these into ExcludeLabels when a
-// project enables intake without configuring the list, so the settings form
-// shows them pre-filled for an unconfigured project. "charter" prefix-matches
-// the whole charter:* family server-side (see observer.go). Keep this in sync
-// with the Go constant; ProjectSettingsForm.test.tsx guards the pairing.
-export const DEFAULT_OPT_OUT_LABELS = ["no-ao", "deferred", "charter", "charter-audit", "human-review"] as const;
-
-// IntakeForm is the flat, string-backed shape both the create sheet and the
-// project settings form edit. repo has no input today (it's derived from the
-// git origin server-side) but is plumbed so a value set via the CLI can be
-// cleared intentionally. optOutLabels is the editable opt-out work gate: intake
-// works every open issue that carries none of these labels.
 export type IntakeForm = {
 	enabled: boolean;
 	repo: string;
 	assignee: string;
 	maxConcurrent: string;
-	optOutLabels: string[];
 };
 
-// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
-// backend's openapi enum). Adding Linear/Jira later means: the backend enum
-// grows, IntakeFields gains a provider <Select> + per-provider scope fields,
-// and buildIntake switches the scope field it emits.
+export function intakeIsValid(form: IntakeForm): boolean {
+	if (!form.enabled) return true;
+	const assignee = form.assignee.trim();
+	const maxConcurrent = Number(form.maxConcurrent.trim());
+	return assignee !== "" && assignee.toLowerCase() !== "none" && Number.isInteger(maxConcurrent) && maxConcurrent > 0;
+}
 
-// buildIntake produces the payload field. Disabled intake usually serializes to
-// `undefined` (omit), but full-replace settings saves need an explicit
-// `{ enabled: false }` sentinel so the daemon can distinguish an intentional
-// disable from a stale writer that dropped trackerIntake. When enabled it
-// spreads `base` (the config that loaded) first so fields the form does NOT own
-// survive the save instead of being silently dropped; the form-owned fields then
-// override. An empty optOutLabels list is omitted so the daemon falls back to
-// the default taxonomy.
 export function buildIntake(
 	form: IntakeForm,
 	base?: TrackerIntakeConfig,
@@ -47,39 +26,38 @@ export function buildIntake(
 ): TrackerIntakeConfig | undefined {
 	if (!form.enabled) {
 		const hasDisabledBase = base !== undefined && base.enabled !== true && Object.keys(base).length > 0;
-		return options.explicitDisable || hasDisabledBase ? { ...base, enabled: false } : undefined;
+		if (!options.explicitDisable && !hasDisabledBase) return undefined;
+		const disabled: TrackerIntakeConfig = { ...base, enabled: false };
+		delete disabled.labels;
+		delete disabled.excludeLabels;
+		return disabled;
 	}
-	const excludeLabels = form.optOutLabels.map((l) => l.trim()).filter((l) => l !== "");
-	const maxConcurrent = Number.parseInt(form.maxConcurrent.trim(), 10);
+	if (!intakeIsValid(form)) {
+		throw new Error("Enabled tracker intake requires an assignee and a positive finite concurrency cap.");
+	}
 	const next: TrackerIntakeConfig = {
 		...base,
 		enabled: true,
 		provider: "github",
+		assignee: form.assignee.trim(),
+		maxConcurrent: Number(form.maxConcurrent.trim()),
 	};
 	const repo = form.repo.trim();
-	const assignee = form.assignee.trim();
 	if (repo) next.repo = repo;
 	else delete next.repo;
-	if (assignee) next.assignee = assignee;
-	else delete next.assignee;
-	if (Number.isFinite(maxConcurrent) && maxConcurrent > 0) next.maxConcurrent = maxConcurrent;
-	else delete next.maxConcurrent;
-	if (excludeLabels.length > 0) next.excludeLabels = excludeLabels;
-	else delete next.excludeLabels;
+	// Legacy fields remain readable in the API schema for persisted-config
+	// compatibility, but the browser never emits label-based admission rules.
+	delete next.labels;
+	delete next.excludeLabels;
 	return next;
 }
 
-// deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (observer.go):
-// derive "owner/repo" from a git origin URL for display only. The daemon does
-// the authoritative derivation server-side at poll time; this is purely so a
-// settings card can show which repo intake will actually poll.
 export function deriveGitHubRepo(remote?: string): string | undefined {
 	const trimmed = remote?.trim();
 	if (!trimmed) return undefined;
 	let path: string | undefined;
-	if (trimmed.startsWith("git@")) {
-		path = trimmed.split(":")[1];
-	} else {
+	if (trimmed.startsWith("git@")) path = trimmed.split(":")[1];
+	else {
 		try {
 			path = new URL(trimmed).pathname;
 		} catch {
@@ -97,15 +75,6 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 	return owner && repo ? `${owner}/${repo}` : undefined;
 }
 
-// IntakeFields renders the shared "Tracker intake" controls: an enable checkbox
-// that reveals the eligibility inputs. It is deliberately card-agnostic (no
-// <Card> wrapper) so the create sheet and the settings form can frame it
-// however they like.
-//
-// repoPreview is only meaningful once a project exists and its git origin is
-// known: pass `{ value }` from settings to render the repo link row, and omit
-// it from the create sheet (the origin URL isn't available there, and the
-// daemon derives the repo regardless).
 export function IntakeFields({
 	form,
 	onChange,
@@ -115,17 +84,13 @@ export function IntakeFields({
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
 	repoPreview?: { value?: string };
-	// compact drops the descriptive/help prose and the opt-out label editor,
-	// folding the explanation into an info-icon tooltip — used by the
-	// create-project sheet, which stays minimal. The daemon still applies the
-	// default opt-out taxonomy to a project created without an explicit list.
 	compact?: boolean;
 }) {
 	return (
 		<div className="flex flex-col gap-4">
 			{!compact && (
 				<p className="text-xs leading-row text-muted-foreground">
-					Auto-spawn worker sessions from matching tracker issues.
+					Assignment authorizes execution. Unassigned issues are inert; labels never grant or veto intake.
 				</p>
 			)}
 			<div className="flex items-center gap-2">
@@ -150,7 +115,9 @@ export function IntakeFields({
 									<Info className="size-3.5" aria-hidden="true" />
 								</button>
 							</TooltipTrigger>
-							<TooltipContent>Auto-spawns a worker session for each matching GitHub issue.</TooltipContent>
+							<TooltipContent>
+								Auto-spawns workers only for assigned GitHub issues, up to the configured cap.
+							</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
 				)}
@@ -175,103 +142,31 @@ export function IntakeFields({
 							)}
 						</IntakeField>
 					)}
-					<IntakeField label="Assignee" htmlFor="intakeAssignee">
+					<IntakeField label="Authorized assignee" htmlFor="intakeAssignee">
 						<input
 							id="intakeAssignee"
+							required
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.assignee}
 							onChange={(e) => onChange({ assignee: e.target.value })}
-							placeholder="optional — blank works any assignee, * requires one"
+							placeholder="* = any assigned issue"
 						/>
 					</IntakeField>
-					<IntakeField label="Max concurrent sessions" htmlFor="intakeMaxConcurrent">
+					<IntakeField label="Maximum concurrent workers" htmlFor="intakeMaxConcurrent">
 						<input
 							id="intakeMaxConcurrent"
 							type="number"
+							required
 							min={1}
+							step={1}
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.maxConcurrent}
 							onChange={(e) => onChange({ maxConcurrent: e.target.value })}
-							placeholder="project default"
+							placeholder="2"
 						/>
 					</IntakeField>
-					{!compact && (
-						<IntakeField label="Opt-out labels">
-							<OptOutLabelsEditor labels={form.optOutLabels} onChange={(optOutLabels) => onChange({ optOutLabels })} />
-						</IntakeField>
-					)}
 				</>
 			)}
-		</div>
-	);
-}
-
-// OptOutLabelsEditor is the add/remove tag list for the opt-out work gate.
-// Intake works every open issue that carries NONE of these labels. "charter"
-// also opts out the charter:* family (server-side prefix match).
-function OptOutLabelsEditor({ labels, onChange }: { labels: string[]; onChange: (next: string[]) => void }) {
-	const [draft, setDraft] = useState("");
-
-	const add = () => {
-		const value = draft.trim();
-		if (value === "") return;
-		if (labels.some((l) => l.toLowerCase() === value.toLowerCase())) {
-			setDraft("");
-			return;
-		}
-		onChange([...labels, value]);
-		setDraft("");
-	};
-
-	const remove = (label: string) => onChange(labels.filter((l) => l !== label));
-
-	return (
-		<div className="flex flex-col gap-2">
-			<p className="text-[12px] leading-5 text-muted-foreground">
-				Intake works every open issue that carries none of these labels.{" "}
-				<code className="text-foreground">charter</code> also opts out the{" "}
-				<code className="text-foreground">charter:*</code> family.
-			</p>
-			{labels.length > 0 ? (
-				<ul className="flex flex-wrap gap-1.5" aria-label="Opt-out labels">
-					{labels.map((label) => (
-						<li
-							key={label}
-							className="flex items-center gap-1 rounded-md border border-input bg-transparent py-0.5 pl-2 pr-1 text-[12px] text-foreground"
-						>
-							<span className="font-mono">{label}</span>
-							<button
-								type="button"
-								className="grid size-4 place-items-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-none"
-								aria-label={`Remove ${label}`}
-								onClick={() => remove(label)}
-							>
-								<X className="size-3" aria-hidden="true" />
-							</button>
-						</li>
-					))}
-				</ul>
-			) : (
-				// Empty ≠ "work everything": the daemon re-materializes the default
-				// taxonomy when the list is unset, so say so rather than let the prose
-				// above imply an empty list disables opt-out protection.
-				<p className="text-[12px] leading-5 text-muted-foreground">
-					None set — the default opt-out labels ({DEFAULT_OPT_OUT_LABELS.join(", ")}) apply.
-				</p>
-			)}
-			<input
-				aria-label="Add opt-out label"
-				className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-				value={draft}
-				onChange={(e) => setDraft(e.target.value)}
-				onKeyDown={(e) => {
-					if (e.key === "Enter") {
-						e.preventDefault();
-						add();
-					}
-				}}
-				placeholder="add a label, press Enter"
-			/>
 		</div>
 	);
 }

@@ -23,9 +23,6 @@ type SpawnConfig struct {
 	Branch     string
 	Prompt     string
 	Model      string
-	// IntakePoolBypass marks tracker-intake workers that should not consume the
-	// normal per-project intake pool/cap.
-	IntakePoolBypass bool
 	// Force overrides the fleet-pause admission guard so a deliberate manual
 	// spawn (`ao spawn --force`) can start a worker on a paused project.
 	Force bool

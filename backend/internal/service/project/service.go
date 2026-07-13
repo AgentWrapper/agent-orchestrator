@@ -754,7 +754,7 @@ func (m *Service) withPauseState(ctx context.Context, row domain.ProjectRecord, 
 func liveWorkersByProject(sessions []domain.SessionRecord) map[string]int {
 	counts := make(map[string]int)
 	for _, sess := range sessions {
-		if sess.IsTerminated || sess.Kind != domain.KindWorker || sess.Metadata.IntakePoolBypass {
+		if sess.IsTerminated || sess.Kind != domain.KindWorker {
 			continue
 		}
 		counts[string(sess.ProjectID)]++

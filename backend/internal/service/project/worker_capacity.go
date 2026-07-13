@@ -319,7 +319,7 @@ func runningWorkerBuckets(sessions []domain.SessionRecord) map[domain.BucketKey]
 func capConsumingWorkerCount(sessions []domain.SessionRecord) int {
 	count := 0
 	for _, rec := range sessions {
-		if rec.Kind != domain.KindWorker || rec.IsTerminated || rec.Metadata.IntakePoolBypass {
+		if rec.Kind != domain.KindWorker || rec.IsTerminated {
 			continue
 		}
 		count++

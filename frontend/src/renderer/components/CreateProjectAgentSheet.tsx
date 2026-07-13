@@ -11,7 +11,7 @@ import {
 } from "../hooks/useModelAvailabilityQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import type { ProjectKind } from "../types/workspace";
-import { buildIntake, type IntakeForm, IntakeFields } from "./IntakeFields";
+import { buildIntake, type IntakeForm, IntakeFields, intakeIsValid } from "./IntakeFields";
 import { ModelAvailabilityField } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
@@ -71,10 +71,9 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-// The create sheet is compact and does not render the opt-out label editor, so
-// optOutLabels stays empty here — a new project's ExcludeLabels is left unset and
-// the daemon materializes the default opt-out taxonomy (domain.WithDefaults).
-const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "", maxConcurrent: "", optOutLabels: [] };
+// New projects start with the safe assignment gate and finite worker cap. The
+// browser never emits legacy label-based admission fields.
+const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "*", maxConcurrent: "2" };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
@@ -178,7 +177,8 @@ export function CreateProjectAgentSheet({
 	const [model, setModel] = useState<string>(NEW_PROJECT_DEFAULTS.model);
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const isBusy = isCreating || isInitializing;
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isBusy && !isLoadingAgents;
+	const canSubmit =
+		workerAgent !== "" && orchestratorAgent !== "" && intakeIsValid(intake) && !isBusy && !isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
 
 	useEffect(() => {

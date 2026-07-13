@@ -482,6 +482,7 @@ func TestManager_SetConfigRejectsImplicitTrackerIntakeDisable(t *testing.T) {
 			Enabled:       true,
 			Provider:      domain.TrackerProviderGitHub,
 			Repo:          "owner/repo",
+			Assignee:      "*",
 			MaxConcurrent: 8,
 		},
 	}
@@ -516,6 +517,7 @@ func TestManager_SetConfigAcceptsExplicitTrackerIntakeDisable(t *testing.T) {
 		TrackerIntake: domain.TrackerIntakeConfig{
 			Enabled:       true,
 			Provider:      domain.TrackerProviderGitHub,
+			Assignee:      "*",
 			MaxConcurrent: 8,
 		},
 	}

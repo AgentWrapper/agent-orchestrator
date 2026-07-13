@@ -163,9 +163,11 @@ Silence about an unrun suite is a defect in the report.
 Features go through OpenSpec; bugs go to the tracker; keep spec-implementation
 and bug-fix sessions separate.
 
-**Selection rule:** work every open issue lacking an opt-out label (`no-ao`,
-`deferred`, `charter`, `charter:*`, `charter-audit`, `human-review`);
-sensitive-path membership is never a reason to skip working a ticket.
+**Selection rule:** assignment is the sole admission signal. Work assigned open
+issues; leave unassigned issues inert, and park work by unassigning it. Status,
+charter, and routing labels are informational or choose a harness only — they
+never grant or veto admission. Sensitive-path membership is never a reason to
+skip working an assigned ticket.
 
 **Start here (routing entry points):**
 

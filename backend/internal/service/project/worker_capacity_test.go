@@ -262,7 +262,7 @@ func TestWorkerCapacityFreeCapacityCountsCapConsumingLiveWorkers(t *testing.T) {
 	if got.ActiveWorkers != 4 {
 		t.Fatalf("ActiveWorkers = %d, want 4", got.ActiveWorkers)
 	}
-	if got.FreeAvailableCapacity == nil || *got.FreeAvailableCapacity != 1 {
-		t.Fatalf("FreeAvailableCapacity = %#v, want 1", got.FreeAvailableCapacity)
+	if got.FreeAvailableCapacity == nil || *got.FreeAvailableCapacity != 0 {
+		t.Fatalf("FreeAvailableCapacity = %#v, want 0 because historical bypass metadata no longer escapes the cap", got.FreeAvailableCapacity)
 	}
 }

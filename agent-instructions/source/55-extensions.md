@@ -163,8 +163,10 @@ blocking, attached commands that run to completion in view.
   back to the previous release pointer, refreshes the stable CLI symlink and
   unit files, restarts daemon/web/notifier/reply services, and reruns the same
   daemon readiness/API/session/web checks.
-- **Pool:** deploy-only work runs on the cheap haiku pool:
-  `ao spawn --model haiku`.
+- **Execution:** `/deploy-verify` runs in the merging worker or the operator's
+  current session. It does not spawn a cap-exempt deploy worker; if the operator
+  explicitly starts a separate deploy session, that worker consumes an ordinary
+  configured worker slot.
 
 ### Session naming — ao owns it
 

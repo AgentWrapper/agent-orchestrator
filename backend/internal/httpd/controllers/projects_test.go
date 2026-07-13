@@ -453,8 +453,16 @@ func TestProjectsAPI_TrackerIntakeDisableMustBeExplicit(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
+	for _, unsafe := range []string{
+		`{"config":{"trackerIntake":{"enabled":true,"provider":"github","maxConcurrent":8}}}`,
+		`{"config":{"trackerIntake":{"enabled":true,"provider":"github","assignee":"none","maxConcurrent":8}}}`,
+		`{"config":{"trackerIntake":{"enabled":true,"provider":"github","assignee":"*","maxConcurrent":0}}}`,
+	} {
+		body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", unsafe)
+		assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_PROJECT_CONFIG")
+	}
 
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":true,"provider":"github","maxConcurrent":8}}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":true,"provider":"github","assignee":"*","maxConcurrent":8}}}`)
 	if status != http.StatusOK {
 		t.Fatalf("enable intake = %d, want 200; body=%s", status, body)
 	}
