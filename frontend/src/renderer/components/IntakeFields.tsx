@@ -1,12 +1,15 @@
 import { Info } from "lucide-react";
 import type { components } from "../../api/schema";
 import { useTrackerIntakeIdentity } from "../hooks/useTrackerIntakeIdentity";
+import { useTrackerIntakeTeams } from "../hooks/useTrackerIntakeTeams";
 import { LabelPicker } from "./LabelPicker";
 import { MatchingIssuesPreview } from "./MatchingIssuesPreview";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
+export type IntakeProvider = "github" | "linear";
 
 // IntakeForm is the flat, string-backed shape both the create sheet and the
 // project settings form edit. repo has no input today (it's derived from the
@@ -14,14 +17,11 @@ type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 // (--tracker-repo) survives a UI save instead of being wiped.
 export type IntakeForm = {
 	enabled: boolean;
+	provider: IntakeProvider;
 	repo: string;
+	teamId: string;
 	labels: string[];
 };
-
-// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
-// backend's openapi enum). Adding Linear/Jira later means: the backend enum
-// grows, IntakeFields gains a provider <Select> + per-provider scope fields,
-// and buildIntake switches the scope field it emits.
 
 // buildIntake produces the payload field, scrubbing empties so a disabled or
 // blank intake serializes to `undefined` (omit) rather than an empty object the
@@ -29,11 +29,20 @@ export type IntakeForm = {
 export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 	const next: TrackerIntakeConfig = {
 		enabled: form.enabled || undefined,
-		provider: form.enabled ? "github" : undefined,
-		repo: form.repo.trim() || undefined,
-		labels: form.labels.length > 0 ? form.labels : undefined,
+		provider: form.enabled || form.provider !== "github" ? form.provider : undefined,
+		repo: form.provider === "github" ? form.repo.trim() || undefined : undefined,
+		teamId: form.provider === "linear" ? form.teamId.trim() || undefined : undefined,
+		labels: form.provider === "github" && form.labels.length > 0 ? form.labels : undefined,
 	};
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
+}
+
+export function intakeValidationMessage(form: IntakeForm): string | null {
+	if (!form.enabled) return null;
+	if (form.provider === "linear" && form.teamId.trim() === "") {
+		return "Select a Linear team.";
+	}
+	return null;
 }
 
 // deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (scope.go):
@@ -100,8 +109,11 @@ export function IntakeFields({
 	// info-icon tooltip — used by the create-project sheet, which stays minimal.
 	compact?: boolean;
 }) {
-	const showDetails = form.enabled && !compact;
-	const identityQuery = useTrackerIntakeIdentity(showDetails);
+	const showDetails = form.enabled;
+	const isGitHub = form.provider === "github";
+	const isLinear = form.provider === "linear";
+	const identityQuery = useTrackerIntakeIdentity(showDetails && isGitHub && !compact);
+	const teamsQuery = useTrackerIntakeTeams(showDetails && isLinear);
 	const assignee = identityQuery.data ? (
 		<a
 			href={`https://github.com/${identityQuery.data.login}`}
@@ -145,38 +157,85 @@ export function IntakeFields({
 									<Info className="size-3.5" aria-hidden="true" />
 								</button>
 							</TooltipTrigger>
-							<TooltipContent>Auto-spawns a worker session for each matching GitHub issue.</TooltipContent>
+							<TooltipContent>Auto-spawns a worker session for matching tracker issues.</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
 				)}
 			</div>
 			{showDetails && (
 				<>
-					<div className={repoPreview ? "grid grid-cols-2 gap-3" : undefined}>
-						{repoPreview && (
-							<IntakeField label="Repository">
-								{repoPreview.value ? (
-									<a
-										href={`https://github.com/${repoPreview.value}`}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="truncate text-[13px] text-accent hover:underline"
-									>
-										{repoPreview.value}
-									</a>
-								) : (
-									<span className="truncate text-[13px] text-muted-foreground">
-										Could not detect a GitHub repo from this project's git origin.
-									</span>
-								)}
-							</IntakeField>
-						)}
-						<IntakeField label="Assignee">{assignee}</IntakeField>
-					</div>
-					{identityQuery.isError && !compact && (
+					<IntakeField label="Provider">
+						<Select
+							value={form.provider}
+							onValueChange={(provider) =>
+								onChange({
+									provider: provider as IntakeProvider,
+									repo: provider === "github" ? form.repo : "",
+									teamId: provider === "linear" ? form.teamId : "",
+									labels: provider === "github" ? form.labels : [],
+								})
+							}
+						>
+							<SelectTrigger className="h-8 w-full text-[13px]">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="github">GitHub</SelectItem>
+								<SelectItem value="linear">Linear</SelectItem>
+							</SelectContent>
+						</Select>
+					</IntakeField>
+					{isGitHub ? (
+						<div className={repoPreview && !compact ? "grid grid-cols-2 gap-3" : undefined}>
+							{repoPreview && !compact && (
+								<IntakeField label="Repository">
+									{repoPreview.value ? (
+										<a
+											href={`https://github.com/${repoPreview.value}`}
+											target="_blank"
+											rel="noopener noreferrer"
+											className="truncate text-[13px] text-accent hover:underline"
+										>
+											{repoPreview.value}
+										</a>
+									) : (
+										<span className="truncate text-[13px] text-muted-foreground">
+											Could not detect a GitHub repo from this project's git origin.
+										</span>
+									)}
+								</IntakeField>
+							)}
+							{!compact && <IntakeField label="Assignee">{assignee}</IntakeField>}
+						</div>
+					) : (
+						<IntakeField label="Team">
+							<Select
+								value={form.teamId}
+								onValueChange={(teamId) => onChange({ teamId })}
+								disabled={teamsQuery.isLoading || teamsQuery.isError}
+							>
+								<SelectTrigger className="h-8 w-full text-[13px]">
+									<SelectValue placeholder={teamsQuery.isLoading ? "Loading teams..." : "Select team"} />
+								</SelectTrigger>
+								<SelectContent>
+									{(teamsQuery.data?.teams ?? []).map((team) => (
+										<SelectItem key={team.id} value={team.id}>
+											{team.key ? `${team.key} · ${team.name}` : team.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							{teamsQuery.isError ? (
+								<p className="text-[12px] leading-5 text-error">Could not load Linear teams.</p>
+							) : form.teamId.trim() === "" ? (
+								<p className="text-[12px] leading-5 text-muted-foreground">Select a team to start Linear intake.</p>
+							) : null}
+						</IntakeField>
+					)}
+					{identityQuery.isError && isGitHub && !compact && (
 						<p className="text-[12px] leading-5 text-error">Check GitHub authentication and try again.</p>
 					)}
-					{projectId ? (
+					{projectId && isGitHub && !compact ? (
 						<>
 							<IntakeField label="Labels">
 								<LabelPicker projectId={projectId} value={form.labels} onChange={(labels) => onChange({ labels })} />

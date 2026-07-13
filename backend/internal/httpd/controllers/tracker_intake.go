@@ -20,6 +20,7 @@ type TrackerIntakeController struct {
 // Register mounts tracker intake routes on the supplied router.
 func (c *TrackerIntakeController) Register(r chi.Router) {
 	r.Get("/tracker-intake/github/user", c.identity)
+	r.Get("/tracker-intake/linear/teams", c.teams)
 	r.Get("/projects/{id}/tracker-intake/github/labels", c.labels)
 	r.Post("/projects/{id}/tracker-intake/github/preview", c.preview)
 }
@@ -78,4 +79,20 @@ func (c *TrackerIntakeController) identity(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, TrackerIntakeIdentityResponse{Login: user.Login})
+}
+
+func (c *TrackerIntakeController) teams(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/tracker-intake/linear/teams")
+		return
+	}
+	teams, err := c.Svc.Teams(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if teams == nil {
+		teams = []domain.TrackerTeam{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, TrackerIntakeTeamsResponse{Teams: teams})
 }

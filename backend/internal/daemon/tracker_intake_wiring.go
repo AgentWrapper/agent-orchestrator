@@ -3,12 +3,14 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	trackergithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/github"
+	trackerlinear "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/linear"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	trackerintake "github.com/aoagents/agent-orchestrator/backend/internal/observe/trackerintake"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -24,13 +26,34 @@ import (
 // stays lazy so daemon readiness is not blocked by credential probing or a gh
 // CLI call, and no token is resolved until some enabled project is actually
 // polled.
-func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, tracker ports.Tracker, logger *slog.Logger) <-chan struct{} {
-	resolver := trackerintake.SingleTrackerResolver{
-		Provider: domain.TrackerProviderGitHub,
-		Adapter:  tracker,
-	}
+func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, resolver trackerintake.TrackerResolver, logger *slog.Logger) <-chan struct{} {
 	observer := trackerintake.New(resolver, store, sessions, trackerintake.Config{Logger: logger})
 	return observer.Start(ctx)
+}
+
+type trackerResolver struct {
+	trackers map[domain.TrackerProvider]ports.Tracker
+}
+
+func newTrackerResolver(logger *slog.Logger) *trackerResolver {
+	return &trackerResolver{trackers: map[domain.TrackerProvider]ports.Tracker{
+		domain.TrackerProviderGitHub: newLazyGitHubTracker(logger),
+		domain.TrackerProviderLinear: newLazyLinearTracker(logger),
+	}}
+}
+
+func (r *trackerResolver) Resolve(provider domain.TrackerProvider) (ports.Tracker, error) {
+	if provider == "" {
+		provider = domain.TrackerProviderGitHub
+	}
+	if r == nil || r.trackers == nil {
+		return nil, fmt.Errorf("tracker intake: no adapter for provider %q", provider)
+	}
+	tracker, ok := r.trackers[provider]
+	if !ok || tracker == nil {
+		return nil, fmt.Errorf("tracker intake: no adapter for provider %q", provider)
+	}
+	return tracker, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +101,14 @@ func (t *lazyGitHubTracker) ListLabels(ctx context.Context, repo domain.TrackerR
 		return nil, err
 	}
 	return tracker.ListLabels(ctx, repo)
+}
+
+func (t *lazyGitHubTracker) ListTeams(ctx context.Context) ([]domain.TrackerTeam, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return tracker.ListTeams(ctx)
 }
 
 func (t *lazyGitHubTracker) Preflight(ctx context.Context) error {
@@ -145,4 +176,85 @@ func (s *trackerTokenSource) Token(ctx context.Context) (string, error) {
 	s.token = token
 	s.expiresAt = now.Add(trackerTokenCacheTTL)
 	return token, nil
+}
+
+// ---------------------------------------------------------------------------
+// Linear lazy adapter (token sourced from LINEAR_API_KEY only)
+// ---------------------------------------------------------------------------
+
+type lazyLinearTracker struct {
+	logger  *slog.Logger
+	mu      sync.Mutex
+	tracker ports.Tracker
+}
+
+func newLazyLinearTracker(logger *slog.Logger) *lazyLinearTracker {
+	return &lazyLinearTracker{logger: logger}
+}
+
+func (t *lazyLinearTracker) Get(ctx context.Context, id domain.TrackerID) (domain.Issue, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return domain.Issue{}, err
+	}
+	return tracker.Get(ctx, id)
+}
+
+func (t *lazyLinearTracker) List(ctx context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return tracker.List(ctx, repo, filter)
+}
+
+func (t *lazyLinearTracker) AuthenticatedUser(ctx context.Context) (domain.TrackerUser, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return domain.TrackerUser{}, err
+	}
+	return tracker.AuthenticatedUser(ctx)
+}
+
+func (t *lazyLinearTracker) ListLabels(ctx context.Context, repo domain.TrackerRepo) ([]domain.TrackerLabel, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return tracker.ListLabels(ctx, repo)
+}
+
+func (t *lazyLinearTracker) ListTeams(ctx context.Context) ([]domain.TrackerTeam, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return tracker.ListTeams(ctx)
+}
+
+func (t *lazyLinearTracker) Preflight(ctx context.Context) error {
+	tracker, err := t.resolve()
+	if err != nil {
+		return err
+	}
+	return tracker.Preflight(ctx)
+}
+
+func (t *lazyLinearTracker) resolve() (ports.Tracker, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.tracker != nil {
+		return t.tracker, nil
+	}
+	tracker, err := trackerlinear.New(trackerlinear.Options{
+		Token: trackerlinear.EnvTokenSource{EnvVars: []string{"LINEAR_API_KEY"}},
+	})
+	if err != nil {
+		if errors.Is(err, trackerlinear.ErrNoToken) && t.logger != nil {
+			t.logger.Warn("linear tracker intake unavailable: LINEAR_API_KEY is not configured", "err", err)
+		}
+		return nil, err
+	}
+	t.tracker = tracker
+	return tracker, nil
 }

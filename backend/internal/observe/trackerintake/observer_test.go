@@ -57,6 +57,43 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	}
 }
 
+func TestPollSpawnsLinearIssueFromSelectedTeam(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID: "demo",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:  true,
+				Provider: domain.TrackerProviderLinear,
+				TeamID:   "team-1",
+			}},
+		}},
+	}
+	tracker := &fakeTracker{
+		user: domain.TrackerUser{Login: "linear-user-1"},
+		issues: []domain.Issue{{
+			ID:        domain.TrackerID{Provider: domain.TrackerProviderLinear, Native: "ENG-12"},
+			Title:     "Fix intake",
+			State:     domain.IssueOpen,
+			Assignees: []string{"linear-user-1"},
+		}},
+	}
+	spawner := &fakeSpawner{}
+
+	resolver := SingleTrackerResolver{Provider: domain.TrackerProviderLinear, Adapter: tracker}
+	if err := New(resolver, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "linear:ENG-12" {
+		t.Fatalf("spawn calls = %+v, want linear issue", spawner.calls)
+	}
+	if len(tracker.repos) != 1 || tracker.repos[0].Provider != domain.TrackerProviderLinear || tracker.repos[0].Native != "team-1" {
+		t.Fatalf("repos = %+v", tracker.repos)
+	}
+	if tracker.filters[0].Assignee != "linear-user-1" || tracker.filters[0].State != domain.ListOpen {
+		t.Fatalf("filter = %+v", tracker.filters[0])
+	}
+}
+
 func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
@@ -182,6 +219,40 @@ func TestPollBacksOffProjectAfterFailure(t *testing.T) {
 	}
 }
 
+func TestPollUsesTrackerRateLimitBackoff(t *testing.T) {
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(10 * time.Minute)
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+	}}}
+	tracker := &fakeTracker{failRepos: map[string]error{"acme/demo": fakeRateLimitError{resetAt: resetAt}}}
+	observer := New(singleResolver(tracker), store, &fakeSpawner{}, Config{
+		Clock:          func() time.Time { return now },
+		FailureBackoff: time.Minute,
+		Logger:         discardLogger(),
+	})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if got := observer.backoffUntil["demo"]; !got.Equal(resetAt) {
+		t.Fatalf("backoffUntil = %v, want %v", got, resetAt)
+	}
+	if len(tracker.repos) != 1 {
+		t.Fatalf("tracker calls after first poll = %d, want 1", len(tracker.repos))
+	}
+
+	now = now.Add(2 * time.Minute)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() during rate backoff error = %v", err)
+	}
+	if len(tracker.repos) != 1 {
+		t.Fatalf("tracker calls during rate backoff = %d, want still 1", len(tracker.repos))
+	}
+}
+
 func TestPollSkipsNonOpenIssueStates(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
@@ -258,7 +329,7 @@ func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
 			Repo:    "acme/demo",
 		}},
 	}
-	repo, ok := intakescope.Repository(project, project.Config.TrackerIntake.WithDefaults())
+	repo, ok := intakescope.Scope(project, project.Config.TrackerIntake.WithDefaults())
 	if !ok {
 		t.Fatal("trackerRepo ok = false")
 	}
@@ -310,6 +381,10 @@ func (f *fakeTracker) ListLabels(context.Context, domain.TrackerRepo) ([]domain.
 	return nil, nil
 }
 
+func (f *fakeTracker) ListTeams(context.Context) ([]domain.TrackerTeam, error) {
+	return nil, nil
+}
+
 func (f *fakeTracker) List(_ context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
 	f.repos = append(f.repos, repo)
 	f.filters = append(f.filters, filter)
@@ -340,3 +415,13 @@ func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Se
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
+
+type fakeRateLimitError struct {
+	resetAt time.Time
+}
+
+func (e fakeRateLimitError) Error() string { return "rate limited" }
+
+func (e fakeRateLimitError) RetryAfterDuration() time.Duration { return 0 }
+
+func (e fakeRateLimitError) RateLimitResetAt() time.Time { return e.resetAt }

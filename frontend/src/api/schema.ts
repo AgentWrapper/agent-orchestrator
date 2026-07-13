@@ -692,6 +692,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tracker-intake/linear/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Linear teams visible to the configured API key */
+        get: operations["listLinearTrackerIntakeTeams"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1169,8 +1186,9 @@ export interface components {
             enabled?: boolean;
             labels?: string[];
             /** @enum {string} */
-            provider?: "github";
+            provider?: "github" | "linear";
             repo?: string;
+            teamId?: string;
         };
         TrackerIntakeIdentityResponse: {
             login: string;
@@ -1184,9 +1202,17 @@ export interface components {
         TrackerIntakePreviewResponse: {
             count: number;
         };
+        TrackerIntakeTeamsResponse: {
+            teams: components["schemas"]["TrackerTeam"][];
+        };
         TrackerLabel: {
             color: string;
             description?: string;
+            name: string;
+        };
+        TrackerTeam: {
+            id: string;
+            key?: string;
             name: string;
         };
         TriggerReviewResponse: {
@@ -3546,6 +3572,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrackerIntakeIdentityResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listLinearTrackerIntakeTeams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackerIntakeTeamsResponse"];
                 };
             };
             /** @description Internal Server Error */

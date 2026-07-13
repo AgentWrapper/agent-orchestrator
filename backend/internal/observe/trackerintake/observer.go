@@ -5,6 +5,7 @@ package trackerintake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -150,8 +151,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 			o.logger.Debug("tracker intake: project in failure backoff", "project", project.ID, "until", until)
 			continue
 		}
-		if failed := o.pollProject(ctx, project, seen); failed {
-			o.backoffUntil[project.ID] = now.Add(o.failureBackoff)
+		if backoff, failed := o.pollProject(ctx, project, seen, now); failed {
+			if backoff <= 0 {
+				backoff = o.failureBackoff
+			}
+			o.backoffUntil[project.ID] = now.Add(backoff)
 		} else {
 			delete(o.backoffUntil, project.ID)
 		}
@@ -161,29 +165,29 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, now time.Time) (time.Duration, bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled {
-		return false
+		return 0, false
 	}
 	if err := cfg.Validate(); err != nil {
 		o.logger.Warn("tracker intake: skipping project with invalid config", "project", project.ID, "err", err)
-		return true
+		return o.failureBackoff, true
 	}
-	repo, ok := intakescope.Repository(project, cfg)
+	repo, ok := intakescope.Scope(project, cfg)
 	if !ok {
 		o.logger.Warn("tracker intake: skipping project without tracker scope", "project", project.ID, "provider", cfg.Provider, "origin", project.RepoOriginURL)
-		return true
+		return o.failureBackoff, true
 	}
 	tracker, err := o.resolver.Resolve(cfg.Provider)
 	if err != nil {
 		o.logger.Warn("tracker intake: no adapter for provider", "project", project.ID, "provider", cfg.Provider, "err", err)
-		return true
+		return o.failureBackoff, true
 	}
 	user, err := tracker.AuthenticatedUser(ctx)
 	if err != nil {
 		o.logger.Error("tracker intake: resolve authenticated user failed", "project", project.ID, "err", err)
-		return true
+		return o.failureBackoffFor(err, now), true
 	}
 	issues, err := tracker.List(ctx, repo, domain.ListFilter{
 		State:    domain.ListOpen,
@@ -191,12 +195,12 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 	})
 	if err != nil {
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
-		return true
+		return o.failureBackoffFor(err, now), true
 	}
 	var spawnFailed bool
 	for _, issue := range issues {
 		if ctx.Err() != nil {
-			return true
+			return o.failureBackoff, true
 		}
 		if issue.State != domain.IssueOpen {
 			continue
@@ -220,7 +224,35 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		}
 		seen[issueID] = true
 	}
-	return spawnFailed
+	if spawnFailed {
+		return o.failureBackoff, true
+	}
+	return 0, false
+}
+
+type retryAfterError interface {
+	RetryAfterDuration() time.Duration
+}
+
+type rateLimitResetError interface {
+	RateLimitResetAt() time.Time
+}
+
+func (o *Observer) failureBackoffFor(err error, now time.Time) time.Duration {
+	backoff := o.failureBackoff
+	var retryAfter retryAfterError
+	if errors.As(err, &retryAfter) {
+		if d := retryAfter.RetryAfterDuration(); d > backoff {
+			backoff = d
+		}
+	}
+	var reset rateLimitResetError
+	if errors.As(err, &reset) {
+		if d := reset.RateLimitResetAt().Sub(now); d > backoff {
+			backoff = d
+		}
+	}
+	return backoff
 }
 
 func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {

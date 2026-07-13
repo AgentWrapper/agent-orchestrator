@@ -6,27 +6,38 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-func TestRepository(t *testing.T) {
+func TestScopeGitHubOrigin(t *testing.T) {
 	project := domain.ProjectRecord{RepoOriginURL: "git@github.com:acme/demo.git"}
-	repo, ok := Repository(project, domain.TrackerIntakeConfig{Enabled: true})
+	repo, ok := Scope(project, domain.TrackerIntakeConfig{Enabled: true})
 	if !ok || repo.Native != "acme/demo" {
-		t.Fatalf("Repository = %#v, %v", repo, ok)
+		t.Fatalf("Scope = %#v, %v", repo, ok)
 	}
-	repo, ok = Repository(project, domain.TrackerIntakeConfig{Enabled: true, Repo: "other/repo"})
+	repo, ok = Scope(project, domain.TrackerIntakeConfig{Enabled: true, Repo: "other/repo"})
 	if !ok || repo.Native != "other/repo" {
-		t.Fatalf("configured Repository = %#v, %v", repo, ok)
+		t.Fatalf("configured Scope = %#v, %v", repo, ok)
 	}
 }
 
-func TestRepositoryRejectsNonGitHubOrigin(t *testing.T) {
+func TestScopeUsesLinearTeam(t *testing.T) {
+	repo, ok := Scope(domain.ProjectRecord{}, domain.TrackerIntakeConfig{
+		Enabled:  true,
+		Provider: domain.TrackerProviderLinear,
+		TeamID:   "team-1",
+	})
+	if !ok || repo.Provider != domain.TrackerProviderLinear || repo.Native != "team-1" {
+		t.Fatalf("Scope = %#v, %v", repo, ok)
+	}
+}
+
+func TestScopeRejectsNonGitHubOrigin(t *testing.T) {
 	for _, remote := range []string{
 		"https://gitlab.com/acme/demo.git",
 		"git@gitlab.com:acme/demo.git",
 	} {
 		t.Run(remote, func(t *testing.T) {
 			project := domain.ProjectRecord{RepoOriginURL: remote}
-			if repo, ok := Repository(project, domain.TrackerIntakeConfig{Enabled: true}); ok {
-				t.Fatalf("Repository = %#v, true; want false", repo)
+			if repo, ok := Scope(project, domain.TrackerIntakeConfig{Enabled: true}); ok {
+				t.Fatalf("Scope = %#v, true; want false", repo)
 			}
 		})
 	}

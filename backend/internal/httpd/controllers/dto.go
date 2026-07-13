@@ -47,6 +47,11 @@ type TrackerIntakeLabelsResponse struct {
 	Labels []domain.TrackerLabel `json:"labels"`
 }
 
+// TrackerIntakeTeamsResponse is the complete Linear team catalog visible to the API key.
+type TrackerIntakeTeamsResponse struct {
+	Teams []domain.TrackerTeam `json:"teams"`
+}
+
 // TrackerIntakePreviewRequest contains unsaved label filters to preview.
 type TrackerIntakePreviewRequest struct {
 	Labels []string `json:"labels,omitempty"`

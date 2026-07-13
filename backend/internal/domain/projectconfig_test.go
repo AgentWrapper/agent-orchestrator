@@ -37,10 +37,15 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake authenticated user", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true}}, false},
 		{"tracker intake explicit github", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitHub}}, false},
 		{"tracker intake labels", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{"bug", "ready"}}}, false},
+		{"tracker intake linear team", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, TeamID: "team-1"}}, false},
+		{"tracker intake linear missing team", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear}}, true},
+		{"tracker intake linear with repo", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, TeamID: "team-1", Repo: "acme/demo"}}, true},
+		{"tracker intake linear with labels", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, TeamID: "team-1", Labels: []string{"bug"}}}, true},
 		{"tracker intake empty label", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{"bug", " "}}}, true},
 		{"tracker intake label whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{" bug"}}}, true},
-		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear"}}, true},
+		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "jira"}}, true},
 		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo"}}, true},
+		{"tracker intake team with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, TeamID: " team-1"}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

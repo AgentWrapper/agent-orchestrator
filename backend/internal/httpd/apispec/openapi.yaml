@@ -1834,6 +1834,31 @@ paths:
       summary: Return the authenticated GitHub account bound to issue intake
       tags:
       - tracker-intake
+  /api/v1/tracker-intake/linear/teams:
+    get:
+      operationId: listLinearTrackerIntakeTeams
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerIntakeTeamsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List Linear teams visible to the configured API key
+      tags:
+      - tracker-intake
 components:
   schemas:
     APIError:
@@ -3072,8 +3097,11 @@ components:
         provider:
           enum:
           - github
+          - linear
           type: string
         repo:
+          type: string
+        teamId:
           type: string
       type: object
     TrackerIntakeIdentityResponse:
@@ -3106,6 +3134,15 @@ components:
       required:
       - count
       type: object
+    TrackerIntakeTeamsResponse:
+      properties:
+        teams:
+          items:
+            $ref: '#/components/schemas/TrackerTeam'
+          type: array
+      required:
+      - teams
+      type: object
     TrackerLabel:
       properties:
         color:
@@ -3117,6 +3154,18 @@ components:
       required:
       - name
       - color
+      type: object
+    TrackerTeam:
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+        name:
+          type: string
+      required:
+      - id
+      - name
       type: object
     TriggerReviewResponse:
       properties:
@@ -3162,3 +3211,5 @@ tags:
   name: import
 - description: Connect Mobile LAN bridge control (loopback/desktop only)
   name: mobile
+- description: Issue intake identity, scope metadata, and preview helpers
+  name: tracker-intake

@@ -73,6 +73,8 @@ func Build() ([]byte, error) {
 			"Legacy AO project import (availability probe and run)"),
 		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
+		*(&openapi31.Tag{Name: "tracker-intake"}).WithDescription(
+			"Issue intake identity, scope metadata, and preview helpers"),
 	}
 
 	for _, op := range operations() {
@@ -145,9 +147,11 @@ var schemaNames = map[string]string{
 	"ControllersTrackerIntakeIdentityResponse":    "TrackerIntakeIdentityResponse",
 	"ControllersTrackerIntakeLabelsQuery":         "TrackerIntakeLabelsQuery",
 	"ControllersTrackerIntakeLabelsResponse":      "TrackerIntakeLabelsResponse",
+	"ControllersTrackerIntakeTeamsResponse":       "TrackerIntakeTeamsResponse",
 	"ControllersTrackerIntakePreviewRequest":      "TrackerIntakePreviewRequest",
 	"ControllersTrackerIntakePreviewResponse":     "TrackerIntakePreviewResponse",
 	"DomainTrackerLabel":                          "TrackerLabel",
+	"DomainTrackerTeam":                           "TrackerTeam",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
@@ -317,6 +321,15 @@ func trackerIntakeOperations() []operation {
 			summary: "Return the authenticated GitHub account bound to issue intake",
 			resps: []respUnit{
 				{http.StatusOK, controllers.TrackerIntakeIdentityResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/tracker-intake/linear/teams", id: "listLinearTrackerIntakeTeams", tag: "tracker-intake",
+			summary: "List Linear teams visible to the configured API key",
+			resps: []respUnit{
+				{http.StatusOK, controllers.TrackerIntakeTeamsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

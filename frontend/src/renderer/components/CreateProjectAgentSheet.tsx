@@ -6,7 +6,7 @@ import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import type { ProjectKind } from "../types/workspace";
-import { buildIntake, type IntakeForm, IntakeFields } from "./IntakeFields";
+import { buildIntake, type IntakeForm, IntakeFields, intakeValidationMessage } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -21,7 +21,7 @@ export type CreateProjectAgentSelection = {
 	trackerIntake?: TrackerIntakeConfig;
 };
 
-const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", labels: [] };
+const EMPTY_INTAKE: IntakeForm = { enabled: false, provider: "github", repo: "", teamId: "", labels: [] };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
@@ -114,7 +114,8 @@ export function CreateProjectAgentSheet({
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isBusy && !isLoadingAgents;
+	const intakeError = intakeValidationMessage(intake);
+	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeError && !isBusy && !isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
 
 	useEffect(() => {
@@ -214,6 +215,8 @@ export function CreateProjectAgentSheet({
 						<div className="border-t border-border pt-4">
 							<IntakeFields form={intake} onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))} compact />
 						</div>
+
+						{intakeError && <p className="text-[12px] leading-5 text-destructive">{intakeError}</p>}
 
 						{repositorySetupNeeded && (
 							<div className="rounded-md border border-border bg-surface/80 px-3 py-2.5 text-xs leading-body-md text-muted-foreground">

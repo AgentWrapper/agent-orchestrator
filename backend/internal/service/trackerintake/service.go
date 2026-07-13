@@ -9,16 +9,18 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	intakescope "github.com/aoagents/agent-orchestrator/backend/internal/trackerintake"
 )
 
 const defaultLabelCacheTTL = 5 * time.Minute
 
 // Tracker is the provider surface needed by tracker intake configuration.
-type Tracker interface {
-	AuthenticatedUser(ctx context.Context) (domain.TrackerUser, error)
-	List(ctx context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error)
-	ListLabels(ctx context.Context, repo domain.TrackerRepo) ([]domain.TrackerLabel, error)
+type Tracker = ports.Tracker
+
+// Resolver returns the tracker adapter for one provider.
+type Resolver interface {
+	Resolve(provider domain.TrackerProvider) (ports.Tracker, error)
 }
 
 // ProjectStore resolves the repository attached to a configured project.
@@ -31,6 +33,7 @@ type Manager interface {
 	Identity(ctx context.Context) (domain.TrackerUser, error)
 	Labels(ctx context.Context, projectID domain.ProjectID, refresh bool) ([]domain.TrackerLabel, error)
 	Preview(ctx context.Context, projectID domain.ProjectID, labels []string) (Preview, error)
+	Teams(ctx context.Context) ([]domain.TrackerTeam, error)
 }
 
 // Preview is the live count of open issues matching the proposed filters.
@@ -38,9 +41,10 @@ type Preview struct {
 	Count int `json:"count"`
 }
 
-// Service serves tracker intake configuration data from one GitHub adapter.
+// Service serves tracker intake configuration data from tracker adapters.
 type Service struct {
 	tracker  Tracker
+	resolver Resolver
 	store    ProjectStore
 	clock    func() time.Time
 	cacheTTL time.Duration
@@ -56,6 +60,7 @@ type labelCacheEntry struct {
 // Deps contains tracker intake service dependencies.
 type Deps struct {
 	Tracker  Tracker
+	Resolver Resolver
 	Store    ProjectStore
 	Clock    func() time.Time
 	CacheTTL time.Duration
@@ -70,6 +75,7 @@ func New(tracker Tracker) *Service {
 func NewWithDeps(deps Deps) *Service {
 	s := &Service{
 		tracker:  deps.Tracker,
+		resolver: deps.Resolver,
 		store:    deps.Store,
 		clock:    deps.Clock,
 		cacheTTL: deps.CacheTTL,
@@ -87,10 +93,11 @@ func NewWithDeps(deps Deps) *Service {
 // Labels returns the repository label catalog, cached for five minutes unless
 // refresh explicitly asks GitHub to revalidate it now.
 func (s *Service) Labels(ctx context.Context, projectID domain.ProjectID, refresh bool) ([]domain.TrackerLabel, error) {
-	if s == nil || s.tracker == nil || s.store == nil {
+	tracker, err := s.trackerFor(domain.TrackerProviderGitHub)
+	if err != nil || s.store == nil {
 		return nil, apierr.Internal("GITHUB_LABELS_UNAVAILABLE", "GitHub labels are unavailable")
 	}
-	repo, err := s.repository(ctx, projectID)
+	repo, err := s.repository(ctx, projectID, domain.TrackerProviderGitHub)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +108,7 @@ func (s *Service) Labels(ctx context.Context, projectID domain.ProjectID, refres
 	if cached, exists := s.labels[repo.Native]; exists && !refresh && now.Before(cached.expiresAt) {
 		return cloneLabels(cached.labels), nil
 	}
-	labels, err := s.tracker.ListLabels(ctx, repo)
+	labels, err := tracker.ListLabels(ctx, repo)
 	if err != nil {
 		return nil, apierr.Internal("GITHUB_LABELS_FAILED", "Failed to load GitHub repository labels")
 	}
@@ -112,13 +119,14 @@ func (s *Service) Labels(ctx context.Context, projectID domain.ProjectID, refres
 // Preview counts open issues matching the authenticated user and proposed
 // label selection without persisting config or spawning sessions.
 func (s *Service) Preview(ctx context.Context, projectID domain.ProjectID, labels []string) (Preview, error) {
-	if s == nil || s.tracker == nil || s.store == nil {
+	tracker, err := s.trackerFor(domain.TrackerProviderGitHub)
+	if err != nil || s.store == nil {
 		return Preview{}, apierr.Internal("GITHUB_PREVIEW_UNAVAILABLE", "GitHub issue preview is unavailable")
 	}
 	if err := (domain.TrackerIntakeConfig{Enabled: true, Labels: labels}).Validate(); err != nil {
 		return Preview{}, apierr.Invalid("INVALID_TRACKER_INTAKE_FILTER", err.Error(), nil)
 	}
-	repo, err := s.repository(ctx, projectID)
+	repo, err := s.repository(ctx, projectID, domain.TrackerProviderGitHub)
 	if err != nil {
 		return Preview{}, err
 	}
@@ -126,7 +134,7 @@ func (s *Service) Preview(ctx context.Context, projectID domain.ProjectID, label
 	if err != nil {
 		return Preview{}, err
 	}
-	issues, err := s.tracker.List(ctx, repo, domain.ListFilter{State: domain.ListOpen, Assignee: user.Login})
+	issues, err := tracker.List(ctx, repo, domain.ListFilter{State: domain.ListOpen, Assignee: user.Login})
 	if err != nil {
 		return Preview{}, apierr.Internal("GITHUB_PREVIEW_FAILED", "Failed to preview matching GitHub issues")
 	}
@@ -139,7 +147,7 @@ func (s *Service) Preview(ctx context.Context, projectID domain.ProjectID, label
 	return Preview{Count: count}, nil
 }
 
-func (s *Service) repository(ctx context.Context, projectID domain.ProjectID) (domain.TrackerRepo, error) {
+func (s *Service) repository(ctx context.Context, projectID domain.ProjectID, provider domain.TrackerProvider) (domain.TrackerRepo, error) {
 	project, ok, err := s.store.GetProject(ctx, string(projectID))
 	if err != nil {
 		return domain.TrackerRepo{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
@@ -147,7 +155,9 @@ func (s *Service) repository(ctx context.Context, projectID domain.ProjectID) (d
 	if !ok || !project.ArchivedAt.IsZero() {
 		return domain.TrackerRepo{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
-	repo, ok := intakescope.Repository(project, project.Config.TrackerIntake.WithDefaults())
+	cfg := project.Config.TrackerIntake.WithDefaults()
+	cfg.Provider = provider
+	repo, ok := intakescope.Scope(project, cfg)
 	if !ok {
 		return domain.TrackerRepo{}, apierr.Invalid("GITHUB_REPOSITORY_UNAVAILABLE", "Project has no GitHub repository for issue intake", nil)
 	}
@@ -162,14 +172,41 @@ func cloneLabels(labels []domain.TrackerLabel) []domain.TrackerLabel {
 
 // Identity returns the authenticated GitHub login used for assignee filtering.
 func (s *Service) Identity(ctx context.Context) (domain.TrackerUser, error) {
-	if s == nil || s.tracker == nil {
+	tracker, err := s.trackerFor(domain.TrackerProviderGitHub)
+	if err != nil {
 		return domain.TrackerUser{}, apierr.Internal("GITHUB_IDENTITY_UNAVAILABLE", "GitHub identity is unavailable")
 	}
-	user, err := s.tracker.AuthenticatedUser(ctx)
+	user, err := tracker.AuthenticatedUser(ctx)
 	if err != nil {
 		return domain.TrackerUser{}, apierr.Internal("GITHUB_IDENTITY_FAILED", "Failed to resolve authenticated GitHub user")
 	}
 	return user, nil
+}
+
+// Teams returns the Linear teams visible to the configured Linear API key.
+func (s *Service) Teams(ctx context.Context) ([]domain.TrackerTeam, error) {
+	tracker, err := s.trackerFor(domain.TrackerProviderLinear)
+	if err != nil {
+		return nil, apierr.Internal("LINEAR_TEAMS_UNAVAILABLE", "Linear teams are unavailable")
+	}
+	teams, err := tracker.ListTeams(ctx)
+	if err != nil {
+		return nil, apierr.Internal("LINEAR_TEAMS_FAILED", "Failed to load Linear teams")
+	}
+	return teams, nil
+}
+
+func (s *Service) trackerFor(provider domain.TrackerProvider) (Tracker, error) {
+	if s == nil {
+		return nil, apierr.Internal("TRACKER_INTAKE_UNAVAILABLE", "Tracker intake is unavailable")
+	}
+	if s.resolver != nil {
+		return s.resolver.Resolve(provider)
+	}
+	if provider == domain.TrackerProviderGitHub && s.tracker != nil {
+		return s.tracker, nil
+	}
+	return nil, apierr.Internal("TRACKER_INTAKE_UNAVAILABLE", "Tracker intake is unavailable")
 }
 
 var _ Manager = (*Service)(nil)

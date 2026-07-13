@@ -90,6 +90,7 @@ type trackerIntakeConfig struct {
 	Enabled  bool     `json:"enabled,omitempty"`
 	Provider string   `json:"provider,omitempty"`
 	Repo     string   `json:"repo,omitempty"`
+	TeamID   string   `json:"teamId,omitempty"`
 	Labels   []string `json:"labels,omitempty"`
 }
 

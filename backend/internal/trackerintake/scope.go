@@ -9,12 +9,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// Repository resolves the configured GitHub repository, falling back to the
-// project's persisted origin URL.
-func Repository(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (domain.TrackerRepo, bool) {
+// Scope resolves the provider-native intake scope for a project.
+func Scope(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (domain.TrackerRepo, bool) {
 	provider := cfg.Provider
 	if provider == "" {
 		provider = domain.TrackerProviderGitHub
+	}
+	if provider == domain.TrackerProviderLinear {
+		teamID := strings.TrimSpace(cfg.TeamID)
+		if teamID == "" {
+			return domain.TrackerRepo{}, false
+		}
+		return domain.TrackerRepo{Provider: provider, Native: teamID}, true
 	}
 	if provider != domain.TrackerProviderGitHub {
 		return domain.TrackerRepo{}, false

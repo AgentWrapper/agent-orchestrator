@@ -455,6 +455,11 @@ func (t *Tracker) ListLabels(ctx context.Context, repo domain.TrackerRepo) ([]do
 	return labels, nil
 }
 
+// ListTeams is not part of GitHub issue-intake scope.
+func (t *Tracker) ListTeams(context.Context) ([]domain.TrackerTeam, error) {
+	return nil, fmt.Errorf("%w: teams are not supported by github", ErrWrongProvider)
+}
+
 func cloneLabels(in []domain.TrackerLabel) []domain.TrackerLabel {
 	out := make([]domain.TrackerLabel, len(in))
 	copy(out, in)

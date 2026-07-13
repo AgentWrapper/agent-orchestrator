@@ -50,6 +50,20 @@ func TestListTrackerIntakeLabels(t *testing.T) {
 	}
 }
 
+func TestListLinearTrackerIntakeTeams(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := &fakeTrackerIntakeService{teams: []domain.TrackerTeam{{ID: "team-1", Key: "ENG", Name: "Engineering"}}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		TrackerIntake: svc,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/tracker-intake/linear/teams", "")
+	if status != http.StatusOK || !strings.Contains(string(body), `"teams":[{"id":"team-1","key":"ENG","name":"Engineering"}]`) {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+}
+
 func TestPreviewTrackerIntakeIssues(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := &fakeTrackerIntakeService{preview: trackerintakesvc.Preview{Count: 7}}
@@ -89,6 +103,7 @@ func TestTrackerIntakeValidationAndErrorEnvelopes(t *testing.T) {
 type fakeTrackerIntakeService struct {
 	user             domain.TrackerUser
 	labels           []domain.TrackerLabel
+	teams            []domain.TrackerTeam
 	labelsProjectID  domain.ProjectID
 	refresh          bool
 	preview          trackerintakesvc.Preview
@@ -111,4 +126,8 @@ func (f *fakeTrackerIntakeService) Labels(_ context.Context, projectID domain.Pr
 
 func (f *fakeTrackerIntakeService) Identity(context.Context) (domain.TrackerUser, error) {
 	return f.user, f.err
+}
+
+func (f *fakeTrackerIntakeService) Teams(context.Context) ([]domain.TrackerTeam, error) {
+	return f.teams, f.err
 }

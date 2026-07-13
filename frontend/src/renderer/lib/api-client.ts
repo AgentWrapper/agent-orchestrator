@@ -63,6 +63,7 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/projects/{id}/tracker-intake/github/labels",
 	"/api/v1/projects/{id}/tracker-intake/github/preview",
 	"/api/v1/tracker-intake/github/user",
+	"/api/v1/tracker-intake/linear/teams",
 	"/api/v1/prs/{id}/merge",
 	"/api/v1/prs/{id}/resolve-comments",
 	"/api/v1/sessions",

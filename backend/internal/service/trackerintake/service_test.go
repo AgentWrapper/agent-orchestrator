@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestIdentityReturnsAuthenticatedLogin(t *testing.T) {
@@ -97,6 +98,26 @@ func TestPreviewRejectsInvalidLabels(t *testing.T) {
 	}
 }
 
+func TestTeamsReturnsLinearTeams(t *testing.T) {
+	svc := NewWithDeps(Deps{Resolver: staticResolver{domain.TrackerProviderLinear: &fakeTracker{}}})
+	teams, err := svc.Teams(context.Background())
+	if err != nil {
+		t.Fatalf("Teams: %v", err)
+	}
+	if len(teams) != 1 || teams[0].ID != "team-1" || teams[0].Key != "ENG" {
+		t.Fatalf("teams = %#v", teams)
+	}
+}
+
+type staticResolver map[domain.TrackerProvider]*fakeTracker
+
+func (r staticResolver) Resolve(provider domain.TrackerProvider) (ports.Tracker, error) {
+	if tracker := r[provider]; tracker != nil {
+		return tracker, nil
+	}
+	return nil, errors.New("missing tracker")
+}
+
 type fakeTracker struct {
 	user       domain.TrackerUser
 	userErr    error
@@ -109,6 +130,10 @@ type fakeTracker struct {
 func (f *fakeTracker) ListLabels(context.Context, domain.TrackerRepo) ([]domain.TrackerLabel, error) {
 	f.labelCalls++
 	return append([]domain.TrackerLabel(nil), f.labels...), nil
+}
+
+func (f *fakeTracker) ListTeams(context.Context) ([]domain.TrackerTeam, error) {
+	return []domain.TrackerTeam{{ID: "team-1", Key: "ENG", Name: "Engineering"}}, nil
 }
 
 func (f *fakeTracker) List(_ context.Context, _ domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
@@ -132,4 +157,12 @@ func (f *fakeProjectStore) GetProject(context.Context, string) (domain.ProjectRe
 
 func (f *fakeTracker) AuthenticatedUser(context.Context) (domain.TrackerUser, error) {
 	return f.user, f.userErr
+}
+
+func (f *fakeTracker) Get(context.Context, domain.TrackerID) (domain.Issue, error) {
+	return domain.Issue{}, nil
+}
+
+func (f *fakeTracker) Preflight(context.Context) error {
+	return nil
 }

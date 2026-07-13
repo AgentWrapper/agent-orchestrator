@@ -440,6 +440,10 @@ func (f *fakeTracker) ListLabels(context.Context, domain.TrackerRepo) ([]domain.
 	return nil, nil
 }
 
+func (f *fakeTracker) ListTeams(context.Context) ([]domain.TrackerTeam, error) {
+	return nil, nil
+}
+
 func (f *fakeTracker) Preflight(context.Context) error { return nil }
 
 func TestSpawnEnrichesIssueContextFromTracker(t *testing.T) {

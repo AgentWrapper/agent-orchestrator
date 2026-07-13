@@ -14,6 +14,7 @@ import (
 //     needs to enumerate work (e.g. backlog view, status sweeps).
 //   - AuthenticatedUser returns the tracker account bound to intake.
 //   - ListLabels returns repository-owned label metadata for filter controls.
+//   - ListTeams returns provider-owned team metadata for scope controls.
 //   - Preflight verifies the configured credential is actually valid against
 //     the provider so daemons fail fast at startup, not at first request.
 //
@@ -25,5 +26,6 @@ type Tracker interface {
 	List(ctx context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error)
 	AuthenticatedUser(ctx context.Context) (domain.TrackerUser, error)
 	ListLabels(ctx context.Context, repo domain.TrackerRepo) ([]domain.TrackerLabel, error)
+	ListTeams(ctx context.Context) ([]domain.TrackerTeam, error)
 	Preflight(ctx context.Context) error
 }

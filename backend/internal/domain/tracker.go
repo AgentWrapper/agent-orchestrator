@@ -8,8 +8,11 @@ import (
 // TrackerProvider identifies an issue-tracker provider implementation.
 type TrackerProvider string
 
-// TrackerProviderGitHub is the only supported issue-tracker provider.
-const TrackerProviderGitHub TrackerProvider = "github"
+// Supported issue-tracker providers.
+const (
+	TrackerProviderGitHub TrackerProvider = "github"
+	TrackerProviderLinear TrackerProvider = "linear"
+)
 
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub) and is parsed by the adapter.
@@ -57,6 +60,13 @@ type TrackerUser struct {
 	Login string `json:"login"`
 }
 
+// TrackerTeam is provider-owned team metadata used to configure scoped intake.
+type TrackerTeam struct {
+	ID   string `json:"id"`
+	Key  string `json:"key,omitempty"`
+	Name string `json:"name"`
+}
+
 // TrackerLabel is repository-owned label metadata used by intake filters.
 type TrackerLabel struct {
 	Name        string `json:"name"`
@@ -94,10 +104,12 @@ type ListFilter struct {
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
-	Provider TrackerProvider `json:"provider,omitempty" enum:"github"`
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github,linear"`
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
+	// TeamID is the Linear team UUID selected for issue intake. Linear only.
+	TeamID string `json:"teamId,omitempty"`
 	// Labels narrows intake to issues carrying every selected repository label.
 	Labels []string `json:"labels,omitempty"`
 }
@@ -117,11 +129,30 @@ func (c TrackerIntakeConfig) Validate() error {
 		return nil
 	}
 	c = c.WithDefaults()
-	if c.Enabled && c.Provider != TrackerProviderGitHub {
+	if c.Provider != TrackerProviderGitHub && c.Provider != TrackerProviderLinear {
 		return fmt.Errorf("trackerIntake.provider: unsupported provider %q", c.Provider)
 	}
 	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
 		return err
+	}
+	if err := validateNoWhitespaceField("trackerIntake.teamId", c.TeamID); err != nil {
+		return err
+	}
+	switch c.Provider {
+	case TrackerProviderGitHub:
+		if c.TeamID != "" {
+			return fmt.Errorf("trackerIntake.teamId: only valid for linear intake")
+		}
+	case TrackerProviderLinear:
+		if c.TeamID == "" {
+			return fmt.Errorf("trackerIntake.teamId: required for linear intake")
+		}
+		if c.Repo != "" {
+			return fmt.Errorf("trackerIntake.repo: only valid for github intake")
+		}
+		if len(c.Labels) > 0 {
+			return fmt.Errorf("trackerIntake.labels: only valid for github intake")
+		}
 	}
 	for index, label := range c.Labels {
 		if strings.TrimSpace(label) == "" {

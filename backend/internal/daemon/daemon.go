@@ -133,8 +133,8 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
-	githubTracker := newLazyGitHubTracker(log)
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, githubTracker, log)
+	trackerResolver := newTrackerResolver(log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, trackerResolver, log)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 	agentSvc := agentsvc.New()
 	go func() {
@@ -168,7 +168,7 @@ func Run() error {
 		Activity:           lcStack.LCM,
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
-		TrackerIntake:      trackerintakesvc.NewWithDeps(trackerintakesvc.Deps{Tracker: githubTracker, Store: store}),
+		TrackerIntake:      trackerintakesvc.NewWithDeps(trackerintakesvc.Deps{Resolver: trackerResolver, Store: store}),
 	})
 	if err != nil {
 		stop()

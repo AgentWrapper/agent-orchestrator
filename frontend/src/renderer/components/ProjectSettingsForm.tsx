@@ -9,7 +9,14 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import {
+	buildIntake,
+	deriveGitHubRepo,
+	IntakeFields,
+	intakeValidationMessage,
+	type IntakeForm,
+	type IntakeProvider,
+} from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -85,7 +92,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
+		intakeProvider: (intake.provider === "linear" ? "linear" : "github") as IntakeProvider,
 		intakeRepo: intake.repo ?? "",
+		intakeTeamId: intake.teamId ?? "",
 		intakeLabels: intake.labels ?? [],
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -106,14 +115,18 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	// same derivation client-side purely for display (a link to the repo being polled).
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
+		provider: form.intakeProvider,
 		repo: form.intakeRepo,
+		teamId: form.intakeTeamId,
 		labels: form.intakeLabels,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
+			intakeProvider: patch.provider ?? f.intakeProvider,
 			intakeRepo: patch.repo ?? f.intakeRepo,
+			intakeTeamId: patch.teamId ?? f.intakeTeamId,
 			intakeLabels: patch.labels ?? f.intakeLabels,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
@@ -178,6 +191,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setReplacementError(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				const intakeError = intakeValidationMessage(intakeForm);
+				if (intakeError) {
+					setValidationError(intakeError);
 					return;
 				}
 				setValidationError(null);
