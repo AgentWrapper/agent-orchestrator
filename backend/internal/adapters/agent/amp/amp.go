@@ -1,15 +1,16 @@
 // Package amp implements the Amp agent adapter: launching new interactive Amp
 // sessions and resuming sessions when a native Amp thread id is known.
 //
-// Amp activity hooks and SessionInfo derivation will likely require an
-// Amp-specific TypeScript plugin, similar to opencode. Until that integration
-// exists, hook installation and SessionInfo are intentionally no-ops.
+// AO injects standing session instructions through a workspace-local Amp
+// TypeScript plugin. Activity hooks and SessionInfo derivation will likely
+// require more Amp-specific plugin work, so SessionInfo remains a no-op.
 package amp
 
 import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -50,12 +51,17 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new interactive Amp session:
 //
-//	amp [--permission-mode <mode>] [-- <prompt>]
+//	amp
 //
-// The prompt is passed after `--` so a prompt beginning with "-" is not
-// mistaken for a flag. Amp has no documented system-prompt flag, so
-// SystemPrompt and SystemPromptFile are intentionally ignored until Amp exposes
-// a supported instruction mechanism.
+// Prompted worker tasks are delivered after startup by the session manager so
+// Amp opens its normal interactive TUI instead of an execute-mode transcript.
+// Amp has no documented --permission-mode flag: it runs tools without approval
+// by default and configures permissions via settings and the Plugin API, not
+// CLI flags. So cfg.Permissions is intentionally not translated to argv because
+// Amp does not document that flag, and relying on hidden or permissively parsed
+// options would make launches version-fragile. Amp also has no documented
+// per-run system-prompt flag, so standing instructions are installed by
+// GetAgentHooks as a workspace-local plugin.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -66,11 +72,36 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-	appendPermissionFlags(&cmd, cfg.Permissions)
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
-	}
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that AO should inject prompted Amp tasks
+// into the interactive terminal after startup.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryAfterStart, nil
+}
+
+// PromptReadinessHints waits briefly for Amp's interactive prompt before AO
+// injects the worker's first task. Timeout falls back to delivery so startup
+// copy changes do not permanently block a session.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 750 * time.Millisecond,
+		Patterns: []string{
+			"Type a message",
+			"What can I help",
+			">",
+		},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      8 * time.Second,
+		Lines:        80,
+	}, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Amp session
@@ -89,23 +120,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	// Capacity fits binary + up to two permission flags + --resume + sessionID.
-	cmd = make([]string, 0, 5)
-	cmd = append(cmd, binary)
-	appendPermissionFlags(&cmd, cfg.Permissions)
-	cmd = append(cmd, "--resume", agentSessionID)
+	// Capacity fits binary + --resume + sessionID.
+	cmd = make([]string, 0, 3)
+	cmd = append(cmd, binary, "--resume", agentSessionID)
 	return cmd, true, nil
-}
-
-func appendPermissionFlags(cmd *[]string, mode ports.PermissionMode) {
-	switch mode {
-	case ports.PermissionModeAcceptEdits:
-		*cmd = append(*cmd, "--permission-mode", "acceptEdits")
-	case ports.PermissionModeAuto:
-		*cmd = append(*cmd, "--permission-mode", "auto")
-	case ports.PermissionModeBypassPermissions:
-		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
-	}
 }
 
 var ampBinarySpec = binaryutil.BinarySpec{

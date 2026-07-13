@@ -1,4 +1,4 @@
-// Package aider implements the Aider agent adapter: launching headless Aider
+// Package aider implements the Aider agent adapter: launching interactive Aider
 // worker sessions.
 //
 // Aider is a Tier C adapter: it has no lifecycle hook surface, no native
@@ -54,17 +54,19 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds the argv to start a headless Aider session:
+// GetLaunchCommand builds the argv to start an interactive Aider session:
 //
-//	aider -m <prompt> [permission flags] --no-check-update --no-stream --no-pretty [--read <system prompt file>]
+//	aider [permission flags] --no-check-update --no-stream --no-pretty [--read <context file>]
 //
-// The prompt is delivered with `-m <prompt>` rather than positionally: Aider
-// treats positional arguments as files to add to the chat, so a positional
-// prompt would be misread. The `-m` pair is only appended when a prompt is set.
+// Prompted tasks are delivered after startup by the session manager rather than
+// via `-m`. Aider's `-m <prompt>` mode is one-shot: it runs the message and then
+// exits, which makes AO workers disappear as soon as the answer is printed.
 //
-// Aider has no inline system-prompt mechanism; only SystemPromptFile is honored
-// via --read. The --no-check-update --no-stream --no-pretty flags keep Aider
-// well-behaved in a non-interactive, captured-output context.
+// Aider has no native system-prompt injection mechanism. AO's prompt file is
+// supplied with --read as read-only context so the agent can see the standing
+// instructions, but this is context fallback rather than system-message
+// replacement. The --no-check-update --no-stream --no-pretty flags keep the
+// terminal output stable in AO's captured-output context.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.aiderBinary(ctx)
 	if err != nil {
@@ -72,18 +74,24 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "-m", cfg.Prompt)
-	}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--no-check-update", "--no-stream", "--no-pretty")
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--read", cfg.SystemPromptFile)
 	}
-	// aider has no inline system-prompt mechanism; only SystemPromptFile is
-	// honored via --read. A cfg.SystemPrompt with no file is intentionally
-	// dropped here rather than written to disk.
+	// aider has no inline system-prompt mechanism. A cfg.SystemPrompt with no
+	// file is intentionally dropped here rather than written to disk.
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that AO should inject prompted Aider tasks
+// into the interactive terminal after startup. Aider's `-m` mode exits after
+// the single message completes.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryAfterStart, nil
 }
 
 // normalizePermissionMode collapses an empty mode onto PermissionModeDefault so

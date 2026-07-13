@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
@@ -14,13 +14,22 @@ import {
 } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { NotificationCenter } from "./NotificationCenter";
+import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+
+const isLinux =
+	typeof navigator !== "undefined" &&
+	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
+		.toLowerCase()
+		.includes("linux");
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -42,32 +51,32 @@ const COLUMNS: Column[] = [
 	{
 		level: "working",
 		label: "Working",
-		glow: "color-mix(in srgb, var(--orange) 7%, transparent)",
-		dot: "var(--orange)",
+		glow: "color-mix(in srgb, var(--color-working) 7%, transparent)",
+		dot: "var(--color-working)",
 		dotGlow: true,
 		titleClass: "text-working",
 	},
 	{
 		level: "action",
 		label: "Needs you",
-		glow: "color-mix(in srgb, var(--amber) 6%, transparent)",
-		dot: "var(--amber)",
+		glow: "color-mix(in srgb, var(--color-warning) 6%, transparent)",
+		dot: "var(--color-warning)",
 		dotGlow: true,
 		titleClass: "text-warning",
 	},
 	{
 		level: "pending",
 		label: "In review",
-		glow: "var(--kanban-pending-glow)",
-		dot: "var(--fg-muted)",
+		glow: "var(--color-overlay-faint)",
+		dot: "var(--color-text-muted)",
 		dotGlow: false,
 		titleClass: "text-muted-foreground",
 	},
 	{
 		level: "merge",
 		label: "Ready to merge",
-		glow: "color-mix(in srgb, var(--green) 7%, transparent)",
-		dot: "var(--green)",
+		glow: "color-mix(in srgb, var(--color-success) 7%, transparent)",
+		dot: "var(--color-success)",
 		dotGlow: true,
 		titleClass: "text-success",
 	},
@@ -84,11 +93,33 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const orchestratorStartupError = useUiStore((state) =>
+		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
+	);
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
+	const visibleSpawnError = spawnError ?? orchestratorStartupError;
+	// The board instance survives project-to-project navigation (same route,
+	// new param), so a spawn failure must not follow the user to another board.
+	useEffect(() => setSpawnError(null), [projectId]);
+	const previousProjectIdRef = useRef(projectId);
+	useEffect(() => {
+		const previousProjectId = previousProjectIdRef.current;
+		if (previousProjectId && previousProjectId !== projectId) {
+			setOrchestratorStartupError(previousProjectId, null);
+		}
+		previousProjectIdRef.current = projectId;
+	}, [projectId, setOrchestratorStartupError]);
+	useEffect(() => {
+		if (projectId && orchestrator && orchestratorStartupError) {
+			setOrchestratorStartupError(projectId, null);
+		}
+	}, [orchestrator, orchestratorStartupError, projectId, setOrchestratorStartupError]);
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -96,6 +127,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
 	const done = byZone.get("done") ?? [];
+	// First-run orientation replaces the empty column shells (only once the
+	// query has resolved, so the welcome never flashes over real data): the
+	// global board teaches the app before any project exists, and a fresh
+	// project board invites the first task instead of showing four zeros.
+	const isLoaded = workspaceQuery.isSuccess;
+	const showWelcome = !projectId && isLoaded && all.length === 0;
+	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Collapsed by default, like agent-orchestrator's done-bar: finished and
 	// killed sessions cost one quiet line under the board until expanded.
 	const [doneExpanded, setDoneExpanded] = useState(false);
@@ -115,14 +153,22 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			});
 			return;
 		}
+		setSpawnError(null);
+		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
 			const sessionId = await spawnOrchestrator(projectId, "board");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			setOrchestratorStartupError(projectId, null);
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
 			});
+		} catch (err) {
+			// Never fail silently: the daemon's message (e.g. a worktree/branch
+			// conflict) is the only actionable signal the user gets.
+			console.error("Failed to spawn orchestrator:", err);
+			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
 		} finally {
 			setIsSpawning(false);
 		}
@@ -150,24 +196,28 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			<button
+			{isLinux ? <NotificationCenter /> : null}
+			{visibleSpawnError && !showProjectEmpty && (
+				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
+					{visibleSpawnError}
+				</TopbarKillError>
+			)}
+			<TopbarButton
 				aria-label="New task"
-				className="dashboard-app-header__accent-btn"
 				disabled={isProjectRestarting}
 				onClick={() => setIsNewTaskOpen(true)}
-				type="button"
+				variant="accent"
 			>
-				<Plus className="h-3.5 w-3.5" aria-hidden="true" />
+				<Plus className="size-icon-md" aria-hidden="true" />
 				New task
-			</button>
-			<button
+			</TopbarButton>
+			<TopbarButton
 				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
-				className="dashboard-app-header__primary-btn"
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
-				type="button"
+				variant="primary"
 			>
-				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{isProjectRestarting
 					? "Restarting..."
 					: isSpawning
@@ -175,38 +225,51 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						: orchestrator
 							? "Orchestrator"
 							: "Spawn Orchestrator"}
-			</button>
+			</TopbarButton>
 		</>
+	) : isLinux ? (
+		<NotificationCenter />
 	) : undefined;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead
-				title="Board"
-				subtitle="Live agent sessions flowing from work → review → merge."
-				actions={actions}
-			/>
+			{/* The first-launch welcome carries its own orientation; a "Board"
+			    header above it would describe a board that isn't rendered
+			    (review feedback on #2432). */}
+			{!showWelcome && (
+				<DashboardSubhead
+					title="Board"
+					subtitle="Live agent sessions flowing from work → review → merge."
+					actions={actions}
+				/>
+			)}
 
-			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
+			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
 				{projectId && health.state !== "ok" ? (
-					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
-						<AlertTriangle className="size-4 shrink-0 text-warning" aria-hidden="true" />
+					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
-							<button
-								className="dashboard-app-header__primary-btn"
-								disabled={isProjectRestarting}
-								onClick={() => void restartOrchestrator()}
-								type="button"
-							>
+							<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
 								<RotateCw className="size-3.5" aria-hidden="true" />
 								Restart
-							</button>
+							</TopbarButton>
 						) : null}
 					</div>
 				) : null}
 				{workspaceQuery.isError ? (
-					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
+					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
+				) : showWelcome ? (
+					<BoardWelcome />
+				) : showProjectEmpty ? (
+					<ProjectBoardEmpty
+						hasOrchestrator={orchestrator !== undefined}
+						isSpawning={isSpawning}
+						isProjectRestarting={isProjectRestarting}
+						onNewTask={() => setIsNewTaskOpen(true)}
+						onOpenOrchestrator={() => void openOrchestrator()}
+						spawnError={visibleSpawnError}
+					/>
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">
 						{COLUMNS.map((col) => (
@@ -217,23 +280,23 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{done.length > 0 && (
-				<div className="shrink-0 border-t border-border px-[18px]">
+				<div className="shrink-0 border-t border-border px-4.5">
 					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. min-h matches
 					    the sidebar footer (7px pad ×2 + 37px Settings button) so this
 					    border-t aligns with the sidebar's footer border. The button is
-					    37px (not the 35.5px its text-[13px] implies) because the
+					    37px (not the 35.5px its text-control implies) because the
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
 					<button
 						aria-expanded={doneExpanded}
-						className="group flex min-h-[51px] w-full items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+						className="group flex min-h-row-md w-full items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
 						onClick={() => setDoneExpanded((v) => !v)}
 						type="button"
 					>
 						<svg
 							aria-hidden="true"
-							className={cn("h-3 w-3 shrink-0 transition-transform duration-150", doneExpanded && "rotate-90")}
+							className={cn("size-icon-2xs shrink-0 transition-transform duration-normal", doneExpanded && "rotate-90")}
 							fill="none"
 							stroke="currentColor"
 							strokeWidth="2"
@@ -241,19 +304,19 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						>
 							<path d="m9 18 6-6-6-6" />
 						</svg>
-						<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em]">Done / Terminated</span>
-						<span className="ml-auto shrink-0 font-mono text-[10px] text-passive">{done.length}</span>
+						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Done / Terminated</span>
+						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{done.length}</span>
 					</button>
 					{doneExpanded && (
 						<div className="flex flex-wrap gap-2 pb-2.5 pt-1">
 							{done.map((s) => (
 								<button
 									key={s.id}
-									className="rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
+									className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
 									onClick={() => openSession(s)}
 									type="button"
 								>
-									<span className="text-[12px] text-muted-foreground">{s.title}</span>
+									<span className="text-xs text-muted-foreground">{s.title}</span>
 								</button>
 							))}
 						</div>
@@ -281,21 +344,23 @@ function ZoneColumn({
 }) {
 	return (
 		<section
-			className="flex min-w-0 flex-col overflow-hidden rounded-[13px]"
-			style={{ background: `linear-gradient(180deg, ${col.glow}, transparent 130px), var(--kanban-column-bg)` }}
+			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			style={{
+				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
+			}}
 		>
-			<div className="flex shrink-0 items-center gap-[9px] px-[15px] pb-[11px] pt-[14px]">
+			<div className="flex shrink-0 items-center gap-2.25 px-3.75 pb-2.75 pt-3.5">
 				<span
-					className="h-[7px] w-[7px] rounded-full"
+					className="size-dot-sm rounded-full"
 					style={{
 						background: col.dot,
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", col.titleClass)}>{col.label}</span>
-				<span className="ml-auto font-mono text-[11px] leading-none text-passive">{sessions.length}</span>
+				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClass)}>{col.label}</span>
+				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
+			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
 				<div className="flex flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
@@ -319,38 +384,38 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 		onOpen();
 	};
 	return (
-		<div className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong">
+		<div className="w-full rounded-md border border-border bg-surface text-left transition-colors hover:border-border-strong">
 			<div onClick={onOpen} onKeyDown={handleKeyDown} role="button" tabIndex={0}>
-				<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
-					<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
-						<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
+				<div className="flex items-center gap-2 px-3.25 pb-2.25 pt-3">
+					<span className={cn("inline-flex items-center gap-1.5 text-caption font-medium", badge.className)}>
+						<span className={cn("size-dot-sm rounded-full bg-current")} />
 						{badge.label}
 					</span>
 					{issueId && (
 						<span
-							className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
+							className="inline-flex max-w-branch-chip items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
 							title={`Intake issue: ${issueId}`}
 						>
 							{issueId}
 						</span>
 					)}
-					<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
+					<span className="ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive">
 						{agentLabel(session.provider)}
 					</span>
 				</div>
 				<div
 					className={cn(
-						"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+						"px-3.25 text-control font-medium leading-snug tracking-tight text-foreground",
 						showBranch ? "pb-2" : "pb-3",
 						"line-clamp-2 overflow-hidden",
 					)}
 				>
 					{session.title}
 				</div>
-				{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
+				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
 			<div
-				className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive"
+				className="border-t border-border px-3.25 py-2 font-mono text-2xs text-passive"
 				onClick={(event) => event.stopPropagation()}
 			>
 				{prSummaries.length === 0 ? (
@@ -460,6 +525,8 @@ function sessionBadge(session: WorkspaceSession): { label: string; className: st
 			return { label: "Merged", className: "text-passive" };
 		case "terminated":
 			return { label: "Terminated", className: "text-passive" };
+		case "idle":
+			return { label: "Idle", className: "text-passive" };
 		default:
 			return { label: "Working", className: "text-working" };
 	}

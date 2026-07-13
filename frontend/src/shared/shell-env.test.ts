@@ -92,6 +92,11 @@ describe("buildDaemonEnv", () => {
 		const env = buildDaemonEnv({ ...minimalProcessEnv, TERM: "screen-256color" }, null, {});
 		expect(env.TERM).toBe("screen-256color");
 	});
+
+	it("replaces TERM=dumb because tmux attach needs clear-screen support", () => {
+		const env = buildDaemonEnv({ ...minimalProcessEnv, TERM: "dumb" }, null, {});
+		expect(env.TERM).toBe("xterm-256color");
+	});
 });
 
 describe("resolveShellPath", () => {

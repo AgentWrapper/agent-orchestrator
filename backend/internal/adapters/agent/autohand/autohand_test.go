@@ -34,7 +34,7 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 		Prompt:           "-fix this",
 		WorkspacePath:    "/work/space",
 		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
-		SystemPrompt:     "ignored",
+		SystemPrompt:     "inline wins",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 		"autohand",
 		"--path", "/work/space",
 		"--unrestricted",
-		"--sys-prompt", filepath.Join("tmp", "prompt with spaces.md"),
+		"--sys-prompt", "inline wins",
 		"--", "-fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -153,7 +153,8 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "autohand"}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Permissions: ports.PermissionModeAuto,
+		Permissions:  ports.PermissionModeAuto,
+		SystemPrompt: "restore instructions ignored by resume",
 		Session: ports.SessionRef{
 			WorkspacePath: "/work/space",
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "sess-123"},
@@ -352,7 +353,7 @@ func TestDeriveActivityState(t *testing.T) {
 		{"session start -> active", "session-start", domain.ActivityActive, true},
 		{"user prompt -> active", "user-prompt-submit", domain.ActivityActive, true},
 		{"stop -> idle", "stop", domain.ActivityIdle, true},
-		{"permission request -> waiting input", "permission-request", domain.ActivityWaitingInput, true},
+		{"permission request -> waiting_input", "permission-request", domain.ActivityWaitingInput, true},
 		{"unknown event -> no signal", "frobnicate", "", false},
 	}
 	for _, tt := range tests {

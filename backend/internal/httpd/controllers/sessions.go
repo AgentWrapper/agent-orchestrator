@@ -189,7 +189,30 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
+	if previewutil.IsMarkdownPath(file) {
+		c.servePreviewMarkdown(w, r, file)
+		return
+	}
 	http.ServeFile(w, r, file)
+}
+
+// servePreviewMarkdown renders a workspace Markdown file to a self-contained
+// HTML document so the browser panel displays formatted content instead of raw
+// source.
+func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http.Request, file string) {
+	source, err := os.ReadFile(file)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	rendered, err := previewutil.RenderMarkdown(source, filepath.Base(file))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a
@@ -437,12 +460,24 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	state := domain.ActivityState(in.State)
 	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityExited:
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
 	default:
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
 		return
 	}
-	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), ports.ActivitySignal{Valid: true, State: state}); err != nil {
+	// The correlation fields ride the same lenient decode: absent on old CLIs.
+	// They are externally-supplied strings headed for logs and in-memory maps,
+	// so sanitize control chars and cap their length (a truncated id could
+	// never match its pre/post counterpart, so overlong values are dropped by
+	// the CLI; the cap here is defense against non-AO callers).
+	sig := ports.ActivitySignal{
+		Valid:     true,
+		State:     state,
+		Event:     capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:  capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID: capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+	}
+	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {
 			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
 			return
@@ -451,6 +486,16 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
+}
+
+// capActivityMeta bounds an optional activity correlation string; overlong
+// values are dropped, not truncated (see the comment at its call site).
+func capActivityMeta(v string) string {
+	const maxLen = 256
+	if len(v) > maxLen {
+		return ""
+	}
+	return v
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {

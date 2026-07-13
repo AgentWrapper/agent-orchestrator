@@ -3,10 +3,14 @@ package amp
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -44,12 +48,22 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if s != ports.PromptDeliveryInCommand {
-		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryInCommand)
+	if s != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryAfterStart)
 	}
 }
 
-func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
+	}
+}
+
+func TestGetLaunchCommandBypassWithPromptLeavesPromptForAfterStartDelivery(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
@@ -59,58 +73,72 @@ func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"amp", "--permission-mode", "bypassPermissions", "--", "-add a health check"}
+	want := []string{"amp"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
+	assertAmpPermissionFlagsAbsent(t, cmd)
 }
 
-func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
-	tests := []struct {
-		name       string
-		mode       ports.PermissionMode
-		want       []string
-		wantAbsent string
-	}{
-		{"default omits flag", ports.PermissionModeDefault, []string{"amp"}, "--permission-mode"},
-		{"empty omits flag", "", []string{"amp"}, "--permission-mode"},
-		{"accept edits", ports.PermissionModeAcceptEdits, []string{"amp", "--permission-mode", "acceptEdits"}, ""},
-		{"auto", ports.PermissionModeAuto, []string{"amp", "--permission-mode", "auto"}, ""},
-		{"bypass", ports.PermissionModeBypassPermissions, []string{"amp", "--permission-mode", "bypassPermissions"}, ""},
+func TestGetLaunchCommandPermissionModesEmitNoFlag(t *testing.T) {
+	modes := []ports.PermissionMode{
+		ports.PermissionModeDefault,
+		"",
+		ports.PermissionModeAcceptEdits,
+		ports.PermissionModeAuto,
+		ports.PermissionModeBypassPermissions,
 	}
+	want := []string{"amp"}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, mode := range modes {
+		t.Run(string(mode), func(t *testing.T) {
 			p := &Plugin{resolvedBinary: "amp"}
-			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: tt.mode})
+			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: mode})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(cmd, tt.want) {
-				t.Fatalf("cmd = %#v, want %#v", cmd, tt.want)
+			if !reflect.DeepEqual(cmd, want) {
+				t.Fatalf("cmd = %#v, want %#v", cmd, want)
 			}
-			if tt.wantAbsent != "" {
-				for _, arg := range cmd {
-					if arg == tt.wantAbsent {
-						t.Fatalf("cmd = %#v unexpectedly contains %q", cmd, tt.wantAbsent)
-					}
-				}
-			}
+			assertAmpPermissionFlagsAbsent(t, cmd)
 		})
 	}
 }
 
-func TestGetLaunchCommandIgnoresInlineSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandUsesPluginForSystemPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		SystemPrompt: "follow repo rules",
-		Prompt:       "do the thing",
+		SystemPrompt:     "follow repo rules",
+		SystemPromptFile: "/tmp/system.md",
+		Prompt:           "do the thing",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"amp", "--", "do the thing"}
+	want := []string{"amp"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	for _, arg := range cmd {
+		if arg == "--append-system-prompt" || arg == "--append-system-prompt-file" {
+			t.Fatalf("cmd = %#v unexpectedly contains system prompt flag", cmd)
+		}
+	}
+	assertAmpSystemPromptFlagsAbsent(t, cmd)
+}
+
+func TestGetLaunchCommandOmitsExecuteModeWithoutPrompt(t *testing.T) {
+	p := &Plugin{resolvedBinary: "amp"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: "/tmp/system.md",
+		SystemPrompt:     "inline wins",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"amp"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -134,6 +162,15 @@ func TestGetLaunchCommandIgnoresSystemPromptFile(t *testing.T) {
 	assertAmpSystemPromptFlagsAbsent(t, cmd)
 }
 
+func assertAmpPermissionFlagsAbsent(t *testing.T, cmd []string) {
+	t.Helper()
+	for _, arg := range cmd {
+		if arg == "--permission-mode" {
+			t.Fatalf("cmd = %#v unexpectedly contains unsupported Amp permission flag", cmd)
+		}
+	}
+}
+
 func assertAmpSystemPromptFlagsAbsent(t *testing.T, cmd []string) {
 	t.Helper()
 	for _, arg := range cmd {
@@ -144,13 +181,28 @@ func assertAmpSystemPromptFlagsAbsent(t *testing.T, cmd []string) {
 	}
 }
 
+func TestGetLaunchCommandPromptlessOmitsPluginReadyTimeout(t *testing.T) {
+	p := &Plugin{resolvedBinary: "amp"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"amp"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
 func TestGetRestoreCommand(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "T-abc123"},
 		},
-		Permissions: ports.PermissionModeBypassPermissions,
+		Permissions:      ports.PermissionModeBypassPermissions,
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: "/tmp/system.md",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +211,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	want := []string{"amp", "--permission-mode", "bypassPermissions", "--resume", "T-abc123"}
+	want := []string{"amp", "--resume", "T-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -178,9 +230,143 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksNoOp(t *testing.T) {
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err != nil {
-		t.Fatalf("GetAgentHooks err = %v, want nil", err)
+func TestGetAgentHooksInstallsSystemPromptPlugin(t *testing.T) {
+	workspace := t.TempDir()
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("AO standing instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath:    workspace,
+		SystemPromptFile: promptFile,
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(ampPluginPath(workspace))
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		ampPluginSentinel,
+		promptFile,
+		"agent.start",
+		"display: false",
+		"readFile(systemPromptFile",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("plugin missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestGetAgentHooksGitignoresSystemPromptPlugin(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	gitignorePath := filepath.Join(workspace, ampPluginDirName, ampPluginSubDir, ".gitignore")
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("read gitignore: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{hookutil.GitignoreSentinel, "/" + ampPluginFileName, "/.gitignore"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestGetAgentHooksPreservesForeignPluginFiles(t *testing.T) {
+	workspace := t.TempDir()
+	foreignPath := filepath.Join(workspace, ampPluginDirName, ampPluginSubDir, "user-plugin.ts")
+	if err := os.MkdirAll(filepath.Dir(foreignPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(foreignPath, []byte("export default function userPlugin() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath:    workspace,
+		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(foreignPath)
+	if err != nil {
+		t.Fatalf("read foreign plugin: %v", err)
+	}
+	if got := string(data); got != "export default function userPlugin() {}\n" {
+		t.Fatalf("foreign plugin changed:\n%s", got)
+	}
+}
+
+func TestGetAgentHooksRequiresWorkspacePath(t *testing.T) {
+	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{})
+	if err == nil {
+		t.Fatal("GetAgentHooks err = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "WorkspacePath is required") {
+		t.Fatalf("GetAgentHooks err = %v, want WorkspacePath message", err)
+	}
+}
+
+func TestGetAgentHooksSystemPromptFileTakesPrecedenceOverInline(t *testing.T) {
+	workspace := t.TempDir()
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath:    workspace,
+		SystemPrompt:     "inline rules",
+		SystemPromptFile: promptFile,
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(ampPluginPath(workspace))
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, promptFile) {
+		t.Fatalf("plugin missing prompt file path:\n%s", text)
+	}
+	if strings.Contains(text, "inline rules") {
+		t.Fatalf("inline prompt should not be embedded when prompt file is provided:\n%s", text)
+	}
+}
+
+func TestGetAgentHooksUsesInlineSystemPromptWithoutFile(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "inline rules",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(ampPluginPath(workspace))
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "inline rules") {
+		t.Fatalf("plugin missing inline prompt:\n%s", text)
+	}
+	if !strings.Contains(text, `const systemPromptFile = ""`) {
+		t.Fatalf("plugin should not point at a prompt file:\n%s", text)
 	}
 }
 
@@ -211,6 +397,9 @@ func TestContextCancellation(t *testing.T) {
 	}
 	if _, err := (&Plugin{}).GetPromptDeliveryStrategy(ctx, ports.LaunchConfig{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("GetPromptDeliveryStrategy err = %v, want context.Canceled", err)
+	}
+	if _, err := (&Plugin{}).PromptReadinessHints(ctx, ports.LaunchConfig{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PromptReadinessHints err = %v, want context.Canceled", err)
 	}
 	if err := (&Plugin{}).GetAgentHooks(ctx, ports.WorkspaceHookConfig{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("GetAgentHooks err = %v, want context.Canceled", err)

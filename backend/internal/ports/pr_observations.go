@@ -24,6 +24,9 @@ type PRObservation struct {
 	Fetched      bool
 	URL          string
 	Number       int
+	Title        string
+	SourceBranch string
+	TargetBranch string
 	Draft        bool
 	Merged       bool
 	Closed       bool
@@ -46,9 +49,11 @@ type PRCheckObservation struct {
 // PRCommentObservation is one review comment observed on the PR.
 type PRCommentObservation struct {
 	ID       string
+	ThreadID string
 	Author   string
 	File     string
 	Line     int
 	Body     string
+	URL      string
 	Resolved bool
 }

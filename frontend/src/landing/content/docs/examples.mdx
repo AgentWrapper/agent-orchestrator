@@ -3,7 +3,7 @@ title: Examples
 description: Five annotated starter configurations covering GitHub, Linear, multi-project, auto-merge, and Codex setups.
 ---
 
-All examples live in the [`examples/` directory](https://github.com/ComposioHQ/agent-orchestrator/tree/main/examples) of the AO repository. Pick the one closest to your setup, copy it to your project root as `agent-orchestrator.yaml`, fill in your repo path and any API keys, and you're ready to spawn agents.
+All examples live in the [`examples/` directory](https://github.com/AgentWrapper/agent-orchestrator/tree/main/examples) of the AO repository. Pick the one closest to your setup, copy it to your project root as `agent-orchestrator.yaml`, fill in your repo path and any API keys, and you're ready to spawn agents.
 
 ```bash
 cp examples/simple-github.yaml agent-orchestrator.yaml
@@ -35,7 +35,7 @@ projects:
 - No `defaults:` block needed — AO's built-in defaults (`tmux` runtime, `claude-code` agent, `worktree` workspace) apply automatically.
 - Replace `owner/my-app` and `~/my-app` with your actual GitHub slug and local checkout path.
 
-[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/simple-github.yaml)
+[View raw file on GitHub](https://github.com/AgentWrapper/agent-orchestrator/blob/main/examples/simple-github.yaml)
 
 ---
 
@@ -75,7 +75,7 @@ projects:
 - Requires a `LINEAR_API_KEY` environment variable (set it in your shell profile or CI secrets).
 - `agentRules` injects project-specific instructions into every agent's prompt — useful for enforcing commit conventions or test requirements.
 
-[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/linear-team.yaml)
+[View raw file on GitHub](https://github.com/AgentWrapper/agent-orchestrator/blob/main/examples/linear-team.yaml)
 
 ---
 
@@ -151,7 +151,7 @@ notificationRouting:
 - `notifiers.slack.webhook: ${SLACK_WEBHOOK_URL}` reads the webhook URL from an environment variable — never hardcode secrets in config files.
 - `notificationRouting` routes urgent and actionable events to both desktop and Slack, while lower-priority events go to Slack only.
 
-[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/multi-project.yaml)
+[View raw file on GitHub](https://github.com/AgentWrapper/agent-orchestrator/blob/main/examples/multi-project.yaml)
 
 ---
 
@@ -207,7 +207,7 @@ reactions:
 - `changes-requested.escalateAfter: 1h` ensures a human is notified if an agent can't resolve review comments within an hour.
 - `agent-stuck.threshold: 10m` triggers an urgent desktop notification if an agent goes silent for 10 minutes.
 
-[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/auto-merge.yaml)
+[View raw file on GitHub](https://github.com/AgentWrapper/agent-orchestrator/blob/main/examples/auto-merge.yaml)
 
 ---
 
@@ -251,7 +251,7 @@ projects:
 - `agentConfig.permissions: default` uses the plugin's built-in permission set — change to `full` to allow broader file access, or `readonly` to restrict writes.
 - Requires an `OPENAI_API_KEY` environment variable.
 
-[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/codex-integration.yaml)
+[View raw file on GitHub](https://github.com/AgentWrapper/agent-orchestrator/blob/main/examples/codex-integration.yaml)
 
 ---
 

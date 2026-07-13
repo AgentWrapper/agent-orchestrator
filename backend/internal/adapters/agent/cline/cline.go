@@ -1,13 +1,11 @@
-// Package cline implements the Cline CLI agent adapter: launching new
-// headless sessions, resuming sessions by native session id, installing
-// workspace-local Cline hooks, and reading hook-derived session info.
+// Package cline implements the Cline CLI agent adapter: launching terminal
+// sessions, resuming sessions by native session id, installing workspace-local
+// Cline hooks, and reading hook-derived session info.
 //
 // Cline is an autonomous coding agent that runs in the terminal (binary
-// "cline", installed via `npm i -g cline`). AO drives task launches headlessly
-// by passing the prompt as a positional argument and requesting NDJSON output
-// with `--json`, which Cline emits one event per line for machine parsing.
-// Promptless launches (notably orchestrators) must stay in Cline's interactive
-// mode because Cline rejects `--json` without a prompt or piped stdin.
+// "cline", installed via `npm i -g cline`). AO opens Cline's normal terminal UI
+// and delivers prompted worker tasks after startup so dashboard terminal
+// attachments stay readable and Cline's startup command parser is bypassed.
 //
 // AO-managed sessions derive native session identity from Cline hooks
 // (the workspace-local `.clinerules/hooks/` executable scripts AO installs)
@@ -18,6 +16,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -54,11 +53,9 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds the argv to start a new Cline session. Prompted
-// launches request machine-readable NDJSON output (`--json`). Promptless
-// launches stay interactive because Cline's JSON output mode requires a prompt
-// argument or piped stdin. The prompt is placed after `--` so a leading "-" is
-// not read as a flag.
+// GetLaunchCommand builds the argv to start a new interactive Cline session.
+// Prompted worker tasks are injected after startup; passing them in argv makes
+// Cline's startup parser reject short prompts such as "hi" as unknown commands.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.clineBinary(ctx)
 	if err != nil {
@@ -66,20 +63,41 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--json")
-	}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-s", cfg.SystemPrompt)
 	}
 
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
-	}
-
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that AO should inject prompted Cline tasks
+// into the interactive terminal after startup.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryAfterStart, nil
+}
+
+// PromptReadinessHints waits briefly for Cline's interactive prompt before AO
+// injects the worker's first task.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 750 * time.Millisecond,
+		Patterns: []string{
+			"Type a message",
+			"What can I help",
+			">",
+		},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      8 * time.Second,
+		Lines:        80,
+	}, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Cline session:
@@ -104,6 +122,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 8)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-s", cfg.SystemPrompt)
+	}
 	cmd = append(cmd, "--id", agentSessionID)
 	return cmd, true, nil
 }

@@ -4,6 +4,7 @@ import { Loader2, X } from "lucide-react";
 import { type FormEvent, useEffect, useId, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -118,12 +119,12 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(560px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
-							<Dialog.Title className="text-[15px] font-semibold text-foreground">New task</Dialog.Title>
-							<Dialog.Description className="mt-1 text-[12px] text-muted-foreground">
+							<Dialog.Title className="text-subtitle font-semibold text-foreground">New task</Dialog.Title>
+							<Dialog.Description className="mt-1 text-xs text-muted-foreground">
 								Start a worker directly from this project.
 							</Dialog.Description>
 						</div>
@@ -133,14 +134,14 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
 								aria-label="Close new task dialog"
 							>
-								<X className="size-4" aria-hidden="true" />
+								<X className="size-icon-base" aria-hidden="true" />
 							</button>
 						</Dialog.Close>
 					</div>
 
 					<form onSubmit={submit} className="space-y-4 px-5 py-4">
 						<div className="space-y-1.5">
-							<label className="text-[12px] font-medium text-muted-foreground" htmlFor={titleId}>
+							<label className="text-xs font-medium text-muted-foreground" htmlFor={titleId}>
 								Title
 							</label>
 							<Input
@@ -153,12 +154,12 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						</div>
 
 						<div className="space-y-1.5">
-							<label className="text-[12px] font-medium text-muted-foreground" htmlFor={promptId}>
+							<label className="text-xs font-medium text-muted-foreground" htmlFor={promptId}>
 								Brief
 							</label>
 							<textarea
 								id={promptId}
-								className="min-h-[112px] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
+								className="min-h-textarea-min w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-control leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
 								placeholder="Describe the change, constraints, and expected verification."
 								value={prompt}
 								onChange={(event) => setPrompt(event.target.value)}
@@ -183,7 +184,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 								/>
 								<button
 									type="button"
-									className="text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
+									className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
 									disabled={refreshAgentsMutation.isPending}
 									onClick={() => refreshAgentsMutation.mutate()}
 								>
@@ -191,9 +192,9 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 								</button>
 							</div>
 							<div className="space-y-1.5">
-								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={branchId}>
+								<Label className="text-xs font-medium text-muted-foreground" htmlFor={branchId}>
 									Branch
-								</label>
+								</Label>
 								<Input
 									id={branchId}
 									placeholder="optional"
@@ -204,13 +205,13 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						</div>
 
 						{error && (
-							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 								{error}
 							</div>
 						)}
 
 						{refreshAgentsMutation.isError && (
-							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 								{refreshAgentsMutation.error instanceof Error
 									? refreshAgentsMutation.error.message
 									: "Could not refresh agent catalog."}

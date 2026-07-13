@@ -407,8 +407,17 @@ type ClaimPRResponse struct {
 }
 
 // SetActivityRequest is the body of POST /api/v1/sessions/{sessionId}/activity.
+// Event/ToolName/ToolUseID are optional correlation facts: which AO hook
+// sub-command produced the state and, for tool-use hooks, which tool call it
+// concerns. Lifecycle uses them to clear a stale blocked state only when the
+// specific approved tool finishes. Absent on old CLIs and on adapters whose
+// payloads carry no tool identity — the signal then keeps its plain
+// state-only semantics.
 type SetActivityRequest struct {
-	State string `json:"state" enum:"active,idle,waiting_input,exited" description:"Agent activity state reported by an agent hook."`
+	State     string `json:"state" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook."`
+	Event     string `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
+	ToolName  string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
+	ToolUseID string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.
@@ -544,4 +553,15 @@ type ResolveCommentsRequest struct {
 type ResolveCommentsResponse struct {
 	OK       bool `json:"ok"`
 	Resolved int  `json:"resolved"`
+}
+
+// MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
+// regenerate endpoints. Password is populated only transiently, on enable and
+// regenerate responses (empty otherwise) — it is never persisted in plaintext.
+type MobileStatusResponse struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Password string `json:"password"`
+	Warning  string `json:"warning"`
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -33,6 +34,7 @@ func TestGetLaunchCommandBuildsInteractiveArgv(t *testing.T) {
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
+		Kind:        domain.KindWorker,
 		Prompt:      "-fix this",
 	})
 	if err != nil {
@@ -43,7 +45,6 @@ func TestGetLaunchCommandBuildsInteractiveArgv(t *testing.T) {
 		"kiro-cli", "chat",
 		"--agent", "ao",
 		"--trust-all-tools",
-		"--", "-fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
@@ -87,10 +88,11 @@ func TestGetLaunchCommandPromptlessWorkerStaysInteractive(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandPromptTakesPrecedenceOverSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandPromptedWorkerKeepsPromptOutOfArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:         domain.KindWorker,
 		Prompt:       "fix the failing test",
 		SystemPrompt: "standing role instructions",
 	})
@@ -101,10 +103,109 @@ func TestGetLaunchCommandPromptTakesPrecedenceOverSystemPrompt(t *testing.T) {
 	want := []string{
 		"kiro-cli", "chat",
 		"--agent", "ao",
-		"--", "fix the failing test",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandPromptedOrchestratorCarriesPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:   domain.KindOrchestrator,
+		Prompt: "do the explicit task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+		"--", "do the explicit task",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandSelectsPreparedCustomAgentForSystemPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	workspace := t.TempDir()
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:      ports.PermissionModeBypassPermissions,
+		Prompt:           "-fix this",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: filepath.Join(t.TempDir(), "system.md"),
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+		"--trust-all-tools",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if _, err := os.Stat(kiroAgentPath(workspace)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("launch wrote agent config, err = %v", err)
+	}
+}
+
+func TestGetLaunchCommandDoesNotRewritePreparedAgentConfig(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	workspace := t.TempDir()
+	promptFile := kiroPromptFile(t, "standing AO instructions")
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		Config:           ports.AgentConfig{Model: "project-model"},
+		DataDir:          t.TempDir(),
+		SessionID:        "sess-1",
+		SystemPrompt:     "standing AO instructions",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	var topLevel map[string]json.RawMessage
+	data, err := os.ReadFile(kiroAgentPath(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &topLevel); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(topLevel["prompt"]); got != `"`+kiroPromptURI(promptFile)+`"` {
+		t.Fatalf("agent prompt = %q, want file URI", got)
+	}
+	var model string
+	if err := json.Unmarshal(topLevel["model"], &model); err != nil {
+		t.Fatalf("decode model from %s: %v", data, err)
+	}
+	if model != "project-model" {
+		t.Fatalf("model = %q, want preserved model", model)
 	}
 }
 
@@ -184,6 +285,21 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	}
 }
 
+func TestGetPromptDeliveryStrategyPromptedWorkerIsAfterStart(t *testing.T) {
+	plugin := &Plugin{}
+
+	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+		Kind:   domain.KindWorker,
+		Prompt: "do this task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryAfterStart {
+		t.Fatalf("unexpected strategy: %q", got)
+	}
+}
+
 func TestGetPromptDeliveryStrategyOrchestratorUsesCustomAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 
@@ -208,6 +324,16 @@ func TestGetPromptDeliveryStrategyPromptedOrchestratorUsesCommand(t *testing.T) 
 	}
 	if got != ports.PromptDeliveryInCommand {
 		t.Fatalf("unexpected strategy: %q", got)
+	}
+}
+
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
 	}
 }
 
@@ -264,6 +390,7 @@ func TestAuthStatusUnauthorizedFromKiroWhoami(t *testing.T) {
 func TestGetAgentHooksInstallsKiroHooks(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 	workspace := t.TempDir()
+	promptFile := kiroPromptFile(t, "standing AO instructions")
 	hooksDir := filepath.Join(workspace, kiroHooksDirName, kiroAgentsDirName)
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -275,10 +402,11 @@ func TestGetAgentHooksInstallsKiroHooks(t *testing.T) {
 	}
 
 	cfg := ports.WorkspaceHookConfig{
-		DataDir:       t.TempDir(),
-		SessionID:     "sess-1",
-		SystemPrompt:  "standing AO instructions",
-		WorkspacePath: workspace,
+		DataDir:          t.TempDir(),
+		SessionID:        "sess-1",
+		SystemPrompt:     "standing AO instructions",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
 	}
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -307,8 +435,11 @@ func TestGetAgentHooksInstallsKiroHooks(t *testing.T) {
 	if err := json.Unmarshal(topLevel["prompt"], &prompt); err != nil {
 		t.Fatalf("decode prompt from %s: %v", data, err)
 	}
-	if prompt != "standing AO instructions" {
-		t.Fatalf("prompt = %q, want system prompt", prompt)
+	if prompt != kiroPromptURI(promptFile) {
+		t.Fatalf("prompt = %q, want system prompt file URI", prompt)
+	}
+	if strings.Contains(string(data), "standing AO instructions") {
+		t.Fatalf("agent file leaked prompt body:\n%s", data)
 	}
 
 	var config kiroHookFile
@@ -334,12 +465,14 @@ func TestGetAgentHooksCreatesNamedKiroAgentFile(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 	workspace := t.TempDir()
 	hooksPath := kiroAgentPath(workspace)
+	promptFile := kiroPromptFile(t, "exact orchestrator system prompt")
 
 	cfg := ports.WorkspaceHookConfig{
-		DataDir:       t.TempDir(),
-		SessionID:     "sess-1",
-		SystemPrompt:  "exact orchestrator system prompt",
-		WorkspacePath: workspace,
+		DataDir:          t.TempDir(),
+		SessionID:        "sess-1",
+		SystemPrompt:     "exact orchestrator system prompt",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
 	}
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -364,8 +497,23 @@ func TestGetAgentHooksCreatesNamedKiroAgentFile(t *testing.T) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Prompt == nil || *config.Prompt != "exact orchestrator system prompt" {
-		t.Fatalf("prompt = %#v, want exact system prompt", config.Prompt)
+	if config.Prompt == nil || *config.Prompt != kiroPromptURI(promptFile) {
+		t.Fatalf("prompt = %#v, want system prompt file URI", config.Prompt)
+	}
+}
+
+func TestGetAgentHooksRequiresSystemPromptFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		SessionID:     "sess-1",
+		SystemPrompt:  "standing AO instructions",
+		WorkspacePath: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("expected error for system prompt without prompt file")
+	}
+	if !strings.Contains(err.Error(), "system prompt file required") {
+		t.Fatalf("err = %v, want system prompt file required", err)
 	}
 }
 
@@ -373,13 +521,15 @@ func TestGetAgentHooksWritesConfiguredModel(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 	workspace := t.TempDir()
 	hooksPath := kiroAgentPath(workspace)
+	promptFile := kiroPromptFile(t, "standing AO instructions")
 
 	cfg := ports.WorkspaceHookConfig{
-		Config:        ports.AgentConfig{Model: "claude-sonnet-4-5"},
-		DataDir:       t.TempDir(),
-		SessionID:     "sess-1",
-		SystemPrompt:  "standing AO instructions",
-		WorkspacePath: workspace,
+		Config:           ports.AgentConfig{Model: "claude-sonnet-4-5"},
+		DataDir:          t.TempDir(),
+		SessionID:        "sess-1",
+		SystemPrompt:     "standing AO instructions",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
 	}
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -406,6 +556,7 @@ func TestGetAgentHooksOverwritesStaleConfiguredModel(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 	workspace := t.TempDir()
 	hooksPath := kiroAgentPath(workspace)
+	promptFile := kiroPromptFile(t, "standing AO instructions")
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -415,11 +566,12 @@ func TestGetAgentHooksOverwritesStaleConfiguredModel(t *testing.T) {
 	}
 
 	cfg := ports.WorkspaceHookConfig{
-		Config:        ports.AgentConfig{Model: "project-model"},
-		DataDir:       t.TempDir(),
-		SessionID:     "sess-1",
-		SystemPrompt:  "standing AO instructions",
-		WorkspacePath: workspace,
+		Config:           ports.AgentConfig{Model: "project-model"},
+		DataDir:          t.TempDir(),
+		SessionID:        "sess-1",
+		SystemPrompt:     "standing AO instructions",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
 	}
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -453,6 +605,7 @@ func TestGetAgentHooksClearsStaleModelWhenConfigRemoved(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "kiro-cli"}
 	workspace := t.TempDir()
 	hooksPath := kiroAgentPath(workspace)
+	promptFile := kiroPromptFile(t, "standing AO instructions")
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -462,10 +615,11 @@ func TestGetAgentHooksClearsStaleModelWhenConfigRemoved(t *testing.T) {
 	}
 
 	cfg := ports.WorkspaceHookConfig{
-		DataDir:       t.TempDir(),
-		SessionID:     "sess-1",
-		SystemPrompt:  "standing AO instructions",
-		WorkspacePath: workspace,
+		DataDir:          t.TempDir(),
+		SessionID:        "sess-1",
+		SystemPrompt:     "standing AO instructions",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
 	}
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -575,6 +729,62 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandReappliesSystemPromptAgent(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	workspace := t.TempDir()
+	promptFile := kiroPromptFile(t, "restore AO rules")
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		Config:           ports.AgentConfig{Model: "project-model"},
+		DataDir:          t.TempDir(),
+		SessionID:        "sess-1",
+		SystemPrompt:     "restore AO rules",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPromptFile: promptFile,
+		Session: ports.SessionRef{
+			WorkspacePath: workspace,
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "uuid-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+		"--resume-id", "uuid-123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+	var config map[string]json.RawMessage
+	data, err := os.ReadFile(kiroAgentPath(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if string(config["prompt"]) != `"`+kiroPromptURI(promptFile)+`"` {
+		t.Fatalf("agent config = %#v, want restore prompt", config)
+	}
+	var model string
+	if err := json.Unmarshal(config["model"], &model); err != nil {
+		t.Fatalf("decode model from %s: %v", data, err)
+	}
+	if model != "project-model" {
+		t.Fatalf("model = %q, want preserved model", model)
 	}
 }
 
@@ -757,4 +967,17 @@ func countKiroHookCommand(entries []kiroHookEntry, command string) int {
 		}
 	}
 	return count
+}
+
+func kiroPromptFile(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func kiroPromptURI(path string) string {
+	return "file://" + filepath.ToSlash(path)
 }

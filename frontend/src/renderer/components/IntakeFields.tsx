@@ -94,15 +94,15 @@ export function IntakeFields({
 	return (
 		<div className="flex flex-col gap-4">
 			{!compact && (
-				<p className="text-[12px] leading-5 text-muted-foreground">
+				<p className="text-xs leading-row text-muted-foreground">
 					Auto-spawn worker sessions from matching tracker issues.
 				</p>
 			)}
 			<div className="flex items-center gap-2">
-				<label className="flex items-center gap-2.5 text-[13px] text-foreground">
+				<label className="flex items-center gap-2.5 text-control text-foreground">
 					<input
 						type="checkbox"
-						className="h-4 w-4 accent-accent"
+						className="size-icon-base accent-accent"
 						checked={form.enabled}
 						onChange={(e) => onChange({ enabled: e.target.checked })}
 					/>
@@ -114,7 +114,7 @@ export function IntakeFields({
 							<TooltipTrigger asChild>
 								<button
 									type="button"
-									className="grid size-4 place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
+									className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
 									aria-label="What does enabling issue intake do?"
 								>
 									<Info className="size-3.5" aria-hidden="true" />
@@ -134,12 +134,12 @@ export function IntakeFields({
 									href={`https://github.com/${repoPreview.value}`}
 									target="_blank"
 									rel="noopener noreferrer"
-									className="text-[13px] text-accent hover:underline"
+									className="text-control text-accent hover:underline"
 								>
 									{repoPreview.value}
 								</a>
 							) : (
-								<span className="text-[13px] text-muted-foreground">
+								<span className="text-control text-muted-foreground">
 									Could not detect a GitHub repo from this project's git origin.
 								</span>
 							)}
@@ -148,14 +148,14 @@ export function IntakeFields({
 					<IntakeField label="Assignee" htmlFor="intakeAssignee">
 						<input
 							id="intakeAssignee"
-							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.assignee}
 							onChange={(e) => onChange({ assignee: e.target.value })}
 							placeholder="type username or * for any"
 						/>
 					</IntakeField>
 					{!compact && needsRule && (
-						<p className="text-[12px] leading-5 text-error">Enabling intake requires an assignee.</p>
+						<p className="text-xs leading-row text-error">Enabling intake requires an assignee.</p>
 					)}
 				</>
 			)}
@@ -166,7 +166,7 @@ export function IntakeFields({
 function IntakeField({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={htmlFor} className="text-[12px] text-muted-foreground">
+			<Label htmlFor={htmlFor} className="text-xs text-muted-foreground">
 				{label}
 			</Label>
 			{children}

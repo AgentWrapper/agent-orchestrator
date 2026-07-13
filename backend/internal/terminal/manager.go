@@ -52,6 +52,31 @@ type Manager struct {
 	mu          sync.Mutex
 	attachments map[*attachment]struct{}
 	closed      bool
+
+	// sharedMu guards shared, the per-terminal-id view of every attached client.
+	// It arbitrates the single PTY's grid across clients (see reconcileLocked).
+	sharedMu sync.Mutex
+	shared   map[string]*sharedTerm
+}
+
+// sharedTerm tracks every client currently viewing one terminal id (one PTY) so
+// the daemon can pick a single authoritative grid for it. A PTY has exactly one
+// size; when several clients view it at once the largest eligible client wins and
+// the rest render that grid scaled — this is what keeps a small phone from
+// stripping down the desktop, and keeps every client's grid matched to the PTY so
+// full-screen TUIs don't mis-render.
+type sharedTerm struct {
+	members            map[*connState]*termMember
+	authCols, authRows uint16 // last authoritative grid broadcast/applied
+}
+
+// termMember is one client's contribution to a shared terminal: its own attach
+// Stream, the grid it last asked for, and whether it drives the size (primary).
+type termMember struct {
+	att     *attachment
+	cols    uint16
+	rows    uint16
+	primary bool
 }
 
 // Option configures a Manager.
@@ -75,6 +100,7 @@ func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option
 		ctx:         ctx,
 		cancel:      cancel,
 		attachments: map[*attachment]struct{}{},
+		shared:      map[string]*sharedTerm{},
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -120,6 +146,110 @@ func (m *Manager) forget(a *attachment) {
 	m.mu.Lock()
 	delete(m.attachments, a)
 	m.mu.Unlock()
+}
+
+// joinTerminal registers a client (its connection + attach Stream + requested
+// grid + role) as a viewer of terminal id, then reconciles the shared grid.
+func (m *Manager) joinTerminal(id string, c *connState, att *attachment, cols, rows uint16, primary bool) {
+	m.sharedMu.Lock()
+	defer m.sharedMu.Unlock()
+	s := m.shared[id]
+	if s == nil {
+		s = &sharedTerm{members: map[*connState]*termMember{}}
+		m.shared[id] = s
+	}
+	s.members[c] = &termMember{att: att, cols: cols, rows: rows, primary: primary}
+	m.reconcileLocked(id, s)
+	// A follower joining a PTY that is already at its authoritative size wouldn't
+	// see a "changed" broadcast, so tell the joining client the current grid
+	// directly — it needs the size to render the shared grid rather than its own.
+	if s.authCols > 0 && s.authRows > 0 {
+		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgResize, Cols: s.authCols, Rows: s.authRows})
+	}
+}
+
+// updateTerminalSize records a client's newly requested grid and reconciles.
+func (m *Manager) updateTerminalSize(id string, c *connState, cols, rows uint16) {
+	m.sharedMu.Lock()
+	defer m.sharedMu.Unlock()
+	s := m.shared[id]
+	if s == nil {
+		return
+	}
+	mem := s.members[c]
+	if mem == nil {
+		return
+	}
+	mem.cols, mem.rows = cols, rows
+	m.reconcileLocked(id, s)
+}
+
+// leaveTerminal drops a client from a shared terminal and reconciles so the grid
+// follows the remaining clients (or the entry is dropped when the last leaves).
+func (m *Manager) leaveTerminal(id string, c *connState) {
+	m.sharedMu.Lock()
+	defer m.sharedMu.Unlock()
+	s := m.shared[id]
+	if s == nil {
+		return
+	}
+	if _, ok := s.members[c]; !ok {
+		return
+	}
+	delete(s.members, c)
+	if len(s.members) == 0 {
+		delete(m.shared, id)
+		return
+	}
+	m.reconcileLocked(id, s)
+}
+
+// reconcileLocked picks the authoritative grid for a shared terminal and applies
+// it: it resizes EVERY member's attach Stream to that grid (so the underlying
+// single PTY converges on one size regardless of runtime), and — when the grid
+// changed — pushes a server "resize" frame to every client so followers render
+// the exact grid instead of their own fitted size. Caller holds m.sharedMu.
+func (m *Manager) reconcileLocked(id string, s *sharedTerm) {
+	cols, rows := largestGrid(s.members)
+	if cols == 0 || rows == 0 {
+		return // no client has reported a usable size yet
+	}
+	changed := cols != s.authCols || rows != s.authRows
+	s.authCols, s.authRows = cols, rows
+	for conn, mem := range s.members {
+		_ = mem.att.resize(rows, cols)
+		if changed {
+			conn.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgResize, Cols: cols, Rows: rows})
+		}
+	}
+}
+
+// largestGrid chooses the authoritative grid for a set of viewers: the largest
+// (by area) among the PRIMARY clients if any primary has reported a size, else
+// the largest among all. Choosing one client's cols AND rows as a pair (never an
+// independent per-axis max) guarantees the grid matches a real client exactly, so
+// that client renders pixel-correct and only smaller ones scale.
+func largestGrid(members map[*connState]*termMember) (cols, rows uint16) {
+	anyPrimary := false
+	for _, mem := range members {
+		if mem.primary && mem.cols > 0 && mem.rows > 0 {
+			anyPrimary = true
+			break
+		}
+	}
+	bestArea := 0
+	for _, mem := range members {
+		if anyPrimary && !mem.primary {
+			continue
+		}
+		if mem.cols == 0 || mem.rows == 0 {
+			continue
+		}
+		if a := int(mem.cols) * int(mem.rows); a > bestArea {
+			bestArea, cols, rows = a, mem.cols, mem.rows
+		}
+	}
+	return cols, rows
 }
 
 // Serve runs the protocol loop for one client connection until it errors, the
@@ -182,7 +312,7 @@ func (c *connState) handle(msg clientMsg) {
 func (c *connState) handleTerminal(msg clientMsg) {
 	switch msg.Type {
 	case msgOpen:
-		c.openTerminal(msg.ID, msg.Rows, msg.Cols)
+		c.openTerminal(msg.ID, msg.Rows, msg.Cols, msg.Role)
 	case msgData:
 		raw, err := base64.StdEncoding.DecodeString(msg.Data)
 		if err != nil {
@@ -192,18 +322,20 @@ func (c *connState) handleTerminal(msg clientMsg) {
 			_ = a.write(raw)
 		}
 	case msgResize:
-		if a := c.lookup(msg.ID); a != nil {
-			_ = a.resize(msg.Rows, msg.Cols)
-		}
+		// The client reports the grid it fits to; the manager arbitrates the shared
+		// PTY's size across all viewers and resizes the attach Stream itself (see
+		// reconcileLocked), so we do not resize this attachment directly here.
+		c.mgr.updateTerminalSize(msg.ID, c, msg.Cols, msg.Rows)
 	case msgClose:
 		c.closeTerminal(msg.ID)
 	}
 }
 
 // openTerminal opens this connection's own attach Stream for the pane. rows/cols
-// are the client's grid from the open frame, applied as the Stream's initial size
-// (a resize that raced ahead of the attach would otherwise be lost).
-func (c *connState) openTerminal(id string, rows, cols uint16) {
+// are the client's grid from the open frame; the manager arbitrates the shared
+// PTY size from it (see joinTerminal) and applies it to the Stream. role marks
+// the client primary/secondary for that arbitration (empty = primary).
+func (c *connState) openTerminal(id string, rows, cols uint16, role string) {
 	if id == "" {
 		c.enqueue(serverMsg{Ch: chTerminal, Type: msgError, Error: "missing terminal id"})
 		return
@@ -241,12 +373,10 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 				delete(c.terms, id)
 			}
 			c.mu.Unlock()
+			c.mgr.leaveTerminal(id, c)
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
 		c.mgr.log)
-	if rows > 0 && cols > 0 {
-		_ = a.resize(rows, cols) // recorded now, applied when the PTY attaches
-	}
 	if err := c.mgr.track(a); err != nil {
 		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgError, Error: err.Error()})
 		return
@@ -254,6 +384,11 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 	c.mu.Lock()
 	c.terms[id] = a
 	c.mu.Unlock()
+
+	// Register with the shared-terminal arbiter, which sizes the attach Stream to
+	// the authoritative grid (the open frame's rows/cols become this client's
+	// requested size). An empty role means primary — the size-driving client.
+	c.mgr.joinTerminal(id, c, a, cols, rows, role != roleSecondary)
 
 	go func() {
 		a.run(c.mgr.ctx)
@@ -266,6 +401,7 @@ func (c *connState) closeTerminal(id string) {
 	a := c.terms[id]
 	delete(c.terms, id)
 	c.mu.Unlock()
+	c.mgr.leaveTerminal(id, c)
 	if a != nil {
 		a.close()
 	}
@@ -360,14 +496,22 @@ func (c *connState) cleanup() {
 	}
 	c.closed = true
 	attachments := make([]*attachment, 0, len(c.terms))
-	for _, a := range c.terms {
+	ids := make([]string, 0, len(c.terms))
+	for id, a := range c.terms {
 		attachments = append(attachments, a)
+		ids = append(ids, id)
 	}
 	c.terms = map[string]*attachment{}
 	unsubEvts := c.unsubEvts
 	c.unsubEvts = nil
 	c.mu.Unlock()
 
+	// Drop this connection from every shared terminal so the grid follows the
+	// clients that remain (a disconnecting large client must let the PTY shrink
+	// back to the smaller ones still attached).
+	for _, id := range ids {
+		c.mgr.leaveTerminal(id, c)
+	}
 	for _, a := range attachments {
 		a.close()
 	}

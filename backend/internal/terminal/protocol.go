@@ -35,6 +35,18 @@ const (
 	msgError    = "error"
 	msgSnapshot = "snapshot" // ch "sessions"
 	msgPong     = "pong"     // ch "system"
+	// msgResize is reused as a SERVER frame too: the daemon pushes the shared
+	// PTY's authoritative grid (Cols/Rows) to every attached client so followers
+	// render the exact grid the PTY is using instead of their own fitted size.
+)
+
+// Client roles for a terminal open. A single PTY has one grid; when several
+// clients view it at once the "primary" (the desktop, the real workspace) drives
+// that grid and secondaries follow, rendering the authoritative size (scaled to
+// fit their screen) rather than shrinking the PTY. An unset role is treated as
+// primary, so existing clients keep driving the size.
+const (
+	roleSecondary = "secondary"
 )
 
 // clientMsg is one inbound frame. Fields are shared across channels; which are
@@ -47,6 +59,9 @@ type clientMsg struct {
 	Data string `json:"data,omitempty"`
 	Cols uint16 `json:"cols,omitempty"`
 	Rows uint16 `json:"rows,omitempty"`
+	// Role is the client's role for a terminal "open" (see roleSecondary). Empty
+	// means primary.
+	Role string `json:"role,omitempty"`
 }
 
 // serverMsg is one outbound frame.
@@ -55,7 +70,11 @@ type serverMsg struct {
 	ID   string `json:"id,omitempty"`
 	Type string `json:"type"`
 	// Data is base64-encoded PTY output for ch "terminal" / type "data".
-	Data    string         `json:"data,omitempty"`
+	Data string `json:"data,omitempty"`
+	// Cols/Rows carry the authoritative PTY grid for ch "terminal" / type
+	// "resize" (server-pushed; see msgResize).
+	Cols    uint16         `json:"cols,omitempty"`
+	Rows    uint16         `json:"rows,omitempty"`
 	Error   string         `json:"error,omitempty"`
 	Session *sessionUpdate `json:"session,omitempty"`
 }

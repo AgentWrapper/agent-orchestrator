@@ -21,7 +21,11 @@ func projectServer(t *testing.T, status int, respBody string) (*httptest.Server,
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.method = r.Method
 		capture.path = r.URL.Path
-		capture.body, _ = io.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		capture.body = data
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
 			http.NotFound(w, r)
 			return
@@ -223,6 +227,36 @@ func TestProjectGet_NotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PROJECT_NOT_FOUND") && !strings.Contains(errOut, "PROJECT_NOT_FOUND") {
 		t.Fatalf("error did not surface not found envelope: %v\nstderr=%s", err, errOut)
+	}
+}
+
+func TestProjectSetConfig_RulesFlags(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo","config":{"agentRules":"Run tests.","agentRulesFile":"docs/rules.md","orchestratorRules":"Delegate."}}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo",
+		"--agent-rules", "Run tests.",
+		"--agent-rules-file", "docs/rules.md",
+		"--orchestrator-rules", "Delegate.",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPut || capture.path != "/api/v1/projects/demo/config" {
+		t.Fatalf("request = %s %s, want PUT /api/v1/projects/demo/config", capture.method, capture.path)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.AgentRules != "Run tests." || got.Config.AgentRulesFile != "docs/rules.md" || got.Config.OrchestratorRules != "Delegate." {
+		t.Fatalf("rules config = %#v", got.Config)
+	}
+	if !strings.Contains(out, "updated config for project demo") {
+		t.Fatalf("output missing update message:\n%s", out)
 	}
 }
 

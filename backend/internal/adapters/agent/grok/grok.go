@@ -5,9 +5,11 @@
 // hook installation (which writes .claude/settings.local.json with AO
 // hook commands). Grok will pick them up via its compat layer.
 //
-// Launch uses `-p <prompt>` for the initial task (in-command delivery).
-// Permission bypass uses `--always-approve`. We also pass `--no-auto-update`
-// for headless/scripted use (parity with Codex no-update).
+// Launch uses a positional prompt for the initial task (in-command delivery).
+// AO's standing instructions are appended with `--rules` so Grok's built-in
+// coding-agent system prompt is preserved. Permission handling uses
+// `--permission-mode`. We also pass `--no-auto-update` for headless/scripted use
+// (parity with Codex no-update).
 // Restore prefers the hook-captured native session id via `-r <id>`.
 //
 // SessionInfo and title/summary flow through the shared claude hook path
@@ -16,6 +18,8 @@ package grok
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -67,8 +71,8 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>] -p <prompt>`.
-// Prompt is delivered via -p (in command).
+// GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>] [-- prompt]`.
+// Prompt is delivered positionally so Grok starts an interactive coding session.
 //
 // Uses --permission-mode (acceptEdits / auto / bypassPermissions) to match
 // `grok -h` output. Default omits the flag so Grok uses its config.
@@ -81,8 +85,16 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = []string{binary, "--no-auto-update"}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
+	systemPrompt, err := launchSystemPromptText(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--rules", systemPrompt)
+	}
+
 	if cfg.Prompt != "" {
-		cmd = append(cmd, "-p", cfg.Prompt)
+		cmd = append(cmd, "--", cfg.Prompt)
 	}
 
 	return cmd, nil
@@ -149,6 +161,13 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 4)
 	cmd = append(cmd, binary, "--no-auto-update")
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	systemPrompt, err := restoreSystemPromptText(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--rules", systemPrompt)
+	}
 	cmd = append(cmd, "-r", agentSessionID)
 	return cmd, true, nil
 }
@@ -197,4 +216,29 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
 	}
+}
+
+// Grok's --rules flag accepts inline text only. AO usually supplies both inline
+// text and an AO-owned file; read the file only when inline instructions are not
+// available.
+func launchSystemPromptText(cfg ports.LaunchConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func restoreSystemPromptText(cfg ports.RestoreConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func systemPromptTextFrom(inline, file string) (string, error) {
+	if inline != "" {
+		return inline, nil
+	}
+	if file == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return "", fmt.Errorf("grok: read system prompt file: %w", err)
+	}
+	return strings.TrimRight(string(data), "\n"), nil
 }

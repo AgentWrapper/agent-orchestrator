@@ -1,0 +1,365 @@
+/*
+ * Design tokens — Agent Orchestrator frontend
+ * ============================================
+ * Source of truth for the app (Electron renderer) visual system.
+ * Extracted from the existing dark-first Cursor-like UI in
+ * src/renderer/styles.css — not a restyle.
+ *
+ * Theme switching:
+ *   - Default (:root)              → dark
+ *   - :root[data-theme="light"]    → light (renderer Zustand toggle)
+ *   - :root.dark / .dark           → alias for landing/docs (Fumadocs)
+ *
+ * Imported by src/renderer/styles.css. See DESIGN_TOKENS.md.
+ */
+
+:root,
+:root.dark,
+.dark {
+	/* ── Color scheme hint for native form controls / scrollbars ── */
+	color-scheme: dark;
+
+	/* ═══════════════════════════════════════════════════════════════
+	   COLOR — semantic (swap these per theme; do not invent new roles
+	   for one-off hex — map one-offs to the nearest existing role)
+	   ═══════════════════════════════════════════════════════════════ */
+
+	/* Surfaces (near-black ramp) */
+	--color-bg-primary: #0a0b0d;
+	--color-bg-secondary: #15171b;
+	--color-bg-tertiary: #1b1d22;
+	--color-bg-elevated: #212329;
+	--color-bg-sidebar: #08090b;
+	--color-bg-terminal: #15171b;
+
+	/* Text */
+	--color-text-primary: #f4f5f7;
+	--color-text-muted: #9ba1aa;
+	--color-text-passive: #646a73;
+	--color-text-terminal: #d7d7d2;
+	--color-text-terminal-dim: #7c7c7c;
+
+	/* Borders (hairline white-alpha on dark) */
+	--color-border: rgb(255 255 255 / 0.06);
+	--color-border-strong: rgb(255 255 255 / 0.1);
+
+	/* Accent — refined blue (primary actions, focus, active session) */
+	--color-accent: #4d8dff;
+	--color-accent-foreground: #ffffff;
+	--color-accent-weak: rgb(77 141 255 / 0.16);
+	--color-accent-dim: #24406e;
+
+	/* Status — matches daemon derived statuses */
+	--color-working: #f59f4c; /* agent working */
+	--color-warning: #e8c14a; /* needs-you / amber */
+	--color-success: #74b98a; /* mergeable */
+	--color-success-bright: #8bdc75; /* reviewer role highlight (was hardcoded) */
+	--color-danger: #ef6b6b; /* fail */
+	--color-purple: #a78bfa; /* accessory / magenta lane */
+
+	/* Interactive overlays */
+	--color-interactive-hover: rgb(255 255 255 / 0.04);
+	--color-interactive-active: rgb(255 255 255 / 0.07);
+	--color-overlay-subtle: rgb(255 255 255 / 0.018);
+	--color-overlay-faint: rgb(255 255 255 / 0.02);
+	--color-scrollbar: rgb(255 255 255 / 0.12);
+	--color-scrollbar-hover: rgb(255 255 255 / 0.2);
+	--color-scrim: rgb(0 0 0 / 0.55);
+
+	/* ═══════════════════════════════════════════════════════════════
+	   TYPOGRAPHY
+	   ═══════════════════════════════════════════════════════════════ */
+
+	--font-family-base:
+		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue",
+		sans-serif;
+	--font-family-mono:
+		"JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono", "FiraCode Nerd Font",
+		"MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font", "Hack Nerd Font Mono", "Hack Nerd Font",
+		"Symbols Nerd Font Mono", "Symbols Nerd Font", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		"Liberation Mono", "Courier New", monospace;
+
+	/* Scale — dense UI chrome uses half-steps between base sizes */
+	--font-size-2xs: 10.5px; /* uppercase meta, board footers */
+	--font-size-xs: 10px; /* micro labels, tight pills */
+	--font-size-caption: 11px; /* badges, kanban labels */
+	--font-size-sm-md: 11.5px; /* inspector tabs, status pills */
+	--font-size-sm: 12px; /* secondary chrome / Tailwind text-xs */
+	--font-size-md-sm: 12.5px; /* kv rows, PR summaries */
+	--font-size-base: 13px; /* dense controls (board buttons) */
+	--font-size-brand: 14.5px; /* titlebar project name */
+	--font-size-md: 14px; /* body / Tailwind text-sm */
+	--font-size-subtitle: 15px; /* dialog titles, stat values */
+	--font-size-heading-sm: 17px; /* empty-state headings */
+	--font-size-heading: 21px; /* dashboard subhead */
+	--font-size-heading-lg: 22px; /* preview mock headings */
+
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+
+	--line-height-normal: 1.5;
+	--line-height-snug: 1.42;
+	--line-height-row: 1.25rem; /* 20px — helper rows at text-xs / text-control */
+	--line-height-body-md: 1.55;
+	--line-height-relaxed: 1.6;
+	--line-height-loose: 1.7;
+
+	/* Letter-spacing — uppercase meta, tight headings */
+	--tracking-tight-xl: -0.025em;
+	--tracking-tight-lg: -0.015em;
+	--tracking-tight: -0.01em;
+	--tracking-wide-xs: 0.04em;
+	--tracking-wide-sm: 0.05em;
+	--tracking-wide: 0.06em;
+	--tracking-wide-md: 0.08em;
+	--tracking-wide-lg: 0.09em;
+	--tracking-wide-xl: 0.12em;
+
+	/* Motion */
+	--duration-fast: 120ms;
+	--duration-normal: 150ms;
+
+	/* ═══════════════════════════════════════════════════════════════
+	   SPACING — 4px base (audit: 4/6/8/10/12/14/16/18 most common)
+	   Prefer even steps; map odd pixels (5/7/9/11/13/15) to nearest.
+	   ═══════════════════════════════════════════════════════════════ */
+
+	--space-0_5: 2px;
+	--space-0_75: 3px;
+	--space-1: 4px;
+	--space-1_25: 5px;
+	--space-1_5: 6px;
+	--space-1_75: 7px;
+	--space-2: 8px;
+	--space-2_25: 9px;
+	--space-2_5: 10px;
+	--space-2_75: 11px;
+	--space-3: 12px;
+	--space-3_25: 13px;
+	--space-3_5: 14px;
+	--space-3_75: 15px;
+	--space-4: 16px;
+	--space-4_5: 18px;
+	--space-5: 20px;
+	--space-5_5: 22px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--space-10: 40px;
+
+	/* ═══════════════════════════════════════════════════════════════
+	   Z-INDEX — stacking layers
+	   ═══════════════════════════════════════════════════════════════ */
+
+	--z-chrome: 10;
+	--z-titlebar: 20;
+	--z-overlay: 50;
+
+	/* ═══════════════════════════════════════════════════════════════
+	   RADIUS
+	   ═══════════════════════════════════════════════════════════════ */
+
+	--radius-xs: 3px; /* inline rename inputs, hairline controls */
+	--radius-sm: 4px; /* chips, tiny controls — absorb old 5px */
+	--radius-md: 6px; /* default controls — absorb old 7px */
+	--radius-lg: 8px; /* cards, larger buttons */
+	--radius-panel: 13px; /* kanban columns, empty-state cards */
+	--radius-full: 999px; /* pills, avatars, status dots */
+
+	/* ═══════════════════════════════════════════════════════════════
+	   BREAKPOINTS — documented here; @media cannot use var()
+	   ═══════════════════════════════════════════════════════════════ */
+
+	--breakpoint-layout-narrow: 680px; /* reviewer grid — @custom-media in styles.css */
+	--breakpoint-inspector-compact: 300px; /* inspector @container */
+
+	/* ═══════════════════════════════════════════════════════════════
+	   LAYOUT — fixed chrome dimensions (not spacing scale)
+	   ═══════════════════════════════════════════════════════════════ */
+
+	--ring-width-focus: 3px; /* select trigger focus ring */
+
+	--size-hairline: 1px;
+	--size-icon-2xs: 12px;
+	--size-icon-xs: 9px;
+	--size-icon-sm: 13px;
+	--size-icon-md: 14px;
+	--size-icon-base: 16px;
+	--size-icon-lg: 15px;
+	--size-icon-xl: 18px;
+	--size-dot-sm: 7px;
+	--size-control-form: 32px;
+	--size-control-xs: 20px;
+	--size-control-sm: 24px;
+	--size-control-md: 28px;
+	--size-control-lg: 34px;
+	--size-control-xl: 38px;
+	--size-control-board-sm: 30px;
+	--size-control-board: 36px;
+	--size-table-head: var(--space-10);
+	--size-toolbar: 56px;
+	--size-inspector-tabs: 47px;
+	--size-row-md: 52px;
+	--size-browser-url: 29px;
+	--size-browser-min: 320px;
+	--size-sidebar-icon: 48px;
+	--size-sidebar-default: 240px;
+	--size-sidebar-mobile: 288px;
+	--size-titlebar-cluster-left: 79px;
+	--size-titlebar-content-offset: 180px;
+	--size-resize-handle: 7px;
+	--size-resize-handle-offset: 3px;
+	--size-kanban-glow: 130px;
+	--size-kv-label: 74px;
+	--size-notification-width: 380px;
+	--size-notification-max-height: 420px;
+	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
+	--size-notification-icon: 26px;
+	--size-font-size-label: 44px;
+	--size-inspector-status-chip-max: 58%;
+	--size-board-empty: 460px;
+	--size-preview-max: 760px;
+	--size-preview-content: 400px;
+	--size-pr-table-actions: 220px;
+	--size-pr-col-number: 64px;
+	--size-pr-col-state: 96px;
+	--size-content-max: 320px;
+	--size-dialog-md: 420px;
+	--size-dialog-lg: 440px;
+	--size-dialog-orchestrator: 460px;
+	--size-dialog-xl: 560px;
+	--size-branch-chip: 13rem;
+	--size-inspector-min: 280px;
+	--size-textarea-min: 112px;
+	--size-sidebar-project-actions: 84px;
+
+	--size-empty-offset-y: 5vh; /* board empty-state vertical nudge */
+
+	/* Browser static preview (light mock page inside dark app) */
+	--color-preview-bg: #f7f8fb;
+	--color-preview-fg: #17202a;
+	--color-preview-border: #dfe4ea;
+	--color-preview-muted: #687384;
+	--color-preview-link: #2f5b9d;
+	--color-preview-card-border: #d7dee8;
+	--color-preview-heading: #111827;
+	--color-preview-body: #526070;
+	--color-preview-success-bg: #e7f8ed;
+	--color-preview-tile-border: #e1e7ef;
+	--color-preview-tile-bg: #fbfcfe;
+	--color-preview-terminal-border: #dce4ef;
+	--color-preview-terminal-bg: #0f172a;
+	--color-preview-terminal-fg: #cbd5e1;
+
+	/* Mock project accent swatches (sidebar dots) */
+	--color-project-accent-mint: #6ee7b7;
+	--color-project-accent-sky: #93c5fd;
+
+	/* xterm extended palette (ANSI bright + selection) */
+	--color-term-cyan: #6fb3c9;
+	--color-term-selection-dark: rgb(77 141 255 / 0.3);
+	--color-term-selection-light: rgb(37 99 235 / 0.25);
+	--color-term-selection-inactive: rgb(128 128 128 / 0.2);
+	--color-term-selection-inactive-light: rgb(128 128 128 / 0.15);
+	--color-term-bright-red: #ff8a8a;
+	--color-term-bright-green: #8fd6a6;
+	--color-term-bright-yellow: #f0d06b;
+	--color-term-bright-blue: #7eaaff;
+	--color-term-bright-magenta: #c4b0fc;
+	--color-term-bright-cyan: #8fcfe0;
+	--color-term-red-light: #b42318;
+	--color-term-magenta-light: #8e24aa;
+	--color-term-cyan-light: #0b7285;
+	--color-term-white-light: #4b5563;
+	--color-term-bright-black-light: #374151;
+	--color-term-bright-red-light: #912018;
+	--color-term-bright-green-light: #176639;
+	--color-term-bright-yellow-light: #6f4a00;
+	--color-term-bright-blue-light: #1d4ed8;
+	--color-term-bright-magenta-light: #7b1fa2;
+	--color-term-bright-cyan-light: #155e75;
+
+	/* ═══════════════════════════════════════════════════════════════
+	   SHADOWS
+	   ═══════════════════════════════════════════════════════════════ */
+
+	--elevation-sm: 0 1px 0 rgb(0 0 0 / 0.35);
+	--elevation-md: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.5);
+	--elevation-lg: 0 8px 40px rgb(0 0 0 / 0.55);
+	--elevation-xl: 0 1px 0 rgb(0 0 0 / 0.4), 0 20px 50px rgb(0 0 0 / 0.55);
+
+	/* @theme bridge — avoids Tailwind theme key / :root name collisions */
+	--bridge-border: var(--color-border);
+	--bridge-border-strong: var(--color-border-strong);
+	--bridge-accent: var(--color-accent);
+	--bridge-accent-fg: var(--color-accent-foreground);
+	--bridge-accent-weak: var(--color-accent-weak);
+	--bridge-accent-dim: var(--color-accent-dim);
+	--bridge-working: var(--color-working);
+	--bridge-success: var(--color-success);
+	--bridge-warning: var(--color-warning);
+	--bridge-danger: var(--color-danger);
+	--bridge-interactive-hover: var(--color-interactive-hover);
+	--bridge-interactive-active: var(--color-interactive-active);
+	--bridge-scrim: var(--color-scrim);
+	--bridge-preview-muted: var(--color-preview-muted);
+	--bridge-preview-link: var(--color-preview-link);
+	--bridge-preview-heading: var(--color-preview-heading);
+	--bridge-preview-body: var(--color-preview-body);
+	--bridge-preview-card: var(--color-preview-card-border);
+	--bridge-preview-success: var(--color-preview-success-bg);
+	--bridge-preview-tile: var(--color-preview-tile-bg);
+	--bridge-preview-tile-border: var(--color-preview-tile-border);
+	--bridge-preview-terminal: var(--color-preview-terminal-bg);
+	--bridge-preview-terminal-border: var(--color-preview-terminal-border);
+	--bridge-preview-terminal-fg: var(--color-preview-terminal-fg);
+
+	--font-sans: var(--font-family-base);
+	--font-mono: var(--font-family-mono);
+}
+
+/* Light theme — set via data-theme (apply-initial-theme + Zustand toggle). */
+
+:root[data-theme="light"] {
+	color-scheme: light;
+
+	--color-bg-primary: #fcfcfc;
+	--color-bg-secondary: #ffffff;
+	--color-bg-tertiary: #ededee;
+	--color-bg-elevated: #e4e4e6;
+	--color-bg-sidebar: #fcfcfc;
+	--color-bg-terminal: #fafafa;
+
+	--color-text-primary: #1a1a1a;
+	--color-text-muted: #666666;
+	--color-text-passive: #9a9a9a;
+	--color-text-terminal: #24292f;
+	--color-text-terminal-dim: #6b7280;
+
+	--color-border: #e3e3e5;
+	--color-border-strong: #d4d4d6;
+
+	--color-accent: #2563eb;
+	--color-accent-foreground: #ffffff;
+	--color-accent-weak: rgb(37 99 235 / 0.12);
+	--color-accent-dim: #bcd2f7;
+
+	--color-working: #c2410c;
+	--color-warning: #9a6b00;
+	--color-success: #1a7f37;
+	--color-success-bright: #176639;
+	--color-danger: #c0392b;
+	--color-purple: #7c3aed;
+
+	--color-interactive-hover: rgb(0 0 0 / 0.04);
+	--color-interactive-active: rgb(0 0 0 / 0.07);
+	--color-overlay-subtle: rgb(0 0 0 / 0.02);
+	--color-overlay-faint: rgb(0 0 0 / 0.03);
+	--color-scrollbar: rgb(0 0 0 / 0.12);
+	--color-scrollbar-hover: rgb(0 0 0 / 0.2);
+	--color-scrim: rgb(0 0 0 / 0.45);
+
+	--elevation-sm: 0 1px 0 rgb(0 0 0 / 0.06);
+	--elevation-md: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
+	--elevation-lg: 0 16px 48px rgb(20 30 50 / 0.16);
+	--elevation-xl: 0 1px 0 rgb(0 0 0 / 0.03), 0 20px 50px rgb(20 30 50 / 0.14);
+}

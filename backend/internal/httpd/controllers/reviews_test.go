@@ -20,7 +20,9 @@ import (
 
 type fakeReviewService struct {
 	triggerErr error
+	cancelErr  error
 	trigger    reviewcore.TriggerResult
+	cancel     reviewcore.CancelResult
 	list       reviewcore.SessionReviews
 	submitted  []reviewsvc.SubmittedReview
 }
@@ -37,6 +39,13 @@ func (f *fakeReviewService) Trigger(context.Context, domain.SessionID) (reviewco
 
 func (f *fakeReviewService) Submit(context.Context, domain.SessionID, string, domain.ReviewVerdict, string, string) (domain.ReviewRun, error) {
 	return domain.ReviewRun{}, nil
+}
+
+func (f *fakeReviewService) Cancel(context.Context, domain.SessionID) (reviewcore.CancelResult, error) {
+	if f.cancelErr != nil {
+		return reviewcore.CancelResult{}, f.cancelErr
+	}
+	return f.cancel, nil
 }
 
 func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, reviews []reviewsvc.SubmittedReview) ([]domain.ReviewRun, error) {
@@ -122,6 +131,26 @@ func TestReviewsTriggerIncludesBatchFields(t *testing.T) {
 	for _, unwanted := range []string{`"reviewItems"`, `"items"`, `"createdReviews"`, `"createdRuns"`, `"reviewRuns"`, `"review":`} {
 		if strings.Contains(string(body), unwanted) {
 			t.Fatalf("body contains deprecated field %s: %s", unwanted, body)
+		}
+	}
+}
+
+func TestReviewsCancelIncludesReviewStates(t *testing.T) {
+	srv := newReviewTestServer(t, &fakeReviewService{cancel: reviewcore.CancelResult{
+		ReviewerHandleID: "review-mer-1",
+		Reviews: []reviewcore.PRReviewState{
+			{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview},
+		},
+	}})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/cancel", "")
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	for _, want := range []string{`"reviews"`, `"needs_review"`, `"reviewerHandleId":"review-mer-1"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
 		}
 	}
 }
