@@ -26,6 +26,7 @@ const maxDisplayNameLen = 20
 type spawnOptions struct {
 	project        string
 	harness        string
+	kind           string
 	branch         string
 	prompt         string
 	issue          string
@@ -40,6 +41,7 @@ type spawnOptions struct {
 type spawnRequest struct {
 	ProjectID   string `json:"projectId"`
 	IssueID     string `json:"issueId,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 	Harness     string `json:"harness,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
@@ -82,7 +84,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			opts.project = project.ID
 
-			harness, err := resolveSpawnHarness(opts.harness, project)
+			harness, err := resolveSpawnHarness(opts.harness, opts.kind, project)
 			if err != nil {
 				return err
 			}
@@ -104,6 +106,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			req := spawnRequest{
 				ProjectID:   opts.project,
 				IssueID:     opts.issue,
+				Kind:        opts.kind,
 				Harness:     opts.harness,
 				Branch:      opts.branch,
 				Prompt:      opts.prompt,
@@ -157,7 +160,8 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; orchestrator spawns default to project orchestrator.agent; required if the project has none)")
+	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
@@ -294,14 +298,23 @@ func pathContains(root, child string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func resolveSpawnHarness(explicit string, project projectDetails) (string, error) {
+func resolveSpawnHarness(explicit, kind string, project projectDetails) (string, error) {
 	if harness := strings.TrimSpace(explicit); harness != "" {
 		return harness, nil
 	}
 	if project.Config != nil {
-		if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
-			return harness, nil
+		if kind == "orchestrator" {
+			if harness := strings.TrimSpace(project.Config.Orchestrator.Agent); harness != "" {
+				return harness, nil
+			}
+		} else {
+			if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
+				return harness, nil
+			}
 		}
+	}
+	if kind == "orchestrator" {
+		return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --orchestrator-agent <agent>`", project.ID)}
 	}
 	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>`", project.ID)}
 }
