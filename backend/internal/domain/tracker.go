@@ -79,8 +79,8 @@ type ListFilter struct {
 }
 
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
-// Enabled requires an explicit assignee eligibility rule so turning intake on
-// cannot accidentally drain an entire issue backlog.
+// Assignment is the admission signal: enabled intake requires an assignee
+// selector, and unassigned issues remain inert.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
@@ -88,8 +88,8 @@ type TrackerIntakeConfig struct {
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
-	// Assignee narrows eligible issues to one assignee. Provider-specific values
-	// such as "*" are passed through unchanged.
+	// Assignee authorizes eligible issues. "*" means any assigned issue. Empty
+	// and "none" are invalid when intake is enabled.
 	Assignee string `json:"assignee,omitempty"`
 }
 
@@ -117,8 +117,12 @@ func (c TrackerIntakeConfig) Validate() error {
 	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.Assignee) == "" {
+	assignee := strings.TrimSpace(c.Assignee)
+	if assignee == "" {
 		return fmt.Errorf("trackerIntake: assignee is required when enabled")
+	}
+	if strings.EqualFold(assignee, "none") {
+		return fmt.Errorf("trackerIntake.assignee: %q would authorize unassigned issues", c.Assignee)
 	}
 	return nil
 }

@@ -235,11 +235,14 @@ func TestIssueMatchesConfigAssigneeSpecialValues(t *testing.T) {
 	if issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "*"}) {
 		t.Fatal("unassigned issue should not match assignee=*")
 	}
-	if !issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
-		t.Fatal("unassigned issue should match assignee=none")
+	if issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
+		t.Fatal("assignee=none must fail closed")
 	}
 	if issueMatchesConfig(assigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
 		t.Fatal("assigned issue should not match assignee=none")
+	}
+	if issueMatchesConfig(assigned, domain.TrackerIntakeConfig{}) {
+		t.Fatal("empty assignee must fail closed")
 	}
 }
 
