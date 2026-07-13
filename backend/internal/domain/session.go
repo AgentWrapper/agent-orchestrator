@@ -49,6 +49,27 @@ const (
 	KindPrime        SessionKind = "prime"
 )
 
+// WithDefault resolves the zero value to the worker kind: an unspecified kind
+// has always meant "a worker".
+func (k SessionKind) WithDefault() SessionKind {
+	if k == "" {
+		return KindWorker
+	}
+	return k
+}
+
+// IsKnown reports whether k is one of AO's session kinds. Every kind carries
+// role-specific standing instructions, so an unknown kind would launch an agent
+// with none — spawn rejects it at both the HTTP and manager boundaries.
+func (k SessionKind) IsKnown() bool {
+	switch k {
+	case KindWorker, KindOrchestrator, KindPrime:
+		return true
+	default:
+		return false
+	}
+}
+
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {

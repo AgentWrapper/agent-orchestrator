@@ -120,3 +120,118 @@ func TestIsMarkdownPath(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenConfinedRejectsSymlinkedWorkspaceRoot pins #293 H2's remaining hole:
+// os.OpenRoot follows symlinks in the ROOT's own name, so a workspace directory
+// replaced by a symlink to the host filesystem (an agent can do this inside its
+// own workspace) would silently re-root confinement at the link's target and
+// serve host files. Confinement must be acquired without following the
+// workspace's final path component.
+func TestOpenConfinedRejectsSymlinkedWorkspaceRoot(t *testing.T) {
+	tmp := t.TempDir()
+	outside := filepath.Join(tmp, "outside")
+	if err := os.MkdirAll(filepath.Join(outside, "etc"), 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	writeEntryFile(t, filepath.Join(outside, "etc", "passwd"), "root:x:0:0", time.Time{})
+
+	// The session's workspace directory IS a symlink pointing out of the managed
+	// tree — the escape the nested-symlink guard does not see.
+	ws := filepath.Join(tmp, "workspace")
+	if err := os.Symlink(outside, ws); err != nil {
+		t.Fatalf("symlink workspace: %v", err)
+	}
+
+	f, _, err := OpenConfined(ws, "etc/passwd")
+	if err == nil {
+		_ = f.Close()
+		t.Fatal("OpenConfined served a file through a symlinked workspace root; confinement escaped")
+	}
+}
+
+// TestOpenConfinedRejectsSymlinkedWorkspaceParent pins the managed-worktree
+// shape of #293 H2 cycle 2: protecting only the workspace's FINAL component is
+// not enough. os.OpenRoot(parent) resolves `parent` — and everything above it —
+// like any other path, so an agent that renames its workspace's parent
+// directory and drops a symlink to the host tree in its place re-roots
+// confinement at the link's target while the stored workspace path is
+// unchanged. Every component of the workspace path is agent-writable; none of
+// them may be followed through a symlink.
+func TestOpenConfinedRejectsSymlinkedWorkspaceParent(t *testing.T) {
+	tmp := realTempDir(t)
+	// The host tree the agent wants read: it carries the SAME final component
+	// name as the workspace, so the stored path still resolves after the swap.
+	host := filepath.Join(tmp, "host")
+	writeEntryFile(t, filepath.Join(host, "session", "secret.html"), "<main>host secret</main>", time.Time{})
+	// The real managed tree.
+	writeEntryFile(t, filepath.Join(tmp, "real", "session", "index.html"), "<main>app</main>", time.Time{})
+
+	// The agent renames `<tmp>/managed` away and replaces it with a symlink to
+	// the host tree. The daemon still holds `<tmp>/managed/session`.
+	if err := os.Symlink(host, filepath.Join(tmp, "managed")); err != nil {
+		t.Fatalf("symlink managed root: %v", err)
+	}
+	ws := filepath.Join(tmp, "managed", "session")
+
+	f, _, err := OpenConfined(ws, "secret.html")
+	if err == nil {
+		_ = f.Close()
+		t.Fatal("OpenConfined served a host file through a symlinked workspace PARENT; confinement escaped")
+	}
+	if _, ok := DiscoverEntry(ws); ok {
+		t.Fatal("DiscoverEntry advertised an entry through a symlinked workspace PARENT")
+	}
+}
+
+// TestOpenConfinedRejectsSymlinkedWorkspaceAncestor pins the in-place shape: an
+// in-place session's workspace is an arbitrary registered repository path, so
+// the escape needs no daemon-managed directory at all — swapping ANY ancestor
+// component (here the grandparent) for a symlink re-roots the preview surface
+// at the link's target.
+func TestOpenConfinedRejectsSymlinkedWorkspaceAncestor(t *testing.T) {
+	tmp := realTempDir(t)
+	// `<tmp>/home/user/.ssh/id_ed25519.html`: the host material an escape reaches.
+	host := filepath.Join(tmp, "home")
+	writeEntryFile(t, filepath.Join(host, "user", ".ssh", "id.html"), "<main>host key</main>", time.Time{})
+	// The registered in-place repo `<tmp>/sandbox/user/.ssh` (a real repo path).
+	writeEntryFile(t, filepath.Join(tmp, "real", "user", ".ssh", "index.html"), "<main>app</main>", time.Time{})
+
+	if err := os.Symlink(host, filepath.Join(tmp, "sandbox")); err != nil {
+		t.Fatalf("symlink sandbox: %v", err)
+	}
+	ws := filepath.Join(tmp, "sandbox", "user", ".ssh")
+
+	f, _, err := OpenConfined(ws, "id.html")
+	if err == nil {
+		_ = f.Close()
+		t.Fatal("OpenConfined served a host file through a symlinked workspace ANCESTOR; confinement escaped")
+	}
+}
+
+// realTempDir returns a t.TempDir() with every symlink resolved, so a test that
+// asserts on symlink handling is asserting on the symlinks it created and not
+// on one the platform put in TMPDIR (macOS resolves /var -> /private/var).
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("eval symlinks in temp dir: %v", err)
+	}
+	return dir
+}
+
+// A workspace root that is a real directory still serves its own files: the
+// root-symlink guard must not break the ordinary preview path.
+func TestOpenConfinedServesRealWorkspaceRoot(t *testing.T) {
+	ws := t.TempDir()
+	writeEntryFile(t, filepath.Join(ws, "sub", "index.html"), "<main>app</main>", time.Time{})
+
+	f, name, err := OpenConfined(ws, "sub/index.html")
+	if err != nil {
+		t.Fatalf("OpenConfined: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	if name != "sub/index.html" {
+		t.Fatalf("name = %q, want sub/index.html", name)
+	}
+}

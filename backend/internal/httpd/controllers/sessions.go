@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +28,9 @@ const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
 	maxDisplayNameLen = 20
+	// maxPreviewMarkdownBytes bounds the Markdown the preview route renders, so a
+	// pathological workspace file cannot balloon one request's memory.
+	maxPreviewMarkdownBytes = 4 << 20
 )
 
 var errPreviewFileNotFound = errors.New("preview file not found")
@@ -139,8 +143,13 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
 		return
 	}
-	if in.Kind == "" {
-		in.Kind = domain.KindWorker
+	in.Kind = in.Kind.WithDefault()
+	// An unknown kind is not a harmless string: it persists, launches, and gets
+	// no worker/orchestrator standing instructions. Reject it here, and again at
+	// the manager's invariant boundary.
+	if !in.Kind.IsKnown() {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_KIND", "kind must be one of: worker, orchestrator", nil)
+		return
 	}
 	if in.Kind == domain.KindPrime {
 		envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the env-gated supervisor", nil)
@@ -196,28 +205,39 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteError(w, r, err)
 		return
 	}
-	file, ok := confinedPreviewPath(sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
-	if !ok {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
-		return
-	}
-	if previewutil.IsMarkdownPath(file) {
-		c.servePreviewMarkdown(w, r, file)
-		return
-	}
-	http.ServeFile(w, r, file)
-}
-
-// servePreviewMarkdown renders a workspace Markdown file to a self-contained
-// HTML document so the browser panel displays formatted content instead of raw
-// source.
-func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http.Request, file string) {
-	source, err := os.ReadFile(file)
+	// Open beneath the workspace root rather than resolving a path and handing it
+	// to http.ServeFile: ServeFile follows symlinks, so a lexically-confined path
+	// could still serve any daemon-readable host file through a workspace-local
+	// symlink. OpenConfined refuses to leave the workspace after resolution.
+	file, name, err := previewutil.OpenConfined(sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
-	rendered, err := previewutil.RenderMarkdown(source, filepath.Base(file))
+	defer func() { _ = file.Close() }()
+
+	if previewutil.IsMarkdownPath(name) {
+		c.servePreviewMarkdown(w, r, file, name)
+		return
+	}
+	info, err := file.Stat()
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	http.ServeContent(w, r, path.Base(name), info.ModTime(), file)
+}
+
+// servePreviewMarkdown renders a workspace Markdown file to a self-contained
+// HTML document so the browser panel displays formatted content instead of raw
+// source. It reads the already-confined handle, never a re-resolved path.
+func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http.Request, file io.Reader, name string) {
+	source, err := io.ReadAll(io.LimitReader(file, maxPreviewMarkdownBytes))
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	rendered, err := previewutil.RenderMarkdown(source, path.Base(name))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -795,15 +815,13 @@ func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, ra
 	if raw == "" || hasURLScheme(raw) {
 		return "", false
 	}
-	file, ok := confinedPreviewPath(workspacePath, raw)
-	if !ok {
+	// Same open-beneath confinement as the files route: a target that only looks
+	// workspace-local but resolves outside through a symlink is not proxied.
+	file, entry, err := previewutil.OpenConfined(workspacePath, raw)
+	if err != nil {
 		return "", false
 	}
-	info, err := os.Stat(file)
-	if err != nil || info.IsDir() {
-		return "", false
-	}
-	entry := strings.TrimPrefix(path.Clean("/"+raw), "/")
+	_ = file.Close()
 	return previewFileURL(r, id, entry), true
 }
 
@@ -866,10 +884,6 @@ func hasURLScheme(raw string) bool {
 		}
 	}
 	return false
-}
-
-func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
-	return previewutil.ConfinedPath(workspacePath, assetPath)
 }
 
 func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {

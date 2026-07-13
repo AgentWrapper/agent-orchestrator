@@ -10,6 +10,31 @@ func revParseVerifyArgs(repo, ref string) []string {
 	return []string{"-C", repo, "rev-parse", "--verify", "--quiet", ref}
 }
 
+// checkRefFormatArgs validates a FULL ref name (refs/…) syntactically: exit 0
+// for a well-formed name, non-zero for a malformed one. It is the only git
+// command that separates those two, and callers MUST run it before reading
+// anything into for-each-ref's output (see refCommitArgs).
+func checkRefFormatArgs(repo, ref string) []string {
+	return []string{"-C", repo, "check-ref-format", ref}
+}
+
+// refCommitArgs prints "<refname> <objectname>" for every ref MATCHING the given
+// pattern. Two properties make its output unsafe to read as a ref lookup, and
+// callers must compensate for both:
+//
+//  1. Empty output (still exit 0) does not mean "the ref is gone". git prints
+//     nothing for a ref that is absent AND for a name that could never be a ref
+//     at all ("refs/bad name", "refs/*"). Validate the name with
+//     checkRefFormatArgs first; only for a name git accepts does empty output
+//     mean absent.
+//  2. It is not an exact lookup: the argument is a pattern that also matches at
+//     "/" boundaries, so refs/a/b reports refs/a/b/c when only the child exists.
+//     Match %(refname) against the requested ref rather than taking whatever
+//     object comes back.
+func refCommitArgs(repo, ref string) []string {
+	return []string{"-C", repo, "for-each-ref", "--format=%(refname) %(objectname)", ref}
+}
+
 func worktreeAddBranchArgs(repo, path, branch string) []string {
 	return []string{"-C", repo, "worktree", "add", path, branch}
 }
@@ -98,8 +123,30 @@ func revParseHeadArgs(worktree string) []string {
 // textual conflict markers in the affected files and exits non-zero. New files
 // added in the preserve commit come through as additions. Because -n is used,
 // no sequencer state is left that would require a cherry-pick --quit afterward.
+//
+// --no-rerere-autoupdate keeps the index honest: with the repo's rerere.enabled
+// + rerere.autoupdate (an ordinary developer config, inherited by every worktree
+// of the repo), git replays a recorded resolution and STAGES it, so a conflicted
+// cherry-pick exits non-zero leaving no unmerged entries at all — and the index
+// is exactly how ApplyPreserved tells a conflict from an operational failure.
+// rerere still writes its resolution into the working tree; only the automatic
+// staging of it is suppressed.
 func cherryPickNoCommitArgs(worktree, commitSHA string) []string {
-	return []string{"-C", worktree, "cherry-pick", "--no-commit", commitSHA}
+	return []string{"-C", worktree, "cherry-pick", "--no-commit", "--no-rerere-autoupdate", commitSHA}
+}
+
+// diffAgainstCommitArgs lists the paths that differ between a commit's tree and
+// the current working tree. Empty output means the working tree already holds
+// that commit's content.
+func diffAgainstCommitArgs(worktree, commitSHA string) []string {
+	return []string{"-C", worktree, "diff", "--name-only", commitSHA}
+}
+
+// lsFilesUnmergedArgs lists the index's unmerged (conflicted) entries. Empty
+// output after a failed merge step means the failure was operational, not a
+// conflict: nothing was merged and no conflict markers were written.
+func lsFilesUnmergedArgs(worktree string) []string {
+	return []string{"-C", worktree, "ls-files", "--unmerged"}
 }
 
 // ignoredCountArgs lists files skipped because of .gitignore (dry-run, no mutation).

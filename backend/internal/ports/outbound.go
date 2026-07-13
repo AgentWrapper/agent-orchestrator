@@ -141,7 +141,9 @@ type Workspace interface {
 	// worktree identified by info. On clean success the preserve ref is deleted.
 	// On conflict, the ref is kept, conflict markers are left in the working
 	// tree, and ErrPreservedConflict (wrapped) is returned. The ref must never
-	// be deleted on a failed or conflicted apply.
+	// be deleted on a failed or conflicted apply. A ref that no longer exists —
+	// a clean apply whose caller never got to clear the marker — returns
+	// ErrPreservedRefMissing (wrapped): already-consumed, not a failure.
 	ApplyPreserved(ctx context.Context, info WorkspaceInfo, ref string) error
 }
 
@@ -177,6 +179,12 @@ var (
 	// conflict markers for manual resolution. Adapters wrap this sentinel via
 	// fmt.Errorf so callers can match it with errors.Is.
 	ErrPreservedConflict = errors.New("workspace: preserved apply produced conflicts")
+	// ErrPreservedRefMissing is returned by ApplyPreserved when the recorded
+	// preserve ref no longer exists in git. A clean apply deletes the ref, so a
+	// ref that has gone missing is work that already landed — never a reason to
+	// abandon a restore. Callers treat it as an already-consumed marker and
+	// carry on.
+	ErrPreservedRefMissing = errors.New("workspace: preserved ref no longer exists")
 	// ErrRuntimePrerequisite reports a missing host prerequisite for the selected
 	// runtime before a session can be created.
 	ErrRuntimePrerequisite = errors.New("runtime: prerequisite missing")

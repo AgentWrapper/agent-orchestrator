@@ -45,6 +45,11 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrInvalidKind means the spawn named a session kind AO does not know. Only
+	// the known kinds carry standing role instructions (buildSystemPrompt has
+	// none for anything else), so an unknown kind would launch a roleless agent.
+	// The API maps it to a 400.
+	ErrInvalidKind = errors.New("session: unknown session kind")
 	// ErrWorkerConcurrencyCap means the project already has the configured
 	// maximum number of live worker sessions. The API maps it to a 409.
 	ErrWorkerConcurrencyCap = errors.New("session: worker concurrency cap reached")
@@ -225,6 +230,10 @@ type Manager struct {
 	logger      *slog.Logger
 	telemetry   ports.EventSink
 	spawnMu     sync.Mutex
+	// commands serializes the mutating lifecycle commands of a single session
+	// (kill, retire, restore, switch) and carries its terminal generation, so a
+	// kill can never be overwritten by a relaunch that was already in flight.
+	commands *commandGate
 
 	// mixHealth is the worker-mix selection surface's candidate-health circuit
 	// breaker (GH #142): the shared policy that, when an exact selected bucket
@@ -379,6 +388,7 @@ func New(d Deps) *Manager {
 		},
 		logger:    d.Logger,
 		telemetry: d.Telemetry,
+		commands:  newCommandGate(),
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -412,6 +422,13 @@ func New(d Deps) *Manager {
 // materialization fails the still-seed row is deleted outright; a later failure
 // parks the row as terminated and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	// Role invariant, enforced before any durable state: an unspecified kind is a
+	// worker, and anything AO does not know is rejected rather than launched with
+	// no standing role instructions at all.
+	cfg.Kind = cfg.Kind.WithDefault()
+	if !cfg.Kind.IsKnown() {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrInvalidKind, cfg.Kind)
+	}
 	project, err := m.loadProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
@@ -1028,7 +1045,27 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // failed partway, handle lost after a crash) is still terminated after the
 // available destroy steps are skipped so it can be cleaned up from the
 // dashboard.
+//
+// Kill takes the session's command slot for its whole sequence, so it never
+// interleaves with a restore/switch: it reads the session row AFTER the slot is
+// held, which is what lets it tear down a runtime a relaunch created moments
+// earlier. Its terminal-intent bump makes every relaunch that was already
+// queued abort rather than resurrect the row.
+//
+// The bump records ACCEPTED terminal intent, not a successful teardown, so it
+// is deferred over EVERY return path (it runs while the slot is still held, just
+// before release): a kill that preserves a dirty workspace, or that fails
+// partway, still means the operator asked for this session to die, and a
+// switch/restore already queued behind it must abort rather than rebuild a
+// runtime for it.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
+	ticket, err := m.commands.begin(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("kill %s: %w", id, err)
+	}
+	defer ticket.release()
+	defer m.commands.markTerminal(id)
+
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
@@ -1095,7 +1132,19 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 //
 // This deliberately does not write a session_worktrees row: those rows are
 // boot-restore markers, and a replaced orchestrator must stay terminated.
+//
+// Like Kill, it runs under the session's command slot and records terminal
+// intent on EVERY return path — including the already-terminated early return —
+// so a concurrent restore/switch cannot bring the retired session back onto the
+// branch the replacement is claiming.
 func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID) error {
+	ticket, err := m.commands.begin(ctx, id)
+	if err != nil {
+		return fmt.Errorf("retire replacement %s: %w", id, err)
+	}
+	defer ticket.release()
+	defer m.commands.markTerminal(id)
+
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return fmt.Errorf("retire replacement %s: %w", id, err)
@@ -1175,7 +1224,21 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs
 // before any durable session write, so a failure never resurrects the row or destroys
 // the worktree (it may hold the agent's prior work).
+//
+// It runs under the session's command slot: a kill that lands while this restore
+// waits (or while it works) wins, and the restore aborts with ErrTerminated
+// rather than relaunching a session the operator has already killed. A restore
+// requested AFTER the kill is unaffected — it is the ordinary revive path.
 func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
+	ticket, err := m.commands.begin(ctx, id)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	defer ticket.release()
+	if ticket.terminalIntentChanged() {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrTerminated)
+	}
+
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
@@ -1308,11 +1371,24 @@ func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHar
 	// Atomically claim the guard before reading the session row: the snapshot,
 	// validation, teardown, and relaunch must describe one switch attempt. If
 	// the row were loaded first, a second request could use a stale runtime handle
-	// after an earlier switch completed.
+	// after an earlier switch completed. Claiming it BEFORE the command slot also
+	// keeps a double-submit a fast 409 instead of a queued second switch.
 	if !m.lcm.TryBeginSwitch(id) {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrSwitchInProgress)
 	}
 	defer m.lcm.EndSwitch(id)
+
+	// Serialize against kill/retire/restore and abort if the session acquired
+	// terminal intent while this switch waited: MarkSwitched clears IsTerminated
+	// unconditionally, so completing here would resurrect a killed session.
+	ticket, err := m.commands.begin(ctx, id)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
+	}
+	defer ticket.release()
+	if ticket.terminalIntentChanged() {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrTerminated)
+	}
 
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -1887,8 +1963,11 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 //
 // For each saved session:
 //  1. Ensure the worktree exists via workspace.Restore.
-//  2. If a preserve ref is recorded, replay it via ApplyPreserved; on conflict
-//     log and continue (still relaunch the agent, never delete the ref).
+//  2. If a preserve ref is recorded, replay it via ApplyPreserved. A CONFLICT is
+//     an intentional outcome: log it and still relaunch (markers in the tree,
+//     ref kept). Any OTHER apply failure left the work unapplied, so the session
+//     stays terminated with its marker intact and is skipped — a relaunch would
+//     consume the marker and silently lose the preserved work.
 //  3. Relaunch via the existing Restore method.
 //
 // Failures on individual sessions are logged and do not abort the loop.
@@ -1962,7 +2041,9 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 
 		// Step 2: replay preserve ref when one was recorded.
 		if restoredWorkspaceProject {
-			m.applyWorkspaceProjectPreserved(ctx, projectRows)
+			if err := m.applyWorkspaceProjectPreserved(ctx, projectRows); err != nil {
+				continue
+			}
 		} else {
 			var preserveRef string
 			for _, r := range rows {
@@ -1973,13 +2054,27 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			}
 			if preserveRef != "" {
 				if applyErr := m.workspace.ApplyPreserved(ctx, ws, preserveRef); applyErr != nil {
-					if errors.Is(applyErr, ports.ErrPreservedConflict) {
+					switch {
+					case errors.Is(applyErr, ports.ErrPreservedRefMissing):
+						// A clean apply deletes the ref before the marker is dropped, so a
+						// ref the row still names but git no longer has is work that already
+						// landed on an earlier boot. Relaunch instead of retrying forever.
+						m.logger.Warn("restore-all: preserved ref already consumed; continuing the restore",
+							"sessionID", rec.ID, "ref", preserveRef, "error", applyErr)
+					case errors.Is(applyErr, ports.ErrPreservedConflict):
+						// A conflict is an intentional outcome: markers in the tree, ref
+						// kept, relaunch anyway.
 						m.logger.Warn("restore-all: apply preserved produced conflicts; agent relaunched with conflict markers in place",
 							"sessionID", rec.ID, "ref", preserveRef, "error", applyErr)
-					} else {
-						m.logger.Error("restore-all: apply preserved failed", "sessionID", rec.ID, "error", applyErr)
+					default:
+						// ANY other failure means the preserved work was NOT applied:
+						// relaunching here and dropping the marker at the end of the loop
+						// would silently discard the agent's work. Leave the session
+						// terminated with its marker intact so the replay stays retryable.
+						m.logger.Error("restore-all: apply preserved failed; leaving session terminated with its marker for retry",
+							"sessionID", rec.ID, "ref", preserveRef, "error", applyErr)
+						continue
 					}
-					// Continue: always relaunch even on conflict (never delete the ref here).
 				}
 			}
 		}
@@ -2237,13 +2332,24 @@ func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.
 	return root, nil
 }
 
-func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []ports.WorkspaceRepoInfo) {
+// applyWorkspaceProjectPreserved replays each repo's preserve ref. A conflict is
+// an intentional outcome (relaunch with markers in place); any other failure
+// left that repo's work unapplied and is returned, so RestoreAll leaves the
+// session terminated with its retry marker intact instead of consuming it.
+//
+// A repo that applies cleanly drops its OWN preserved_ref immediately, because
+// ApplyPreserved has already deleted that ref from git. Leaving the name behind
+// in the row would poison the retry: the next boot would resolve a ref that no
+// longer exists, fail, and abandon the restore before reaching the repo that
+// still needs replaying. The session-wide marker (the rows themselves) survives
+// until every repo has completed.
+func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []ports.WorkspaceRepoInfo) error {
 	for _, row := range rows {
 		var preserveRef string
 		sessionRows, err := m.store.ListSessionWorktrees(ctx, row.SessionID)
 		if err != nil {
 			m.logger.Error("restore-all: list worktrees failed", "sessionID", row.SessionID, "error", err)
-			continue
+			return err
 		}
 		for _, sessionRow := range sessionRows {
 			if sessionRow.RepoName == row.RepoName {
@@ -2255,14 +2361,35 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 			continue
 		}
 		if applyErr := m.workspace.ApplyPreserved(ctx, workspaceInfoFromRepoInfo(row), preserveRef); applyErr != nil {
-			if errors.Is(applyErr, ports.ErrPreservedConflict) {
+			switch {
+			case errors.Is(applyErr, ports.ErrPreservedRefMissing):
+				// The ref is deleted by a clean apply, and the row that names it is
+				// cleared afterwards — so a failure BETWEEN the two (a busy database,
+				// an IO error, a crash) leaves a row naming a ref git no longer has.
+				// That work already landed. Reconcile the row and carry on; failing
+				// here would strand the restore on the very marker this loop clears.
+				m.logger.Warn("restore-all: preserved ref already consumed; clearing the stale marker and continuing",
+					"sessionID", row.SessionID, "repo", row.RepoName, "ref", preserveRef, "error", applyErr)
+			case errors.Is(applyErr, ports.ErrPreservedConflict):
 				m.logger.Warn("restore-all: apply preserved produced conflicts; agent relaunched with conflict markers in place",
 					"sessionID", row.SessionID, "repo", row.RepoName, "ref", preserveRef, "error", applyErr)
-			} else {
-				m.logger.Error("restore-all: apply preserved failed", "sessionID", row.SessionID, "repo", row.RepoName, "error", applyErr)
+				continue
+			default:
+				m.logger.Error("restore-all: apply preserved failed; leaving session terminated with its marker for retry",
+					"sessionID", row.SessionID, "repo", row.RepoName, "ref", preserveRef, "error", applyErr)
+				return applyErr
 			}
 		}
+		// Applied (now or on an earlier boot): the ref is gone from git, so drop it
+		// from this repo's row rather than at the end of the restore. A later
+		// repo's failure must not leave a row naming a ref that no longer exists.
+		if err := m.upsertWorkspaceProjectRowState(ctx, row, "active"); err != nil {
+			m.logger.Error("restore-all: clearing an applied repo's preserved ref failed",
+				"sessionID", row.SessionID, "repo", row.RepoName, "ref", preserveRef, "error", err)
+			return err
+		}
 	}
+	return nil
 }
 
 // Send delivers a message to a running session's agent through the guarded
@@ -2672,8 +2799,17 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		// the workspace path, so it runs even when the workspace is shared with a
 		// live successor — otherwise a skipped session would leak its runtime
 		// (the lingering keep-alive shell) until cleanup reruns.
+		//
+		// A teardown that FAILS is not "usually already gone": the runtime may
+		// still be up. Destroying the workspace under it (and reporting the
+		// session cleaned) would claim a success that did not happen, so keep the
+		// workspace and report the session skipped — cleanup can be rerun.
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
-			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
+			if err := m.runtime.Destroy(ctx, h); err != nil {
+				m.logger.Warn("cleanup: runtime teardown failed; workspace preserved for retry", "sessionID", rec.ID, "handle", h.ID, "error", err)
+				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "runtime teardown failed"})
+				continue
+			}
 		}
 		// An in-place workspace is the operator's shared repo root: it is never
 		// destroyed. It also bypasses the liveWorkspacePaths guard on purpose —

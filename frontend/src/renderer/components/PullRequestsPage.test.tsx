@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PullRequestsPage } from "./PullRequestsPage";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -75,16 +74,17 @@ describe("PullRequestsPage", () => {
 		expect(numbers).toEqual(["#41", "#42", "#40"]);
 	});
 
-	it("merges the PR by its own number, not the session's", async () => {
+	// #293 M7: the daemon never wires APIDeps.PRs, so POST /prs/{id}/merge and
+	// /prs/{id}/resolve-comments always answer 501. The board must not render
+	// actions that can only fail, nor claim it can merge or resolve.
+	it("renders no merge or resolve controls while the PR action API is unimplemented", () => {
 		setWorkspaces([session("auth", [pr(41, "open"), pr(42, "draft")])]);
 		renderPage();
-		const user = userEvent.setup();
 
-		const childRow = screen.getByText("#42").closest("tr")!;
-		await user.click(within(childRow).getByRole("button", { name: "Merge" }));
-
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", { params: { path: { id: "42" } } });
+		expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Resolve" })).toBeNull();
+		expect(postMock).not.toHaveBeenCalled();
+		expect(screen.queryByText(/ready to resolve and merge/i)).toBeNull();
 	});
 
 	it("shows an empty state when no session has a PR", () => {

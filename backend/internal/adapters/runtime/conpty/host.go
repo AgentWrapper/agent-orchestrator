@@ -44,20 +44,97 @@ type ServeConfig struct {
 func Serve(ctx context.Context, cfg ServeConfig) error {
 	h := &host{
 		cfg:       cfg,
-		clients:   make(map[net.Conn]struct{}),
+		clients:   make(map[net.Conn]*hostClient),
 		shutdownC: make(chan struct{}),
 	}
 	return h.run(ctx)
 }
 
+// clientQueueDepth bounds each client's pending-frame queue. A client that
+// stops draining its socket fills this queue and is then evicted, instead of
+// blocking the PTY pump (and every other client) behind its stalled write.
+// Deep enough to absorb a normal reader's jitter, shallow enough that a dead
+// reader is detected within one screen of output.
+const clientQueueDepth = 256
+
 // host holds the mutable state for a single pty-host session.
 type host struct {
 	cfg     ServeConfig
 	mu      sync.Mutex
-	clients map[net.Conn]struct{}
+	clients map[net.Conn]*hostClient
 
 	shutdownOnce sync.Once
 	shutdownC    chan struct{} // closed when Shutdown is called
+}
+
+// hostClient is one connected client: its connection plus the bounded queue its
+// own writer goroutine drains. Socket writes happen ONLY in that goroutine, so
+// no write is ever performed under the host's global client mutex.
+type hostClient struct {
+	conn      net.Conn
+	sendC     chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+// enqueue offers a frame to the client's queue without ever blocking. A full
+// queue means the client is not reading: evict it. Dropping frames for that one
+// client is the only alternative to stalling the whole session, and a client
+// that fell behind by a full queue has already lost the stream — it must
+// reattach for a fresh scrollback replay.
+func (h *host) enqueue(c *hostClient, msg []byte) {
+	select {
+	case c.sendC <- msg:
+	case <-c.done:
+	default:
+		h.removeClient(c)
+	}
+}
+
+// pumpClient drains the client's queue onto its socket. Blocking here is safe:
+// it holds no lock.
+func (h *host) pumpClient(c *hostClient) {
+	for {
+		select {
+		case <-c.done:
+			return
+		case frame := <-c.sendC:
+			if _, err := c.conn.Write(frame); err != nil {
+				h.removeClient(c)
+				return
+			}
+		}
+	}
+}
+
+// removeClient unregisters and closes a client. Idempotent; safe to call from
+// the pump, the reader, the broadcaster, and shutdown.
+func (h *host) removeClient(c *hostClient) {
+	h.mu.Lock()
+	if h.clients[c.conn] == c {
+		delete(h.clients, c.conn)
+	}
+	h.mu.Unlock()
+	c.close()
+}
+
+func (c *hostClient) close() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		_ = c.conn.Close()
+	})
+}
+
+// snapshotClients copies the current client set so fan-out never holds the
+// global mutex across a send.
+func (h *host) snapshotClients() []*hostClient {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]*hostClient, 0, len(h.clients))
+	for _, c := range h.clients {
+		out = append(out, c)
+	}
+	return out
 }
 
 // run is the main event loop.
@@ -107,13 +184,18 @@ func (h *host) shutdown() {
 		// 2. Brief grace so the OS ConPTY helper can clean up.
 		time.Sleep(50 * time.Millisecond)
 
-		// 3. Close all client connections.
+		// 3. Close all client connections. The close happens outside the lock: a
+		// client whose socket is full must not be able to hold shutdown behind it.
 		h.mu.Lock()
-		for c := range h.clients {
-			_ = c.Close()
+		clients := make([]*hostClient, 0, len(h.clients))
+		for _, c := range h.clients {
+			clients = append(clients, c)
 		}
-		h.clients = make(map[net.Conn]struct{})
+		h.clients = make(map[net.Conn]*hostClient)
 		h.mu.Unlock()
+		for _, c := range clients {
+			c.close()
+		}
 
 		// 4. Close the listener to unblock Accept.
 		_ = h.cfg.Listener.Close()
@@ -153,62 +235,66 @@ func (h *host) pumpPTY() {
 	// still connect and read scrollback.
 }
 
-// broadcast sends msg to all connected clients, removing any that error.
+// broadcast queues msg for every connected client. It never writes to a socket
+// under the global mutex: it copies the client set, then offers the frame to
+// each client's bounded queue, evicting any client that has stopped reading.
 func (h *host) broadcast(msg []byte) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for c := range h.clients {
-		if _, err := c.Write(msg); err != nil {
-			_ = c.Close()
-			delete(h.clients, c)
-		}
+	for _, c := range h.snapshotClients() {
+		h.enqueue(c, msg)
 	}
 }
 
-// sendTo sends msg to a single conn (best-effort; removes on error).
+// sendTo queues msg for a single client (best-effort; evicts a stalled one).
 func (h *host) sendTo(conn net.Conn, msg []byte) {
-	if _, err := conn.Write(msg); err != nil {
-		h.mu.Lock()
-		_ = conn.Close()
-		delete(h.clients, conn)
-		h.mu.Unlock()
+	h.mu.Lock()
+	c, ok := h.clients[conn]
+	h.mu.Unlock()
+	if !ok {
+		return
 	}
+	h.enqueue(c, msg)
 }
 
 // handleConn manages the lifecycle of a single client connection.
 func (h *host) handleConn(conn net.Conn) {
-	// Scrollback replay: take the ring snapshot, write it to the conn, and add
-	// the conn to the broadcast set all under a SINGLE h.mu hold. broadcast()
-	// also takes h.mu, so it cannot interleave: any PTY chunk that arrives is
-	// either already in this snapshot, or is broadcast strictly after the conn
-	// joins the set. Doing this in two separate locks would let a chunk slip
-	// into the gap (in neither the snapshot nor this client's broadcast) and be
-	// silently dropped.
-	// ponytail: the snapshot write happens while holding h.mu. It is bounded by
-	// MaxOutputLines (the ring cap), so the lock hold is bounded; upgrade path
-	// is a per-client send queue if a slow client ever stalls broadcast.
+	// Scrollback replay: take the ring snapshot, QUEUE it as this client's first
+	// frame, and add the client to the broadcast set — all under a SINGLE h.mu
+	// hold. broadcast() takes h.mu to copy the client set, so it cannot
+	// interleave: any PTY chunk that arrives is either already in this snapshot,
+	// or is queued strictly after the client joins the set. Doing this in two
+	// separate locks would let a chunk slip into the gap (in neither the snapshot
+	// nor this client's stream) and be silently dropped.
+	//
+	// The snapshot is only ENQUEUED here (the queue is empty, so it cannot
+	// block); the socket write happens in the client's own pump goroutine, so no
+	// socket write is ever performed under the global mutex.
+	c := &hostClient{conn: conn, sendC: make(chan []byte, clientQueueDepth), done: make(chan struct{})}
 	h.mu.Lock()
+	// Shutdown is checked UNDER the same lock that registers the client, and
+	// shutdown closes shutdownC before it takes that lock to snapshot the client
+	// set. So either this client joins the set before the snapshot (and shutdown
+	// closes it), or it sees the closed channel here and is refused — a
+	// connection the accept loop admitted in the shutdown window is never adopted
+	// and left blocked in Read until its peer happens to disconnect.
+	select {
+	case <-h.shutdownC:
+		h.mu.Unlock()
+		c.close()
+		return
+	default:
+	}
 	snap := h.cfg.Ring.Snapshot()
 	if len(snap) > 0 {
-		snapFrame, err := EncodeMessage(MsgTerminalData, snap)
-		if err == nil {
-			_, err = conn.Write(snapFrame)
-		}
-		if err != nil {
-			h.mu.Unlock()
-			_ = conn.Close()
-			return
+		if snapFrame, err := EncodeMessage(MsgTerminalData, snap); err == nil {
+			c.sendC <- snapFrame
 		}
 	}
-	h.clients[conn] = struct{}{}
+	h.clients[conn] = c
 	h.mu.Unlock()
 
-	defer func() {
-		h.mu.Lock()
-		delete(h.clients, conn)
-		h.mu.Unlock()
-		_ = conn.Close()
-	}()
+	go h.pumpClient(c)
+
+	defer h.removeClient(c)
 
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		h.handleClientMsg(conn, msgType, payload)

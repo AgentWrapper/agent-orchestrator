@@ -953,6 +953,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrInvalidKind):
+		return apierr.Invalid("INVALID_KIND", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap):
 		return apierr.Conflict("WORKER_CONCURRENCY_CAP", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrWorkerMixBucketDown):

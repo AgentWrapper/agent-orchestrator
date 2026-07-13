@@ -33,6 +33,9 @@ var (
 // and errors.Is works because the adapter wraps the ports sentinel.
 var ErrPreservedConflict = ports.ErrPreservedConflict
 
+// ErrPreservedRefMissing is an adapter-local alias of ports.ErrPreservedRefMissing.
+var ErrPreservedRefMissing = ports.ErrPreservedRefMissing
+
 // ErrBranchCheckedOutElsewhere and ErrBranchNotFetched are adapter-local aliases
 // of the port-level sentinels: they preserve the gitworktree-prefixed message
 // while letting the service layer match on ports.ErrWorkspaceBranchCheckedOutElsewhere
@@ -549,6 +552,10 @@ func (w *Workspace) countIgnoredPaths(ctx context.Context, worktree string) (int
 // On clean success, the preserve ref is deleted.
 // On conflict, the ref is kept, conflict markers are left in the affected files,
 // and ErrPreservedConflict (wrapped) is returned so the caller can surface it.
+// An operational failure of the merge step (disk full, permission denied,
+// unwritable index, cancelled context) keeps the ref too but returns a PLAIN
+// error: the sentinel means "conflict markers are in the tree, the work landed",
+// and callers act on that difference.
 //
 // NEVER deletes the preserve ref on a failed or conflicted apply.
 func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo, ref string) error {
@@ -568,24 +575,75 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 		return errors.New("gitworktree: ApplyPreserved: ref must not be empty")
 	}
 
-	// Resolve the ref to its commit SHA.
-	resolveOut, err := w.run(ctx, w.binary, revParseVerifyArgs(info.Path, ref)...)
+	// ErrPreservedRefMissing is a LOAD-BEARING outcome, not a shrug: the caller
+	// reads it as "that work already landed" (a clean apply deletes the ref before
+	// the caller records the result) and consumes the session's retry marker. So
+	// the resolve below may only produce it when the ref is genuinely gone, and
+	// nothing else may be mistaken for gone.
+	//
+	// `git for-each-ref <name>` alone cannot carry that weight. It exits 0 and
+	// prints nothing BOTH for a ref that does not exist and for a name that could
+	// never be a ref ("refs/bad name", "refs/*") — gone and malformed are
+	// indistinguishable in its output — and its argument is a pattern that
+	// prefix-matches at "/" boundaries, so it answers for refs/a/b/c when asked
+	// about refs/a/b. Two guards make the missing case genuinely distinct:
+	//
+	// First, check-ref-format: the one git command that fails on a malformed name.
+	// A name git will not accept is an operational error, never "already
+	// consumed" — plain error, ref and retry marker kept.
+	if _, err := w.run(ctx, w.binary, checkRefFormatArgs(info.Path, ref)...); err != nil {
+		return fmt.Errorf("gitworktree: ApplyPreserved: malformed preserved ref %q: %w", ref, err)
+	}
+
+	// Second, an exact refname match. Only now — a name git accepts, and no ref by
+	// exactly that name — does empty mean GONE.
+	resolveOut, err := w.run(ctx, w.binary, refCommitArgs(info.Path, ref)...)
 	if err != nil {
 		return fmt.Errorf("gitworktree: ApplyPreserved resolve ref %q: %w", ref, err)
 	}
-	commitSHA := strings.TrimSpace(string(resolveOut))
+	commitSHA := exactRefCommit(string(resolveOut), ref)
+	if commitSHA == "" {
+		return fmt.Errorf("%w: %s", ErrPreservedRefMissing, ref)
+	}
 
 	// Apply the preserve commit via "git cherry-pick --no-commit <sha>".
 	// cherry-pick computes the diff between the preserve commit and its parent
 	// (the HEAD at save time) and 3-way-merges it onto the current working tree.
 	// On conflict it leaves textual conflict markers in the affected files and
-	// exits non-zero WITHOUT committing or moving HEAD. Conflict detection uses
-	// the exit code only (not output text) to stay locale-independent.
+	// exits non-zero WITHOUT committing or moving HEAD.
 	applyErr := w.runCherryPickNoCommit(ctx, info.Path, commitSHA)
 	if applyErr != nil {
-		// Any non-zero exit from the merge step is a conflict: keep the ref,
-		// leave conflict markers in place, and surface the sentinel.
-		return fmt.Errorf("%w: %w", ErrPreservedConflict, applyErr)
+		// A non-zero exit is not automatically a conflict. Disk-full, permission
+		// denied, an unwritable index and a cancelled context all exit non-zero
+		// too, and the caller treats ErrPreservedConflict as an INTENTIONAL
+		// outcome (markers are in the tree: relaunch the agent and consume the
+		// retry marker). Mislabelling an operational failure that way silently
+		// discards the agent's preserved work.
+		//
+		// The index is what separates them, locale-independently: a real
+		// three-way conflict leaves unmerged entries behind; an operational
+		// failure leaves none. Keep the ref either way.
+		conflicted, checkErr := w.hasUnmergedEntries(ctx, info.Path)
+		if checkErr != nil {
+			return fmt.Errorf("gitworktree: ApplyPreserved %q: %w (conflict check failed: %w)", ref, applyErr, checkErr)
+		}
+		if conflicted {
+			return fmt.Errorf("%w: %w", ErrPreservedConflict, applyErr)
+		}
+		// Not a conflict — but not necessarily a failure either. A cherry-pick with
+		// nothing left to apply (the worktree already holds the preserved snapshot)
+		// can also exit non-zero, and reporting THAT as an operational failure keeps
+		// the session's retry marker forever and stalls restoration on every later
+		// boot, over work that is not even missing. Nothing to apply is a completed
+		// apply: fall through and drop the ref.
+		applied, appliedErr := w.worktreeHoldsCommit(ctx, info.Path, commitSHA)
+		if appliedErr != nil || !applied {
+			return fmt.Errorf("gitworktree: ApplyPreserved %q: %w", ref, applyErr)
+		}
+		slog.WarnContext(ctx, "gitworktree: ApplyPreserved found the preserved work already in the worktree; treating the failed replay as applied",
+			"ref", ref,
+			"err", applyErr,
+		)
 	}
 
 	// Clean apply: remove the preserve ref so it is never replayed twice.
@@ -600,9 +658,46 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 	return nil
 }
 
+// exactRefCommit picks the object of the ref named EXACTLY ref out of
+// for-each-ref's "<refname> <objectname>" lines, discarding the "/"-boundary
+// prefix matches for-each-ref also reports. It returns "" only when no line
+// names that ref — i.e. the ref itself does not exist.
+func exactRefCommit(out, ref string) string {
+	for _, line := range strings.Split(out, "\n") {
+		name, object, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if ok && name == ref {
+			return object
+		}
+	}
+	return ""
+}
+
+// hasUnmergedEntries reports whether the worktree's index holds unmerged
+// (conflicted) entries — the durable, locale-independent evidence that a failed
+// cherry-pick left a real merge conflict rather than failing operationally.
+func (w *Workspace) hasUnmergedEntries(ctx context.Context, worktree string) (bool, error) {
+	out, err := w.run(ctx, w.binary, lsFilesUnmergedArgs(worktree)...)
+	if err != nil {
+		return false, fmt.Errorf("gitworktree: list unmerged entries: %w", err)
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// worktreeHoldsCommit reports whether the working tree already holds the
+// content of commitSHA — i.e. replaying the preserve commit has nothing left to
+// apply. The preserve commit is a snapshot of the whole worktree, so an empty
+// diff against it means the preserved work is present.
+func (w *Workspace) worktreeHoldsCommit(ctx context.Context, worktree, commitSHA string) (bool, error) {
+	out, err := w.run(ctx, w.binary, diffAgainstCommitArgs(worktree, commitSHA)...)
+	if err != nil {
+		return false, fmt.Errorf("gitworktree: diff against preserved commit: %w", err)
+	}
+	return strings.TrimSpace(string(out)) == "", nil
+}
+
 // runCherryPickNoCommit runs "git -C <worktree> cherry-pick --no-commit <sha>"
 // and captures combined output so any conflict details are available in the
-// returned commandError. Exit code detection happens in the caller.
+// returned commandError. Classification happens in the caller.
 func (w *Workspace) runCherryPickNoCommit(ctx context.Context, worktree, commitSHA string) error {
 	args := cherryPickNoCommitArgs(worktree, commitSHA)
 	cmd := exec.CommandContext(ctx, w.binary, args...)
