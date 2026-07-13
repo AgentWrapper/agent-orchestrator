@@ -45,6 +45,11 @@ export function UpdatesSection() {
 		feature: null,
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	// Reveals the feature-build picker when the user selects "Feature Releases"
+	// but has not pinned a build yet (form.feature is still null). Without this,
+	// the controlled select would snap back to the home channel and the picker
+	// could never be opened from a clean state.
+	const [showFeature, setShowFeature] = useState(false);
 
 	useEffect(() => {
 		if (query.data) setForm(query.data);
@@ -60,8 +65,9 @@ export function UpdatesSection() {
 		},
 	});
 
-	// Derived primary select value: "feature" when a PR is pinned, else the home channel.
-	const primaryValue = form.feature != null ? "feature" : form.channel;
+	// Derived primary select value: "feature" when a PR is pinned OR the user has
+	// chosen Feature Releases (showFeature) but not pinned yet; else the home channel.
+	const primaryValue = form.feature != null || showFeature ? "feature" : form.channel;
 
 	const setEnabled = (enabled: boolean) => {
 		setSavedAt(null);
@@ -70,9 +76,17 @@ export function UpdatesSection() {
 
 	const handlePrimaryChannel = (v: string) => {
 		setSavedAt(null);
-		if (v === "latest") setForm((f) => ({ ...f, channel: "latest", nightlyAck: false, feature: null }));
-		else if (v === "nightly") setForm((f) => ({ ...f, channel: "nightly", nightlyAck: true, feature: null }));
-		// "feature": just reveal the secondary select; do not touch form.channel
+		if (v === "latest") {
+			setShowFeature(false);
+			setForm((f) => ({ ...f, channel: "latest", nightlyAck: false, feature: null }));
+		} else if (v === "nightly") {
+			setShowFeature(false);
+			setForm((f) => ({ ...f, channel: "nightly", nightlyAck: true, feature: null }));
+		} else if (v === "feature") {
+			// Reveal the secondary picker; the pin is only written once the user
+			// selects a specific build (handlePinBuild). Home channel is untouched.
+			setShowFeature(true);
+		}
 	};
 
 	const handlePinBuild = async (pr: number, title: string) => {
@@ -88,6 +102,7 @@ export function UpdatesSection() {
 	};
 
 	const handleReturnToHome = async () => {
+		setShowFeature(false);
 		const next = { ...form, feature: null };
 		setForm(next);
 		await aoBridge.updateSettings.set(next);

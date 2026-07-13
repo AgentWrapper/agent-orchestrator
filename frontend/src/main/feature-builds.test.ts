@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { listFeatureBuilds, parseFeatureBuild } from "./feature-builds";
+import { listFeatureBuilds, parseFeatureBuild, reconcileFeaturePin } from "./feature-builds";
+import type { UpdateSettings } from "./update-settings";
 
 // Mock the electron module so `app.getVersion()` works outside Electron.
 vi.mock("electron", () => ({
@@ -296,5 +297,70 @@ describe("listFeatureBuilds", () => {
 		await listFeatureBuilds();
 		const pullsCalls = (fetchMock.mock.calls as [string][]).filter(([url]) => String(url).includes("/pulls/"));
 		expect(pullsCalls).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// reconcileFeaturePin
+// ---------------------------------------------------------------------------
+
+describe("reconcileFeaturePin", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const pinned = (pr: number): UpdateSettings => ({
+		enabled: true,
+		channel: "latest",
+		nightlyAck: false,
+		feature: { pr },
+	});
+
+	it("returns unchanged when there is no pin", async () => {
+		const settings: UpdateSettings = { enabled: true, channel: "nightly", nightlyAck: true, feature: null };
+		const r = await reconcileFeaturePin(settings);
+		expect(r).toEqual({ settings, cleared: false });
+	});
+
+	it("keeps the pin when the PR still has a live build", async () => {
+		stubFetch([makeRelease()], { 2270: { state: "open" } });
+		const r = await reconcileFeaturePin(pinned(2270));
+		expect(r.cleared).toBe(false);
+		expect(r.settings.feature).toEqual({ pr: 2270 });
+	});
+
+	it("clears the pin (preserving the home channel) when the PR has no live build", async () => {
+		stubFetch([]); // no live feature builds at all -> pin is retired
+		const r = await reconcileFeaturePin(pinned(2270));
+		expect(r.cleared).toBe(true);
+		expect(r.settings.feature).toBeNull();
+		expect(r.settings.channel).toBe("latest");
+	});
+
+	it("clears the pin when a different PR is live but the pinned one is not", async () => {
+		stubFetch(
+			[
+				makeRelease({
+					tag_name: "v0.2.0-pr999.202607061200",
+					body: '<!-- ao-feature-build: {"pr":999,"base":"main","sha":"x","slug":"y"} -->',
+				}),
+			],
+			{ 999: { state: "open" } },
+		);
+		const r = await reconcileFeaturePin(pinned(2270));
+		expect(r.cleared).toBe(true);
+		expect(r.settings.feature).toBeNull();
+	});
+
+	it("keeps the pin on a fetch error (never strands the user on a transient failure)", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => {
+				throw new Error("network error");
+			}),
+		);
+		const r = await reconcileFeaturePin(pinned(2270));
+		expect(r.cleared).toBe(false);
+		expect(r.settings.feature).toEqual({ pr: 2270 });
 	});
 });

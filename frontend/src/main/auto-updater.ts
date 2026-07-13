@@ -10,6 +10,20 @@ import {
 	type UpdateSettings,
 	type UpdateStatus,
 } from "./update-settings";
+import { reconcileFeaturePin } from "./feature-builds";
+
+// reconcileAndPersist clears a pinned feature build whose PR has been retired
+// (merged/closed/deleted/expired) and persists the change, so the next check
+// resolves the home channel and moves the user back automatically. A fetch
+// failure keeps the pin (see reconcileFeaturePin). Returns the effective settings.
+async function reconcileAndPersist(stateDir: string, settings: UpdateSettings): Promise<UpdateSettings> {
+	const rec = await reconcileFeaturePin(settings);
+	if (rec.cleared) {
+		await writeUpdateSettings(stateDir, rec.settings);
+		console.info("[feature-builds] pinned PR retired; cleared pin, falling back to home channel");
+	}
+	return rec.settings;
+}
 
 // configureFeed sets the update channel on electron-updater. The repo/owner
 // are loaded automatically from app-update.yml (written by forge.config.ts's
@@ -79,8 +93,9 @@ export function getUpdateStatus(): UpdateStatus {
 // It is a thin shell: all policy (channel, opt-in) comes from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
-	const settings = await readUpdateSettings(stateDir);
-	if (!settings.enabled) return;
+	const initial = await readUpdateSettings(stateDir);
+	if (!initial.enabled) return;
+	const settings = await reconcileAndPersist(stateDir, initial);
 
 	wireUpdaterEvents();
 	configureFeed(settings);
@@ -105,7 +120,7 @@ export async function checkForUpdatesNow(stateDir: string): Promise<void> {
 		broadcast({ state: "unsupported", message: "Updates are only available in the installed app." });
 		return;
 	}
-	const settings = await readUpdateSettings(stateDir);
+	const settings = await reconcileAndPersist(stateDir, await readUpdateSettings(stateDir));
 	configureFeed(settings);
 	autoUpdater.autoDownload = false;
 	autoUpdater.autoInstallOnAppQuit = true;

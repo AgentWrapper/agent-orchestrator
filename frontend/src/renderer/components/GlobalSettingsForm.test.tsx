@@ -189,4 +189,15 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByText(/disk full/i)).toBeInTheDocument();
 		expect(setMigration).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", error: "disk full" }));
 	});
+
+	it("reveals the feature-build picker when Feature Releases is selected", async () => {
+		renderForm();
+		await screen.findByText("Updates");
+		// The picker must be reachable from a clean state (no pin seeded).
+		await userEvent.click(screen.getByLabelText("Update channel"));
+		await userEvent.click(await screen.findByRole("option", { name: "Feature Releases" }));
+		// Secondary picker mounts; no live builds are mocked, so it shows the empty state.
+		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
+		expect(featListBuilds).toHaveBeenCalled();
+	});
 });

@@ -96,6 +96,10 @@ jobs:
             if [ -z "$json" ]; then continue; fi
             pr_num="$(echo "$json" | jq -r '.pr' 2>/dev/null)" || true
             if [ -z "$pr_num" ] || [ "$pr_num" = "null" ]; then continue; fi
+            # A rebuild of a PR that already has a live build is net-zero (the
+            # "delete prior build" step below retires it before publishing),
+            # so don't let it count against the quota.
+            if [ "$pr_num" = "$PR_NUMBER" ]; then continue; fi
             state="$(gh api "repos/$REPO/pulls/$pr_num" --jq '.state' 2>/dev/null || echo closed)"
             if [ "$state" = "open" ]; then
               active=$((active + 1))

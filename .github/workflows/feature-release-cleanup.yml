@@ -36,6 +36,9 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      # For fork PRs, pull_request: closed gets a read-only GITHUB_TOKEN, so
+      # the delete below can fail silently for those builds; the daily
+      # `cleanup-expired` schedule sweep is the real backstop for fork builds.
       - name: Delete feature build(s) for closed PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
