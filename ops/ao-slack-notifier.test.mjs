@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import http from "node:http";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +29,22 @@ import {
 	spawnNode,
 	waitForOutput,
 } from "./main-invocation-test-helpers.mjs";
+import { handleSlackRequest } from "./attention-reply-listener.mjs";
+import { loadNotifierThreadMap } from "./notifier-thread-state.mjs";
+
+// Slack signs every inbound request; the listener verifies it before routing, so
+// the post->reply integration tests have to sign like Slack does.
+const SIGNING_SECRET = "test-signing-secret";
+
+function signedSlackRequest(payload) {
+	const rawBody = JSON.stringify(payload);
+	const timestamp = String(Math.floor(Date.now() / 1000));
+	const signature = `v0=${createHmac("sha256", SIGNING_SECRET).update(`v0:${timestamp}:${rawBody}`).digest("hex")}`;
+	return {
+		rawBody,
+		headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": signature },
+	};
+}
 
 let cleanup = [];
 afterEach(async () => {
@@ -551,6 +569,58 @@ describe("ao Slack notifier replay/dedup", () => {
 		assert.equal(notifier.state.lastEventId, "ev_1");
 		assert.equal(notifier.state.lastDigestKey, "digest");
 		assert.equal(notifier.state.digestTs, "123.456");
+	});
+
+	// --- 1g (#293, codex review of #309): saveState used writeFileSync straight
+	// onto the live state file. That truncates in place, so a crash mid-write
+	// discards EVERY thread binding, seen id and needs-response record at once —
+	// the notifier then re-pages history and can never route a threaded reply
+	// again. The write must be atomic: temp file + rename.
+	it("persists state atomically so a crash mid-write cannot truncate the state file", async () => {
+		const stateFile = await tmpState();
+		saveState(stateFile, { seen: new Set(["n1"]), threadBindings: { 1.1: { sessionId: "s1", projectId: "p" } } }, 10);
+		const before = statSync(stateFile);
+
+		saveState(stateFile, { seen: new Set(["n2"]), threadBindings: { 2.2: { sessionId: "s2", projectId: "p" } } }, 10);
+		const after = statSync(stateFile);
+
+		// rename() swaps a fully-written file in; an in-place truncating write keeps
+		// the same inode and exposes a half-written file to every reader in between.
+		assert.notEqual(
+			after.ino,
+			before.ino,
+			"state must be written to a temp file and renamed into place, never truncated in place",
+		);
+		assert.equal(JSON.parse(readFileSync(stateFile, "utf8")).threadBindings["2.2"].sessionId, "s2");
+		assert.deepEqual(
+			readdirSync(path.dirname(stateFile)).filter((name) => name !== path.basename(stateFile)),
+			[],
+			"the temp file must not be left behind",
+		);
+	});
+
+	it("leaves the previous state intact when a state write fails", async () => {
+		const stateFile = await tmpState();
+		saveState(stateFile, { seen: new Set(["keep"]), threadBindings: { 1.1: { sessionId: "s1", projectId: "p" } } }, 10);
+		const warnings = [];
+
+		const exploding = {
+			seen: new Set(["lost"]),
+			attentionTracker: {
+				serialize() {
+					throw new Error("state serialization blew up mid-save");
+				},
+			},
+		};
+		saveState(stateFile, exploding, 10, { warn: (...args) => warnings.push(args.join(" ")) });
+
+		assert.equal(warnings.length, 1);
+		assert.deepEqual(JSON.parse(readFileSync(stateFile, "utf8")).seen, ["keep"], "the last good state must survive");
+		assert.deepEqual(
+			readdirSync(path.dirname(stateFile)).filter((name) => name !== path.basename(stateFile)),
+			[],
+			"a failed write must not strand a temp file",
+		);
 	});
 
 	it("logs state persistence failures instead of silently swallowing them", async () => {
@@ -1394,6 +1464,87 @@ describe("ao Slack notifier session attention polling", () => {
 		assert.ok(posts[1].includes("cannot poll ao sessions"));
 	});
 
+	// --- M9 (#293): the daemon-unhealthy alert must survive Slack being down at
+	// the exact moment it first fires.
+	//
+	// The alert used to be attempted ONLY at `consecutiveErrors === 3`. If Slack
+	// was unavailable on that one attempt, counts 4, 5, 6... never retried and the
+	// alert was lost outright — the daemon could stay unreachable indefinitely with
+	// nobody ever paged. Delivery must be tracked, retried until it succeeds, and
+	// suppressed only AFTER it has actually been delivered (until recovery).
+	it("retries the daemon_unhealthy alert until it is actually delivered, then suppresses", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		let slackDown = true;
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			postMessage: async (text) => {
+				if (slackDown) throw new Error("slack 503");
+				posts.push(text);
+			},
+			fetchImpl: async () => {
+				throw new Error("ECONNREFUSED");
+			},
+			logger: { info() {}, error() {}, warn() {} },
+		});
+
+		// Slack is down exactly when the threshold is first crossed.
+		notifier.consecutiveErrors = 3;
+		await notifier.alertUnhealthy("stream down");
+		assert.equal(posts.length, 0, "the post failed, so nothing was delivered");
+
+		// The old code gave up here forever: 4+ never re-attempted.
+		notifier.consecutiveErrors = 4;
+		await notifier.alertUnhealthy("stream down");
+		assert.equal(posts.length, 0);
+
+		slackDown = false;
+		notifier.consecutiveErrors = 5;
+		await notifier.alertUnhealthy("stream down");
+		assert.equal(
+			posts.filter((p) => /daemon_unhealthy/.test(p)).length,
+			1,
+			"once Slack recovers the pending health alert must actually be delivered",
+		);
+
+		// Delivered — now, and only now, it may be suppressed.
+		notifier.consecutiveErrors = 6;
+		await notifier.alertUnhealthy("stream down");
+		assert.equal(posts.filter((p) => /daemon_unhealthy/.test(p)).length, 1, "a delivered alert must not re-page");
+	});
+
+	it("re-arms the daemon_unhealthy alert after the daemon recovers", async () => {
+		const stateFile = await tmpState();
+		const posts = [];
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			postMessage: async (text) => posts.push(text),
+			fetchImpl: async () => {
+				throw new Error("ECONNREFUSED");
+			},
+			logger: { info() {}, error() {}, warn() {} },
+		});
+
+		notifier.consecutiveErrors = 3;
+		await notifier.alertUnhealthy("stream down");
+		assert.equal(posts.filter((p) => /daemon_unhealthy/.test(p)).length, 1);
+
+		// Recovery clears the latch, so a LATER outage pages again rather than
+		// being suppressed forever by the first one.
+		notifier.consecutiveErrors = 0;
+		notifier.streamUnhealthyPaged = false;
+
+		notifier.consecutiveErrors = 3;
+		await notifier.alertUnhealthy("stream down again");
+		assert.equal(posts.filter((p) => /daemon_unhealthy/.test(p)).length, 2, "a new outage after recovery must page");
+	});
+
 	it("pages stream daemon_unhealthy when a session poll outage was already latched", async () => {
 		const stateFile = await tmpState();
 		const posts = [];
@@ -1827,5 +1978,158 @@ describe("ao Slack notifier main module invocation", () => {
 			await waitForOutput({ child, output, pattern: /connected to ao notification stream/ });
 			assert.equal(child.exitCode, null);
 		}
+	});
+});
+
+// --- M6 (#293): the outbound notifier must create thread->session bindings.
+//
+// The RETIRED notifier wrote ThreadSessionMap bindings to ~/.ao/attention-state.json.
+// The CURRENT one discarded `chat.postMessage.ts` entirely and persisted only seen
+// ids — and deploy actively DELETES the retired notifier's state file. So the reply
+// listener had zero bindings and every threaded Slack reply to a live alert routed
+// to `unknown_thread`: two-way replies were dead in production.
+describe("thread -> session bindings (post -> reply routing)", () => {
+	it("persists the posted message ts against the session it came from", async () => {
+		const stateFile = await tmpState();
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			postMessage: async () => ({ ts: "1712345678.000100" }),
+			fetchImpl: async () => response({}),
+			logger: { info() {}, error() {}, warn() {} },
+		});
+
+		await notifier.recordDelivered({
+			id: "n1",
+			type: "needs_input",
+			sessionId: "agent-orchestrator-208",
+			projectId: "agent-orchestrator",
+			title: "needs a decision",
+		});
+
+		const map = loadNotifierThreadMap(stateFile);
+		assert.deepEqual(map.lookup("1712345678.000100"), {
+			projectId: "agent-orchestrator",
+			sessionId: "agent-orchestrator-208",
+		});
+	});
+
+	it("routes a threaded Slack reply back to the session that raised the alert", async () => {
+		// The full production path, end to end: notifier posts -> binding is
+		// persisted to the shared state file -> reply listener loads it -> a threaded
+		// reply resolves to `ao send --session <that session>`.
+		const stateFile = await tmpState();
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			postMessage: async () => ({ ts: "1712345678.000200" }),
+			fetchImpl: async () => response({}),
+			logger: { info() {}, error() {}, warn() {} },
+		});
+		await notifier.recordDelivered({
+			id: "n2",
+			type: "needs_input",
+			sessionId: "agent-orchestrator-99",
+			projectId: "agent-orchestrator",
+			title: "which option?",
+		});
+
+		const threadMap = loadNotifierThreadMap(stateFile);
+		const sent = [];
+		const out = await handleSlackRequest({
+			...signedSlackRequest({
+				type: "event_callback",
+				event: { type: "message", text: "go with 2", thread_ts: "1712345678.000200", user: "U123", ts: "1712345999.1" },
+			}),
+			signingSecret: SIGNING_SECRET,
+			threadMap,
+			allowedUserId: "U123",
+			aoSend: async (args) => sent.push(args),
+			logger: { info() {}, error() {}, warn() {} },
+		});
+
+		assert.equal(out.status, 200);
+		assert.deepEqual(out.sent, { sessionId: "agent-orchestrator-99", message: "go with 2" });
+		assert.deepEqual(sent, [["send", "--session", "agent-orchestrator-99", "--message", "go with 2"]]);
+	});
+
+	it("degrades honestly on a webhook sink, which returns no message ts", async () => {
+		// An incoming webhook post has no `ts` in its response, so there is nothing
+		// to bind a thread to. That must be reported, not faked: threaded replies
+		// genuinely cannot work without SLACK_BOT_TOKEN.
+		const stateFile = await tmpState();
+		const warnings = [];
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			mentionUserId: "U123",
+			// chat.postMessage returns {ts}; an incoming webhook returns nothing.
+			postMessage: async () => undefined,
+			fetchImpl: async () => response({}),
+			logger: { info() {}, error() {}, warn: (...a) => warnings.push(a.join(" ")) },
+		});
+
+		await notifier.recordDelivered({
+			id: "n3",
+			type: "needs_input",
+			sessionId: "agent-orchestrator-7",
+			projectId: "agent-orchestrator",
+			title: "blocked",
+		});
+
+		const map = loadNotifierThreadMap(stateFile);
+		assert.equal(map.lookup(undefined), null, "no ts means no binding — never fabricate one");
+		assert.ok(
+			warnings.some((w) => /webhook/i.test(w) && /thread/i.test(w)),
+			`the webhook sink's inability to thread must be surfaced, got: ${JSON.stringify(warnings)}`,
+		);
+
+		// And the reply path degrades to unknown_thread rather than misrouting.
+		const route = await handleSlackRequest({
+			...signedSlackRequest({
+				type: "event_callback",
+				event: { type: "message", text: "hi", thread_ts: "9999.0001", user: "U123", ts: "9999.1" },
+			}),
+			signingSecret: SIGNING_SECRET,
+			threadMap: map,
+			allowedUserId: "U123",
+			aoSend: async () => assert.fail("must not route an unbound thread"),
+			logger: { info() {}, error() {}, warn() {} },
+		});
+		assert.equal(route.status, 200);
+		assert.equal(route.sent, undefined);
+	});
+
+	it("bounds the binding map so a long-lived notifier cannot grow it without limit", async () => {
+		const stateFile = await tmpState();
+		const notifier = new SlackNotificationNotifier({
+			baseUrl: "http://ao.test/api/v1",
+			stateFile,
+			state: loadState(stateFile),
+			threadBindingLimit: 3,
+			postMessage: async () => ({ ts: `ts-${n}` }),
+			fetchImpl: async () => response({}),
+			logger: { info() {}, error() {}, warn() {} },
+		});
+		let n = 0;
+		for (n = 0; n < 5; n++) {
+			await notifier.recordDelivered({
+				id: `k${n}`,
+				type: "pr_merged",
+				sessionId: `s${n}`,
+				projectId: "p",
+				title: "merged",
+			});
+		}
+
+		const map = loadNotifierThreadMap(stateFile);
+		assert.equal(map.map.size, 3, "oldest bindings must be evicted");
+		assert.equal(map.lookup("ts-4").sessionId, "s4", "the newest binding survives");
+		assert.equal(map.lookup("ts-0"), null, "the oldest is gone");
 	});
 });

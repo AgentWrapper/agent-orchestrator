@@ -52,6 +52,32 @@ npm_cache_dir="${AO_DEPLOY_NPM_CACHE_DIR:-${state_dir}/npm-cache}"
 deploy_log="${AO_DEPLOY_LOG:-${state_dir}/agent-orchestrator.deploy.log}"
 deploy_log_warned=0
 ao_unit="${AO_DEPLOY_AO_UNIT:-ao.service}"
+# Owns the tmux server, and therefore the cgroup every agent pane lives in
+# (#293/D1). Installed and enabled like any other unit, but NEVER stopped,
+# restarted or `disable --now`-ed by a deploy OR a rollback: stopping it signals
+# the tmux server every agent in the fleet lives under. The unit itself is what
+# makes a STOP JOB non-fatal now (no ExecStop, RefuseManualStop, SIGCONT, no
+# SIGKILL — see ops/ao-tmux.service); guard_fleet_fatal() keeps this script from
+# even trying.
+#
+# Scope that claim precisely, because every previous version of this fix
+# overclaimed it: the deploy path and the ordinary systemd stop/restart/failure
+# paths can no longer kill the fleet. Direct cgroup kills (`systemctl --user
+# kill`, systemd-oomd, the kernel OOM killer) and host/user-manager shutdown still
+# can — no unit directive can refuse a signal delivered straight to the cgroup.
+# The residual-risk note at the end of ops/ao-tmux.service's [Service] block is
+# the full list.
+tmux_unit="${AO_DEPLOY_TMUX_UNIT:-ao-tmux.service}"
+# Re-takes the tmux socket for ${tmux_unit} if the legacy server ever DIES (crash,
+# OOM, an outright kill) — draining is prevented outright by
+# prevent_legacy_tmux_drain(). A unit that ExecCondition SKIPPED is never retried
+# by systemd, so without this the socket freed by such a death would be grabbed by
+# the daemon and D1 would come straight back (#293).
+tmux_claim_unit="${AO_DEPLOY_TMUX_CLAIM_UNIT:-ao-tmux-claim.service}"
+tmux_claim_timer="${AO_DEPLOY_TMUX_CLAIM_TIMER:-ao-tmux-claim.timer}"
+# Set when prevent_legacy_tmux_drain() could not write the exit-empty pin, so the
+# end of the run can say so instead of ending on a clean-looking line (#293/D1).
+tmux_drain_pin_failed=0
 web_unit="${AO_DEPLOY_WEB_UNIT:-ao-web.service}"
 notifier_unit="${AO_DEPLOY_NOTIFIER_UNIT:-ao-slack-notifier.service}"
 attention_reply_unit="${AO_DEPLOY_ATTENTION_REPLY_UNIT:-ao-attention-reply.service}"
@@ -113,7 +139,62 @@ log() {
   fi
 }
 
+# Refuse — hard, before anything is executed OR printed — any command that would
+# stop the tmux server (#293/D1).
+#
+# Every agent pane, every claude / codex / `npm test` child in the fleet lives
+# under that server. `systemctl stop|restart|kill|try-restart ao-tmux.service`,
+# and `disable --NOW`, are not "risky": a deploy or an emergency rollback is
+# exactly when someone reaches for them, and `kill` in particular signals the
+# unit's whole cgroup — which no unit directive can refuse.
+#
+# THIS IS THE SECOND LAYER, NOT THE INVARIANT (#293, review cycle 2). A guard in
+# one shell script cannot enforce a systemd-level property: it only sees the
+# spellings this script issues, never a hand-typed `systemctl --user stop`, a
+# `mask --now`, or a user-manager shutdown. The invariant lives in
+# ops/ao-tmux.service, which now carries no ExecStop, refuses manual stops, and
+# signals the server with SIGCONT rather than SIGTERM/SIGKILL. This guard exists
+# so a future edit to THIS script fails the DEPLOY (loudly, before any host
+# mutation) rather than relying on that unit's defenses.
+#
+# `disable` without `--now` and `enable`/`start` stay allowed: they are how the
+# unit is installed and how it takes ownership of the socket.
+#
+# The tmux arm is the same idea one level down. Deploy has exactly one reason to
+# speak to the fleet's tmux server (pinning `exit-empty off`, see
+# prevent_legacy_tmux_drain), and every verb that can end a server, a session, a
+# window or a pane is a fleet kill spelled without the word systemctl. Read-only
+# probes and option writes stay allowed; anything that destroys does not.
+guard_fleet_fatal() {
+  local args=" ${*} " verb=""
+  if [[ "$1" == "tmux" ]]; then
+    case "${args}" in
+      *" kill-server "* | *" kill-session "* | *" kill-window "* | *" kill-pane "*)
+        printf 'Refusing to run `%s`: it would kill the tmux server (or a pane of it) that the whole agent fleet lives in (#293/D1). Deploy and rollback may only PROBE that server and set options on it.\n' \
+          "$(quote_cmd "$@")" >&2
+        return 1
+        ;;
+      *) return 0 ;;
+    esac
+  fi
+  [[ "$1" == "systemctl" ]] || return 0
+  [[ "${args}" == *" ${tmux_unit} "* ]] || return 0
+  case "${args}" in
+    *" stop "*) verb="stop" ;;
+    *" restart "*) verb="restart" ;;
+    *" try-restart "*) verb="try-restart" ;;
+    *" reload-or-restart "*) verb="reload-or-restart" ;;
+    *" kill "*) verb="kill" ;;
+    *" --now "*) verb="disable --now" ;;
+    *) return 0 ;;
+  esac
+  printf 'Refusing to run `%s`: it would stop the tmux server that %s owns, killing every agent pane in the fleet (#293/D1). Deploy and rollback must never stop this unit.\n' \
+    "$(quote_cmd "$@")" "${tmux_unit}" >&2
+  return 1
+}
+
 run() {
+  guard_fleet_fatal "$@" || return 1
   if [[ "${dry_run}" == "1" ]]; then
     printf 'DRY-RUN: %s\n' "$(quote_cmd "$@")"
     return 0
@@ -131,7 +212,21 @@ run_in() {
   (cd "${dir}" && "$@")
 }
 
+# NEVER BRANCH ON THIS FUNCTION'S EXIT STATUS (#293, review cycle 4).
+#
+# run_best_effort SWALLOWS failure by design: it warns and returns 0 whatever the
+# command did. Its status therefore carries NO information about the command, and
+# `if run_best_effort …` / `run_best_effort … || …` writes a branch that can never
+# be taken. That is not hypothetical: the exit-empty pin was written that way and
+# printed "Pinned exit-empty=off" on the line after "WARN: … failed; continuing" —
+# a deploy reporting the D1 race closed while it was wide open.
+#
+# A caller that needs to know whether the command worked must call `run` (which
+# returns the command's real status) and branch on that. deploy.test.mjs asserts no
+# line in this file branches on run_best_effort.
 run_best_effort() {
+  # "Best effort" never extends to a fleet-fatal command: that one aborts.
+  guard_fleet_fatal "$@" || return 1
   if [[ "${dry_run}" == "1" ]]; then
     printf 'DRY-RUN: %s\n' "$(quote_cmd "$@")"
     return 0
@@ -139,6 +234,7 @@ run_best_effort() {
   if ! "$@"; then
     log "WARN: '$(quote_cmd "$@")' failed; continuing."
   fi
+  return 0
 }
 
 command_exists() {
@@ -444,6 +540,49 @@ changed_in_range() {
   git -C "${repo_root}" diff --name-only "${base}" "${head}" -- "${pathspec}" | grep -q .
 }
 
+# The web surface's real inputs (#293 H4). Production does NOT execute anything
+# from `frontend/` — it runs `ops/ao-web-server.mjs`, configured by
+# `ops/ao-web.service` plus its drop-ins, serving the prebuilt `frontend/dist`
+# bundle. Keying the web restart and its reporting on `frontend/` alone let an
+# ops-only web change deploy "successfully" while the OLD node process kept
+# serving, and the HTTP-200 verification then passed against that stale process.
+# Each of these paths is a genuine web input.
+web_input_paths=(
+  "frontend/"
+  "ops/ao-web-server.mjs"
+  "ops/${web_unit}"
+  "ops/${web_unit}.d"
+)
+
+# Emits the first changed web input path, or nothing when none changed. The path
+# is echoed so the deploy log can name WHICH input triggered the restart instead
+# of the untrue "frontend/ unchanged".
+changed_web_input() {
+  local base="$1" head="$2" pathspec
+  for pathspec in "${web_input_paths[@]}"; do
+    if changed_in_range "${base}" "${head}" "${pathspec}"; then
+      printf '%s' "${pathspec}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Unit drop-ins (`<unit>.d/*.conf`) are part of the unit definition. The tracked
+# ops/ao-web.service.d/override.conf carries AO_WEB_PUBLIC_URL, which deploy
+# itself reads back (systemd_environment_value) to decide whether to verify the
+# tailnet web surface at all. Before #293 drop-ins were never rendered or
+# installed, so a host kept whatever drop-in had been hand-placed on it forever,
+# and a clean host silently SKIPPED web verification entirely.
+unit_dropin_names() {
+  local dir="$1" unit="$2" file
+  [[ -d "${dir}/${unit}.d" ]] || return 0
+  for file in "${dir}/${unit}.d"/*.conf; do
+    [[ -f "${file}" ]] || continue
+    printf '%s\n' "$(basename -- "${file}")"
+  done
+}
+
 install_frontend_dependencies() {
   local source_root="$1"
   local lockfile="${source_root}/frontend/package-lock.json"
@@ -641,6 +780,380 @@ unit_exists() {
   systemctl --user cat "$1" >/dev/null 2>&1
 }
 
+# True when a unit declares an [Install] section, i.e. `systemctl enable` can do
+# something with it. Read from the first definition that exists: the installed
+# file, else the release payload, else the checkout's template (dry-run, where
+# nothing has been rendered yet). A unit with no [Install] — ao-tmux-claim.service
+# is started by its timer, not by a target — must not be handed to `enable`.
+unit_is_enableable() {
+  local unit="$1" candidate
+  for candidate in "${systemd_user_dir}/${unit}" "${current_link}/systemd/${unit}" "${repo_root}/ops/${unit}"; do
+    [[ -f "${candidate}" ]] || continue
+    grep -qE '^\[Install\]' "${candidate}"
+    return $?
+  done
+  # No definition to read: assume enableable and let systemctl be the judge, which
+  # is how this behaved before the check existed.
+  return 0
+}
+
+# Who owns the default tmux socket. THREE outcomes, never two (#293, review
+# cycle 2) — the same classification the two unit files make, kept in step with
+# them on purpose:
+#
+#   0 -> a server owns the socket
+#   1 -> no server owns it (free)
+#   2 -> the probe itself failed; we do not know, and we must not guess
+#
+# The old version returned "a server exists" for every tmux failure it did not
+# recognize, so `tmux: command not found` or a socket permission error read as
+# "someone owns it, leave it alone" — the safe-sounding answer that silently
+# skips the whole D1 fix.
+#
+# Probe semantics, measured against tmux 3.5a:
+#   server, >=1 session -> exit 0
+#   server, 0 sessions  -> exit 0                                    <- has-session
+#                                                                       exits 1 here
+#   no server at all    -> exit 1, "error connecting to <socket>"
+#   stale socket        -> exit 1, "no server running on <socket>"
+# `list-sessions` gives us an exit code that positively proves a server exists
+# without parsing English, and — like has-session, unlike start-server — it never
+# CREATES a server, so the probe cannot itself spawn the ao.service-parented
+# server we are avoiding.
+tmux_server_running() {
+  command_exists tmux || return 2
+  local out
+  if tmux list-sessions >/dev/null 2>&1; then
+    return 0
+  fi
+  # `|| true`: the script runs under `set -e`, and reaching here means tmux exited
+  # non-zero. errexit happens to be suppressed today (the only caller uses `||`),
+  # but a future caller that does not would abort the whole deploy on the ordinary,
+  # expected "no server" path. Do not leave that to the call site.
+  out="$(tmux list-sessions 2>&1 || true)"
+  if grep -qiE 'permission denied|operation not permitted' <<<"${out}"; then
+    return 2
+  fi
+  if grep -qiE 'error connecting|no server running' <<<"${out}"; then
+    return 1
+  fi
+  return 2
+}
+
+# Hand the tmux server to ao-tmux.service (#293/D1) — but only when no server
+# already owns the socket.
+#
+# tmux daemonizes its SERVER from whichever client first touches the socket, so a
+# server spawned lazily by the daemon inherits ao.service's cgroup, and with it
+# every pane, agent process and `npm test` child. Starting ao-tmux.service first
+# means the server is created inside THAT unit's cgroup, and pane placement
+# follows the server, never the client — so nothing in the fleet can land in
+# ao.service's cgroup again.
+#
+# When a server is already running we must NOT start or restart the unit:
+#   * `systemctl start` would run `tmux start-server`, which merely attaches to
+#     the existing server and exits, leaving this Type=forking unit stuck in
+#     `activating` until its start timeout; and
+#   * `systemctl restart` would stop the unit — and stopping the unit signals the
+#     server the whole fleet lives under (guard_fleet_fatal refuses that outright,
+#     from anywhere in this script).
+# The legacy server keeps running under ao.service (where KillMode=process still
+# protects it) and ao-tmux.service takes ownership at the next REBOOT. That is
+# reported, never failed: a deploy cannot migrate a live server, and refusing to
+# deploy over one would be strictly worse.
+#
+# We do exactly one thing to that legacy server, and it is not destructive:
+# prevent_legacy_tmux_drain() pins its `exit-empty off` (below).
+#
+# This skip is the OUTER layer only. It cannot be the whole answer, because
+# ao.service Wants= the tmux unit: restarting the daemon makes systemd start the
+# very unit we declined to start. The unit therefore guards ITSELF with an
+# ExecCondition that skips cleanly when a server already owns the socket — see
+# ops/ao-tmux.service.
+ensure_tmux_server_unit() {
+  if [[ "${dry_run}" == "1" ]]; then
+    printf 'DRY-RUN: start %s when no tmux server owns the default socket\n' "${tmux_unit}"
+    return 0
+  fi
+  local state=0
+  tmux_server_running || state=$?
+  case "${state}" in
+    0)
+      log "A tmux server is already running; not starting ${tmux_unit} over it. ${tmux_unit} takes ownership of the socket at the next reboot."
+      prevent_legacy_tmux_drain
+      return 0
+      ;;
+    2)
+      # We could not classify the socket. Starting the unit might create a SECOND
+      # server; not starting it leaves the daemon to spawn one. Neither is a
+      # decision a deploy should make blind, so do nothing and say so loudly.
+      # ao.service's ExecStartPre refuses on the same signal, so a genuinely
+      # broken tmux surfaces as a failed daemon rather than a silent D1.
+      log "WARN: the tmux ownership probe FAILED (tmux is missing, or the default socket cannot be queried). NOT starting ${tmux_unit}: it could become a second server. ${ao_unit} will refuse to start until this is fixed (#293/D1)."
+      return 0
+      ;;
+  esac
+  log "No tmux server owns the default socket; starting ${tmux_unit} so it — not ${ao_unit} — owns the fleet's cgroup."
+  run_best_effort systemctl --user start --no-block "${tmux_unit}"
+}
+
+# CLOSE the reacquisition window rather than race to fill it (#293, review cycle 3).
+#
+# The legacy server — the one running on the deploy host right now, and on any host
+# mid-migration — carries tmux's DEFAULT `exit-empty on`: the server exits as soon
+# as its last session closes. The moment it does, the socket goes free, and the ao
+# daemon (already running, already issuing tmux commands) can win the race to that
+# free socket and lazily spawn a replacement server inside ao.service's cgroup.
+# That IS D1, recreated silently, hours after the deploy, with nobody watching.
+# ao-tmux-claim.timer bounds that window to one tick; it cannot eliminate it, and
+# ao.service's ExecStartPre does not help — it only runs when ao itself starts.
+#
+# So do not race the daemon for the socket. Make the socket never go free:
+#
+#   A server that cannot drain cannot hand the socket to anyone.
+#
+# `exit-empty off` on the legacy server means it stays alive with zero sessions, so
+# the socket stays owned for the life of this boot, so no window ever opens. The
+# migration then happens exactly where it is safe — at the next REBOOT, where
+# ao-tmux.service (Before=ao.service, WantedBy=default.target) creates the server
+# first and owns it from the start.
+#
+# THE ONE THING WE DO TO A LIVE 49-AGENT SERVER, AND WHY IT IS SAFE. This is a pure
+# server-option write. Verified against tmux 3.5a on a scratch socket, not assumed:
+#   * it starts nothing, stops nothing, kills nothing: sessions, windows, panes and
+#     the server's PID are all untouched by the set;
+#   * `exit-empty` lives in tmux's SERVER option table, and `-g` resolves into that
+#     table (`show-options -s exit-empty` reads back `off` afterwards) — the same
+#     spelling ao-tmux.service's ExecStart uses;
+#   * with it off, closing the last session leaves the server ALIVE (same PID), and
+#     a later `new-session` re-attaches to that server instead of spawning one;
+#   * against a socket with NO server it just exits 1. Unlike `new-session` or
+#     `start-server`, `set-option` cannot itself create the very server we are
+#     trying to keep out of ao.service's cgroup.
+# It is nonetheless issued ONLY on the "a server positively owns the socket" branch:
+# on a socket we could not classify (probe state 2) we touch nothing at all.
+#
+# WHEN THE PIN FAILS: ADVISORY, BUT NEVER SILENT, AND NEVER "SUCCESS" (#293, review
+# cycle 4). The `set-option` can fail — an unreachable or read-only socket, a server
+# that died between the probe and this call, an option error on an older tmux. The
+# status this function branches on is therefore the REAL exit status of that
+# `set-option` (via run(), which propagates it); it is deliberately NOT routed
+# through run_best_effort(), which returns 0 whatever happened and made this
+# function's failure branch unreachable dead code for a whole review cycle.
+#
+# Advisory, not fatal, and the reasoning is that aborting buys nothing:
+#   * a failed pin leaves the host EXACTLY where it was before the deploy ran — the
+#     server is unpinned, as it has been every day until now. Failing the deploy
+#     removes none of that risk; it only withholds the new code.
+#   * the same code path runs on --rollback, so a hard failure here would make an
+#     emergency rollback unrunnable because of a transient tmux error. Refusing to
+#     roll back a broken daemon to protect against a drain that may never happen is
+#     the worse trade.
+#   * the deploy's own fleet risk is unchanged by the pin: the pin defends against a
+#     LATER drain, not against anything this script is about to do.
+# What a failed pin does buy is a lie if we let it print the success line. So it
+# prints the failure in the failure's own words, names the manual cgroup check that
+# is still required, and is re-stated at the END of the run (report_fleet_safety_
+# warnings) so it cannot scroll away behind the restart output.
+#
+# The probe cannot tell a LEGACY server from one ${tmux_unit} already owns, and it
+# does not need to: the pin is idempotent. On a migrated host ${tmux_unit}'s own
+# ExecStart already set `exit-empty off`, so this is a no-op that re-asserts it;
+# on the migration host it is the fix. Only the log line distinguishes them, and
+# it asks systemd rather than guessing.
+prevent_legacy_tmux_drain() {
+  local owner="legacy (pre-${tmux_unit})"
+  if systemctl --user is-active --quiet "${tmux_unit}" 2>/dev/null; then
+    owner="${tmux_unit}-owned"
+  fi
+  local status=0
+  # run(), not run_best_effort(): this branch needs the set-option's REAL status.
+  run tmux set-option -g exit-empty off || status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    # Under dry-run, run() returns 0 WITHOUT executing anything, so a factual
+    # "Pinned" line here would be exactly the false success cycle 4 caught —
+    # asserting a state we never established. Say what a dry run actually knows.
+    if [[ "${dry_run}" == "1" ]]; then
+      printf 'DRY-RUN: would pin exit-empty=off on the %s tmux server\n' "${owner}"
+      return 0
+    fi
+    log "Pinned exit-empty=off on the ${owner} tmux server: it can no longer exit when its last session closes, so it can never free the socket for ${ao_unit} to grab. ${tmux_unit} takes the socket at the next reboot."
+    return 0
+  fi
+  tmux_drain_pin_failed=1
+  log "WARN: the ${owner} tmux server could NOT be pinned (\`tmux set-option -g exit-empty off\` exited ${status}). This deploy did NOT confirm the #293/D1 reacquisition race is closed."
+  # A failed set-option proves only that THIS RUN could not set or confirm the
+  # option. It does not prove the server is exit-empty=on — a previous deploy may
+  # already have pinned it. State the unconfirmed state, not a state we did not read.
+  log "WARN:   * The server's exit-empty setting is UNCONFIRMED and may still be tmux's default (on). If it is on, then when its last session closes the server exits and frees the socket, and ${ao_unit} — already running, already issuing tmux commands — can spawn the next server inside its OWN cgroup. That is D1, live again, hours later, with nobody watching."
+  log "WARN:   * ${tmux_claim_timer} still races for the freed socket and a reboot fixes it for good, but neither is a guarantee."
+  log "WARN:   * The manual pre-deploy cgroup check REMAINS NECESSARY until this host reboots into ${tmux_unit}: confirm the tmux server is not in ${ao_unit}'s cgroup before the next deploy — cat /proc/\$(pgrep -f 'tmux.*server' | head -1)/cgroup."
+  return 0
+}
+
+# Re-state, at the very end of a deploy or rollback, any fleet-safety property this
+# run FAILED to establish (#293, review cycle 4). A warning printed before twenty
+# restart lines is a warning nobody reads, and the last line of a deploy is the one
+# a human acts on — it must not read like a clean run when it was not.
+#
+# This does not change the exit status: these are things that were ALREADY true of
+# the host before the deploy and that the deploy could not improve (see
+# prevent_legacy_tmux_drain), not things the deploy broke. Exiting non-zero would
+# report a failed deploy that in fact succeeded, and would trip callers into rolling
+# back a good release.
+report_fleet_safety_warnings() {
+  if [[ "${tmux_drain_pin_failed}" != "1" ]]; then
+    return 0
+  fi
+  log "UNRESOLVED (#293/D1): the tmux server could NOT be pinned with exit-empty=off during this run. The fleet's tmux server can still drain and hand its socket to ${ao_unit}. Re-run once tmux is reachable, or reboot into ${tmux_unit}; until then the manual pre-deploy cgroup check remains necessary."
+}
+
+# Belt and braces for the ONE case the drain pin cannot cover (#293, review cycle 3).
+#
+# With prevent_legacy_tmux_drain() in place the socket no longer goes free by
+# DRAINING. It can still go free by the server DYING: a crash, a segfault, an OOM
+# kill, `systemctl --user kill`, a hand-run `tmux kill-server`. In that state
+# ao-tmux.service is not running and was never started (its ExecCondition SKIPPED
+# it while the legacy server held the socket), and a skipped unit is never retried
+# — Restart= only reacts to a started process exiting. So nothing would start it,
+# and the daemon's next `tmux new-session` would spawn the replacement server in
+# ao.service's cgroup: D1, again.
+#
+# That is what this timer is for, and it is now its ONLY job. Note what it is NOT:
+# it is not a rescue of a live fleet — if the server died, every agent pane died
+# with it. It exists so the NEXT server is created in the right cgroup instead of
+# the daemon's, without waiting for a human or a reboot.
+#
+# `systemctl enable` on a timer only links it for the NEXT boot, and the death we
+# are covering can happen at any moment of THIS one — so the timer has to be running
+# now. Restarting a timer is not a fleet operation (it triggers
+# ao-tmux-claim.service, which only ever `start`s the tmux unit), so unlike
+# ${tmux_unit} it is safe to converge on every deploy.
+ensure_tmux_claim_timer() {
+  run_best_effort systemctl --user restart "${tmux_claim_timer}"
+}
+
+# Classify the sudo PAM warnings that appear under ao.service after a restart
+# (#293/D2, from #295).
+#
+# THE EMITTER IS NOT AO. `sudo` appears nowhere in this repo's deploy, ops, or
+# backend surface. The warnings come from AGENT processes that the D1 cgroup bug
+# mis-parented into ao.service's cgroup, and they are two very different things:
+#
+#   * `sudo -n true` — a NON-interactive capability probe the agent harnesses run
+#     (it also shows up under session scopes and tmux-spawn scopes, wherever an
+#     agent runs). `-n` tells sudo never to prompt, and pam_unix logs
+#     "conversation failed" precisely BECAUSE it refused to prompt. It cannot
+#     hang. On this host it accounted for 722 of the lines.
+#   * a genuinely interactive `sudo -- sh -c "apt-get install …"` — Playwright's
+#     browser-dependency install, run by a worker agent. THAT is the latent hang
+#     #295 was worried about, and it is agent behavior, not daemon behavior.
+#
+# So the fix is not to suppress a log line: it is D1 (the agent fleet no longer
+# lives in ao.service's cgroup, so neither class can be attributed to — or block —
+# the daemon service). What deploy owes the operator is an honest classification:
+# a bounded, documented count of the harmless probes, and the ACTUAL COMMAND LINE
+# of anything interactive. Advisory, never fatal: an agent's install choice must
+# not be able to fail a production deploy.
+verify_ao_sudo_warnings() {
+  local since="$1"
+  if [[ "${dry_run}" == "1" ]]; then
+    log "DRY-RUN: would classify sudo PAM warnings under ${ao_unit} since ${since}"
+    return 0
+  fi
+  if ! command_exists journalctl || ! command_exists node; then
+    log "WARN: journalctl or node unavailable; skipping the ${ao_unit} sudo warning scan."
+    return 0
+  fi
+
+  # Read the journal FIRST, on its own, and check that it actually worked. Piping
+  # journalctl straight into node under `set -o pipefail` with a trailing
+  # `|| true` made a permission-denied / corrupt-journal failure indistinguishable
+  # from a clean host: no entries, no error, "0 warnings" (#293, codex review of
+  # #309). An unreadable journal means the classification is UNAVAILABLE — say so.
+  local entries
+  if ! entries="$(journalctl --user-unit "${ao_unit}" _COMM=sudo --since "${since}" -o json --no-pager 2>&1)"; then
+    log "WARN: ${ao_unit}: sudo warning classification unavailable — the journal query failed (${entries%%$'\n'*}). This is NOT a clean result: the scan was skipped, not passed."
+    return 0
+  fi
+
+  local report noninteractive interactive
+  report="$(printf '%s' "${entries}" | node -e '
+let body = "";
+process.stdin.on("data", (chunk) => (body += chunk));
+process.stdin.on("end", () => {
+  let probes = 0;
+  const interactive = new Map();
+  for (const line of body.split("\n")) {
+    if (!line.trim()) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    const msg = String(entry.MESSAGE || "");
+    if (!/pam_unix\(sudo:auth\)/.test(msg)) continue;
+    const cmd = String(entry._CMDLINE || "");
+    // `-n` anywhere in the option run before the command means non-interactive.
+    if (/^sudo\s+(?:-\w+\s+)*-n(?:\s|$)/.test(cmd) || /\s-n\s/.test(cmd)) {
+      probes += 1;
+      continue;
+    }
+    interactive.set(cmd, (interactive.get(cmd) || 0) + 1);
+  }
+  const named = [...interactive.entries()].map(([cmd, n]) => `${n}x ${cmd.slice(0, 160)}`);
+  process.stdout.write(`${probes}\t${named.join(" | ")}`);
+});
+' 2>/dev/null)" || {
+    log "WARN: ${ao_unit}: sudo warning classification unavailable — the classifier could not read the journal output. This is NOT a clean result: the scan was skipped, not passed."
+    return 0
+  }
+
+  noninteractive="${report%%$'\t'*}"
+  interactive="${report#*$'\t'}"
+  [[ -n "${noninteractive}" ]] || return 0
+
+  if [[ "${noninteractive}" != "0" ]]; then
+    log "${ao_unit}: ${noninteractive} non-interactive sudo probe warning(s) since restart (\`sudo -n\` capability probes from agent harnesses). Expected: \`-n\` means they cannot prompt and cannot hang; pam_unix logs 'conversation failed' precisely because sudo refused to prompt."
+  fi
+  if [[ -n "${interactive//[[:space:]]/}" ]]; then
+    log "WARN: ${ao_unit}: interactive sudo attributed to the daemon service: ${interactive}"
+    log "WARN: this is an AGENT-side install (typically Playwright browser deps), not ao — ao itself never shells out to sudo. It can only reach this cgroup while a pre-${tmux_unit} tmux server is still parented under ${ao_unit} (see #293/D1); it disappears once the host reboots and ${tmux_unit} owns the server."
+  fi
+}
+
+# Report whether the D1 invariant actually holds on this host: no agent/worker
+# process may live in ao.service's cgroup. This is the manual pre-deploy ritual
+# (`/proc/$(pgrep -f 'tmux.*server')/cgroup`) turned into an automatic, always-run
+# check. Advisory by design — a legacy server predating ao-tmux.service cannot be
+# migrated by a deploy, and failing the deploy over it would block the very
+# release that fixes it.
+verify_ao_cgroup_is_daemon_only() {
+  if [[ "${dry_run}" == "1" ]]; then
+    log "DRY-RUN: would verify no agent/worker processes share the ${ao_unit} cgroup"
+    return 0
+  fi
+  command_exists systemctl || return 0
+  local cgroup procs pid comm leftovers=""
+  cgroup="$(systemctl --user show "${ao_unit}" --property=ControlGroup --value 2>/dev/null || true)"
+  [[ -n "${cgroup}" ]] || return 0
+  procs="/sys/fs/cgroup${cgroup}/cgroup.procs"
+  [[ -r "${procs}" ]] || return 0
+
+  local main_pid
+  main_pid="$(systemctl --user show "${ao_unit}" --property=MainPID --value 2>/dev/null || true)"
+  while IFS= read -r pid; do
+    [[ -n "${pid}" && "${pid}" != "${main_pid}" ]] || continue
+    comm="$(cat "/proc/${pid}/comm" 2>/dev/null || true)"
+    [[ -n "${comm}" ]] || continue
+    leftovers+="${comm} "
+  done < "${procs}"
+
+  if [[ -z "${leftovers}" ]]; then
+    log "${ao_unit} cgroup holds the daemon only; the agent fleet is outside it (#293/D1 invariant holds)."
+    return 0
+  fi
+  log "WARN: ${ao_unit} cgroup still holds non-daemon processes: ${leftovers%% }"
+  log "WARN: these predate ${tmux_unit} owning the tmux server. ${ao_unit} keeps KillMode=process so a restart of the daemon cannot kill them, but the structural escape only lands when the host reboots and ${tmux_unit} creates the server itself. (A direct cgroup kill of ${ao_unit} — systemctl kill, an OOM kill, host shutdown — would still take them with it.)"
+}
+
 restart_unit() {
   local unit="$1"
   run systemctl --user restart "${unit}"
@@ -656,16 +1169,30 @@ render_release_units() {
   escaped_current="${escaped_current//|/\\|}"
   run mkdir -p "${unit_dir}"
 
-  for unit in "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+  local dropin
+  for unit in "${ao_unit}" "${tmux_unit}" "${tmux_claim_unit}" "${tmux_claim_timer}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
     if [[ "${dry_run}" == "1" ]]; then
       printf 'DRY-RUN: render %s -> %s\n' "${source_ops}/${unit}" "${unit_dir}/${unit}"
-      continue
+    else
+      if [[ ! -f "${source_ops}/${unit}" ]]; then
+        printf 'Refusing to deploy: unit template missing from staged source: %s\n' "${source_ops}/${unit}" >&2
+        return 1
+      fi
+      sed "s|%h/.ao/deploy/current|${escaped_current}|g" "${source_ops}/${unit}" > "${unit_dir}/${unit}"
     fi
-    if [[ ! -f "${source_ops}/${unit}" ]]; then
-      printf 'Refusing to deploy: unit template missing from staged source: %s\n' "${source_ops}/${unit}" >&2
-      return 1
-    fi
-    sed "s|%h/.ao/deploy/current|${escaped_current}|g" "${source_ops}/${unit}" > "${unit_dir}/${unit}"
+
+    # Render the unit's tracked drop-ins alongside it, through the same %h
+    # substitution, so `current/systemd/` is a complete picture of what the host
+    # should be running (#293 H4).
+    while IFS= read -r dropin; do
+      [[ -n "${dropin}" ]] || continue
+      if [[ "${dry_run}" == "1" ]]; then
+        printf 'DRY-RUN: render %s -> %s\n' "${source_ops}/${unit}.d/${dropin}" "${unit_dir}/${unit}.d/${dropin}"
+        continue
+      fi
+      mkdir -p "${unit_dir}/${unit}.d"
+      sed "s|%h/.ao/deploy/current|${escaped_current}|g" "${source_ops}/${unit}.d/${dropin}" > "${unit_dir}/${unit}.d/${dropin}"
+    done < <(unit_dropin_names "${source_ops}" "${unit}")
   done
 }
 
@@ -868,10 +1395,28 @@ restore_units() {
 
 # Sanitize and validate EVERY unit before installing ANY of them, so a refusal
 # cannot leave the host with a half-updated set of units.
+#
+# Units the ACTIVE PAYLOAD does not ship are skipped, not fatal (#293). This runs
+# AFTER the release pointer has already been flipped, so on a rollback to a release
+# that predates a newly-introduced unit — every pre-#293 release has no
+# ao-tmux.service — a hard failure here aborted the emergency rollback in a
+# half-switched state: `current` and the CLI already on the old release, the units
+# still the new ones. Breaking the recovery path is strictly worse than carrying a
+# unit an older payload never knew about, so the installed unit is left as it is
+# (for ao-tmux.service that is also the safe answer: it is release-independent).
 install_units_from_current() {
   run mkdir -p "${systemd_user_dir}"
-  local units=("${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}")
+  local all_units=("${ao_unit}" "${tmux_unit}" "${tmux_claim_unit}" "${tmux_claim_timer}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}")
+  local units=()
   local unit
+
+  for unit in "${all_units[@]}"; do
+    if [[ "${dry_run}" == "1" || -f "${current_link}/systemd/${unit}" ]]; then
+      units+=("${unit}")
+    else
+      log "WARN: the active release ships no ${unit}; keeping the installed unit as-is (this release predates it)."
+    fi
+  done
 
   if [[ "${dry_run}" == "1" ]]; then
     for unit in "${units[@]}"; do
@@ -933,8 +1478,186 @@ install_units_from_current() {
     rm -rf -- "${backup}"
   fi
 
+  install_unit_dropins "${units[@]}"
+
   run systemctl --user daemon-reload
-  run systemctl --user enable "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"
+  # Enable what is actually installed. `systemctl enable` on a unit with no unit
+  # file fails, and after a rollback to a payload that predates a unit the only
+  # thing on disk may be the previously-installed file — which is still the one to
+  # enable. -f follows the symlink, so a MASKED unit (-> /dev/null) is excluded
+  # rather than turned into a hard deploy failure.
+  #
+  # …and only what is ENABLEABLE. A unit with no [Install] section cannot be
+  # enabled: systemd prints a five-line "no installation config" complaint and
+  # exits 0, so nothing fails — it just becomes permanent deploy noise.
+  # ao-tmux-claim.service is such a unit (its .timer starts it; no target wants
+  # it). The check reads the file rather than hardcoding a name, so a future
+  # timer- or socket-activated unit is handled the day it lands.
+  local enable_units=()
+  for unit in "${all_units[@]}"; do
+    if [[ "${dry_run}" == "1" || -f "${systemd_user_dir}/${unit}" ]]; then
+      unit_is_enableable "${unit}" && enable_units+=("${unit}")
+    fi
+  done
+  if (( ${#enable_units[@]} > 0 )); then
+    run systemctl --user enable "${enable_units[@]}"
+  fi
+}
+
+# Ownership ledger for the drop-ins this deploy installed into a unit's drop-in
+# dir. systemd only reads `*.conf` from that dir, so a dot-prefixed ledger sits
+# there inertly, next to the files it describes, and survives a rollback the same
+# way the units do.
+#
+# OWNERSHIP IS CONTENT-ADDRESSED, NOT NAME-ADDRESSED (#293, review cycle 2). Each
+# line is `<sha256>  <name.conf>` — the hash of the bytes deploy actually
+# installed. Tracking names alone let deploy claim a file it never wrote: an
+# operator's pre-existing `override.conf` was silently overwritten on the first
+# deploy and RECORDED AS OURS, so a later release that retired that name deleted
+# their file. Deploy owns a name only while the bytes on disk are still its bytes.
+dropin_ledger() {
+  printf '%s/%s.d/.ao-deploy-owned' "${systemd_user_dir}" "$1"
+}
+
+# Names deploy installed into ${unit}.d on the last convergence. Empty when the
+# ledger is absent (a host that predates it), which is the safe answer: an
+# unrecorded file is treated as somebody else's and left alone.
+dropin_owned_names() {
+  local ledger
+  ledger="$(dropin_ledger "$1")"
+  [[ -f "${ledger}" ]] || return 0
+  awk 'NF == 2 && $2 ~ /^[^\/]+\.conf$/ { print $2 }' "${ledger}"
+}
+
+# The hash deploy recorded for ${unit}.d/${name}; empty when it never wrote it.
+dropin_owned_hash() {
+  local ledger
+  ledger="$(dropin_ledger "$1")"
+  [[ -f "${ledger}" ]] || return 0
+  awk -v name="$2" 'NF == 2 && $2 == name { print $1; exit }' "${ledger}"
+}
+
+file_sha256() {
+  [[ -f "$1" ]] || return 1
+  local out
+  out="$(sha256sum -- "$1" 2>/dev/null)" || return 1
+  printf '%s' "${out%% *}"
+}
+
+# Never destroy a file at a managed drop-in name that deploy did not write.
+#
+# Two cases, one test: the bytes on disk are not the bytes we recorded. Either the
+# operator hand-placed the file before deploy ever ran (unrecorded), or they edited
+# the one deploy installed (recorded, but changed). In both, the file is about to
+# be overwritten by an install or deleted by a retirement, and in both it is theirs.
+#
+# We back it up and warn rather than refusing the deploy: the release's drop-in is
+# part of the unit definition and must reach the host (that is #293/H4), so a stale
+# hand-placed file cannot be allowed to wedge production. But if the BACKUP itself
+# fails we do refuse — proceeding would be the silent data loss this exists to stop,
+# and a directory we cannot write to is broken in a way a deploy must not paper over.
+# The backup keeps the operator's bytes and drops the `.conf` suffix, so systemd
+# ignores it and it cannot come back as live config.
+preserve_unmanaged_dropin() {
+  local unit="$1" name="$2" path="$3"
+  [[ -e "${path}" ]] || return 0
+
+  local recorded actual backup
+  recorded="$(dropin_owned_hash "${unit}" "${name}")"
+  actual="$(file_sha256 "${path}" || true)"
+  if [[ -n "${recorded}" && -n "${actual}" && "${recorded}" == "${actual}" ]]; then
+    return 0
+  fi
+
+  backup="${path}.operator-backup.$(date -u +%Y%m%dT%H%M%SZ)"
+  if ! cp -p -- "${path}" "${backup}"; then
+    printf 'Refusing to deploy: %s.d/%s was not written by deploy (hand-placed or hand-edited) and it could not be backed up to %s. Deploy will not overwrite or delete a file it does not own.\n' \
+      "${unit}" "${name}" "${backup}" >&2
+    return 1
+  fi
+  log "WARN: ${unit}.d/${name} is not the file deploy installed (hand-placed or hand-edited). Preserved a copy at ${backup}; the release's own definition now takes that name (#293)."
+}
+
+# Converge each unit's drop-in dir with the release's. Drop-ins go through the
+# same prime sanitizer as the units themselves (an `Environment=AO_PRIME_*` in a
+# drop-in activates prime exactly as one in the unit body would), and drop-ins
+# the release no longer ships are removed so a retired override cannot outlive
+# the commit that deleted it (#293 H4).
+#
+# Removal is scoped by OWNERSHIP, never by glob (#293, codex review of #309). The
+# old `rm -f <unit>.d/*.conf` deleted every drop-in in the dir — including files
+# deploy never wrote: an operator's `10-local-port.conf`, a resource-limit
+# override, anything a human put there — and the unconditional service restart
+# then applied the loss immediately and silently. Only names this deploy recorded
+# as its own are eligible for removal; everything else survives untouched.
+install_unit_dropins() {
+  local unit dropin dst_dir src_dir tmp ledger owned shipped
+  for unit in "$@"; do
+    src_dir="${current_link}/systemd/${unit}.d"
+    dst_dir="${systemd_user_dir}/${unit}.d"
+
+    if [[ "${dry_run}" == "1" ]]; then
+      while IFS= read -r dropin; do
+        [[ -n "${dropin}" ]] || continue
+        printf 'DRY-RUN: %s\n' "$(quote_cmd cp "${src_dir}/${dropin}" "${dst_dir}/${dropin}")"
+      done < <(unit_dropin_names "${current_link}/systemd" "${unit}")
+      continue
+    fi
+
+    ledger="$(dropin_ledger "${unit}")"
+    shipped=""
+    if [[ -d "${src_dir}" ]]; then
+      shipped="$(unit_dropin_names "${current_link}/systemd" "${unit}")"
+    fi
+
+    # Retire only the previously-installed drop-ins this release no longer ships —
+    # and only after making sure the bytes there are still the bytes we installed.
+    # An operator who edited a managed drop-in gets their version preserved instead
+    # of deleted (the retired name still stops being active: that is the H4 fix).
+    while IFS= read -r owned; do
+      [[ -n "${owned}" ]] || continue
+      grep -qxF "${owned}" <<<"${shipped}" && continue
+      preserve_unmanaged_dropin "${unit}" "${owned}" "${dst_dir}/${owned}" || return 1
+      rm -f -- "${dst_dir}/${owned}"
+    done < <(dropin_owned_names "${unit}")
+
+    if [[ -z "${shipped}" ]]; then
+      rm -f -- "${ledger}"
+      # Prune the dir only when nothing else lives in it. An operator drop-in keeps
+      # it — and rmdir MUST NOT be able to fail the deploy for exactly that reason.
+      if [[ -d "${dst_dir}" ]]; then
+        rmdir "${dst_dir}" 2>/dev/null || true
+      fi
+      continue
+    fi
+
+    mkdir -p "${dst_dir}"
+    while IFS= read -r dropin; do
+      [[ -n "${dropin}" ]] || continue
+      # A file already sitting at a name this release ships is only ours to
+      # overwrite if we wrote it and nobody touched it since.
+      preserve_unmanaged_dropin "${unit}" "${dropin}" "${dst_dir}/${dropin}" || return 1
+      if ! tmp="$(mktemp "${dst_dir}/${dropin}.XXXXXX")"; then
+        printf 'Refusing to deploy: could not stage drop-in %s\n' "${unit}.d/${dropin}" >&2
+        return 1
+      fi
+      if ! stage_unit_file "${src_dir}/${dropin}" "${tmp}" "${unit}" || ! mv -Tf "${tmp}" "${dst_dir}/${dropin}"; then
+        rm -f -- "${tmp}"
+        printf 'Refusing to deploy: could not install drop-in %s\n' "${unit}.d/${dropin}" >&2
+        return 1
+      fi
+    done <<<"${shipped}"
+
+    # Record what we now own — the NAME and the HASH OF THE BYTES WE WROTE — and do
+    # it AFTER installing: a crash mid-install leaves the older ledger, which
+    # under-claims (leaks a file) rather than over-claims (deletes a stranger's).
+    # The hash is what a later deploy re-checks before overwriting or retiring the
+    # name, so an operator's edit can never be mistaken for our own file.
+    while IFS= read -r dropin; do
+      [[ -n "${dropin}" ]] || continue
+      printf '%s  %s\n' "$(file_sha256 "${dst_dir}/${dropin}" || true)" "${dropin}"
+    done <<<"${shipped}" > "${ledger}"
+  done
 }
 
 backup_pre_hermetic_host() {
@@ -953,7 +1676,7 @@ backup_pre_hermetic_host() {
     cp -p "${ao_bin}" "${pre_hermetic_dir}/ao"
   fi
   local unit copied=0
-  for unit in "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+  for unit in "${ao_unit}" "${tmux_unit}" "${tmux_claim_unit}" "${tmux_claim_timer}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
     if [[ -f "${systemd_user_dir}/${unit}" ]]; then
       cp -p "${systemd_user_dir}/${unit}" "${pre_hermetic_dir}/systemd/${unit}"
       copied=$((copied + 1))
@@ -979,7 +1702,25 @@ rollback_pre_hermetic() {
   run mv -Tf "${ao_bin}.tmp" "${ao_bin}"
   run rm -f "${current_link}" "${previous_link}"
   local unit
-  for unit in "${ao_unit}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+  for unit in "${ao_unit}" "${tmux_unit}" "${tmux_claim_unit}" "${tmux_claim_timer}" "${web_unit}" "${notifier_unit}" "${attention_reply_unit}"; do
+    if [[ ! -f "${pre_hermetic_dir}/systemd/${unit}" ]] &&
+      [[ "${unit}" == "${tmux_unit}" || "${unit}" == "${tmux_claim_unit}" || "${unit}" == "${tmux_claim_timer}" ]]; then
+      # THE FLEET LIVES IN ao-tmux.service's CGROUP. A pre-hermetic backup taken
+      # before that unit existed cannot contain it — which is the FIRST deploy from
+      # any pre-#293 host — so the generic "not in the backup => disable --now and
+      # remove" branch below would issue `disable --now` against the unit that owns
+      # the tmux server and signal every agent pane. Absence from a backup is not
+      # consent to kill the fleet.
+      #
+      # Keep these units instead. They are release-independent (they exec
+      # /usr/bin/tmux and /usr/bin/systemctl, nothing under current/), so they stay
+      # correct no matter how far back the binary is rolled — and removing them
+      # would only hand the socket back to a daemon-spawned server, i.e. re-create
+      # D1 during an emergency rollback. The claim timer goes with the unit: without
+      # it, a rollback would silently disable the only path back to socket ownership.
+      log "Keeping ${unit} installed and running: it predates this backup, and tearing it out re-exposes the fleet (#293/D1)."
+      continue
+    fi
     if [[ "${dry_run}" == "1" || -f "${pre_hermetic_dir}/systemd/${unit}" ]]; then
       install_unit_file "${pre_hermetic_dir}/systemd/${unit}" "${systemd_user_dir}/${unit}"
     elif [[ -f "${systemd_user_dir}/${unit}" ]]; then
@@ -1230,8 +1971,14 @@ rollback_deploy() {
   install_cli_link
   install_units_from_current
   retire_legacy_attention_notifier
+  ensure_tmux_server_unit
+  ensure_tmux_claim_timer
+  local ao_restart_started_at
+  ao_restart_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   restart_unit "${ao_unit}"
   verify_after_restart "${pre_sessions}" "Pre-rollback session count unavailable (old daemon may be down)"
+  verify_ao_cgroup_is_daemon_only
+  verify_ao_sudo_warnings "${ao_restart_started_at}"
   local rolled_revision=""
   if [[ "${dry_run}" != "1" ]]; then
     rolled_revision="$(cat "${current_link}/REVISION")"
@@ -1246,10 +1993,12 @@ rollback_deploy() {
   restart_unit "${attention_reply_unit}"
   verify_unit_active "${attention_reply_unit}" "attention reply listener"
   verify_tailnet_web
+  report_fleet_safety_warnings
 }
 
 deploy() {
   local head base frontend_changed=false frontend_package_metadata_changed=false web_build_needed=false pre_sessions
+  local changed_web=""
 
   if [[ "${dry_run}" != "1" && -L "${current_link}" && ! -x "${ao_bin}" ]]; then
     log "WARN: current ao symlink is missing or not executable at ${ao_bin}; deploy will repair it before restart."
@@ -1266,6 +2015,9 @@ deploy() {
   if changed_in_range "${base}" "${head}" "frontend/"; then
     frontend_changed=true
   fi
+  # Web INPUTS are wider than the bundle's sources: the server script and the
+  # unit/drop-in definition are executed and read by production too (#293 H4).
+  changed_web="$(changed_web_input "${base}" "${head}" || true)"
   if changed_in_range "${base}" "${head}" "frontend/package.json" ||
     changed_in_range "${base}" "${head}" "frontend/package-lock.json"; then
     frontend_package_metadata_changed=true
@@ -1346,14 +2098,28 @@ deploy() {
   install_cli_link
   install_units_from_current
   retire_legacy_attention_notifier
+  # Before the daemon restarts: make sure the tmux server is owned by
+  # ao-tmux.service, so the daemon can never be the client that lazily spawns one
+  # into ao.service's own cgroup (#293/D1).
+  ensure_tmux_server_unit
+  ensure_tmux_claim_timer
+  local ao_restart_started_at
+  ao_restart_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   restart_unit "${ao_unit}"
   verify_after_restart "${pre_sessions}" "Pre-restart session count unavailable (first deploy or old daemon unreachable)"
   verify_daemon_revision "${built_revision:-}"
+  verify_ao_cgroup_is_daemon_only
+  verify_ao_sudo_warnings "${ao_restart_started_at}"
 
-  if [[ "${frontend_changed}" == "true" ]]; then
-    log "frontend/ changed; restarting ${web_unit} from the activated release."
+  # Name the web input that changed. The restart itself is unconditional (the web
+  # process must always follow the activated release pointer), but before #293
+  # this log claimed "frontend/ unchanged" for a change to the very file the web
+  # process executes — which is how an ops-only web fix could be reported as
+  # deployed while the old process kept serving.
+  if [[ -n "${changed_web}" ]]; then
+    log "web inputs changed (${changed_web}); restarting ${web_unit} from the activated release."
   else
-    log "frontend/ unchanged; restarting ${web_unit} so it follows the activated release pointer."
+    log "no web inputs changed; restarting ${web_unit} so it follows the activated release pointer."
   fi
   restart_unit "${web_unit}"
   verify_unit_active "${web_unit}" "ao web"
@@ -1381,6 +2147,7 @@ deploy() {
   prune_old_releases
 
   log "ao deploy complete."
+  report_fleet_safety_warnings
 }
 
 with_deploy_lock() {
@@ -1397,6 +2164,13 @@ with_deploy_lock() {
   fi
   "$@"
 }
+
+# Test hook: let the suite source this script and exercise individual functions
+# (notably the fleet-fatal systemctl guard) without running a deploy or a rollback
+# against the host it happens to be running on.
+if [[ -n "${AO_DEPLOY_LIB_ONLY:-}" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 if [[ "${rollback}" == "true" ]]; then
   with_deploy_lock rollback_deploy

@@ -1,0 +1,210 @@
+[Unit]
+Description=ao tmux server (owns every agent pane's cgroup)
+Documentation=https://github.com/polymath-ventures/agent-orchestrator/issues/293
+# The daemon must never be the first client to touch the default tmux socket:
+# whichever process starts the server owns it, and tmux daemonizes the server
+# from that client, so a lazily-spawned server inherits the CLIENT's cgroup.
+# Ordering this unit before ao.service is what makes the escape structural
+# rather than a race.
+Before=ao.service
+
+# Refuse `systemctl --user stop|restart|try-restart` and `disable/mask --now` on
+# this unit outright: stopping it signals the tmux server the entire agent fleet
+# lives under (see the [Service] block below for the full stop story).
+#
+# THIS KEY BELONGS TO [Unit]. systemd silently IGNORES unknown keys — putting it
+# in [Service] parses fine, logs one line at load, and quietly does nothing, which
+# is exactly the kind of "guard" that reads as safe and protects nothing.
+# deploy.test.mjs asserts its section for that reason.
+#
+# It cannot refuse a stop that comes from a dependency, an `isolate`, or a
+# user-manager shutdown — those are not "manual". For those, the [Service]
+# settings below make THIS UNIT'S OWN STOP SEQUENCE non-fatal to the server. That
+# is all they do, and it is worth being exact about the difference (see the
+# residual-risk note at the end of [Service]): they neutralize the stop JOB; they
+# cannot neutralize a signal delivered straight to the cgroup, which is what a
+# user-manager/session teardown ultimately does after the stop job runs.
+RefuseManualStop=yes
+
+[Service]
+# Skip cleanly when a server ALREADY owns the default socket.
+#
+# ao.service Wants= this unit, so systemd pulls it into every `systemctl restart
+# ao.service` transaction — including on the one host this unit exists to
+# migrate, whose tmux server was lazily spawned by the daemon before this unit
+# existed. deploy.sh declining to `start` it is therefore not enough: systemd
+# starts it anyway. Without this guard ExecStart would merely ATTACH to the
+# foreign server and exit, leaving a Type=forking unit with no process to adopt
+# — it hangs in `activating` until its start timeout (delaying the After=
+# daemon), then fails.
+#
+# ExecCondition is the right primitive: exit 1-254 marks the unit SKIPPED, not
+# failed, so nothing waits on it and nothing loops.
+#
+# THE PROBE HAS THREE OUTCOMES, NOT TWO (#293, review cycle 2). Inferring "a
+# server exists" from an error we did not recognize is not a check at all: a
+# missing tmux, a socket permission error, or an unmodelled diagnostic would
+# silently skip this unit AND satisfy ao.service's assertion — and the daemon
+# would then lazily spawn the server in its own cgroup. D1, back again.
+#
+#   exit 0 -> the socket is FREE. Take it (ExecStart runs).
+#   exit 1 -> a server already owns it. Skip quietly. Ownership passes to this
+#             unit at the next drain (ao-tmux-claim.timer) or at reboot.
+#   exit 2 -> THE PROBE ITSELF FAILED. Skip, loudly. We do not know the state, so
+#             we neither create a possible second server nor pretend we checked.
+#             ao.service's ExecStartPre refuses for the same reason, so this is
+#             visible as a failed daemon instead of a silently recreated D1.
+#
+# `tmux list-sessions` is the probe, and its EXIT CODE — not its English — is the
+# positive test. Measured against tmux 3.5a:
+#   server, >=1 session -> exit 0
+#   server, 0 sessions  -> exit 0    (has-session exits 1 here, "no current
+#                                     target". That divergence is exactly why the
+#                                     probe is not has-session: a freshly started,
+#                                     still-empty server is what this unit creates
+#                                     at boot, and the daemon must accept it.)
+#   no server           -> exit 1, "error connecting to <socket>"
+#   stale socket        -> exit 1, "no server running on <socket>"
+# Like has-session, and unlike most tmux commands, list-sessions never CREATES a
+# server — so the probe cannot itself spawn the daemon-parented server this unit
+# exists to prevent. English is used only to classify a FAILURE, never to
+# conclude that a server exists.
+ExecCondition=/bin/sh -c 'if tmux list-sessions >/dev/null 2>&1; then exit 1; fi; if tmux list-sessions 2>&1 | grep -qiE "permission denied|operation not permitted"; then echo "ao-tmux.service SKIPPED: the tmux ownership probe FAILED (the socket cannot be queried). Not starting a server: it could become a second one. Fix the socket permissions, then: systemctl --user start ao-tmux.service" >&2; exit 2; fi; if tmux list-sessions 2>&1 | grep -qiE "error connecting|no server running"; then exit 0; fi; echo "ao-tmux.service SKIPPED: the tmux ownership probe FAILED. tmux exited non-zero with a diagnostic this unit does not model, so it CANNOT tell whether a server owns the default socket, and it will not guess. ao.service refuses to start until this is fixed (see its ExecStartPre). tmux list-sessions said:" >&2; tmux list-sessions 2>&1 | sed "s/^/  /" >&2; exit 2'
+
+# `tmux start-server` double-forks and the invoking client exits, so the tmux
+# server is the surviving process in this unit's cgroup and systemd adopts it as
+# the main PID.
+#
+# `exit-empty off` is load-bearing, not a nicety: tmux's default is to exit the
+# server as soon as its last session closes. If it exited, the NEXT `tmux
+# new-session` — which comes from the ao daemon — would lazily spawn a fresh
+# server inside ao.service's cgroup and silently undo this unit. Pinning it off
+# keeps this unit the owner of the server for the life of the boot.
+Type=forking
+ExecStart=/usr/bin/tmux start-server ";" set-option -g exit-empty off
+
+# THERE IS DELIBERATELY NO ExecStop (#293, review cycle 2).
+#
+# It used to be `tmux kill-server`. A "tidy teardown" of this unit IS the fleet
+# kill: every agent pane, every claude/codex process, every `npm test` child
+# lives under that server. And ExecStop is reached by far more than deploy.sh — a
+# hand-typed `systemctl --user stop`, a `restart`, a `mask --now`, an `isolate`,
+# a user-manager shutdown, even a Type=forking main-PID misdetection all run it.
+# A guard inside one shell script cannot enforce a systemd-level invariant, so
+# the invariant lives here instead: THIS UNIT OWNS NO COMMAND THAT CAN KILL THE
+# SERVER. Stopping it now orphans a still-ALIVE tmux server — strictly better
+# than a clean teardown that takes the fleet with it. A later start sees that
+# server (ExecCondition) and skips; ao-tmux-claim.timer re-adopts the socket once
+# it is genuinely free.
+#
+# Deleting ExecStop is necessary but NOT sufficient: with no ExecStop, systemd
+# falls back to SIGNALLING the unit on stop. So the fallback is made harmless too.
+#
+#   RefuseManualStop  (in [Unit], above) systemd itself refuses `stop`, `restart`,
+#                     `try-restart` and `disable/mask --now`. The operator gets an
+#                     error instead of a dead fleet. It cannot refuse a stop that is
+#                     dependency- or shutdown-driven — which is what the rest of
+#                     this block is for.
+#   KillMode=process  the fleet lives in this cgroup (and in tmux-spawn-*.scopes
+#                     beneath the user manager); a cgroup-wide signal is a fleet
+#                     kill, so only the main process is ever signalled.
+#   KillSignal        and that one signal lands on the tmux server itself. SIGTERM
+#                     would kill it, so we send SIGCONT — a no-op for a running
+#                     process.
+#   SendSIGKILL=no    after TimeoutStopSec systemd escalates to SIGKILL by
+#                     default; that alone is a fleet kill. Instead systemd gives
+#                     up and leaves the server running.
+#   TimeoutStopSec    bounds how long "giving up" takes. Measured on systemd 257:
+#                     an unrefusable stop takes ~2x this (systemd walks
+#                     stop-sigterm and then a final phase, each bounded by it),
+#                     ends with the unit in `failed`, AND LEAVES THE SERVER
+#                     RUNNING — which is the whole point. 5s keeps that bounded at
+#                     ~10s of a shutdown/isolate, since the server is never
+#                     expected to exit on a stop and this always elapses in full.
+#   OOMPolicy         an OOM-killed agent process must not make systemd stop the
+#                     unit that owns the entire fleet.
+#
+# A unit left `failed` with a live server is fine and expected: the next start
+# (from ao-tmux-claim.timer) re-runs ExecCondition, sees that server, and skips.
+#
+# ---------------------------------------------------------------------------
+# RESIDUAL RISK — WHAT CAN STILL KILL THE FLEET (#293, review cycles 3 and 4).
+#
+# Scope the claim exactly. What the directives above buy is this and only this:
+#
+#   THE DEPLOY PATH AND SYSTEMD *STOP/RESTART JOBS* ON THIS UNIT CAN NO LONGER
+#   KILL THE FLEET. ANYTHING THAT SIGNALS THE PROCESSES DIRECTLY — A CGROUP KILL,
+#   A KILL BY PID, THE TMUX SERVER CRASHING, OOM, HOST SHUTDOWN — STILL CAN.
+#
+# Note precisely what that does NOT say (review cycle 4 corrects review cycle 3,
+# which said "the ordinary systemd stop/restart/FAILURE paths"): it is about stop
+# JOBS, not about failure in general. Every directive above acts on a systemd stop
+# job. Nothing here — and no unit directive that exists — can refuse a signal
+# delivered straight to a process or a cgroup, and nothing here keeps a process
+# alive that has died on its own. These still kill the fleet, and saying otherwise
+# would be a lie:
+#
+#   * THE TMUX SERVER PROCESS ITSELF FAILING — a crash, a segfault, an assertion,
+#     `tmux kill-server`. Every pane is a child of that server: when it dies, the
+#     fleet dies with it, instantly. Restart=always below does NOT rescue it — it
+#     starts a NEW, EMPTY server. Its value is that the replacement lands in THIS
+#     cgroup instead of ao.service's; it is not, and cannot be, fleet recovery.
+#   * A SIGNAL SENT STRAIGHT TO THE SERVER'S PID — a hand-typed `kill`/`kill -9`,
+#     a supervisor, anything with the pid. It never touches this unit's stop
+#     settings: KillSignal/KillMode/SendSIGKILL only govern the signals SYSTEMD
+#     sends on a stop job, never one someone else sends. Same outcome: fleet gone,
+#     Restart=always brings back an empty server.
+#   * `systemctl --user kill ao-tmux.service` (and `kill --kill-whom=all`). Not a
+#     stop job: it signals the cgroup directly. VERIFIED — it killed the process in
+#     testing. deploy.sh's guard_fleet_fatal() blocks it from the SCRIPT; a human
+#     typing it by hand still kills the fleet.
+#   * systemd-oomd, and the kernel's own OOM killer, selecting the tmux server or a
+#     pane. OOMPolicy=continue only stops systemd REACTING to that by stopping the
+#     unit; it cannot stop the kill itself.
+#   * Teardown of the ENCLOSING hierarchy: the user manager's own shutdown, the
+#     user slice, logind's session cleanup, and host shutdown/reboot. These do not
+#     go through this unit's stop settings at the end — the enclosing scope is
+#     killed regardless of what the leaf unit says. So "user-manager shutdown is
+#     survivable" (claimed in review cycle 2) is WRONG, and is corrected here: this
+#     unit's stop SEQUENCE is protected, the later cleanup by the user/session
+#     hierarchy is NOT. Whether an SSH logout triggers that at all depends on
+#     `loginctl enable-linger` for this user and on logind's KillUserProcesses
+#     setting — i.e. on host config, not on anything in this file.
+#
+# The honest summary: this unit removes the routine, automatable ways the fleet
+# died — a deploy, a `systemctl stop/restart`, a dependency-driven stop, a tidy
+# ExecStop, and the unit being marked `failed` (which no longer drags the server
+# down with it). It does not protect the tmux PROCESS: if that process dies, by its
+# own fault or by anyone's signal, the fleet dies with it and this unit only decides
+# where the next (empty) server is born. It does not make the fleet unkillable, and
+# nothing at the unit level could.
+# ---------------------------------------------------------------------------
+KillMode=process
+KillSignal=SIGCONT
+SendSIGKILL=no
+TimeoutStopSec=5s
+OOMPolicy=continue
+
+# Restart= reacts to a STARTED main process EXITING, so it covers exactly one
+# case: the tmux server this unit owns dies (a crash, a segfault, a signal sent to
+# its PID, a hand-run `tmux kill-server`). systemd then re-runs ExecCondition, finds
+# the socket free, and recreates the server in THIS cgroup.
+#
+# BE CLEAR ABOUT WHAT THAT RECOVERS (#293, review cycle 4). The panes are children
+# of the server: when it dies they die, and no restart brings them back. What
+# systemd recreates is an EMPTY server. The only thing this buys is that the empty
+# server is born in THIS unit's cgroup rather than being lazily spawned by the
+# daemon into ao.service's — i.e. it prevents the NEXT fleet from inheriting D1. It
+# is not fleet recovery, and it must never be described as making a tmux crash
+# survivable. It is not survivable.
+#
+# It does NOT retry a unit that ExecCondition SKIPPED — nothing was started, so
+# nothing can exit. Reacquiring the socket from a drained legacy server is
+# therefore ao-tmux-claim.timer's job, not this setting's.
+Restart=always
+RestartSec=2s
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Delegate=yes
+
+[Install]
+WantedBy=default.target

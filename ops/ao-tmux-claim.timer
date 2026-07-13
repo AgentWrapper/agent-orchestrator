@@ -1,0 +1,27 @@
+[Unit]
+Description=Retry tmux socket ownership for ao-tmux.service (#293)
+Documentation=https://github.com/polymath-ventures/agent-orchestrator/issues/293
+
+[Timer]
+# A poll, deliberately. systemd's .path units can only trigger on a path COMING
+# INTO existence (PathExists=/PathChanged=/DirectoryNotEmpty=); there is no
+# inverse, and what we must react to is the tmux socket DISAPPEARING — which now
+# means only one thing: the legacy server DIED (crash, OOM, an outright kill).
+# It can no longer drain, because deploy pins its `exit-empty off`. So this asks,
+# on a cadence, whether the socket has been freed by such a death — and
+# ao-tmux-claim.service makes asking free.
+#
+# The cadence is still an exposure window, and it is still honest to name it:
+# between that death and the next tick, a `tmux new-session` from the daemon can
+# spawn the replacement server in ao.service's cgroup. 30s bounds it. It does not
+# eliminate the race — but the race now only runs over an ALREADY-DEAD fleet (the
+# server died; every pane died with it), which is why bounding it is enough and
+# closing it is not worth a busier poll. The live-fleet race — the one that
+# mattered — is closed upstream, by preventing the drain rather than racing it.
+OnBootSec=30s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=ao-tmux-claim.service
+
+[Install]
+WantedBy=timers.target

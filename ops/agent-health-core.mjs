@@ -56,10 +56,24 @@ export function describeHealthRecovery(h, { host } = {}) {
 // diffHealth compares the last-notified state map (id -> settled health) against
 // a fresh snapshot and returns the messages to post plus the next state map.
 // Pure so the transition logic is unit-testable without Slack or a daemon.
+//
+// It ALSO returns the work split the way pollOnce must commit it (#293/M8):
+//
+//   transitions — one { id, health, message } per message that must be POSTED.
+//                 Each one's state write is owned by its own post: it may only be
+//                 persisted once that post has actually succeeded.
+//   silent      — state writes with no message attached (a harness that was
+//                 already healthy, or is healthy the first time we see it). These
+//                 are idempotent and safe to persist eagerly.
+//
+// `next` is retained as the "everything applied" map for callers that only want
+// the end state (and for the existing unit tests of the pure diff).
 export function diffHealth(prevHealth, harnesses, opts = {}) {
 	const next = { ...prevHealth };
 	const alerts = [];
 	const recoveries = [];
+	const transitions = [];
+	const silent = [];
 	for (const h of harnesses || []) {
 		if (!h || !h.id) continue;
 		const health = h.health;
@@ -67,17 +81,27 @@ export function diffHealth(prevHealth, harnesses, opts = {}) {
 		const prev = prevHealth[h.id];
 		if (ACTIONABLE.has(health)) {
 			if (prev !== health) {
-				alerts.push(describeHealthAlert(h, opts));
+				const message = describeHealthAlert(h, opts);
+				alerts.push(message);
+				transitions.push({ id: h.id, health, message });
 				next[h.id] = health;
 			}
 		} else if (health === "healthy") {
 			if (prev !== undefined && prev !== "healthy") {
-				recoveries.push(describeHealthRecovery(h, opts));
+				const message = describeHealthRecovery(h, opts);
+				recoveries.push(message);
+				// The recovery's "healthy" write belongs to the recovery POST. If we
+				// persisted it eagerly and the post then failed, the harness would be
+				// recorded as healthy with the recovery notice never delivered — the
+				// operator would simply never be told it came back.
+				transitions.push({ id: h.id, health: "healthy", message });
+			} else {
+				silent.push({ id: h.id, health: "healthy" });
 			}
 			next[h.id] = "healthy";
 		}
 	}
-	return { alerts, recoveries, next };
+	return { alerts, recoveries, transitions, silent, next };
 }
 
 function sleep(ms, signal) {
@@ -121,6 +145,11 @@ export class AgentHealthNotifier {
 	// Returns the posted messages (for tests). A 501 (monitor unwired) or any
 	// non-2xx is treated as "nothing to report" rather than an error so a daemon
 	// without the monitor never spams or crashes the loop.
+	//
+	// Each transition is committed IMMEDIATELY after its own successful post
+	// (#293/M8). State used to be written only once the whole batch had posted, so
+	// if alert A succeeded and B then failed, neither was persisted — and A was
+	// re-posted on every single retry until B happened to succeed.
 	async pollOnce({ signal } = {}) {
 		const res = await this.fetchImpl(`${this.baseUrl}/agents/health`, {
 			headers: { accept: "application/json" },
@@ -132,18 +161,36 @@ export class AgentHealthNotifier {
 		}
 		const payload = await res.json();
 		const harnesses = Array.isArray(payload?.harnesses) ? payload.harnesses : [];
-		const { alerts, recoveries, next } = diffHealth(this.state.health, harnesses, {
+		const { transitions, silent } = diffHealth(this.state.health, harnesses, {
 			mentionUserId: this.mentionUserId,
 			host: this.host,
 		});
-		const posted = [];
-		for (const msg of [...alerts, ...recoveries]) {
-			await this.postMessage(msg);
-			posted.push(msg);
-		}
-		this.state.health = next;
+
 		this.state.initialized = true;
-		saveHealthState(this.stateFile, this.state, this.logger);
+		// Writes with no message attached are idempotent — nobody is paged for them,
+		// so nothing is lost by committing them up front.
+		let dirty = silent.length > 0;
+		for (const { id, health } of silent) this.state.health[id] = health;
+
+		const posted = [];
+		try {
+			for (const { id, health, message } of transitions) {
+				await this.postMessage(message);
+				// Committed only now, and only for THIS transition: the post is what
+				// the persisted state is a record of.
+				this.state.health[id] = health;
+				dirty = true;
+				saveHealthState(this.stateFile, this.state, this.logger);
+				posted.push(message);
+			}
+		} catch (e) {
+			// Everything delivered so far is already on disk; the failed transition is
+			// deliberately not, so the next poll retries exactly it.
+			if (dirty) saveHealthState(this.stateFile, this.state, this.logger);
+			throw e;
+		}
+
+		if (dirty || !transitions.length) saveHealthState(this.stateFile, this.state, this.logger);
 		return posted;
 	}
 

@@ -24,6 +24,7 @@ import {
 import { resolveMentionUserId } from "./attention-core.mjs";
 import { loadEnvFile } from "./env-file.mjs";
 import { loadLegacyThreadMap } from "./legacy-attention-state.mjs";
+import { loadNotifierThreadMap } from "./notifier-thread-state.mjs";
 import { isMainModule } from "./main-module.mjs";
 
 const ENV_FILE = process.env.AO_ENV_FILE || "/home/orchestrator/agent-orchestrator/.env";
@@ -168,7 +169,14 @@ async function main() {
 		console.error("attention-reply-listener: SLACK_SIGNING_SECRET is required for inbound verification");
 		process.exit(1);
 	}
+	// Bindings come from the CURRENT outbound notifier's state file. The retired
+	// notifier's file is merged in FIRST so the live notifier's bindings win on any
+	// overlap — and so a host mid-migration keeps routing replies to alerts the old
+	// notifier posted. Before #293/M6 only the retired file was read, and deploy
+	// deletes it, so the listener had no bindings at all and every threaded reply
+	// to a live alert died as `unknown_thread`.
 	const threadMap = loadLegacyThreadMap();
+	threadMap.mergeFrom(loadNotifierThreadMap());
 	// Honor the same member-id resolution as outbound alerts (SLACK_MEMBER_ID,
 	// with the legacy SLACK_MENTION_USER_ID fallback) so un-migrated hosts can
 	// still reply-to-unblock instead of failing closed.
@@ -185,10 +193,11 @@ async function main() {
 		aoSend: execAoSend,
 		allowedUserId,
 		logger: console,
-		// Re-read the shared state file so bindings the notifier persists after
+		// Re-read the shared state files so bindings the notifier persists AFTER
 		// this listener started are visible to threaded replies.
 		refreshThreadMap: (tm) => {
 			tm.mergeFrom(loadLegacyThreadMap());
+			tm.mergeFrom(loadNotifierThreadMap());
 		},
 	});
 	server.listen(port, "127.0.0.1", () => console.log(`attention-reply-listener on 127.0.0.1:${port}/slack/events`));

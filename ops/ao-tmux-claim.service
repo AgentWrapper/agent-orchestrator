@@ -1,0 +1,52 @@
+[Unit]
+Description=Claim the tmux socket for ao-tmux.service when nothing owns it
+Documentation=https://github.com/polymath-ventures/agent-orchestrator/issues/293
+# Why this unit exists (#293, review cycle 2).
+#
+# ao-tmux.service's ExecCondition SKIPS the unit while a foreign server (the
+# legacy, daemon-spawned one on the migration host) owns the default socket. A
+# skipped unit is never retried: Restart= only reacts to a started process
+# exiting, and nothing was started. So if that legacy server ever stops owning the
+# socket, NOTHING starts ao-tmux.service — and the daemon's next `tmux
+# new-session` lazily spawns a fresh server inside ao.service's cgroup, putting
+# the fleet back under the daemon. D1 recurs, silently, with nobody watching.
+#
+# WHAT IS LEFT FOR THIS UNIT TO COVER (#293, review cycle 3). The legacy server no
+# longer DRAINS: deploy pins `exit-empty off` on it (prevent_legacy_tmux_drain in
+# ops/deploy.sh), so it cannot exit when its last session closes, and the socket
+# never goes free while the fleet is alive. The drain race this unit was originally
+# written to bound therefore no longer exists.
+#
+# It still earns its keep for the case the pin CANNOT cover: the legacy server
+# DYING rather than draining — a crash, a segfault, an OOM kill, `systemctl --user
+# kill`, a hand-run `tmux kill-server`. That frees the socket with ao-tmux.service
+# still in the skipped-and-never-retried state, and the daemon would take it.
+#
+# Be clear about what that is worth: if the server died, the fleet died with it.
+# This unit does not rescue a live fleet. It ensures the NEXT server is created in
+# ao-tmux.service's cgroup instead of the daemon's, without a human and without a
+# reboot. That is a smaller job than it used to have, and it is still worth a unit.
+#
+# It converges with no human:
+# the timer fires it on a fixed cadence, and it simply asks systemd to start
+# ao-tmux.service. That request is a no-op in every state except the one we are
+# waiting for:
+#
+#   ao-tmux.service already active   -> `start` does nothing.
+#   a foreign server owns the socket -> its ExecCondition skips it (exit 1).
+#   the probe cannot be classified   -> its ExecCondition skips it, loudly (exit 2).
+#   THE SOCKET IS FREE               -> its ExecCondition passes and ExecStart
+#                                       creates the server in the right cgroup.
+#
+# It therefore cannot hang (--no-block never waits on a job), cannot loop hot (it
+# runs once per timer tick and exits), and can never touch a live server: it only
+# ever issues `start`. `stop`/`restart` are what kill the fleet, and this unit
+# does not know how to say them.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user start --no-block ao-tmux.service
+# This fires on a timer forever, and its whole job is to do nothing almost every
+# time. Keep it out of the journal at info level so it cannot bury the daemon's
+# own logs; a real failure (warning and above) still surfaces.
+LogLevelMax=warning

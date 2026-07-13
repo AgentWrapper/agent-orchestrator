@@ -54,6 +54,9 @@ const asLogicalLines = (unitBody) => {
 	return logical.join("\n");
 };
 
+// One `journalctl -o json` record, as deploy.sh's sudo classifier reads them.
+const journalEntry = (cmdline, message) => JSON.stringify({ _COMM: "sudo", _CMDLINE: cmdline, MESSAGE: message });
+
 let cleanup = [];
 
 beforeEach(() => {
@@ -103,10 +106,13 @@ describe("ao self-deploy script", () => {
 		assert.match(result.stdout, /DRY-RUN: systemctl --user daemon-reload/);
 		assert.match(
 			result.stdout,
-			/DRY-RUN: systemctl --user enable ao\.service ao-web\.service ao-slack-notifier\.service ao-attention-reply\.service/,
+			/DRY-RUN: systemctl --user enable ao\.service ao-tmux\.service ao-tmux-claim\.timer ao-web\.service ao-slack-notifier\.service ao-attention-reply\.service/,
 		);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao\.service/);
-		assert.match(result.stdout, /frontend\/ changed; restarting ao-web\.service from the activated release/);
+		assert.match(
+			result.stdout,
+			/web inputs changed \(frontend\/\); restarting ao-web\.service from the activated release/,
+		);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
 		assert.match(result.stdout, /Restarting ao-slack-notifier\.service from the activated release/);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-slack-notifier\.service/);
@@ -224,7 +230,7 @@ describe("ao self-deploy script", () => {
 		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
 		assert.match(
 			systemctlLog,
-			/^--user enable ao\.service ao-web\.service ao-slack-notifier\.service ao-attention-reply\.service$/m,
+			/^--user enable ao\.service ao-tmux\.service ao-tmux-claim\.timer ao-web\.service ao-slack-notifier\.service ao-attention-reply\.service$/m,
 		);
 	});
 
@@ -236,7 +242,15 @@ describe("ao self-deploy script", () => {
 		const result = await runDeployLive(fixture, web);
 
 		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
-		for (const unit of ["ao.service", "ao-web.service", "ao-slack-notifier.service", "ao-attention-reply.service"]) {
+		for (const unit of [
+			"ao.service",
+			"ao-tmux.service",
+			"ao-tmux-claim.service",
+			"ao-tmux-claim.timer",
+			"ao-web.service",
+			"ao-slack-notifier.service",
+			"ao-attention-reply.service",
+		]) {
 			const body = await readFile(path.join(fixture.home, ".config", "systemd", "user", unit), "utf8");
 			assert.doesNotMatch(
 				asLogicalLines(body),
@@ -416,7 +430,10 @@ describe("ao self-deploy script", () => {
 			webBefore,
 			"a refused deploy must not have installed the other units",
 		);
-		const leftovers = (await readdir(systemdDir)).filter((f) => f.includes(".service."));
+		// Stray mktemp staging files look like `<unit>.service.XXXXXX`. A
+		// `<unit>.service.d` drop-in DIR is a legitimate installed artifact (#293
+		// H4), not a leftover, so it is not a stranded temp file.
+		const leftovers = (await readdir(systemdDir)).filter((f) => f.includes(".service.") && !f.endsWith(".service.d"));
 		assert.deepEqual(leftovers, [], `refusal must not strand staged temp files: ${leftovers}`);
 	});
 
@@ -653,7 +670,7 @@ describe("ao self-deploy script", () => {
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(
 			result.stdout,
-			/frontend\/ unchanged; restarting ao-web\.service so it follows the activated release pointer/,
+			/no web inputs changed; restarting ao-web\.service so it follows the activated release pointer/,
 		);
 		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
 		assert.match(result.stdout, /Restarting ao-slack-notifier\.service from the activated release/);
@@ -1204,6 +1221,246 @@ describe("ao self-deploy script", () => {
 				`${path.relative(repoRoot, template)} must not set AO_PRIME_*; deploy would re-inject it on every release`,
 			);
 		}
+	});
+
+	// --- H4 (#293): the web surface's real inputs are frontend/ AND the ops-side
+	// server source + unit definition. Keying restart/classification only on
+	// `frontend/` let an ops-only web change deploy "successfully" while the old
+	// process kept serving, and unit DROP-INS were never installed at all.
+	it("treats an ops-only web-server source change as a web input and restarts ao-web.service", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const base = await git(fixture.dir, ["rev-parse", "HEAD"]);
+
+		// Production executes ops/ao-web-server.mjs — nothing under frontend/.
+		await writeFile(path.join(fixture.dir, "ops", "ao-web-server.mjs"), "console.log('web server changed');\n");
+		await commitFixture(fixture.dir, "web-server-only change");
+
+		const result = await runDeployDryRun(fixture.dir, fixture.home, { AO_DEPLOY_BASE: base.stdout.trim() });
+
+		assert.equal(result.code, 0, result.stderr);
+		assert.match(
+			result.stdout,
+			/web inputs changed \(ops\/ao-web-server\.mjs\); restarting ao-web\.service/,
+			"an ops/ao-web-server.mjs change must be classified as a web input, not 'frontend/ unchanged'",
+		);
+		assert.doesNotMatch(
+			result.stdout,
+			/frontend\/ unchanged; leaving ao-web\.service running/,
+			"the stale-process path must not be reachable for a web-server source change",
+		);
+		assert.match(result.stdout, /DRY-RUN: systemctl --user restart ao-web\.service/);
+	});
+
+	it("installs tracked unit drop-ins, so a web-unit drop-in change reaches the host", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao-web.service.d", "override.conf"),
+			"[Service]\nEnvironment=AO_WEB_PUBLIC_URL=https://changed.example/\n",
+		);
+		await commitFixture(fixture.dir, "web drop-in change");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const installed = await readFile(
+			path.join(fixture.home, ".config", "systemd", "user", "ao-web.service.d", "override.conf"),
+			"utf8",
+		);
+		assert.match(
+			installed,
+			/AO_WEB_PUBLIC_URL=https:\/\/changed\.example\//,
+			"the tracked drop-in must be installed; otherwise the host silently keeps a hand-placed one forever",
+		);
+	});
+
+	it("installs a changed ao-web.service before the web unit is restarted", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		await writeFile(
+			path.join(fixture.dir, "ops", "ao-web.service"),
+			"[Service]\nExecStart=/usr/bin/node /new-web-server.mjs\n\n[Install]\nWantedBy=default.target\n",
+		);
+		await commitFixture(fixture.dir, "web unit change");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const unit = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao-web.service"), "utf8");
+		assert.match(unit, /ExecStart=\/usr\/bin\/node \/new-web-server\.mjs/, "the new web unit must be installed");
+
+		const log = await readFile(fixture.systemctlLog, "utf8");
+		const reloaded = log.indexOf("--user daemon-reload");
+		const restarted = log.indexOf("--user restart ao-web.service");
+		assert.notEqual(restarted, -1, "ao-web.service must be restarted");
+		assert(reloaded !== -1 && reloaded < restarted, "the unit must be installed + reloaded BEFORE the web restart");
+	});
+
+	// --- D1 (#293, from #296): the agent fleet must not live in ao.service's
+	// cgroup. tmux daemonizes its SERVER from whichever client first touches the
+	// socket, so a server spawned lazily by the daemon inherits ao.service's
+	// cgroup — and with it every pane, agent, and `npm test` child. A daemon
+	// restart (i.e. EVERY deploy) could then signal the whole fleet. Owning the
+	// server in its own unit is what makes the escape structural.
+	it("ships an ao-tmux.service that owns the tmux server in its own cgroup", async () => {
+		const unit = await readFile(path.join(repoRoot, "ops", "ao-tmux.service"), "utf8");
+
+		assert.match(unit, /^Type=forking$/m, "tmux daemonizes the server; systemd must adopt it as the main PID");
+		assert.match(
+			unit,
+			/^ExecStart=\/usr\/bin\/tmux start-server ";" set-option -g exit-empty off$/m,
+			"exit-empty MUST be pinned off: a server that exits when its last session closes hands the next lazily-spawned server straight back into ao.service's cgroup",
+		);
+		assert.match(unit, /^Before=ao\.service$/m, "the daemon must never be the first client to touch the socket");
+		assert.match(
+			unit,
+			/^KillMode=process$/m,
+			"the fleet lives in this cgroup; a cgroup-wide kill here is a fleet kill",
+		);
+		assert.match(unit, /^Delegate=yes$/m);
+	});
+
+	it("ships an ao.service that orders itself after the tmux server unit", async () => {
+		const unit = await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8");
+
+		assert.match(
+			unit,
+			/^After=.*\bao-tmux\.service\b/m,
+			"the daemon must start after the tmux server it will attach to",
+		);
+		assert.match(unit, /^Wants=.*\bao-tmux\.service\b/m, "the daemon must pull the tmux server unit in");
+	});
+
+	it("installs and enables ao-tmux.service, but never restarts it (a restart kills the fleet)", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		const installed = await readFile(path.join(fixture.home, ".config", "systemd", "user", "ao-tmux.service"), "utf8");
+		assert.match(installed, /ExecStart=\/usr\/bin\/tmux start-server/, "ao-tmux.service must be installed on the host");
+
+		const log = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(
+			log,
+			/^--user enable .*\bao-tmux\.service\b/m,
+			"ao-tmux.service must be enabled so it owns the socket at boot",
+		);
+		assert.doesNotMatch(
+			log,
+			/^--user restart ao-tmux\.service$/m,
+			"restarting ao-tmux.service runs ExecStop=kill-server — it would kill every in-flight agent session",
+		);
+	});
+
+	it("warns instead of failing when a legacy tmux server still sits in the ao.service cgroup", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		// A pre-existing server owns the socket (the live-host migration state).
+		// deploy must NOT start ao-tmux.service into a `activating` hang, and must
+		// NOT fail — it reports that the escape lands at the next reboot.
+		const result = await runDeployLive(fixture, web, { AO_TEST_TMUX_SERVER_RUNNING: "1" });
+
+		assert.equal(result.code, 0, `a legacy tmux server must not fail the deploy\n${result.stderr}`);
+		assert.match(
+			result.stdout,
+			/tmux server is already running; not starting ao-tmux\.service over it/,
+			"deploy must never restart a live tmux server out from under the fleet",
+		);
+		const log = await readFile(fixture.systemctlLog, "utf8");
+		assert.doesNotMatch(
+			log,
+			/^--user start .*ao-tmux\.service$/m,
+			"starting it would hang: the socket is already owned",
+		);
+	});
+
+	// --- D2 (#293, from #295): the sudo PAM warnings under ao.service.
+	//
+	// Forensics (journalctl _COMM=sudo, 14 days, this host): ao's own code contains
+	// no sudo at all. The emitters are AGENT processes that were mis-parented into
+	// ao.service's cgroup by the D1 bug:
+	//   * 722x `sudo -n true` — a NON-interactive capability probe run by the agent
+	//     harnesses. `-n` refuses to prompt, which is exactly why pam_unix logs
+	//     "conversation failed". It cannot hang. It is noise, and it is expected.
+	//   * a handful of genuinely INTERACTIVE ones — Playwright browser-dep installs
+	//     (`sudo -- sh -c "apt-get update && apt-get install ... xvfb ..."`,
+	//     `reinstall_chrome_stable_linux.sh`). THOSE are the latent hang, and after
+	//     D1 they can no longer be attributed to (or block) the daemon service.
+	it("classifies non-interactive sudo probes as expected and never fails the deploy", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_TEST_JOURNAL_SUDO: [
+				journalEntry("sudo -n true", "pam_unix(sudo:auth): conversation failed"),
+				journalEntry("sudo -n true", "pam_unix(sudo:auth): auth could not identify password for [orchestrator]"),
+				journalEntry("sudo -n true", "pam_unix(sudo:auth): conversation failed"),
+			].join("\n"),
+		});
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		assert.match(
+			result.stdout,
+			/3 non-interactive sudo probe warning\(s\).*cannot prompt and cannot hang/s,
+			"a `sudo -n` probe is non-interactive by construction; report it as a documented, bounded count",
+		);
+		assert.doesNotMatch(
+			result.stdout,
+			/WARN:.*interactive sudo/i,
+			"probes alone must not raise an interactive warning",
+		);
+	});
+
+	it("names the interactive sudo emitter instead of whitelisting the PAM message away", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, {
+			AO_TEST_JOURNAL_SUDO: [
+				journalEntry("sudo -n true", "pam_unix(sudo:auth): conversation failed"),
+				journalEntry(
+					'sudo -- sh -c "apt-get update && apt-get install -y --no-install-recommends libasound2t64 xvfb"',
+					"pam_unix(sudo:auth): conversation failed",
+				),
+			].join("\n"),
+		});
+
+		assert.equal(result.code, 0, "an agent-side interactive sudo must not break the deploy");
+		// The whole point: the deploy must say WHAT ran sudo, not merely that a
+		// known-looking PAM line appeared. A count-matching whitelist would have
+		// reported this as "expected" and told the operator nothing.
+		assert.match(result.stdout, /WARN:.*interactive sudo/i);
+		assert.match(result.stdout, /apt-get install/, "the deploy must name the actual emitting command line");
+		assert.match(result.stdout, /1 non-interactive sudo probe warning\(s\)/);
+	});
+
+	it("ships no sudo invocation of its own", async () => {
+		// The premise of #295 was that "something is shelling out to an interactive
+		// sudo". It is NOT ao: the repo's own deploy surface invokes sudo nowhere.
+		// Lock that in, so a future ad-hoc `sudo` inside a non-interactive service
+		// cannot reintroduce the latent hang. Comments (which discuss sudo at length)
+		// and journal field selectors (`_COMM=sudo`) are not invocations, so match
+		// only `sudo` in COMMAND position.
+		const deployBody = await readFile(deployScript, "utf8");
+		const invocations = deployBody
+			.split("\n")
+			.map((line) => line.replace(/#.*$/, ""))
+			.filter((line) => /(^|[;&|(]\s*|\brun(?:_best_effort|_in)?\s+)sudo(\s|$)/.test(line));
+
+		assert.deepEqual(invocations, [], "ops/deploy.sh must never shell out to sudo");
 	});
 
 	it("ships an ao.service that cannot be handed prime activation through an env file", async () => {
@@ -1883,6 +2140,850 @@ describe("ao self-deploy script", () => {
 		assert.match(result.stderr, /could not fetch workflow runs for .*; scheduled\/release guards will NOT be excluded/);
 		assert.match(result.stderr, /main CI is failure: latest-release/);
 	});
+
+	// --- 1a (#293, codex review of #309): NOTHING deploy runs may stop, restart,
+	// or `disable --now` ao-tmux.service. Its ExecStop is `tmux kill-server`: the
+	// tmux server, every pane, every agent process, the whole fleet. The guard is
+	// a chokepoint in run()/run_best_effort so a future edit that adds such a call
+	// fails the DEPLOY instead of the fleet.
+	it("refuses, at the run() chokepoint, any systemctl verb that could stop the tmux server", async () => {
+		const fatal = [
+			"systemctl --user restart ao-tmux.service",
+			"systemctl --user stop ao-tmux.service",
+			"systemctl --user disable --now ao-tmux.service",
+			"systemctl --user kill ao-tmux.service",
+			"systemctl --user try-restart ao-tmux.service",
+		];
+
+		for (const command of fatal) {
+			for (const wrapper of ["run", "run_best_effort"]) {
+				const result = await sourceDeploy(`${wrapper} ${command}`);
+				assert.notEqual(result.code, 0, `${wrapper} ${command} must abort, not run\n${result.stdout}${result.stderr}`);
+				assert.match(
+					result.stderr,
+					/would stop the tmux server/,
+					`${wrapper} ${command} must be refused loudly\n${result.stderr}`,
+				);
+				assert.doesNotMatch(
+					result.stdout,
+					/DRY-RUN/,
+					"a fleet-fatal command must be refused before it is even printed",
+				);
+			}
+		}
+
+		// The verbs deploy legitimately needs on that unit stay allowed.
+		for (const command of [
+			"systemctl --user enable ao-tmux.service",
+			"systemctl --user disable ao-tmux.service",
+			"systemctl --user start --no-block ao-tmux.service",
+			"systemctl --user restart ao.service",
+			"systemctl --user restart ao-web.service",
+		]) {
+			const result = await sourceDeploy(`run ${command}`);
+			assert.equal(result.code, 0, `${command} must remain allowed\n${result.stderr}`);
+		}
+	});
+
+	it("never stops or disables the tmux unit when rolling back to a pre-hermetic host that predates it", async () => {
+		// The real migration host: a pre-hermetic install whose backup CANNOT contain
+		// ao-tmux.service (the unit did not exist yet). The old code hit the generic
+		// "not in the backup -> disable --now + remove" branch, which runs
+		// ExecStop=`tmux kill-server` and takes the fleet down with it.
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const unitDir = path.join(fixture.home, ".config", "systemd", "user");
+		await mkdir(unitDir, { recursive: true });
+		await writeFile(path.join(unitDir, "ao.service"), "[Service]\nExecStart=%h/.local/bin/ao daemon\n");
+		await writeFile(path.join(unitDir, "ao-web.service"), "[Service]\nExecStart=/old-web\n");
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		await assert.rejects(
+			access(path.join(fixture.stateDir, "pre-hermetic", "systemd", "ao-tmux.service")),
+			"the pre-hermetic backup cannot contain a unit that did not exist yet",
+		);
+
+		await writeFile(fixture.systemctlLog, "");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web, { AO_TEST_TMUX_SERVER_RUNNING: "1" }, { args: ["--rollback"] });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.doesNotMatch(
+			systemctlLog,
+			/^--user disable --now ao-tmux\.service$/m,
+			"`disable --now` runs ExecStop=`tmux kill-server` — it would kill every agent pane in the fleet",
+		);
+		assert.doesNotMatch(systemctlLog, /^--user (stop|restart|kill|try-restart) ao-tmux\.service$/m);
+		// And the unit survives the rollback: it is release-independent (it execs
+		// /usr/bin/tmux), so tearing it out would only re-expose the fleet.
+		await assert.doesNotReject(access(path.join(unitDir, "ao-tmux.service")));
+	});
+
+	// --- 1b (#293, codex review of #309): deploy skips STARTING ao-tmux.service
+	// when a legacy server owns the socket — but ao.service `Wants=` it, so
+	// restarting ao.service makes systemd pull the skipped unit into the same
+	// transaction anyway. The unit itself must therefore be safe to start on that
+	// host: ExecCondition must skip it cleanly (exit 1-254 => "skipped", not
+	// "failed", no Restart=) rather than letting ExecStart attach to the foreign
+	// server and hang the Type=forking unit in `activating`.
+	it("ships an ao-tmux.service whose ExecCondition skips cleanly when a server already owns the socket", async () => {
+		const unit = await readFile(path.join(repoRoot, "ops", "ao-tmux.service"), "utf8");
+		const condition = execShellCommand(unit, "ExecCondition");
+		assert.ok(condition, "ao-tmux.service must carry an ExecCondition guard");
+
+		const fixture = await makeGitFixture();
+
+		// systemd pulls the unit in via Wants= while a legacy/foreign server owns the
+		// socket: the condition must SKIP (1-254), never run ExecStart.
+		const skipped = await runShell(condition, fixture.stubBin, { AO_TEST_TMUX_SERVER_RUNNING: "1" });
+		assert.ok(
+			skipped.code >= 1 && skipped.code <= 254,
+			`a foreign tmux server must skip the unit cleanly (exit 1-254), got ${skipped.code}`,
+		);
+
+		// Socket free: the condition passes and ExecStart creates the server here.
+		const proceed = await runShell(condition, fixture.stubBin, {});
+		assert.equal(proceed.code, 0, "with no server on the socket the unit must start and own it");
+	});
+
+	// --- 1b-drain (#293, codex review cycle 3 of #309): CLOSE the reacquisition
+	// window instead of racing to fill it.
+	//
+	// The legacy server (the one running on this host right now, and on any host
+	// mid-migration) carries tmux's DEFAULT `exit-empty on`: it exits the moment its
+	// last session closes. When it does, the socket goes free — and the ao daemon,
+	// which is already running and issuing tmux commands, can win the race to the
+	// free socket and lazily spawn a replacement server inside ao.service's cgroup.
+	// That is D1, silently recreated, with nobody watching. ao-tmux-claim.timer
+	// bounds that window; it cannot eliminate it.
+	//
+	// So do not race the daemon: prevent the drain. Pinning `exit-empty off` on the
+	// legacy server means it never exits when it empties, so the socket NEVER goes
+	// free while the fleet is alive, so there is no window to race. The migration
+	// then happens at the next reboot, where ao-tmux.service (Before=ao.service)
+	// creates the server first and owns it from the start.
+	//
+	// `set-option` is the only tmux verb allowed here, and it is a pure server-option
+	// write. Verified against tmux 3.5a on a scratch socket:
+	//   * sessions, windows, panes and the server PID are untouched;
+	//   * `exit-empty` lives in the SERVER option table and `-g` resolves into it;
+	//   * with it off, killing the last session leaves the server alive (same PID)
+	//     and a later `new-session` re-attaches to it instead of spawning a new one;
+	//   * against a socket with NO server it exits 1 — unlike `new-session` /
+	//     `start-server` it cannot itself create the server we are trying to avoid.
+	it("pins exit-empty off on a legacy tmux server so it cannot drain and hand the socket to the daemon", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const web = await startFakeWeb();
+
+		const result = await runDeployLive(fixture, web, { AO_TEST_TMUX_SERVER_RUNNING: "1" });
+		assert.equal(result.code, 0, `a legacy tmux server must not fail the deploy\n${result.stderr}`);
+
+		const tmuxLog = await readFile(fixture.tmuxLog, "utf8");
+		assert.match(
+			tmuxLog,
+			/^set-option -g exit-empty off$/m,
+			"deploy must pin the legacy server's exit-empty off: a server that cannot drain cannot hand the socket to ao.service",
+		);
+
+		// The other half of the contract, and the more important one: deploy touched
+		// the fleet's server with NOTHING destructive. Any tmux verb that can end a
+		// server, a session, a window or a pane is 49 dead agents.
+		for (const line of tmuxLog.split("\n").filter(Boolean)) {
+			assert.doesNotMatch(
+				line,
+				/^(kill-server|kill-session|kill-window|kill-pane|respawn-pane|respawn-window|send-keys|new-session|start-server|source-file|run-shell)\b/,
+				`deploy issued a destructive tmux verb against the live fleet server: \`tmux ${line}\``,
+			);
+		}
+	});
+
+	// The pin is for a server we did NOT create. When the socket is free, deploy
+	// starts ao-tmux.service, whose own ExecStart sets exit-empty off on the server
+	// it creates — deploy must not also poke the socket itself. And when the probe
+	// CANNOT be classified, deploy must not touch the socket at all: it does not
+	// know what is on the other end.
+	it("issues no tmux option write when the socket is free or the ownership probe failed", async () => {
+		for (const state of ["free", "broken"]) {
+			const fixture = await makeGitFixture();
+			await commitFixture(fixture.dir, "initial");
+			const web = await startFakeWeb();
+
+			const result = await runDeployLive(fixture, web, { AO_TEST_TMUX_STATE: state });
+			assert.equal(result.code, 0, `${state}: deploy must not fail\n${result.stderr}`);
+
+			const tmuxLog = await readFile(fixture.tmuxLog, "utf8").catch(() => "");
+			assert.doesNotMatch(
+				tmuxLog,
+				/^set-option\b/m,
+				`${state}: deploy must only pin exit-empty on a server it has positively identified as already owning the socket`,
+			);
+		}
+	});
+
+	// --- 1a (#293, codex review cycle 4 of #309): A FAILED PIN MUST NOT REPORT
+	// SUCCESS.
+	//
+	// The pin is the whole of cycle 3's fix, and the deploy log is the only place a
+	// human ever learns whether it took. `run_best_effort` logs a warning on failure
+	// and then returns 0 REGARDLESS — so a caller that branches on its status always
+	// takes the success branch, and the failure branch is unreachable dead code. That
+	// turned a failed `set-option` (a transient socket error, a read-only socket, an
+	// option error) into a deploy that printed "Pinned exit-empty=off" while
+	// exit-empty was still ON: the legacy server can still drain, the daemon can still
+	// recreate the server inside ao.service's cgroup, and the deploy said it was fixed.
+	// A fix that silently stops working is the exact failure mode #293 exists to
+	// prevent, so the pin's status must be the REAL status of the `set-option`.
+	//
+	// The pin is advisory, not fatal — a failed pin leaves the host exactly where it
+	// was before the deploy (unpinned, as it has been all along), so aborting removes
+	// no risk while making an emergency ROLLBACK unrunnable on a transient tmux error.
+	// It must therefore be loud, specific, and repeated at the end of the run, and it
+	// must never print the success line.
+	it("reports a FAILED exit-empty pin as a failure instead of claiming the race is closed", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const web = await startFakeWeb();
+
+		const result = await runDeployLive(fixture, web, {
+			AO_TEST_TMUX_SERVER_RUNNING: "1",
+			AO_TEST_TMUX_SET_OPTION_FAIL: "1",
+		});
+		const output = `${result.stdout}\n${result.stderr}`;
+
+		assert.doesNotMatch(
+			output,
+			/Pinned exit-empty=off/,
+			"deploy claimed it pinned exit-empty off when the `set-option` actually FAILED: the legacy server can still drain into ao.service's cgroup",
+		);
+		assert.match(
+			output,
+			/could NOT be pinned/,
+			"a failed pin must say so, in the failure's own words — it is the only signal a human gets",
+		);
+		assert.match(
+			output,
+			/cgroup check/i,
+			"a failed pin must name the manual pre-deploy cgroup check that is still required (#293/D1)",
+		);
+
+		// Advisory, deliberately: the failure does not abort the deploy (the host is no
+		// worse off than before it ran), but it must survive to the END of the run
+		// rather than scrolling away behind twenty restart lines.
+		assert.equal(result.code, 0, `a failed pin is advisory, not fatal\n${result.stderr}`);
+		const tail = output.slice(output.indexOf("ao deploy complete."));
+		assert.match(
+			tail,
+			/could NOT be pinned/,
+			"the unresolved fleet-safety warning must be re-stated at the end of the deploy, not buried mid-run",
+		);
+	});
+
+	// The class of bug, not just the instance. `run_best_effort` swallows failure BY
+	// DESIGN (that is what "best effort" means here), so its exit status carries no
+	// information — and any `if run_best_effort …` / `run_best_effort … ||` writes a
+	// branch that can never be taken. Nothing in this script may branch on it.
+	it("never branches on run_best_effort's exit status, which is always success", async () => {
+		const swallowed = await sourceDeploy('run_best_effort false && echo ALWAYS_SUCCEEDS || echo "reported failure"');
+		assert.match(
+			swallowed.stdout,
+			/ALWAYS_SUCCEEDS/,
+			"run_best_effort is expected to swallow failure; if it ever propagates one, this guard can be relaxed",
+		);
+
+		const script = await readFile(deployScript, "utf8");
+		for (const line of script.split("\n")) {
+			if (!line.includes("run_best_effort")) continue;
+			if (line.trimStart().startsWith("#")) continue;
+			assert.doesNotMatch(
+				line,
+				/(\bif\b|\bwhile\b|\buntil\b|!|&&|\|\|)\s*.*run_best_effort|run_best_effort\b.*(&&|\|\|)/,
+				`branching on run_best_effort's status is dead code — it always returns 0: ${line.trim()}`,
+			);
+		}
+	});
+
+	// The script-level backstop, mirroring guard_fleet_fatal's systemctl arm: a
+	// future edit that reaches for a destructive tmux verb fails the DEPLOY, loudly,
+	// before it can touch the host. This is the second layer, not the invariant —
+	// the invariant is that ao-tmux.service owns no command that can kill the server.
+	it("refuses, at the run() chokepoint, any tmux verb that could kill the fleet's server", async () => {
+		for (const command of [
+			"tmux kill-server",
+			"tmux kill-session -t ao-1",
+			"tmux kill-window -t ao-1",
+			"tmux kill-pane -t ao-1",
+		]) {
+			const result = await sourceDeploy(`run ${command}`);
+			assert.notEqual(result.code, 0, `deploy must refuse \`${command}\``);
+			assert.match(result.stderr, /would kill|fleet/i, `\`${command}\` must be refused with a fleet-kill reason`);
+		}
+
+		// Read-only probes and the option write stay allowed — they are how deploy
+		// identifies the server and pins it.
+		for (const command of ["tmux list-sessions", "tmux set-option -g exit-empty off"]) {
+			const result = await sourceDeploy(`run ${command}`);
+			assert.equal(result.code, 0, `deploy must allow \`${command}\`: ${result.stderr}`);
+		}
+	});
+
+	// --- 1c (#293, codex review of #309): After=/Wants= fails OPEN. If
+	// ao-tmux.service is masked, fails, or never establishes a server, systemd
+	// still starts ao.service — whose first `tmux new-session` then spawns the
+	// server inside ao.service's cgroup and silently recreates D1. The daemon unit
+	// must assert the invariant and fail LOUDLY instead.
+	it("ships an ao.service that refuses to start when no tmux server owns the socket", async () => {
+		const unit = await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8");
+		const assertion = execShellCommand(unit, "ExecStartPre");
+		assert.ok(assertion, "ao.service must assert the D1 ownership invariant before the daemon starts");
+
+		const fixture = await makeGitFixture();
+
+		const noServer = await runShell(assertion, fixture.stubBin, {});
+		assert.notEqual(noServer.code, 0, "no tmux server => the daemon would create one in its own cgroup => refuse");
+		assert.match(noServer.stderr, /ao-tmux\.service/, "the failure must name the unit an operator has to start");
+
+		// The migration window (1b): a legacy server owns the socket. It is NOT in
+		// ao-tmux.service's cgroup, but it is not in ao.service's either — killing it
+		// is worse than grandfathering it, so the daemon is allowed to start.
+		const legacyServer = await runShell(assertion, fixture.stubBin, { AO_TEST_TMUX_SERVER_RUNNING: "1" });
+		assert.equal(legacyServer.code, 0, "a live tmux server (legacy or ao-tmux-owned) satisfies the invariant");
+	});
+
+	// --- 1d (#293, codex review of #309): rollback flips `current` FIRST, then
+	// installs units from it. A release that predates ao-tmux.service has no such
+	// unit file — which used to abort the install AFTER the pointer had already
+	// moved, i.e. it broke the emergency recovery path itself.
+	it("rolls back to a release payload that predates ao-tmux.service without aborting half-switched", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const first = (await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim();
+		const firstRelease = await readlinkReal(path.join(fixture.stateDir, "current"));
+
+		await writeFile(path.join(fixture.dir, "README.md"), "second\n");
+		await commitFixture(fixture.dir, "second");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		// Age the previous release into a pre-#293 payload: no ao-tmux.service in it.
+		await rm(path.join(firstRelease, "systemd", "ao-tmux.service"));
+
+		await writeFile(fixture.systemctlLog, "");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web, {}, { args: ["--rollback"], daemonRevision: first });
+
+		assert.equal(
+			result.code,
+			0,
+			`rollback to a pre-tmux-unit release must succeed\n${result.stdout}\n${result.stderr}`,
+		);
+		assert.equal((await readFile(path.join(fixture.stateDir, "current", "REVISION"), "utf8")).trim(), first);
+		const unitDir = path.join(fixture.home, ".config", "systemd", "user");
+		// The already-installed tmux unit is kept: it is release-independent, and
+		// removing it would hand the fleet's cgroup back to ao.service.
+		await assert.doesNotReject(access(path.join(unitDir, "ao-tmux.service")));
+		const systemctlLog = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(systemctlLog, /^--user restart ao\.service$/m, "the rollback must still restart the daemon");
+		assert.doesNotMatch(systemctlLog, /^--user (stop|restart|kill|try-restart|disable --now) ao-tmux\.service$/m);
+	});
+
+	// --- 1e (#293, codex review of #309): drop-in convergence used to `rm -f
+	// <unit>.d/*.conf` — deleting drop-ins deploy never created. An operator's
+	// local port/limit override vanished on the next deploy, and the unconditional
+	// web restart applied that silently.
+	it("removes only the drop-ins it installed and leaves operator drop-ins alone", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const dropinDir = path.join(fixture.home, ".config", "systemd", "user", "ao-web.service.d");
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		await assert.doesNotReject(access(path.join(dropinDir, "override.conf")), "deploy ships its own drop-in");
+
+		// An operator adds a host-local override that deploy has never heard of.
+		await writeFile(path.join(dropinDir, "10-local-port.conf"), "[Service]\nEnvironment=AO_WEB_PORT=6173\n");
+
+		// The release then RETIRES its own drop-in.
+		await rm(path.join(fixture.dir, "ops", "ao-web.service.d", "override.conf"));
+		await commitFixture(fixture.dir, "drop the shipped web drop-in");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await assert.rejects(
+			access(path.join(dropinDir, "override.conf")),
+			"a drop-in this deploy owned and the release retired must be removed",
+		);
+		assert.equal(
+			await readFile(path.join(dropinDir, "10-local-port.conf"), "utf8"),
+			"[Service]\nEnvironment=AO_WEB_PORT=6173\n",
+			"an operator drop-in deploy never created must survive the deploy",
+		);
+	});
+
+	// --- 1f (#293, codex review of #309): the D2 sudo classifier piped journalctl
+	// into node under `set -o pipefail` with a trailing `|| true`, so a journal
+	// permission/DB failure reported as "no warnings" — silently clean.
+	it("reports that the sudo classification is unavailable when the journal query fails", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_TEST_JOURNAL_FAIL: "1" });
+
+		assert.equal(result.code, 0, "an unreadable journal is advisory, never fatal");
+		assert.match(
+			result.stdout,
+			/WARN: .*sudo warning classification unavailable/,
+			"a failing journal query must never be reported as zero warnings",
+		);
+	});
+
+	// --- 2a (#293, codex review cycle 2 of #309): THE FLEET-KILL INVARIANT IS A
+	// UNIT-FILE CONTRACT, NOT A deploy.sh CONTRACT.
+	//
+	// guard_fleet_fatal() can only refuse the spellings deploy.sh itself issues. It
+	// cannot reach `systemctl --user stop ao-tmux.service` typed by a human, a
+	// `mask --now`, an `isolate`, or a user-manager shutdown — all of which used to
+	// reach ExecStop=`tmux kill-server` and destroy every agent pane. The hazard IS
+	// the ExecStop. This asserts the unit itself carries no command and no signal
+	// that can kill the tmux server.
+	it("ships an ao-tmux.service that no systemd stop path can turn into a fleet kill", async () => {
+		const unit = await readFile(path.join(repoRoot, "ops", "ao-tmux.service"), "utf8");
+		const lines = asLogicalLines(unit);
+
+		// 1. No ExecStop at all. A "tidy teardown" of this unit IS a fleet kill, so
+		//    the unit must have no teardown: a stray stop orphans a still-ALIVE tmux
+		//    server instead of killing it.
+		assert.doesNotMatch(
+			lines,
+			/^[ \t]*ExecStop=/m,
+			"ExecStop is the hazard: it runs on stop, restart, mask --now, isolate AND user-manager shutdown — none of which deploy.sh can intercept",
+		);
+		// 2. No directive anywhere may invoke a tmux teardown.
+		for (const line of lines.split("\n")) {
+			if (/^[ \t]*(?:#|;)/.test(line)) continue;
+			assert.doesNotMatch(
+				line,
+				/kill-server|kill-session/,
+				`no directive in ao-tmux.service may tear the server down: ${line}`,
+			);
+		}
+		// 3. A manual stop/restart/try-restart/mask --now is refused by systemd itself
+		//    — and the directive must sit in the section systemd actually reads it
+		//    from. RefuseManualStop is a [Unit] key: in [Service] systemd logs
+		//    "Unknown key ..., ignoring" and the guard silently protects NOTHING.
+		//    A safety directive that parses but is ignored is worse than none.
+		assert.match(
+			lines,
+			/^RefuseManualStop=yes$/m,
+			"systemctl stop/restart/try-restart/mask --now must be refused by systemd, not merely avoided by deploy.sh",
+		);
+		assert.equal(
+			unitSection(unit, "RefuseManualStop"),
+			"Unit",
+			"RefuseManualStop is a [Unit] key; systemd silently IGNORES it in [Service]",
+		);
+		// 4. The stop JOBS systemd can still run (dependency stop, isolate, the stop
+		//    phase of a user-manager shutdown) are NOT refusable. Those jobs must be
+		//    made non-fatal instead: with no ExecStop, systemd falls back to
+		//    signalling the unit — so the signal it sends must not be fatal to the
+		//    tmux server, and it must never escalate to SIGKILL.
+		//
+		//    Scope of the claim (#293, review cycles 3 and 4 — each corrected the one
+		//    before): these directives neutralize the unit's own stop SEQUENCE. They
+		//    do not make the fleet unkillable, and no unit directive could. A signal
+		//    delivered straight to the processes still kills it: `systemctl --user
+		//    kill`, a `kill` by PID, systemd-oomd, the kernel OOM killer, and the
+		//    enclosing user-slice/session teardown that FOLLOWS the stop job at
+		//    user-manager shutdown or host shutdown (whether an SSH logout triggers
+		//    that at all is a linger/logind config question, not a unit-file one). Nor
+		//    do they keep alive a tmux server that CRASHES: the panes are its children
+		//    and die with it, and Restart=always then creates an empty replacement —
+		//    valuable only because that replacement lands in this cgroup rather than
+		//    ao.service's. So "ordinary systemd FAILURE paths can no longer kill the
+		//    fleet" (cycle 3) is too broad and is narrowed here. What is bought is
+		//    exactly: the deploy path and systemd stop/restart JOBS on this unit can
+		//    no longer kill the fleet, and the unit being left `failed` no longer
+		//    takes the server down with it.
+		assert.match(lines, /^KillMode=process$/m, "a cgroup-wide signal here is a fleet kill");
+		assert.match(
+			lines,
+			/^KillSignal=SIGCONT$/m,
+			"the stop signal reaches the tmux server itself; it must be a no-op signal, not SIGTERM",
+		);
+		assert.match(
+			lines,
+			/^SendSIGKILL=no$/m,
+			"after TimeoutStopSec systemd escalates to SIGKILL by default — that alone would kill the server",
+		);
+		assert.match(
+			lines,
+			/^OOMPolicy=continue$/m,
+			"an OOM-killed agent process must not make systemd stop the unit that owns the fleet",
+		);
+	});
+
+	// The section check above is one instance of a general hazard, so ask systemd
+	// itself: a key in the wrong section, or a value it cannot parse, is IGNORED
+	// with a single log line. Every safety directive in these units is exactly the
+	// kind of thing that fails that way — silently, while still reading as a guard.
+	// (`RefuseManualStop` in [Service] shipped in this very PR before this ran.)
+	it("ships units that real systemd parses with no silently-ignored directives", async (t) => {
+		const probe = await run("systemd-analyze", ["--version"]).catch(() => null);
+		if (!probe || probe.code !== 0) {
+			t.skip("systemd-analyze unavailable");
+			return;
+		}
+
+		const units = ["ao.service", "ao-tmux.service", "ao-tmux-claim.service", "ao-tmux-claim.timer"].map((unit) =>
+			path.join(repoRoot, "ops", unit),
+		);
+		const result = await run("systemd-analyze", ["--user", "verify", ...units], { cwd: repoRoot });
+		const ignored = `${result.stdout}${result.stderr}`
+			.split("\n")
+			.filter((line) => /Unknown key|Unknown lvalue|Failed to parse|Ignoring/i.test(line));
+
+		assert.deepEqual(ignored, [], `systemd would silently ignore these directives:\n${ignored.join("\n")}`);
+	});
+
+	// --- 2b (#293, codex review cycle 2 of #309): a SKIPPED unit is never retried.
+	//
+	// Restart= only reacts to a STARTED process exiting. When ExecCondition skips
+	// ao-tmux.service (a legacy server owns the socket), nothing ever starts it
+	// again — so if that legacy server ever stops owning the socket, the daemon's
+	// next `tmux new-session` lazily spawns a server inside ao.service's cgroup and
+	// D1 silently returns. The unit needs a real path back to the socket.
+	//
+	// Cycle 3 narrows WHEN that can happen, and therefore what this timer is for.
+	// The legacy server can no longer DRAIN (deploy pins its `exit-empty off`), so
+	// the only way the socket goes free is the server DYING: crash, OOM, an outright
+	// kill. The timer still earns its keep for exactly that — not to rescue a live
+	// fleet (if the server died, the fleet died with it) but to make sure the NEXT
+	// server is created in ao-tmux.service's cgroup rather than the daemon's,
+	// without a human and without a reboot.
+	it("ships a claim timer that reacquires the tmux socket without a human when the legacy server dies", async () => {
+		const timer = await readFile(path.join(repoRoot, "ops", "ao-tmux-claim.timer"), "utf8");
+		const claim = await readFile(path.join(repoRoot, "ops", "ao-tmux-claim.service"), "utf8");
+
+		assert.match(
+			asLogicalLines(timer),
+			/^On(?:UnitInactiveSec|UnitActiveSec|Calendar)=/m,
+			"the timer must retry on a recurring schedule; a one-shot trigger cannot catch a server death that happens later",
+		);
+		assert.match(asLogicalLines(timer), /^Unit=ao-tmux-claim\.service$/m);
+		assert.match(asLogicalLines(timer), /^WantedBy=timers\.target$/m, "the timer must be enableable");
+
+		// The claim only ever STARTS the unit. `start` is a no-op when it is already
+		// active, and its ExecCondition skips cleanly while a foreign server owns the
+		// socket — so this can retry forever without ever touching a live server.
+		const exec = unitDirective(claim, "ExecStart");
+		assert.match(exec, /systemctl .*--user .*\bstart\b.* ao-tmux\.service$/, `claim must START the unit, got: ${exec}`);
+		assert.doesNotMatch(
+			exec,
+			/\b(stop|restart|try-restart|kill)\b/,
+			"the claim must never stop or restart the unit — that is the fleet kill",
+		);
+
+		// And the false claim must be gone from the unit's own documentation.
+		const tmuxUnit = await readFile(path.join(repoRoot, "ops", "ao-tmux.service"), "utf8");
+		assert.doesNotMatch(
+			tmuxUnit,
+			/Restart=always then takes the socket/,
+			"Restart= does NOT retry a unit that ExecCondition skipped; that comment was wrong",
+		);
+	});
+
+	it("drives the server-death -> reacquire transition end to end", async () => {
+		const fixture = await makeGitFixture();
+		const claim = await readFile(path.join(repoRoot, "ops", "ao-tmux-claim.service"), "utf8");
+		const condition = execShellCommand(
+			await readFile(path.join(repoRoot, "ops", "ao-tmux.service"), "utf8"),
+			"ExecCondition",
+		);
+
+		// Step 1 — the legacy server still owns the socket: the timer fires, the claim
+		// service asks systemd to start the unit, and the unit's condition SKIPS. No
+		// server is touched, and nothing loops hot (the timer just fires again later).
+		assert.equal(
+			(await runShell(condition, fixture.stubBin, { AO_TEST_TMUX_STATE: "running" })).code,
+			1,
+			"while a server owns the socket the unit must skip (1-254 = skipped, not failed)",
+		);
+
+		// Step 2 — the legacy server DIES (crash, OOM, an outright kill; it can no
+		// longer drain) and its socket is gone. The next timer tick runs the same
+		// claim command...
+		//
+		// systemd requires an ABSOLUTE ExecStart, so the unit names /usr/bin/systemctl
+		// — which would bypass the stub and drive this machine's REAL user manager.
+		// Rebind it to the stub explicitly; the test asserts the arguments, never the
+		// binary. A test must not be able to touch the live fleet.
+		const log = path.join(fixture.home, "claim-systemctl.log");
+		const claimCommand = unitDirective(claim, "ExecStart").replace(
+			/^\/\S*\/systemctl\b/,
+			path.join(fixture.stubBin, "systemctl"),
+		);
+		assert.notEqual(claimCommand, unitDirective(claim, "ExecStart"), "the real systemctl must have been stubbed out");
+		const claimRun = await runShell(claimCommand, fixture.stubBin, { SYSTEMCTL_LOG: log });
+		assert.equal(claimRun.code, 0, `the claim must not fail: ${claimRun.stderr}`);
+		assert.match(
+			await readFile(log, "utf8"),
+			/^--user start .*ao-tmux\.service$/m,
+			"the claim service must ask systemd to start the tmux unit",
+		);
+
+		// ...and this time the condition PASSES, so ExecStart creates the server inside
+		// ao-tmux.service's cgroup. The socket is reacquired with no human involved.
+		assert.equal(
+			(await runShell(condition, fixture.stubBin, { AO_TEST_TMUX_STATE: "free" })).code,
+			0,
+			"once the socket is free the condition must pass so ExecStart owns the new server",
+		);
+	});
+
+	it("does not try to enable a unit that has no [Install] section", async () => {
+		// ao-tmux-claim.service is started BY ITS TIMER, so it has no [Install] — and
+		// `systemctl enable` on such a unit does nothing but print a five-line "the
+		// unit files have no installation config" complaint (verified against systemd
+		// 257: it exits 0, so nothing catches it; it just becomes deploy noise forever).
+		// The rule is general, not a special case for this unit: enable only what is
+		// enableable.
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_TEST_TMUX_SERVER_RUNNING: "1" });
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		const enableLine = (await readFile(fixture.systemctlLog, "utf8"))
+			.split("\n")
+			.find((line) => line.startsWith("--user enable "));
+		assert.ok(enableLine, "deploy must still enable the installable units");
+		assert.doesNotMatch(
+			enableLine,
+			/\bao-tmux-claim\.service\b/,
+			"ao-tmux-claim.service has no [Install]; systemd cannot enable it",
+		);
+		assert.match(enableLine, /\bao-tmux-claim\.timer\b/, "the TIMER is the thing with an [Install] section");
+		assert.match(enableLine, /\bao\.service\b/);
+	});
+
+	it("installs, enables and starts the tmux claim timer", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_TEST_TMUX_SERVER_RUNNING: "1" });
+
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		const unitDir = path.join(fixture.home, ".config", "systemd", "user");
+		await assert.doesNotReject(access(path.join(unitDir, "ao-tmux-claim.service")));
+		await assert.doesNotReject(access(path.join(unitDir, "ao-tmux-claim.timer")));
+
+		const log = await readFile(fixture.systemctlLog, "utf8");
+		assert.match(log, /^--user enable .*\bao-tmux-claim\.timer\b/m, "the timer must be enabled for the next boot");
+		assert.match(
+			log,
+			/^--user (?:restart|start) ao-tmux-claim\.timer$/m,
+			"the timer must also be running NOW — the server death it covers can happen at any moment of THIS boot, and `enable` alone only arms it for the next one",
+		);
+	});
+
+	// --- 2c (#293, codex review cycle 2 of #309): the probes inferred "a server
+	// exists" from ANY error they did not recognize. `tmux: command not found`, a
+	// socket permission error, or any unrecognized diagnostic made the tmux unit
+	// skip AND the daemon's assertion pass — so the daemon started, lazily spawned
+	// the server in its own cgroup, and D1 was back. That is not an assertion.
+	//
+	// The probe is now `tmux list-sessions`, whose EXIT CODE is a positive test:
+	// measured against tmux 3.5a it exits 0 for a live server with zero sessions
+	// (has-session does not), exits 1 for no-server/stale-socket, and never creates
+	// a server. English is used only to classify the FAILURE, and anything
+	// unrecognized is a third, distinct, loud state.
+	it("classifies the tmux probe into three states and never reads an unknown error as 'a server exists'", async () => {
+		const fixture = await makeGitFixture();
+		const condition = execShellCommand(
+			await readFile(path.join(repoRoot, "ops", "ao-tmux.service"), "utf8"),
+			"ExecCondition",
+		);
+		const assertion = execShellCommand(
+			await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8"),
+			"ExecStartPre",
+		);
+		assert.ok(condition && assertion, "both units must carry a probe");
+
+		// (i) A server owns the socket — including the ZERO-SESSION case, which is what
+		// ao-tmux.service's own freshly-started server looks like when the fleet is
+		// empty. Reading that as "no server" would refuse to start the daemon at boot.
+		for (const state of ["running", "running-empty"]) {
+			assert.equal(
+				(await runShell(condition, fixture.stubBin, { AO_TEST_TMUX_STATE: state })).code,
+				1,
+				`${state}: skip`,
+			);
+			assert.equal(
+				(await runShell(assertion, fixture.stubBin, { AO_TEST_TMUX_STATE: state })).code,
+				0,
+				`${state}: a live server satisfies the daemon's invariant`,
+			);
+		}
+
+		// (ii) No server owns the socket — the one state that must be refused.
+		for (const state of ["free", "stale"]) {
+			assert.equal(
+				(await runShell(condition, fixture.stubBin, { AO_TEST_TMUX_STATE: state })).code,
+				0,
+				`${state}: the socket is free, so the unit must take it`,
+			);
+			const refused = await runShell(assertion, fixture.stubBin, { AO_TEST_TMUX_STATE: state });
+			assert.equal(refused.code, 1, `${state}: the daemon must refuse to become the tmux owner`);
+			assert.match(refused.stderr, /ao-tmux\.service/, "the refusal must name the unit an operator has to start");
+		}
+
+		// (iii) The probe itself failed. NOT "a server exists" — a distinct, loud
+		// refusal. `missing` is `tmux: command not found` (exit 127); `denied` is a
+		// socket permission error; `broken` is any diagnostic we do not model.
+		for (const state of ["missing", "denied", "broken"]) {
+			const skipped = await runShell(condition, fixture.stubBin, { AO_TEST_TMUX_STATE: state });
+			assert.equal(skipped.code, 2, `${state}: an unclassifiable probe must skip DISTINCTLY, not silently`);
+			assert.match(skipped.stderr, /probe/i, `${state}: the skip must say why`);
+
+			const refused = await runShell(assertion, fixture.stubBin, { AO_TEST_TMUX_STATE: state });
+			assert.equal(refused.code, 2, `${state}: the daemon must refuse DISTINCTLY from "no server", never proceed`);
+			assert.match(
+				refused.stderr,
+				/probe/i,
+				`${state}: "I could not tell" must be actionable, not silently accepted as proof a server exists`,
+			);
+		}
+	});
+
+	it("refuses to guess about the tmux socket when its own probe fails", async () => {
+		// deploy.sh made the same mistake the units did: any tmux failure it did not
+		// recognize was read as "a server is running, leave it alone" — the
+		// safe-SOUNDING answer that silently skips the entire D1 fix. A probe that
+		// failed is a third state: touch nothing, and say so.
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web, { AO_TEST_TMUX_STATE: "broken" });
+
+		assert.equal(result.code, 0, `an unclassifiable probe is not a reason to fail a deploy\n${result.stderr}`);
+		assert.match(
+			result.stdout,
+			/WARN: the tmux ownership probe FAILED/,
+			"an unrecognized tmux error must never be reported as 'a server is already running'",
+		);
+		assert.doesNotMatch(
+			result.stdout,
+			/tmux server is already running/,
+			"deploy must not claim a server exists when it could not tell",
+		);
+		assert.doesNotMatch(
+			await readFile(fixture.systemctlLog, "utf8"),
+			/^--user start .*ao-tmux\.service$/m,
+			"starting the unit blind could create a SECOND server",
+		);
+	});
+
+	// --- 2d (#293, codex review cycle 2 of #309): the drop-in ledger tracked
+	// ownership by FILENAME only. On the first deploy an operator's pre-existing
+	// `override.conf` was silently overwritten and then RECORDED AS DEPLOY-OWNED —
+	// so a later release that retired that name deleted the operator's file.
+	// Ownership is now content-addressed: deploy owns a name only while the bytes
+	// on disk are still the bytes it installed.
+	it("never silently claims a pre-existing operator file at a managed drop-in name", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const dropinDir = path.join(fixture.home, ".config", "systemd", "user", "ao-web.service.d");
+		await mkdir(dropinDir, { recursive: true });
+
+		// The operator hand-placed a file at the very name the release also ships.
+		const operatorBody = "[Service]\nEnvironment=AO_WEB_PUBLIC_URL=https://operator.example/\n";
+		await writeFile(path.join(dropinDir, "override.conf"), operatorBody);
+
+		const web = await startFakeWeb();
+		const result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		// Deploy still installs its own drop-in (the release's definition must reach
+		// the host) — but it must not destroy what it found.
+		assert.match(await readFile(path.join(dropinDir, "override.conf"), "utf8"), /fixture\.example/);
+		const backups = (await readdir(dropinDir)).filter((name) => name.startsWith("override.conf."));
+		assert.equal(backups.length, 1, `the pre-existing operator file must be preserved, found: ${backups}`);
+		assert.equal(await readFile(path.join(dropinDir, backups[0]), "utf8"), operatorBody);
+		assert.doesNotMatch(backups[0], /\.conf$/, "the backup must not itself be loaded by systemd");
+		assert.match(result.stdout, /WARN: .*override\.conf/, "silently overwriting an operator file is the bug");
+	});
+
+	it("backs up an operator-modified managed drop-in instead of deleting it when the release retires it", async () => {
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const dropinDir = path.join(fixture.home, ".config", "systemd", "user", "ao-web.service.d");
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		// The operator EDITS the file at the managed name. Deploy installed it, so it
+		// is in the ledger — but these are no longer deploy's bytes.
+		const edited = "[Service]\nEnvironment=AO_WEB_PUBLIC_URL=https://edited.example/\n";
+		await writeFile(path.join(dropinDir, "override.conf"), edited);
+
+		// A later release retires the drop-in.
+		await rm(path.join(fixture.dir, "ops", "ao-web.service.d", "override.conf"));
+		await commitFixture(fixture.dir, "retire the shipped web drop-in");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		// The retired drop-in stops being active (that is H4) — but the operator's
+		// edits are not destroyed on the way out.
+		await assert.rejects(
+			access(path.join(dropinDir, "override.conf")),
+			"a retired managed drop-in must not stay active",
+		);
+		const backups = (await readdir(dropinDir)).filter((name) => name.startsWith("override.conf."));
+		assert.equal(backups.length, 1, `the operator's edits must be preserved, found: ${backups}`);
+		assert.equal(await readFile(path.join(dropinDir, backups[0]), "utf8"), edited);
+		assert.match(result.stdout, /WARN: .*override\.conf/, "deleting an operator's edited file must be announced");
+	});
+
+	it("still retires its own untouched drop-in without leaving a backup behind", async () => {
+		// The control case for 2d: content-addressed ownership must not turn every
+		// ordinary retirement into a backup — deploy owns bytes it wrote and nobody
+		// touched, and removes them cleanly.
+		const fixture = await makeGitFixture();
+		await commitFixture(fixture.dir, "initial");
+		const dropinDir = path.join(fixture.home, ".config", "systemd", "user", "ao-web.service.d");
+
+		let web = await startFakeWeb();
+		let result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		await rm(path.join(fixture.dir, "ops", "ao-web.service.d", "override.conf"));
+		await commitFixture(fixture.dir, "retire the shipped web drop-in");
+		web = await startFakeWeb();
+		result = await runDeployLive(fixture, web);
+		assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+
+		const left = await readdir(dropinDir).catch(() => []);
+		assert.deepEqual(
+			left.filter((name) => name.startsWith("override.conf")),
+			[],
+			"deploy's own untouched drop-in is deploy's to remove, with no backup noise",
+		);
+	});
 });
 
 async function makeGitFixture() {
@@ -1893,7 +2994,7 @@ async function makeGitFixture() {
 
 	await mkdir(path.join(dir, "backend", "cmd", "ao"), { recursive: true });
 	await mkdir(path.join(dir, "frontend"), { recursive: true });
-	await mkdir(path.join(dir, "ops"), { recursive: true });
+	await mkdir(path.join(dir, "ops", "ao-web.service.d"), { recursive: true });
 	await mkdir(path.join(home, ".local", "bin"), { recursive: true });
 
 	await writeFile(path.join(dir, "backend", "cmd", "ao", "main.go"), "package main\nfunc main() {}\n");
@@ -1902,9 +3003,27 @@ async function makeGitFixture() {
 	await writeFile(path.join(dir, "frontend", "package.json"), '{"scripts":{"build:web":"echo build"}}\n');
 	await writeFile(path.join(dir, "frontend", "package-lock.json"), '{"lockfileVersion":3}\n');
 	await writeFile(path.join(dir, "ops", "ao-slack-notifier.mjs"), "console.log('ops');\n");
+	// Production's web process IS this file — deploy must treat it as a web input.
+	await writeFile(path.join(dir, "ops", "ao-web-server.mjs"), "console.log('web server');\n");
+	await writeFile(
+		path.join(dir, "ops", "ao-web.service.d", "override.conf"),
+		"[Service]\nEnvironment=AO_WEB_PUBLIC_URL=https://fixture.example/\n",
+	);
 	await writeFile(
 		path.join(dir, "ops", "ao.service"),
 		await readFile(path.join(repoRoot, "ops", "ao.service"), "utf8"),
+	);
+	await writeFile(
+		path.join(dir, "ops", "ao-tmux.service"),
+		await readFile(path.join(repoRoot, "ops", "ao-tmux.service"), "utf8"),
+	);
+	await writeFile(
+		path.join(dir, "ops", "ao-tmux-claim.service"),
+		await readFile(path.join(repoRoot, "ops", "ao-tmux-claim.service"), "utf8"),
+	);
+	await writeFile(
+		path.join(dir, "ops", "ao-tmux-claim.timer"),
+		await readFile(path.join(repoRoot, "ops", "ao-tmux-claim.timer"), "utf8"),
 	);
 	await writeFile(
 		path.join(dir, "ops", "ao-web.service"),
@@ -1929,6 +3048,10 @@ async function makeGitFixture() {
 
 	const stubBin = path.join(home, "stub-bin");
 	const systemctlLog = path.join(home, "systemctl.log");
+	// Every tmux verb deploy issues, in order. The fleet lives inside the tmux
+	// server, so "which tmux commands did the deploy run against it" is a safety
+	// property, not a detail: one `kill-session` here is 49 dead agents.
+	const tmuxLog = path.join(home, "tmux.log");
 	const goBuildLog = path.join(home, "go-build.log");
 	const npmLog = path.join(home, "npm.log");
 	const orderLog = path.join(home, "deploy-order.log");
@@ -1950,6 +3073,7 @@ async function makeGitFixture() {
 		home,
 		stubBin,
 		systemctlLog,
+		tmuxLog,
 		goBuildLog,
 		npmLog,
 		orderLog,
@@ -2047,6 +3171,71 @@ if [[ "$1" = "api" ]]; then
   exit 0
 fi
 exit 1
+`,
+		// Mirrors real tmux's probe semantics, measured on the host:
+		//   no server at all      -> stderr "error connecting to <socket>", exit 1
+		//   server, zero sessions -> stderr "no current target",            exit 1
+		//   server, >=1 session   -> exit 0
+		// Only the FIRST case means "the socket is free for ao-tmux.service".
+		// AO_TEST_JOURNAL_FAIL mirrors a journal the deploy user cannot read (missing
+		// systemd-journal group, corrupt journal DB): journalctl writes to stderr and
+		// exits non-zero, emitting NO entries. That must never read as "zero warnings".
+		journalctl: `#!/usr/bin/env bash
+if [[ "\${AO_TEST_JOURNAL_FAIL:-0}" = "1" ]]; then
+  printf 'Failed to open journal: Permission denied\\n' >&2
+  exit 1
+fi
+printf '%s' "\${AO_TEST_JOURNAL_SUDO:-}"
+exit 0
+`,
+		// tmux 3.5a's probe semantics, MEASURED on the deploy host. Neither
+		// list-sessions nor has-session ever CREATES a server, so a probe can never
+		// itself spawn the ao.service-parented server we are avoiding.
+		//
+		//   state           list-sessions                          has-session
+		//   server+sessions exit 0                                 exit 0
+		//   server+0 sess.  exit 0                                 exit 1 "no current target"
+		//   no server       exit 1 "error connecting to <socket>"  same
+		//   stale socket    exit 1 "no server running on <socket>" same
+		//
+		// The zero-session divergence is the whole reason the probe uses
+		// list-sessions: an EXIT CODE of 0 positively proves a server owns the
+		// socket, with no English involved. `denied`/`broken`/`missing` are the
+		// probe-FAILED states the classifier must refuse to read as "a server exists".
+		tmux: `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "\${TMUX_LOG:-/dev/null}"
+state="\${AO_TEST_TMUX_STATE:-}"
+if [[ -z "\${state}" ]]; then
+  if [[ "\${AO_TEST_TMUX_SERVER_RUNNING:-0}" = "1" ]]; then state=running; else state=free; fi
+fi
+if [[ "$1" = "set-option" && "\${AO_TEST_TMUX_SET_OPTION_FAIL:-0}" = "1" ]]; then
+  printf 'no server running on /tmp/tmux-1007/default\\n' >&2
+  exit 1
+fi
+if [[ "$1" != "list-sessions" && "$1" != "has-session" ]]; then exit 0; fi
+case "\${state}" in
+  running)
+    exit 0 ;;
+  running-empty)
+    [[ "$1" = "has-session" ]] && { printf 'no current target\\n' >&2; exit 1; }
+    exit 0 ;;
+  free)
+    printf 'error connecting to /tmp/tmux-1007/default (No such file or directory)\\n' >&2
+    exit 1 ;;
+  stale)
+    printf 'no server running on /tmp/tmux-1007/default\\n' >&2
+    exit 1 ;;
+  denied)
+    printf 'error connecting to /tmp/tmux-1007/default (Permission denied)\\n' >&2
+    exit 1 ;;
+  broken)
+    printf 'lost server\\n' >&2
+    exit 1 ;;
+  missing)
+    printf 'tmux: command not found\\n' >&2
+    exit 127 ;;
+esac
+exit 0
 `,
 		npm: `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "\${NPM_LOG:-/dev/null}"
@@ -2168,8 +3357,13 @@ async function commitFixture(cwd, message) {
 		"frontend/package.json",
 		"frontend/package-lock.json",
 		"ops/ao-slack-notifier.mjs",
+		"ops/ao-web-server.mjs",
 		"ops/ao.service",
+		"ops/ao-tmux.service",
+		"ops/ao-tmux-claim.service",
+		"ops/ao-tmux-claim.timer",
 		"ops/ao-web.service",
+		"ops/ao-web.service.d/override.conf",
 		"ops/ao-slack-notifier.service",
 		"ops/ao-attention-reply.service",
 		"ops/install-attention.sh",
@@ -2230,6 +3424,7 @@ async function runDeployLive(fixture, web, env = {}, opts = {}) {
 			PATH: `${fixture.stubBin}${path.delimiter}${process.env.PATH}`,
 			HOME: fixture.home,
 			SYSTEMCTL_LOG: fixture.systemctlLog,
+			TMUX_LOG: fixture.tmuxLog,
 			GO_BUILD_LOG: fixture.goBuildLog,
 			NPM_LOG: fixture.npmLog,
 			AO_TEST_ORDER_LOG: fixture.orderLog,
@@ -2245,6 +3440,63 @@ async function runDeployLive(fixture, web, env = {}, opts = {}) {
 			AO_DEPLOY_WEB_URL: web.webUrl,
 			...env,
 		},
+	});
+}
+
+// Source deploy.sh as a library (AO_DEPLOY_LIB_ONLY skips the deploy/rollback
+// dispatch) and evaluate one snippet against its real functions. Runs with
+// AO_DEPLOY_DRY_RUN=1 so a snippet that IS allowed through only prints its
+// command — the test host is never mutated.
+async function sourceDeploy(snippet, env = {}) {
+	return run("bash", ["-c", `source "${deployScript}"\n${snippet}`], {
+		cwd: repoRoot,
+		env: { ...process.env, AO_DEPLOY_LIB_ONLY: "1", AO_DEPLOY_DRY_RUN: "1", ...env },
+	});
+}
+
+// Which [Section] a directive is written under. systemd silently IGNORES a key in
+// the wrong section (it logs "Unknown key ..., ignoring" once at load and carries
+// on), so a misplaced safety directive parses, reads as protection, and does
+// nothing. Section placement is part of the contract, not a style question.
+function unitSection(unitBody, directive) {
+	let section = null;
+	for (const raw of asLogicalLines(unitBody).split("\n")) {
+		const line = raw.trim();
+		const header = /^\[(.+)\]$/.exec(line);
+		if (header) {
+			section = header[1];
+			continue;
+		}
+		if (line.startsWith(`${directive}=`)) return section;
+	}
+	return null;
+}
+
+// The raw value of a unit directive, as systemd's logical line reader sees it.
+function unitDirective(unitBody, directive) {
+	const line = asLogicalLines(unitBody)
+		.split("\n")
+		.find((candidate) => candidate.startsWith(`${directive}=`));
+	assert.ok(line, `unit has no ${directive}=`);
+	return line.slice(directive.length + 1).trim();
+}
+
+// Pull the shell script out of a `<Directive>=/bin/sh -c '<script>'` unit line so
+// a test can execute exactly what systemd would execute.
+function execShellCommand(unitBody, directive) {
+	const line = asLogicalLines(unitBody)
+		.split("\n")
+		.find((candidate) => candidate.startsWith(`${directive}=`));
+	if (!line) return null;
+	const match = /^[^=]+=\/bin\/sh -c '(.*)'$/.exec(line.trim());
+	assert.ok(match, `${directive} must be a single /bin/sh -c '…' command, got: ${line}`);
+	return match[1];
+}
+
+async function runShell(script, stubBin, env = {}) {
+	return run("/bin/sh", ["-c", script], {
+		cwd: repoRoot,
+		env: { ...process.env, PATH: `${stubBin}${path.delimiter}${process.env.PATH}`, ...env },
 	});
 }
 

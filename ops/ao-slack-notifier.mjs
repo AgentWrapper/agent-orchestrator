@@ -41,7 +41,7 @@
 // server-side unread cursor so reconnects can drain backlogs larger than one
 // API page without re-paging Nick.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 
@@ -71,6 +71,9 @@ const WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 const MENTION_USER_ID = resolveMentionUserId();
 const STATE_FILE = process.env.AO_SLACK_NOTIFIER_STATE || "/home/orchestrator/.ao/slack-notifier-state.json";
 const SEEN_LIMIT = Number(process.env.AO_SLACK_NOTIFIER_SEEN_LIMIT || 2_000);
+// Thread->session bindings kept for inbound reply routing (#293/M6). Matches
+// ThreadSessionMap's own default bound.
+const THREAD_BINDING_LIMIT = Number(process.env.AO_SLACK_NOTIFIER_THREAD_LIMIT || 5_000);
 const HEARTBEAT_MS = Number(process.env.AO_SLACK_NOTIFIER_HEARTBEAT_MS || 15 * 60 * 1000);
 const RECONNECT_MS = Number(process.env.AO_SLACK_NOTIFIER_RECONNECT_MS || 10_000);
 // Belt-and-suspenders content dedupe (issue #190): even if the daemon emits a
@@ -423,6 +426,7 @@ export function loadState(file = STATE_FILE) {
 			digestTs: raw.digestTs ?? null,
 			postedSignatures: normalizePostedSignatures(raw.postedSignatures),
 			needsResponseMessages: normalizeNeedsResponseMessages(raw.needsResponseMessages),
+			threadBindings: normalizeThreadBindings(raw.threadBindings),
 		};
 	} catch {
 		return {
@@ -435,8 +439,25 @@ export function loadState(file = STATE_FILE) {
 			digestTs: null,
 			postedSignatures: {},
 			needsResponseMessages: {},
+			threadBindings: {},
 		};
 	}
+}
+
+// threadBindings maps a posted Slack message ts -> the session that raised the
+// alert, so the reply listener can route a threaded reply back to that worker
+// (#293/M6). Corrupt or session-less entries are dropped: a MISSING binding
+// degrades to `unknown_thread`, which is correct and safe; a WRONG one would
+// `ao send` a human's reply straight into the wrong agent.
+function normalizeThreadBindings(raw) {
+	const out = {};
+	if (!raw || typeof raw !== "object") return out;
+	for (const [ts, target] of Object.entries(raw)) {
+		const sessionId = String(target?.sessionId ?? "");
+		if (!ts || !sessionId) continue;
+		out[String(ts)] = { sessionId, projectId: String(target?.projectId ?? "") };
+	}
+	return out;
 }
 
 // normalizePostedSignatures coerces the persisted {signature: epochMs} map back
@@ -507,12 +528,32 @@ function isPollBackedAttention(rec) {
 	return rec?.kind === "needs_input" || POLL_ALERT_KINDS.has(rec?.kind);
 }
 
-export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
+export function saveState(
+	file,
+	state,
+	limit = SEEN_LIMIT,
+	logger = console,
+	threadBindingLimit = THREAD_BINDING_LIMIT,
+) {
+	// Write to a temp file and rename it into place (#293/M6, from the codex review
+	// of #309). writeFileSync truncates the target FIRST, so a crash — or a full
+	// disk — part-way through the write leaves a truncated/half-written JSON blob
+	// where the state used to be, and loadState then falls back to empty: every
+	// thread binding, every seen id and every open needs-response record gone at
+	// once. The notifier would re-page history and could never route a threaded
+	// reply again. rename(2) within the same directory is atomic: a reader sees
+	// either the old complete file or the new complete file, never a partial one.
+	const tmp = `${file}.tmp-${process.pid}`;
 	try {
 		mkdirSync(dirname(file), { recursive: true });
 		const seen = [...state.seen].slice(-limit);
+		// Bound the binding map the same way `seen` is bounded: a long-lived notifier
+		// posts indefinitely, and an unbounded map would grow the state file forever.
+		// Object key order is insertion order, so slicing the tail keeps the NEWEST
+		// bindings — the ones a human could still be replying to.
+		const bindingEntries = Object.entries(state.threadBindings ?? {}).slice(-threadBindingLimit);
 		writeFileSync(
-			file,
+			tmp,
 			JSON.stringify({
 				seen,
 				lastEventId: state.lastEventId || "",
@@ -523,10 +564,18 @@ export function saveState(file, state, limit = SEEN_LIMIT, logger = console) {
 				digestTs: state.digestTs ?? null,
 				postedSignatures: state.postedSignatures ?? {},
 				needsResponseMessages: state.needsResponseMessages ?? {},
+				threadBindings: Object.fromEntries(bindingEntries),
 			}),
 			"utf8",
 		);
+		renameSync(tmp, file);
 	} catch (e) {
+		// The previous state file is still intact — only the temp is garbage.
+		try {
+			rmSync(tmp, { force: true });
+		} catch {
+			// Nothing more to do: the temp is inert (loadState only ever reads `file`).
+		}
 		logger?.warn?.("ao-slack-notifier: failed to persist state:", e.message);
 	}
 }
@@ -547,6 +596,7 @@ export class SlackNotificationNotifier {
 		heartbeatMs = HEARTBEAT_MS,
 		reconnectMs = RECONNECT_MS,
 		seenLimit = SEEN_LIMIT,
+		threadBindingLimit = THREAD_BINDING_LIMIT,
 		bootstrapMode = BOOTSTRAP_MODE,
 		pageLimit = 100,
 		sessionPollMs = SESSION_ATTENTION_POLL_MS,
@@ -568,6 +618,8 @@ export class SlackNotificationNotifier {
 		this.heartbeatMs = heartbeatMs;
 		this.reconnectMs = reconnectMs;
 		this.seenLimit = seenLimit;
+		this.threadBindingLimit = threadBindingLimit;
+		this.webhookThreadingWarned = false;
 		this.bootstrapMode = bootstrapMode;
 		this.pageLimit = pageLimit;
 		this.sessionPollMs = parsePollMs(sessionPollMs, SESSION_ATTENTION_POLL_MS);
@@ -643,7 +695,11 @@ export class SlackNotificationNotifier {
 				await this.postNeedsResponse(rec, { trackWithSessionAttention: isPollBackedAttention(rec) });
 				this.recordPostedSignature(raw);
 			} else if (msg) {
-				await this.postMessage(msg, { channel: this.notifyChannel });
+				const posted = await this.postMessage(msg, { channel: this.notifyChannel });
+				// Plain informational posts are threadable too — Nick can reply in the
+				// thread of a pr_merged/worker_died post to talk to that session. The ts
+				// used to be dropped on the floor here (#293/M6).
+				this.rememberThreadBinding(posted, { sessionId: n.sessionId, projectId: n.projectId });
 				this.recordPostedSignature(raw);
 			} else if (suppressed) {
 				// A matching post is still within the cooldown: swallow the Slack
@@ -668,6 +724,40 @@ export class SlackNotificationNotifier {
 		return !this.state.seen.has(key) || shouldPost;
 	}
 
+	// Bind the Slack message we just posted to the session that raised it, so a
+	// threaded reply routes back to that worker (#293/M6).
+	//
+	// `posted` is whatever the sink returned: chat.postMessage yields { ts }, an
+	// incoming WEBHOOK yields nothing at all. A webhook post therefore has no
+	// thread to bind, and there is no honest way to invent one — say so (once) and
+	// leave the thread unbound, so a reply degrades to `unknown_thread` instead of
+	// being misrouted into some other agent.
+	rememberThreadBinding(posted, { sessionId, projectId } = {}) {
+		if (!sessionId) return false;
+		const ts = posted?.ts;
+		if (!ts) {
+			if (!this.webhookThreadingWarned) {
+				this.webhookThreadingWarned = true;
+				this.logger?.warn?.(
+					"ao-slack-notifier: Slack sink returned no message ts (incoming webhook), so no thread->session binding can be recorded; threaded replies will not route. Configure SLACK_BOT_TOKEN + a channel for two-way replies.",
+				);
+			}
+			return false;
+		}
+		this.state.threadBindings ??= {};
+		// Re-insert so the newest binding sits at the tail: object key order is
+		// insertion order, which is what both the eviction below and saveState's
+		// bound rely on.
+		delete this.state.threadBindings[ts];
+		this.state.threadBindings[ts] = { sessionId, projectId: projectId ?? "" };
+
+		const keys = Object.keys(this.state.threadBindings);
+		for (const stale of keys.slice(0, Math.max(0, keys.length - this.threadBindingLimit))) {
+			delete this.state.threadBindings[stale];
+		}
+		return true;
+	}
+
 	async postNeedsResponse(rec, { trackWithSessionAttention = true } = {}) {
 		const sig = needsResponseSignature(rec);
 		if (!sig) return false;
@@ -687,6 +777,9 @@ export class SlackNotificationNotifier {
 				openedAt: this.clock().toISOString(),
 			};
 		}
+		// A needs-response alert is precisely the post a human replies to, so its
+		// thread MUST be routable back to the waiting worker (#293/M6).
+		this.rememberThreadBinding(posted, { sessionId: rec.sessionId, projectId: rec.projectId });
 		saveState(this.stateFile, this.state, this.seenLimit, this.logger);
 		return true;
 	}

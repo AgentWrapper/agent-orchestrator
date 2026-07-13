@@ -163,3 +163,92 @@ test("run() stops promptly when aborted during poll sleep", async () => {
 	assert.equal(result, "stopped");
 	assert.equal(polled, 1);
 });
+
+// --- M8 (#293): a later post failure must not repeat earlier successful alerts.
+//
+// State used to be committed only after the ENTIRE batch posted. If alert A
+// succeeded and B then failed, NEITHER transition was persisted — so on every
+// retry A was re-posted, paging Nick again for a harness he had already been
+// told about, forever, until B happened to succeed.
+test("persists each health transition immediately after its own successful post", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "ah-partial-"));
+	const stateFile = join(dir, "state.json");
+	const snapshot = {
+		harnesses: [harness("codex", "unauthorized"), harness("fugu", "missing")],
+	};
+
+	const posted = [];
+	const failing = new AgentHealthNotifier({
+		stateFile,
+		postMessage: async (m) => {
+			posted.push(m);
+			// The FIRST alert lands; Slack then fails for the second.
+			if (posted.length === 2) throw new Error("slack 503");
+		},
+		fetchImpl: async () => ({ ok: true, status: 200, json: async () => snapshot }),
+		logger: { error() {}, info() {}, warn() {} },
+	});
+
+	await assert.rejects(failing.pollOnce(), /slack 503/, "the batch failure must still surface");
+	assert.equal(posted.length, 2, "it must have attempted both");
+
+	// A fresh notifier reads the state file from disk — exactly what happens after
+	// the notifier restarts, or on the next poll.
+	const retried = [];
+	const retry = new AgentHealthNotifier({
+		stateFile,
+		postMessage: async (m) => retried.push(m),
+		fetchImpl: async () => ({ ok: true, status: 200, json: async () => snapshot }),
+		logger: { error() {}, info() {}, warn() {} },
+	});
+	await retry.pollOnce();
+
+	assert.equal(retried.length, 1, "only the alert that FAILED may be retried");
+	assert.match(retried[0], /fugu/, "the successfully-posted codex alert must not be re-paged");
+	assert.doesNotMatch(retried[0], /codex/);
+});
+
+test("a recovery post that fails is retried, not silently marked healthy", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "ah-recovery-"));
+	const stateFile = join(dir, "state.json");
+
+	// Seed: codex is known-unauthorized.
+	const seed = new AgentHealthNotifier({
+		stateFile,
+		postMessage: async () => {},
+		fetchImpl: async () => ({
+			ok: true,
+			status: 200,
+			json: async () => ({ harnesses: [harness("codex", "unauthorized")] }),
+		}),
+		logger: { error() {}, info() {}, warn() {} },
+	});
+	await seed.pollOnce();
+
+	const healthy = { harnesses: [harness("codex", "healthy")] };
+	let fail = true;
+	const flaky = new AgentHealthNotifier({
+		stateFile,
+		postMessage: async () => {
+			if (fail) throw new Error("slack 503");
+		},
+		fetchImpl: async () => ({ ok: true, status: 200, json: async () => healthy }),
+		logger: { error() {}, info() {}, warn() {} },
+	});
+	await assert.rejects(flaky.pollOnce(), /slack 503/);
+
+	// Recovery post failed, so the harness must still be recorded as unauthorized:
+	// marking it healthy would swallow the recovery notice permanently.
+	fail = false;
+	const posted = [];
+	const after = new AgentHealthNotifier({
+		stateFile,
+		postMessage: async (m) => posted.push(m),
+		fetchImpl: async () => ({ ok: true, status: 200, json: async () => healthy }),
+		logger: { error() {}, info() {}, warn() {} },
+	});
+	await after.pollOnce();
+
+	assert.equal(posted.length, 1, "the recovery must be retried");
+	assert.match(posted[0], /recovered/);
+});

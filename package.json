@@ -9,7 +9,7 @@
 		"format:check": "base_ref=\"${BASE_REF:-$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)}\"; git diff --name-only -z --diff-filter=d \"$base_ref...HEAD\" | xargs -0 --no-run-if-empty npx --yes prettier@3 --check --ignore-unknown",
 		"lint": "npm run ci:backend",
 		"frontend:typecheck": "npm --prefix frontend run typecheck",
-		"test:ops": "node --test ops/*.test.mjs",
+		"test:ops": "node --test ops/*.test.mjs packages/ao/bin/*.test.mjs",
 		"sqlc": "cd backend && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate",
 		"api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
 		"api:ts": "openapi-typescript backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts",

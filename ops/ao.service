@@ -1,12 +1,53 @@
 [Unit]
 Description=Agent Orchestrator daemon
-After=network-online.target
-Wants=network-online.target
+After=network-online.target ao-tmux.service
+Wants=network-online.target ao-tmux.service
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 
 [Service]
 Type=simple
+# Assert the D1 ownership invariant before the daemon gets to run (#293).
+#
+# After=/Wants=ao-tmux.service fails OPEN: if that unit is masked, fails, or never
+# establishes a server, systemd starts this one anyway — and the daemon's first
+# `tmux new-session` then spawns the server from THIS process, inside THIS cgroup,
+# putting every pane and every agent back under the daemon, silently, for the rest
+# of the boot. Requires= would not fix that (a unit skipped by its ExecCondition
+# still satisfies Requires=, and a hard Requires= would instead brick the daemon on
+# the very migration host we must keep running), so the daemon asserts the actual
+# invariant rather than a proxy for it: SOMETHING other than this process already
+# owns the tmux socket.
+#
+# What it accepts: the ao-tmux.service server (the fix), or a legacy server that
+# predates the unit (the migration window — not ours, but not in this cgroup
+# either, and killing it to enforce purity would take the fleet down).
+# What it refuses: no server at all, which is the one state in which starting the
+# daemon recreates D1. Loud, visible failure (Restart=always + StartLimitBurst=5
+# lands the unit in `failed`) beats a silent regression that only shows up as a
+# fleet kill on some future deploy.
+#
+# AND IT REFUSES A THIRD STATE (#293, review cycle 2): a probe that did not work.
+# This used to read `tmux has-session` and treat every non-zero result it did not
+# recognize as proof that a server existed — so `tmux: command not found`, a
+# socket permission error, or any unmodelled tmux diagnostic sailed straight
+# through the assertion while ALSO making ao-tmux.service skip. The daemon then
+# started, spawned the server itself, and D1 was back. An assertion that passes
+# when the check breaks is not an assertion.
+#
+# Three states, decided in this order:
+#   exit 0 -> `tmux list-sessions` exited 0. A server owns the socket. Proceed.
+#             The exit code is the positive test, not English: list-sessions (unlike
+#             has-session) exits 0 even for a server with ZERO sessions, which is
+#             precisely what ao-tmux.service's freshly started server looks like at
+#             boot. It also never CREATES a server, so the probe cannot cause D1.
+#   exit 1 -> tmux says nothing is listening ("error connecting" / "no server
+#             running"). The one state that recreates D1. Refuse, and say who
+#             should own the socket.
+#   exit 2 -> the probe FAILED (tmux missing, socket unqueryable, unrecognized
+#             diagnostic). Refuse DISTINCTLY, print what tmux actually said, and do
+#             not pretend a server exists. "I could not tell" must never read as OK.
+ExecStartPre=/bin/sh -c 'if tmux list-sessions >/dev/null 2>&1; then exit 0; fi; if tmux list-sessions 2>&1 | grep -qiE "permission denied|operation not permitted"; then echo "ao.service: refusing to start: the tmux ownership probe FAILED (the default socket exists but cannot be queried). The daemon will not guess: if no server actually owns the socket, starting it spawns one inside ao.service cgroup and the whole agent fleet lands back under the daemon (#293/D1). Fix the socket permissions, then: systemctl --user start ao-tmux.service" >&2; exit 2; fi; if tmux list-sessions 2>&1 | grep -qiE "error connecting|no server running"; then echo "ao.service: refusing to start: no tmux server owns the default socket. ao-tmux.service must own it, or the daemon spawns the server inside ao.service cgroup and the whole agent fleet lands back under the daemon (#293/D1). Start it first: systemctl --user start ao-tmux.service" >&2; exit 1; fi; echo "ao.service: refusing to start: the tmux ownership probe FAILED. tmux exited non-zero with a diagnostic this unit does not model, so it CANNOT tell whether a server owns the default socket — and an unrecognized error is not proof that one does (#293/D1). Fix tmux, confirm ao-tmux.service owns the socket, then start the daemon. tmux list-sessions said:" >&2; tmux list-sessions 2>&1 | sed "s/^/  /" >&2; exit 2'
 ExecStart=%h/.ao/deploy/current/bin/ao daemon
 # Keep the user service persistent after clean daemon exits. Explicit operator
 # stops still go through `systemctl stop ao.service` (`ao stop` does this when
@@ -21,10 +62,22 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # rolling back to an older release cannot reinstate them either.
 Delegate=yes
 
-# Only signal the daemon's main process on restart. The tmux server can inherit
-# ao.service's cgroup when the daemon launches the first session, and a
-# cgroup-wide kill would terminate every live agent pane before reconcile can
-# re-adopt them. Non-session helpers must be reaped by the daemon itself.
+# Only signal the daemon's main process on restart.
+#
+# ao-tmux.service (After=/Wants= above) now owns the tmux server, so the fleet
+# lives in THAT unit's cgroup and a restart here cannot reach it — that is the
+# structural fix (#293/D1). This stays as the safety net for the one case the
+# unit ordering cannot cover: a host whose tmux server was lazily spawned by the
+# daemon BEFORE ao-tmux.service existed still has that legacy server (and its
+# panes) inside this cgroup until the host REBOOTS (deploy pins that server's
+# `exit-empty off` so it cannot drain and silently hand the socket back to this
+# daemon — see prevent_legacy_tmux_drain in ops/deploy.sh). A cgroup-wide kill
+# would terminate every live agent pane before reconcile could re-adopt them.
+# Non-session helpers must be reaped by the daemon itself.
+#
+# KillMode=process neutralizes a STOP JOB on this unit, nothing more: a direct
+# cgroup kill (`systemctl --user kill ao.service`, systemd-oomd, the kernel OOM
+# killer, host shutdown) still takes that legacy server and its panes with it.
 KillMode=process
 TimeoutStopSec=60s
 

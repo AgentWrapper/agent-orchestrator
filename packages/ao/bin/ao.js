@@ -8,6 +8,7 @@
 "use strict";
 
 const { spawnSync } = require("node:child_process");
+const os = require("node:os");
 const path = require("node:path");
 
 // npm cpu names match process.arch (x64/arm64); npm os names match
@@ -59,7 +60,16 @@ if (result.error) {
 
 // Propagate signal-terminations as a conventional 128+signal code, else the
 // child's own exit code.
+//
+// This used to `process.exit(1)` for every signal, which erased the distinction
+// the comment promised: a Ctrl-C (SIGINT) or a supervisor's SIGTERM came back as
+// exit 1, indistinguishable from `ao` simply failing. Shells, CI, and wrapper
+// scripts read 130/143 as "cancelled" and 1 as "errored", so cancellation
+// semantics were being thrown away by the shim.
 if (result.signal) {
-  process.exit(1);
+  const signum = os.constants.signals[result.signal];
+  // An unknown signal name has no conventional code to map to; keep the old
+  // generic failure rather than inventing one.
+  process.exit(typeof signum === "number" ? 128 + signum : 1);
 }
 process.exit(result.status === null ? 1 : result.status);
