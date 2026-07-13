@@ -226,7 +226,7 @@ export function Sidebar({
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			className={cn("border-border", underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!")}
 		>
-			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-3.5 group-data-[collapsible=icon]:px-1.5">
+			<SidebarHeader className={cn("gap-0 p-0 pr-1.75 pt-3.5", isMac ? "pl-titlebar-cluster-left" : "pl-2.5", "group-data-[collapsible=icon]:px-1.5")}>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-4.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
