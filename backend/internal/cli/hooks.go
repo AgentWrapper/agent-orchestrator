@@ -22,6 +22,10 @@ import (
 // before it reaches the loopback URL keeps it from steering the request.
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// ghPRURLPattern matches a GitHub pull-request URL anywhere in a string (e.g.
+// in the output of `gh pr create`). The captured group is the full URL.
+var ghPRURLPattern = regexp.MustCompile(`https://github\.com/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+/pull/[0-9]+`)
+
 const (
 	// hooksLogName is the file under AO_DATA_DIR where hook delivery failures
 	// are appended. Agent hook runners swallow stderr, so without a durable
@@ -131,6 +135,10 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
 	}
+	// Fast-path PR registration: if a Bash tool's output contains a GitHub PR
+	// URL (e.g. from `gh pr create`), claim it immediately rather than waiting
+	// for the 30-second polling loop.
+	c.maybeClaimPR(ctx, agent, event, sessionID, payload)
 	return nil
 }
 
@@ -166,6 +174,35 @@ func (c *commandContext) emitSessionStartContext(agent, event, sessionID string)
 	out.HookSpecificOutput.AdditionalContext = prompt
 	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write session-start context: %w", err))
+	}
+}
+
+// maybeClaimPR inspects a claude-code post-tool-use payload and, when the
+// tool is Bash and its output contains a GitHub PR URL, fires a best-effort
+// claim against the existing sessions/{id}/pr/claim endpoint. Errors are
+// logged via reportHookFailure and never returned: a failed claim must not
+// break the agent.
+func (c *commandContext) maybeClaimPR(ctx context.Context, agent, event, sessionID string, payload []byte) {
+	if agent != "claude-code" || event != "post-tool-use" {
+		return
+	}
+	var p struct {
+		ToolName     string `json:"tool_name"`
+		ToolResponse string `json:"tool_response"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return
+	}
+	if !strings.EqualFold(p.ToolName, "Bash") {
+		return
+	}
+	prURL := ghPRURLPattern.FindString(p.ToolResponse)
+	if prURL == "" {
+		return
+	}
+	path := "sessions/" + url.PathEscape(sessionID) + "/pr/claim"
+	if err := c.postJSON(ctx, path, claimPRRequest{PR: prURL, AllowTakeover: false}, nil); err != nil {
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("hook-based PR claim %s: %w", prURL, err))
 	}
 }
 

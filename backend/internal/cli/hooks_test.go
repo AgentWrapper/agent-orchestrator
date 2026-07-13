@@ -176,6 +176,99 @@ func TestHooks_PostToolUseCarriesCorrelationFields(t *testing.T) {
 	}
 }
 
+// multiPathServer handles BOTH /activity and /pr/claim paths so tests can
+// assert that both endpoints are (or are not) hit by a single hook invocation.
+type multiPathCapture struct {
+	activityHits int
+	claimHits    int
+	claimBody    string
+}
+
+func multiPathServer(t *testing.T) (*httptest.Server, *multiPathCapture) {
+	t.Helper()
+	cap := &multiPathCapture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/activity"):
+			cap.activityHits++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		case strings.HasSuffix(r.URL.Path, "/pr/claim"):
+			cap.claimHits++
+			cap.claimBody = string(body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, cap
+}
+
+func TestHooks_PostToolUseClaimsPROnGhPrCreate(t *testing.T) {
+	// When a Bash post-tool-use response contains a GitHub PR URL (as emitted by
+	// `gh pr create`), the hook must fire a best-effort claim against
+	// sessions/{id}/pr/claim immediately.
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, cap := multiPathServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	prURL := "https://github.com/acme/myrepo/pull/42"
+	payload := `{"tool_name":"Bash","tool_use_id":"toolu_99","tool_response":"` + prURL + `\n"}`
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(payload),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "post-tool-use")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if cap.claimHits != 1 {
+		t.Fatalf("expected 1 claim call, got %d", cap.claimHits)
+	}
+	var req claimPRRequest
+	if err := json.Unmarshal([]byte(cap.claimBody), &req); err != nil {
+		t.Fatalf("decode claim body: %v\nbody=%s", err, cap.claimBody)
+	}
+	if req.PR != prURL {
+		t.Errorf("claim pr = %q, want %q", req.PR, prURL)
+	}
+	if req.AllowTakeover {
+		t.Errorf("hook-based claim must not allow takeover")
+	}
+}
+
+func TestHooks_PostToolUseNoPRInOutput(t *testing.T) {
+	// A Bash post-tool-use whose tool_response contains no GitHub PR URL must
+	// NOT hit the claim endpoint.
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, cap := multiPathServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"tool_name":"Bash","tool_use_id":"toolu_99","tool_response":"all tests passed"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "post-tool-use")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if cap.claimHits != 0 {
+		t.Errorf("expected no claim call when output has no PR URL, got %d", cap.claimHits)
+	}
+}
+
 func TestHooks_EventWithoutToolIdentityOmitsIt(t *testing.T) {
 	// Adapters whose payloads carry no tool fields (codex permission-request
 	// payload here has tool_name only) still tag the event; missing identity
