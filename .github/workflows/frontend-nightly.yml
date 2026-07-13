@@ -51,6 +51,7 @@ jobs:
   release:
     needs: guard
     if: needs.guard.outputs.should_build == 'true'
+    environment: nightly
     strategy:
       fail-fast: false
       matrix:
@@ -116,6 +117,7 @@ jobs:
   release-intel:
     needs: guard
     if: needs.guard.outputs.should_build == 'true'
+    environment: nightly
     runs-on: macos-15-intel
     permissions:
       contents: write
