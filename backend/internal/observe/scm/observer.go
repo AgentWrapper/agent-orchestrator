@@ -495,9 +495,11 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 			}
 		}
 		repos := make([]ports.SCMRepo, 0, len(scanRepos[sess.ProjectID]))
-		if origin, ok := originRepos[sess.ProjectID]; ok {
+		if _, ok := originRepos[sess.ProjectID]; ok {
 			for _, repo := range scanRepos[sess.ProjectID] {
-				sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: origin, branch: branch})
+				for _, headRepo := range scanRepos[sess.ProjectID] {
+					sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: headRepo, branch: branch})
+				}
 				repos = append(repos, repo)
 			}
 		}
