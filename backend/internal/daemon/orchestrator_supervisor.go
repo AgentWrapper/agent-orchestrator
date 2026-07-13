@@ -318,41 +318,13 @@ func ensurePrimeWithReset(ctx context.Context, primeProjectID domain.ProjectID, 
 		log.Debug("prime-supervisor: prime disabled; configure project prime.agent to enable", "project", primeProjectID)
 		return
 	}
-	if projectSummary.PauseState != "" && projectSummary.PauseState != projectsvc.PauseStateRunning {
-		prime, ok, err := sessions.ActivePrime(ctx)
-		switch {
-		case err != nil:
-			if ctx.Err() == nil {
-				log.Warn("prime-supervisor: paused prime lookup failed; will retry", "project", primeProjectID, "err", err)
-			}
-		case !ok:
-			delete(wakes.primePausedNotified, primeProjectID)
-		case wakes.primePausedNotified[primeProjectID] != prime.ID:
-			if err := sessions.Send(ctx, prime.ID, primePausedMessage(primeProjectID)); err == nil {
-				wakes.primePausedNotified[primeProjectID] = prime.ID
-			} else if ctx.Err() == nil {
-				log.Warn("prime-supervisor: send pause notice failed; will retry", "project", primeProjectID, "session", prime.ID, "err", err)
-			}
-		}
-		log.Debug("prime-supervisor: prime host project paused; skipping prime spawn/wake", "project", primeProjectID, "pause_state", projectSummary.PauseState)
-		return
-	}
-	if _, wasPaused := wakes.primePausedNotified[primeProjectID]; wasPaused {
-		prime, ok, err := sessions.ActivePrime(ctx)
-		switch {
-		case err != nil:
-			if ctx.Err() == nil {
-				log.Warn("prime-supervisor: resume lookup failed; will retry", "project", primeProjectID, "err", err)
-			}
-		case !ok:
-			delete(wakes.primePausedNotified, primeProjectID)
-		default:
-			if err := sessions.Send(ctx, prime.ID, primeResumedMessage(primeProjectID)); err == nil {
-				delete(wakes.primePausedNotified, primeProjectID)
-			} else if ctx.Err() == nil {
-				log.Warn("prime-supervisor: send resume notice failed; will retry", "project", primeProjectID, "session", prime.ID, "err", err)
-			}
-		}
+	// Prime is the fleet's meta tier: a host-project pause is delivered as
+	// information (one notice per prime instance) but never gates prime
+	// spawn/wake — pausing a project must not decapitate the tier that
+	// supervises all projects (#312).
+	hostPaused := projectSummary.PauseState != "" && projectSummary.PauseState != projectsvc.PauseStateRunning
+	if hostPaused {
+		log.Debug("prime-supervisor: prime host project paused; prime spawn/wake continues", "project", primeProjectID, "pause_state", projectSummary.PauseState)
 	}
 	wakePolicy := primeWakeBackoffPolicy(primeProjectID, projectConfig, log)
 	prime, err := sessions.SpawnPrime(ctx, primeProjectID, false)
@@ -362,6 +334,27 @@ func ensurePrimeWithReset(ctx context.Context, primeProjectID domain.ProjectID, 
 		}
 		log.Warn("prime-supervisor: ensure prime failed", "project", primeProjectID, "err", err)
 		return
+	}
+	// Pause/resume notices go to the ensured prime, so a prime spawned during
+	// the pause is told in the same pass, and RESUMED is only ever sent to the
+	// instance that received PAUSED — a replacement that never saw the pause
+	// just has the stale marker cleared.
+	if hostPaused {
+		if wakes.primePausedNotified[primeProjectID] != prime.ID {
+			if err := sessions.Send(ctx, prime.ID, primePausedMessage(primeProjectID)); err == nil {
+				wakes.primePausedNotified[primeProjectID] = prime.ID
+			} else if ctx.Err() == nil {
+				log.Warn("prime-supervisor: send pause notice failed; will retry", "project", primeProjectID, "session", prime.ID, "err", err)
+			}
+		}
+	} else if notified, wasPaused := wakes.primePausedNotified[primeProjectID]; wasPaused {
+		if notified != prime.ID {
+			delete(wakes.primePausedNotified, primeProjectID)
+		} else if err := sessions.Send(ctx, prime.ID, primeResumedMessage(primeProjectID)); err == nil {
+			delete(wakes.primePausedNotified, primeProjectID)
+		} else if ctx.Err() == nil {
+			log.Warn("prime-supervisor: send resume notice failed; will retry", "project", primeProjectID, "session", prime.ID, "err", err)
+		}
 	}
 	if resetDriven {
 		wakes.resetWakeBackoff(primeProjectID)

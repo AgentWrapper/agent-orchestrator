@@ -2100,14 +2100,19 @@ func TestEnsurePrimeStillWarnsOnUnexpectedEnsureError(t *testing.T) {
 	}
 }
 
-func TestEnsurePrimeSkipsPausedHostProject(t *testing.T) {
+func TestEnsurePrimeOperatesDespitePausedHostProject(t *testing.T) {
+	// Prime is the fleet's meta tier: a host-project pause informs it (one
+	// notice) but never gates its spawn/wake loop (#312).
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
 		SessionRecord: domain.SessionRecord{
-			ID:        "ao-prime",
-			ProjectID: "ao",
-			Kind:      domain.KindPrime,
+			ID:            "ao-prime",
+			ProjectID:     "ao",
+			Kind:          domain.KindPrime,
+			FirstSignalAt: now.Add(-time.Minute),
+			Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 		},
+		Status: domain.StatusIdle,
 	}}}
 	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
 		ID:         "ao",
@@ -2118,11 +2123,8 @@ func TestEnsurePrimeSkipsPausedHostProject(t *testing.T) {
 	wakes := newOrchestratorWakeTracker()
 	ensurePrime(context.Background(), "ao", projects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	if len(sessions.primeCalls) != 0 {
-		t.Fatalf("prime calls = %v, want none while prime host project is paused", sessions.primeCalls)
-	}
-	if len(sessions.sends) != 0 {
-		t.Fatalf("prime sends = %v, want none while prime host project is paused", sessions.sends)
+	if len(sessions.primeCalls) != 1 {
+		t.Fatalf("prime calls = %v, want ensure to proceed while prime host project is paused", sessions.primeCalls)
 	}
 	if len(sessions.pauseSends) != 1 || sessions.pauseSends[0].id != "ao-prime" || !strings.Contains(sessions.pauseSends[0].message, "PAUSED") {
 		t.Fatalf("pause notice = %#v, want one pause notice to active prime", sessions.pauseSends)
@@ -2131,6 +2133,90 @@ func TestEnsurePrimeSkipsPausedHostProject(t *testing.T) {
 	ensurePrime(context.Background(), "ao", projects, sessions, nil, wakes, now.Add(30*time.Second), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if len(sessions.pauseSends) != 1 {
 		t.Fatalf("pause notice should be sent once per active prime, sends=%#v", sessions.pauseSends)
+	}
+	if len(sessions.primeCalls) != 2 {
+		t.Fatalf("prime calls = %v, want ensure on every tick during pause", sessions.primeCalls)
+	}
+}
+
+func TestEnsurePrimeSpawnsDespitePausedHostProject(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	sessions := &fakeOrchestratorEnsurer{}
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
+		ID:         "ao",
+		PauseState: projectsvc.PauseStatePaused,
+		Config:     domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}}}
+
+	ensurePrime(context.Background(), "ao", projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if len(sessions.primeCalls) != 1 {
+		t.Fatalf("prime calls = %v, want a paused host project to still spawn prime", sessions.primeCalls)
+	}
+	if len(sessions.pauseSends) != 1 || !strings.Contains(sessions.pauseSends[0].message, "PAUSED") {
+		t.Fatalf("pause sends = %#v, want the freshly spawned prime to receive the pause notice in the same pass", sessions.pauseSends)
+	}
+}
+
+func TestEnsurePrimeResumeNoticeOnlyToPrimeThatWasPaused(t *testing.T) {
+	// A prime spawned or replaced during the pause never received PAUSED, so
+	// it must not receive RESUMED; the stale marker is just cleared (#312).
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	runningProjects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
+		ID:     "ao",
+		Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}}}
+	sessions := &fakeOrchestratorEnsurer{sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:            "ao-prime-replacement",
+			ProjectID:     "ao",
+			Kind:          domain.KindPrime,
+			FirstSignalAt: now.Add(-time.Minute),
+			Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		},
+		Status: domain.StatusIdle,
+	}}}
+	wakes := newOrchestratorWakeTracker()
+	wakes.primePausedNotified["ao"] = "ao-prime-retired"
+
+	ensurePrime(context.Background(), "ao", runningProjects, sessions, nil, wakes, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if len(sessions.pauseSends) != 0 {
+		t.Fatalf("sends = %#v, want no RESUMED notice to a prime that never received PAUSED", sessions.pauseSends)
+	}
+	if _, still := wakes.primePausedNotified["ao"]; still {
+		t.Fatalf("stale paused marker should be cleared without a resume notice")
+	}
+}
+
+func TestEnsurePrimeWakesIdlePrimeDespitePausedHostProject(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	sessions := &fakeOrchestratorEnsurer{send: true, sessions: []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:            "ao-prime",
+			ProjectID:     "ao",
+			Kind:          domain.KindPrime,
+			Harness:       domain.HarnessCodex,
+			FirstSignalAt: now.Add(-17 * time.Minute),
+			Activity: domain.Activity{
+				State:          domain.ActivityIdle,
+				LastActivityAt: now.Add(-16 * time.Minute),
+			},
+		},
+	}}}
+	projects := fakeOrchestratorProjectLister{projects: []projectsvc.Summary{{
+		ID:         "ao",
+		PauseState: projectsvc.PauseStatePaused,
+		Config:     domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}}}
+
+	ensurePrime(context.Background(), "ao", projects, sessions, nil, newOrchestratorWakeTracker(), now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if len(sessions.sends) != 1 {
+		t.Fatalf("sends = %#v, want one prime wake despite paused host project", sessions.sends)
+	}
+	if sessions.sends[0].id != "ao-prime" || !strings.Contains(strings.ToLower(sessions.sends[0].message), "fleet supervision loop") {
+		t.Fatalf("wake send = %#v, want fleet supervision nudge to ao-prime", sessions.sends[0])
 	}
 }
 
