@@ -124,7 +124,8 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 			aria-hidden="true"
 			className={cn(
 				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				zone === "working" && "animate-status-pulse bg-working",
+				zone === "working" && session.status === "idle" && "bg-passive",
+				zone === "working" && session.status !== "idle" && "animate-status-pulse bg-working",
 				zone === "action" && (session.status === "ci_failed" ? "bg-error" : "bg-warning"),
 				zone === "pending" && "bg-passive",
 				zone === "merge" && "bg-success",

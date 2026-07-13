@@ -704,4 +704,25 @@ describe("Sidebar", () => {
 			cancelAnimationFrameSpy.mockRestore();
 		}
 	});
+
+	it("renders a calm non-pulsing dot for an idle session and a pulsing one for a working session", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{ ...session, id: "proj-1-idle", title: "idle task", status: "idle" },
+						{ ...session, id: "proj-1-work", title: "working task", status: "working" },
+					],
+				},
+			],
+		});
+
+		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
+		expect(idleDot).toHaveClass("bg-passive");
+		expect(idleDot).not.toHaveClass("animate-status-pulse");
+
+		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
+		expect(workingDot).toHaveClass("animate-status-pulse", "bg-working");
+	});
 });
