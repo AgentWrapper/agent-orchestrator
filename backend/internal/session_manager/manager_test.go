@@ -247,18 +247,22 @@ func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAg
 // session manager resolved and forwarded a project's agent config.
 type recordingAgent struct {
 	fakeAgent
-	lastConfig  ports.AgentConfig
-	lastLaunch  ports.LaunchConfig
-	lastRestore ports.RestoreConfig
+	lastConfig   ports.AgentConfig
+	lastLaunch   ports.LaunchConfig
+	lastRestore  ports.RestoreConfig
+	launchCalls  int
+	restoreCalls int
 }
 
 func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
+	a.launchCalls++
 	a.lastConfig = cfg.Config
 	a.lastLaunch = cfg
 	return []string{"launch"}, nil
 }
 
 func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.restoreCalls++
 	a.lastConfig = cfg.Config
 	a.lastRestore = cfg
 	// Mirror real adapters: with no native agent-session id to resume, signal
@@ -2242,6 +2246,78 @@ func TestRestore_FallbackLaunchDeliversPromptAfterStartWhenAgentRequestsIt(t *te
 	}
 	if rt.created != 1 {
 		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+}
+
+func TestRestore_CodexWithoutAgentSessionIDIsNotResumable(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Restore(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create = %d, want 0", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain terminated/restorable")
+	}
+}
+
+func TestRestore_ClaudeCodeWithoutRestoreCommandIsNotResumable(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Restore(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create = %d, want 0", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain terminated/restorable")
 	}
 }
 

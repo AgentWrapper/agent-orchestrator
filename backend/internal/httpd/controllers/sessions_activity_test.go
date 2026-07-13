@@ -97,6 +97,35 @@ func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_ActivityThreadsAgentSessionIDWithoutState(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"event":"session-start","agentSessionId":"codex-native-1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	want := ports.ActivitySignal{Valid: false, Event: "session-start", AgentSessionID: "codex-native-1"}
+	if rec.gotSignal != want {
+		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
+	}
+}
+
+func TestSessionsAPI_ActivityThreadsWhitespaceAgentSessionID(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"active","agentSessionId":"   "}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if rec.gotSignal.AgentSessionID != "   " {
+		t.Fatalf("AgentSessionID = %q, want raw whitespace before lifecycle trim", rec.gotSignal.AgentSessionID)
+	}
+}
+
 func TestSessionsAPI_ActivityCapsOverlongCorrelationFields(t *testing.T) {
 	// Overlong values are dropped, not truncated: a truncated id could never
 	// match its pre/post counterpart, so an empty value (fail-safe: no

@@ -40,10 +40,11 @@ const (
 // native payload when present. All three are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State     string `json:"state"`
-	Event     string `json:"event,omitempty"`
-	ToolName  string `json:"toolName,omitempty"`
-	ToolUseID string `json:"toolUseId,omitempty"`
+	State          string `json:"state,omitempty"`
+	Event          string `json:"event,omitempty"`
+	ToolName       string `json:"toolName,omitempty"`
+	ToolUseID      string `json:"toolUseId,omitempty"`
+	AgentSessionID string `json:"agentSessionId,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -70,6 +71,18 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 		p.ToolUseID = ""
 	}
 	return p.ToolName, p.ToolUseID
+}
+
+func hookAgentSessionID(payload []byte) string {
+	var p struct {
+		SessionID string `json:"session_id"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	p.SessionID = strings.TrimSpace(p.SessionID)
+	if len(p.SessionID) > maxActivityMetaLen {
+		return ""
+	}
+	return p.SessionID
 }
 
 type sessionStartHookOutput struct {
@@ -118,15 +131,21 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		c.emitSessionStartContext(agent, event, sessionID)
 	}
 
+	agentSessionID := ""
+	switch agent {
+	case "codex", "claude-code":
+		agentSessionID = hookAgentSessionID(payload)
+	}
+
 	state, ok := activitydispatch.Derive(agent, event, payload)
-	if !ok {
-		// Unknown agent, or an event that carries no activity signal: report nothing.
+	if !ok && agentSessionID == "" {
+		// Unknown agent, or an event that carries no activity signal or metadata: report nothing.
 		return nil
 	}
 
 	toolName, toolUseID := activityMeta(payload)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Event: event, ToolName: toolName, ToolUseID: toolUseID}, nil); err != nil {
+	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Event: event, ToolName: toolName, ToolUseID: toolUseID, AgentSessionID: agentSessionID}, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)

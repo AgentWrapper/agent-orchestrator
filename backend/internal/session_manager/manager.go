@@ -819,7 +819,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
-	argv, delivery, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir)
+	argv, delivery, err := restoreArgv(ctx, agent, rec.Harness, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
@@ -2309,7 +2309,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 // a worker with no prompt and no native session id has nothing to restore from.
 // Orchestrators are promptless by design and always relaunch fresh with the
 // system prompt only.
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, harness domain.AgentHarness, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -2321,6 +2321,9 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	}
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, nil
+	}
+	if harness == domain.HarnessCodex || harness == domain.HarnessClaudeCode {
+		return nil, "", ErrNotResumable
 	}
 	// Adapter cannot resume. A saved prompt is replayed fresh. An orchestrator is
 	// promptless by design and relaunches with the system prompt only. A promptless

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -127,7 +128,8 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 
 // ApplyActivitySignal records an authoritative agent activity signal.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
-	if !s.Valid {
+	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
+	if !s.Valid && s.AgentSessionID == "" {
 		return nil
 	}
 	var intent *ports.NotificationIntent
@@ -147,6 +149,25 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
+	next := rec
+	metadataChanged := false
+	if s.AgentSessionID != "" && next.Metadata.AgentSessionID != s.AgentSessionID {
+		next.Metadata.AgentSessionID = s.AgentSessionID
+		metadataChanged = true
+	}
+	if !s.Valid {
+		if !metadataChanged {
+			m.mu.Unlock()
+			return nil
+		}
+		next.UpdatedAt = now
+		if err := m.store.UpdateSession(ctx, next); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		m.mu.Unlock()
+		return nil
+	}
 	// Event-tagged signals fold through the session's tool-flight state first:
 	// they may be suppressed (state write skipped) by the blocked-precedence
 	// rule, while their tracking side effects still land. Untagged signals
@@ -159,16 +180,19 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
-	next := rec
 	act := domain.Activity{State: s.State, LastActivityAt: timeOr(s.Timestamp, now)}
+	sameState := sameActivity(rec.Activity, act)
 	// A same-state repeat is still a write when it is the FIRST signal for
 	// this spawn: the receipt itself is a durable fact (it clears the
 	// no_signal display status). Hook deliveries are best-effort, so the
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
-	if sameActivity(rec.Activity, act) && !rec.FirstSignalAt.IsZero() {
+	if sameState && !rec.FirstSignalAt.IsZero() && !metadataChanged {
 		m.mu.Unlock()
 		return nil
+	}
+	if sameState && !rec.FirstSignalAt.IsZero() {
+		act.LastActivityAt = rec.Activity.LastActivityAt
 	}
 	next.Activity = act
 	if next.FirstSignalAt.IsZero() {

@@ -2782,6 +2782,9 @@ components:
       type: object
     SetActivityRequest:
       properties:
+        agentSessionId:
+          description: Native agent session id used for transcript resume.
+          type: string
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string
@@ -2800,8 +2803,6 @@ components:
         toolUseId:
           description: Native tool-use id, for tool-use hook events.
           type: string
-      required:
-      - state
       type: object
     SetActivityResponse:
       properties:

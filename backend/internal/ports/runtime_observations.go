@@ -34,10 +34,11 @@ type RuntimeFacts struct {
 // (old CLIs, adapters with no tool identity) keeps plain last-writer-wins
 // state semantics.
 type ActivitySignal struct {
-	Valid     bool
-	State     domain.ActivityState
-	Timestamp time.Time
-	Event     string
-	ToolName  string
-	ToolUseID string
+	Valid          bool
+	State          domain.ActivityState
+	Timestamp      time.Time
+	Event          string
+	ToolName       string
+	ToolUseID      string
+	AgentSessionID string
 }

@@ -459,9 +459,15 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := domain.ActivityState(in.State)
-	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
-	default:
+	validState := in.State != ""
+	if validState {
+		switch state {
+		case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
+		default:
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
+			return
+		}
+	} else if strings.TrimSpace(in.AgentSessionID) == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
 		return
 	}
@@ -471,11 +477,12 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	// never match its pre/post counterpart, so overlong values are dropped by
 	// the CLI; the cap here is defense against non-AO callers).
 	sig := ports.ActivitySignal{
-		Valid:     true,
-		State:     state,
-		Event:     capActivityMeta(domain.SanitizeControlChars(in.Event)),
-		ToolName:  capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
-		ToolUseID: capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		Valid:          validState,
+		State:          state,
+		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		AgentSessionID: capActivityMeta(domain.SanitizeControlChars(in.AgentSessionID)),
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {

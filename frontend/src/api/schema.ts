@@ -1050,13 +1050,15 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
         };
         SetActivityRequest: {
+            /** @description Native agent session id used for transcript resume. */
+            agentSessionId?: string;
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
             /**
              * @description Agent activity state reported by an agent hook.
              * @enum {string}
              */
-            state: "active" | "idle" | "waiting_input" | "blocked" | "exited";
+            state?: "active" | "idle" | "waiting_input" | "blocked" | "exited";
             /** @description Native tool name, for tool-use hook events. */
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
