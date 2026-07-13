@@ -60,6 +60,9 @@ if (typeof window !== "undefined") {
 			chooseDirectory: async () => null,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 		},
+		terminal: {
+			saveDroppedFile: async () => "",
+		},
 		window: {
 			setOverlay: async () => undefined,
 		},

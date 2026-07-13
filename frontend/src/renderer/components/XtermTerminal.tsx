@@ -556,6 +556,39 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		host.addEventListener("paste", pasteInput, true);
 		host.addEventListener("compositionend", compositionInput, true);
 
+		// A file dropped on the pane inserts its path, mirroring a native terminal
+		// so an agent (e.g. Claude Code) attaches it. The sandboxed renderer cannot
+		// read a dropped file's original path on macOS, so the bytes are stashed to
+		// a temp file by the main process and that path is inserted instead.
+		const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+		const dragOverInput = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+		};
+		const dropInput = (event: DragEvent) => {
+			const files = Array.from(event.dataTransfer?.files ?? []);
+			if (files.length === 0) return;
+			event.preventDefault();
+			event.stopPropagation();
+			void (async () => {
+				const paths: string[] = [];
+				for (const file of files) {
+					try {
+						const bytes = new Uint8Array(await file.arrayBuffer());
+						const saved = await aoBridge.terminal.saveDroppedFile({ name: file.name, bytes });
+						if (saved) paths.push(saved);
+					} catch (error) {
+						console.warn("Unable to attach dropped file", error);
+					}
+				}
+				if (paths.length === 0) return;
+				pasteText(`${paths.map((p) => (/\s/.test(p) ? `'${p}'` : p)).join(" ")} `);
+			})();
+		};
+		host.addEventListener("dragover", dragOverInput);
+		host.addEventListener("drop", dropInput);
+
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
 		const handle: AttachableTerminal = {
@@ -589,6 +622,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			selectionChange.dispose();
 			host.removeEventListener("paste", pasteInput, true);
 			host.removeEventListener("compositionend", compositionInput, true);
+			host.removeEventListener("dragover", dragOverInput);
+			host.removeEventListener("drop", dropInput);
 			clearSuppressNativePaste();
 			keyInput.dispose();
 			userInputListeners.clear();

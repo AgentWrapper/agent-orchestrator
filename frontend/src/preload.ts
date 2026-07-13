@@ -47,6 +47,10 @@ const api = {
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
 	},
+	terminal: {
+		saveDroppedFile: (input: { name: string; bytes: Uint8Array }) =>
+			ipcRenderer.invoke("terminal:saveDroppedFile", input) as Promise<string>,
+	},
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
