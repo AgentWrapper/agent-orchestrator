@@ -123,6 +123,7 @@ gitignored** — the run commands prebuild them for you.
    If Xcode rejects the bundle identifier or team, open `ios/AO.xcworkspace`, select the
    **AO** target → **Signing & Capabilities**, choose your personal team and let Xcode manage
    signing, then re-run the command.
+
 4. On first launch iOS asks for **Local Network** access. Allow it, or the app cannot reach
    the daemon on your LAN.
 
@@ -184,7 +185,7 @@ Manual entry, if you prefer (or for simulators / Tailscale):
 | Field             | Value                                                                                |
 | ----------------- | ------------------------------------------------------------------------------------ |
 | **Host**          | Your machine's LAN IP (`ipconfig getifaddr en0` on macOS), or Tailscale name/`100.x` |
-| **API Port**      | `3011` — the Connect Mobile bridge, **not** the loopback `3001`                       |
+| **API Port**      | `3011` — the Connect Mobile bridge, **not** the loopback `3001`                      |
 | **Password**      | The 8-character password from the Connect Mobile modal                               |
 | **Terminal Port** | Legacy, ignored. The daemon serves REST and the `/mux` terminal on the API port      |
 | **Use TLS**       | Off for the LAN bridge. On only for real HTTPS, e.g. a Tailscale funnel              |
@@ -207,17 +208,17 @@ surgery, regenerate the native projects from scratch with `npx expo prebuild --c
 
 ## Troubleshooting
 
-| Symptom                                           | Fix                                                                                                                                     |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Crash at launch, _"main has not been registered"_ | Two React copies. Keep `metro.config.js` intact, reinstall with plain `npm install` (never `--force`), then `npx expo prebuild --clean`. |
+| Symptom                                           | Fix                                                                                                                                                          |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Crash at launch, _"main has not been registered"_ | Two React copies. Keep `metro.config.js` intact, reinstall with plain `npm install` (never `--force`), then `npx expo prebuild --clean`.                     |
 | **Test connection** fails, everything times out   | Connect Mobile is off on the desktop, wrong port (`3011`, not `3001`), phone on a different network, or the macOS firewall is blocking incoming connections. |
-| 401 / invalid password                            | The password was regenerated on the desktop. Re-scan the QR.                                                                             |
-| Locked out after repeated failures                | The bridge locks out a source after 5 failed attempts. Wait it out, or toggle Connect Mobile off and on.                                 |
-| `adb devices` shows `unauthorized`                | Re-accept the USB debugging prompt on the phone.                                                                                        |
-| iOS app installs, then closes immediately         | Untrusted developer profile: **Settings → General → VPN & Device Management → trust your Apple ID**.                                     |
-| App runs but can't reach the daemon (iOS)         | The Local Network prompt was denied: **Settings → Privacy & Security → Local Network → AO** → on.                                        |
-| Phone can't reach Metro                           | `adb reverse tcp:8081 tcp:8081` (Android), or `npx expo start --tunnel` (either platform).                                               |
-| Terminal renders blank                            | The xterm WebView is patched via `patch-package`; confirm `postinstall` ran (`npx patch-package`).                                       |
+| 401 / invalid password                            | The password was regenerated on the desktop. Re-scan the QR.                                                                                                 |
+| Locked out after repeated failures                | The bridge locks out a source after 5 failed attempts. Wait it out, or toggle Connect Mobile off and on.                                                     |
+| `adb devices` shows `unauthorized`                | Re-accept the USB debugging prompt on the phone.                                                                                                             |
+| iOS app installs, then closes immediately         | Untrusted developer profile: **Settings → General → VPN & Device Management → trust your Apple ID**.                                                         |
+| App runs but can't reach the daemon (iOS)         | The Local Network prompt was denied: **Settings → Privacy & Security → Local Network → AO** → on.                                                            |
+| Phone can't reach Metro                           | `adb reverse tcp:8081 tcp:8081` (Android), or `npx expo start --tunnel` (either platform).                                                                   |
+| Terminal renders blank                            | The xterm WebView is patched via `patch-package`; confirm `postinstall` ran (`npx patch-package`).                                                           |
 
 ## Project layout
 
