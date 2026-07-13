@@ -20,8 +20,6 @@ package kiro
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -70,8 +68,8 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // startup so AO keeps the interactive TUI and avoids Kiro's current positional
 // input submission gap. Kiro runs interactively for both workers and
 // orchestrators; standing instructions come from the generated custom agent.
-// AO standing instructions are injected by writing them into the AO-managed
-// workspace-local agent config and selecting it with --agent.
+// AO standing instructions are installed during workspace preparation through
+// the AO-managed workspace-local agent config, then selected here with --agent.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kiroBinary(ctx)
 	if err != nil {
@@ -79,11 +77,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary, "chat"}
-	if (cfg.SystemPrompt != "" || cfg.SystemPromptFile != "") && strings.TrimSpace(cfg.WorkspacePath) != "" {
-		if err := kiroAgentFlag(cfg.SystemPrompt, cfg.SystemPromptFile, cfg.WorkspacePath); err != nil {
-			return nil, err
-		}
-	}
 	cmd = append(cmd, "--agent", kiroAgentName)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
@@ -149,13 +142,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 
 	cmd = make([]string, 0, 8)
-	cmd = append(cmd, binary, "chat")
-	if (cfg.SystemPrompt != "" || cfg.SystemPromptFile != "") && strings.TrimSpace(cfg.Session.WorkspacePath) != "" {
-		if err := kiroAgentFlag(cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.WorkspacePath); err != nil {
-			return nil, false, err
-		}
-	}
-	cmd = append(cmd, "--agent", kiroAgentName, "--resume-id", agentSessionID)
+	cmd = append(cmd, binary, "chat", "--agent", kiroAgentName, "--resume-id", agentSessionID)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	return cmd, true, nil
 }
@@ -184,28 +171,6 @@ var kiroBinarySpec = binaryutil.BinarySpec{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kiro-cli.exe"}},
 		{Base: binaryutil.WinHome, Parts: []string{".kiro", "bin", "kiro-cli.exe"}},
 	},
-}
-
-func kiroAgentFlag(inlinePrompt, promptFile, workspacePath string) error {
-	if inlinePrompt == "" && promptFile == "" {
-		return nil
-	}
-	if strings.TrimSpace(workspacePath) == "" {
-		return fmt.Errorf("kiro: workspace path required to build agent config")
-	}
-	prompt := inlinePrompt
-	if prompt == "" {
-		prompt = "file://" + filepath.ToSlash(promptFile)
-	}
-	agentPath := kiroAgentPath(workspacePath)
-	topLevel, rawHooks, err := readKiroHooks(agentPath)
-	if err != nil {
-		return err
-	}
-	if err := writeKiroHooks(agentPath, topLevel, rawHooks, prompt, promptFile, ports.AgentConfig{}); err != nil {
-		return err
-	}
-	return nil
 }
 
 // ResolveKiroBinary returns the path to the kiro-cli binary on this machine,

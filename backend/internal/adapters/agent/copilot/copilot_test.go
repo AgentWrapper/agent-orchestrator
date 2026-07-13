@@ -142,7 +142,7 @@ func TestGetLaunchCommandRespectsCanceledContext(t *testing.T) {
 	}
 }
 
-func TestGetPromptDeliveryStrategyIsAfterStart(t *testing.T) {
+func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
