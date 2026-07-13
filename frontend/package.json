@@ -1,7 +1,7 @@
 {
   "name": "agent-orchestrator",
   "productName": "Agent Orchestrator",
-  "version": "0.10.0",
+  "version": "0.10.3",
   "private": true,
   "description": "Electron + TypeScript frontend for the agent-orchestrator rewrite",
   "author": "Agent Orchestrator",
@@ -44,6 +44,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "app-builder-lib": "^26.15.3",
+    "cross-env": "^7.0.3",
     "electron": "^33.0.0",
     "jsdom": "^29.1.1",
     "openapi-typescript": "^7.13.0",
@@ -51,8 +52,7 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^5.6.0",
     "vite": "^8.0.16",
-    "vitest": "^4.1.8",
-    "cross-env": "^7.0.3"
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.16",
