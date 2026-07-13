@@ -442,6 +442,57 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith(expected, "shortcut");
 	});
 
+	it("does not re-fire a shortcut on the keyup that follows its keydown", () => {
+		// xterm.js invokes attachCustomKeyEventHandler on keydown, keyup, AND
+		// keypress for the same physical key press. Without gating on event.type,
+		// releasing Ctrl+Backspace would emit the escape sequence a second time.
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const keyDown = {
+			type: "keydown",
+			key: "Backspace",
+			ctrlKey: true,
+			metaKey: false,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(keyDown)).toBe(false);
+		expect(onInput).toHaveBeenCalledTimes(1);
+
+		const keyUp = { ...keyDown, type: "keyup" } as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(keyUp)).toBe(true);
+		expect(onInput).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not re-paste on the keyup that follows a Cmd+V keydown", async () => {
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("pasted once");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const keyDown = {
+			type: "keydown",
+			key: "v",
+			ctrlKey: false,
+			metaKey: true,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(keyDown)).toBe(false);
+		await Promise.resolve();
+
+		const keyUp = { ...keyDown, type: "keyup" } as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(keyUp)).toBe(true);
+		await Promise.resolve();
+
+		expect(window.ao!.clipboard.readText).toHaveBeenCalledTimes(1);
+		expect(onInput).toHaveBeenCalledTimes(1);
+	});
+
 	it("forwards keyboard input from explicit key events", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
@@ -553,9 +604,10 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 	});
 
-	it("opens terminal links via window.open so Electron routes them to the OS browser", () => {
+	it("opens terminal links externally and reports the clicked URL", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
-		render(<XtermTerminal theme="dark" />);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
 
 		// The default WebLinksAddon handler opens an empty window first, which the
 		// Electron main process denies; ours must pass the matched URL directly.
@@ -563,6 +615,22 @@ describe("XtermTerminal", () => {
 		state.linkHandler!({} as MouseEvent, "https://example.com");
 
 		expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
+		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com");
+		open.mockRestore();
+	});
+
+	it("opens OSC 8 links externally and reports the clicked URL", () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+		const oscLinkHandler = state.lastTerminal!.options.linkHandler as {
+			activate: (event: MouseEvent, uri: string) => void;
+		};
+
+		oscLinkHandler.activate({} as MouseEvent, "http://localhost:3000");
+
+		expect(open).toHaveBeenCalledWith("http://localhost:3000", "_blank", "noopener");
+		expect(onLinkOpen).toHaveBeenCalledWith("http://localhost:3000");
 		open.mockRestore();
 	});
 

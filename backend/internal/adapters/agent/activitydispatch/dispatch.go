@@ -33,6 +33,7 @@ var Derivers = map[string]DeriveFunc{
 	"agy":         agy.DeriveActivityState,
 	"opencode":    opencode.DeriveActivityState,
 	"goose":       activitystate.StandardDeriveActivityState,
+	"devin":       activitystate.StandardDeriveActivityState,
 	"cursor":      activitystate.StandardDeriveActivityState,
 	"qwen":        activitystate.StandardDeriveActivityState,
 	"copilot":     activitystate.StandardDeriveActivityState,

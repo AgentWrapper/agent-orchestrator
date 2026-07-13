@@ -62,6 +62,18 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// EmitsSubmitActivity signals that Claude Code fires a user-prompt-submit hook
+// under AO's launch, so Activity.State can flip to active after a prompt is
+// accepted. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity signals that Claude Code fires both pre- and post-tool
+// hooks, so Activity.State can flip to blocked mid-turn on a permission dialog
+// and the guarded send loop can clear it once the tool completes. Only
+// claude-code (and its hook-delegators) carry this trio; see
+// ports.ActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -234,11 +246,15 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
-	if cfg.SystemPrompt != "" {
+	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if systemPrompt != "" {
 		// --resume rebuilds the system prompt from the current flags (it is
 		// not stored in the transcript), so standing instructions must be
 		// re-appended or a restored orchestrator loses its role.
-		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
@@ -370,8 +386,11 @@ func claudeSessionUUID(aoSessionID string) string {
 }
 
 // resolveSystemPrompt returns the system prompt text to append, preferring
-// SystemPromptFile (read from disk) over an inline SystemPrompt.
+// inline instructions when AO has them.
 func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {
+	if cfg.SystemPrompt != "" {
+		return cfg.SystemPrompt, nil
+	}
 	if cfg.SystemPromptFile != "" {
 		data, err := os.ReadFile(cfg.SystemPromptFile)
 		if err != nil {
@@ -379,7 +398,21 @@ func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {
 		}
 		return strings.TrimRight(string(data), "\n"), nil
 	}
-	return cfg.SystemPrompt, nil
+	return "", nil
+}
+
+func resolveRestoreSystemPrompt(cfg ports.RestoreConfig) (string, error) {
+	if cfg.SystemPrompt != "" {
+		return cfg.SystemPrompt, nil
+	}
+	if cfg.SystemPromptFile != "" {
+		data, err := os.ReadFile(cfg.SystemPromptFile)
+		if err != nil {
+			return "", fmt.Errorf("claude-code: read system prompt file: %w", err)
+		}
+		return strings.TrimRight(string(data), "\n"), nil
+	}
+	return "", nil
 }
 
 // appendPermissionFlags maps AO's permission modes onto Claude Code's

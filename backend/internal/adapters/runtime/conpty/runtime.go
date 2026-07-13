@@ -171,6 +171,15 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	return clientSendMessage(sess.addr, message)
 }
 
+// Interrupt sends Ctrl-C to the PTY without tearing down the terminal host.
+func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) error {
+	sess := r.resolve(handle.ID)
+	if sess == nil {
+		return fmt.Errorf("conpty: session %q not found", handle.ID)
+	}
+	return clientSendInput(sess.addr, "\x03")
+}
+
 // GetOutput returns the last lines lines from the pty-host ring buffer.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
 	if lines <= 0 {

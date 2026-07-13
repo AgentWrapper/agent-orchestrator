@@ -69,11 +69,11 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	// Autohand's --sys-prompt accepts either an inline string or a file path,
-	// auto-detected by the CLI; prefer the file form when AO provides one.
-	if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "--sys-prompt", cfg.SystemPromptFile)
-	} else if cfg.SystemPrompt != "" {
+	// auto-detected by the CLI; prefer inline instructions when AO has them.
+	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "--sys-prompt", cfg.SystemPrompt)
+	} else if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "--sys-prompt", cfg.SystemPromptFile)
 	}
 
 	if cfg.Prompt != "" {
@@ -86,8 +86,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 // GetRestoreCommand rebuilds the argv that continues an existing Autohand
 // session: `autohand resume [--path <workspace>] <sessionId>`. ok is false when
 // the hook-derived native session id has not landed yet, so callers can fall
-// back to fresh launch behavior. Autohand's resume sub-command does not accept
-// approval flags, so none are appended here.
+// back to fresh launch behavior. Autohand's resume sub-command only accepts the
+// workspace path and session id, so approval and system-prompt flags are not
+// re-applied here.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err

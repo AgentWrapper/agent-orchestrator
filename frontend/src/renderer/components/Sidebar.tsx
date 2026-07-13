@@ -1,11 +1,7 @@
-import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
-	CheckCircle2,
-	Folder,
-	FolderPlus,
 	GitPullRequest,
 	LayoutDashboard,
 	MessageSquare,
@@ -18,16 +14,12 @@ import {
 	Smartphone,
 	Sun,
 	Trash2,
-	X,
-	XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { ImportFolderScan } from "../../preload";
+import { useEffect, useRef, useState } from "react";
 import {
 	attentionZone,
 	newestActiveOrchestrator,
 	sessionIsActive,
-	type ProjectKind,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 	workerSessions,
@@ -69,9 +61,10 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
-import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ReportProblemDialog } from "./ReportProblemDialog";
-import { Button } from "./ui/button";
+import { ResizeHandle } from "./ResizeHandle";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
@@ -84,7 +77,7 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // orchestrator, kebab): a 20px square icon button that tints on hover, matching
 // the old SidebarMenuAction footprint.
 const HOVER_ACTION_CLASS =
-	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-[15px]";
+	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
@@ -99,7 +92,8 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCreateProject: (input: { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection) => Promise<void>;
+	onCreateProject: (input: CreateProjectInput) => Promise<void>;
+	onInitializeProject: (path: string) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -152,6 +146,7 @@ export function Sidebar({
 	workspaceError,
 	workspaces,
 	onCreateProject,
+	onInitializeProject,
 	onRemoveProject,
 }: SidebarProps) {
 	const selection = useSelection();
@@ -230,17 +225,17 @@ export function Sidebar({
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			className={cn("border-border", underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!")}
 		>
-			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
+			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-3.5 group-data-[collapsible=icon]:px-1.5">
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
-				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-[18px] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
+				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-4.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Orchestrator board"
 								className={cn(
-									"grid h-[22px] w-[22px] shrink-0 place-items-center",
-									"group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:rounded-lg",
+									"grid h-5.5 w-5.5 shrink-0 place-items-center",
+									"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
 									selection.isHome
 										? "group-data-[collapsible=icon]:bg-interactive-active"
 										: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
@@ -248,7 +243,7 @@ export function Sidebar({
 								onClick={selection.goHome}
 								type="button"
 							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-[22px] w-[22px] rounded-[6px] object-cover" />
+								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
@@ -266,17 +261,11 @@ export function Sidebar({
 							<TooltipContent side="right">Expand sidebar · ⌘B</TooltipContent>
 						</Tooltip>
 					)}
-					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-[14px] font-bold tracking-[-0.015em] text-foreground group-data-[collapsible=icon]:hidden">
+					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
 					{isNightly && (
-						<span
-							className="sidebar-expanded-chrome shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none group-data-[collapsible=icon]:hidden"
-							style={{
-								color: "var(--purple)",
-								background: "color-mix(in srgb, var(--purple) 12%, transparent)",
-							}}
-						>
+						<span className="sidebar-expanded-chrome shrink-0 rounded-full bg-purple-subtle px-1.5 py-0.5 text-micro font-semibold leading-none text-purple-accent group-data-[collapsible=icon]:hidden">
 							nightly
 						</span>
 					)}
@@ -286,7 +275,7 @@ export function Sidebar({
 							<TooltipTrigger asChild>
 								<SidebarTrigger
 									aria-label="Collapse sidebar"
-									className="sidebar-expanded-chrome size-[18px] shrink-0 rounded-[4px] p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-[15px]"
+									className="sidebar-expanded-chrome size-icon-xl shrink-0 rounded-sm p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-icon-lg"
 								/>
 							</TooltipTrigger>
 							<TooltipContent>Collapse sidebar · ⌘B</TooltipContent>
@@ -295,27 +284,27 @@ export function Sidebar({
 				</div>
 			</SidebarHeader>
 
-			<SidebarContent className="gap-0 pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
-						<SidebarGroupLabel className="h-auto rounded-none p-0 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-passive">
+						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 							Projects
 						</SidebarGroupLabel>
-						<CreateProjectButton onCreateProject={onCreateProject} />
+						<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
 					</div>
 
 					{/* Tree (project-sidebar__tree) */}
 					<SidebarGroupContent>
 						{workspaceError ? (
 							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
-								<p className="text-[12px] text-foreground">Could not load projects.</p>
-								<p className="mt-1 text-[11px] text-passive">{workspaceError}</p>
+								<p className="text-xs text-foreground">Could not load projects.</p>
+								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 							</div>
 						) : workspaces.length === 0 ? (
 							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
-								<p className="text-[12px] text-passive">No projects yet.</p>
-								<p className="mt-1 text-[11px] text-passive">
+								<p className="text-xs text-passive">No projects yet.</p>
+								<p className="mt-1 text-caption text-passive">
 									Click <span className="text-foreground">+</span> above to register a repo or workspace.
 								</p>
 							</div>
@@ -331,38 +320,40 @@ export function Sidebar({
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
-								{isCollapsed && <CreateProjectListItem onCreateProject={onCreateProject} />}
+								{isCollapsed && (
+									<CreateProjectListItem onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
+								)}
 							</SidebarMenu>
 						)}
 					</SidebarGroupContent>
 				</SidebarGroup>
 			</SidebarContent>
 
-			{/* Footer (project-sidebar__footer) — single Settings menu. Divergence
+			{/* Footer (project-sidebar__footer) — Feedback plus Settings menu. Divergence
           (user-requested 2026-06-10): the trigger stretches the full row width
           (flex-1) with a uniform 7px footer inset on all sides (reference uses
           12px top, 0 bottom, content-hugging button). The icon rail keeps the
           icon-only settings action plus expand toggle (off macOS). */}
-			<SidebarFooter className="relative mt-auto min-h-[95px] gap-0 overflow-hidden border-t border-border p-[7px] transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[88px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarFooter className="relative mt-auto min-h-[95px] gap-0 overflow-hidden border-t border-border p-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[88px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<div className="sidebar-expanded-chrome relative flex min-h-[81px] w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
 					<button
 						aria-label="Feedback"
-						className="flex w-full items-center justify-start gap-2.5 rounded-md p-2 text-[13px] font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-[15px] [&_svg]:text-passive"
+						className="flex w-full items-center justify-start gap-2.5 rounded-md p-2 text-control font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:text-passive"
 						onClick={() => setIsFeedbackOpen(true)}
 						type="button"
 					>
 						<MessageSquare aria-hidden="true" />
-						<span className="tracking-[-0.01em]">Feedback</span>
+						<span className="tracking-tight">Feedback</span>
 					</button>
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<button
 								aria-label="Settings"
-								className="flex flex-1 items-center justify-start gap-2.5 rounded-md p-2 text-[13px] font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-[15px] [&_svg]:text-passive"
+								className="flex flex-1 items-center justify-start gap-2.5 rounded-md p-2 text-control font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-icon-lg [&_svg]:text-passive"
 								type="button"
 							>
 								<Settings aria-hidden="true" />
-								<span className="tracking-[-0.01em]">Settings</span>
+								<span className="tracking-tight">Settings</span>
 							</button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent
@@ -429,7 +420,7 @@ export function Sidebar({
 								<DropdownMenuTrigger asChild>
 									<button
 										aria-label="Settings"
-										className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
+										className="grid size-control-board place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 										type="button"
 									>
 										<Settings aria-hidden="true" />
@@ -471,13 +462,22 @@ export function Sidebar({
 							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
+					{!isMac && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<SidebarTrigger className="size-control-board rounded-lg text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base" />
+							</TooltipTrigger>
+							<TooltipContent side="right">Expand sidebar · ⌘B</TooltipContent>
+						</Tooltip>
+					)}
 				</div>
 			</SidebarFooter>
 
-			<div
-				className="resize-handle resize-handle--right group-data-[collapsible=icon]:hidden"
-				onPointerDown={onResizePointerDown}
+			<ResizeHandle
+				className="group-data-[collapsible=icon]:hidden"
 				onDoubleClick={onResizeDoubleClick}
+				onPointerDown={onResizePointerDown}
+				side="right"
 				style={noDragStyle}
 			/>
 			<SidebarRail
@@ -512,6 +512,7 @@ function ProjectItem({
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
@@ -553,22 +554,21 @@ function ProjectItem({
 		}
 	};
 
-	const removeProject = async () => {
+	const removeProject = () => {
 		setRemoveError(null);
-		const confirmed = window.confirm(
-			`Remove project ${workspace.name}? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.`,
-		);
-		if (!confirmed) return;
+		setConfirmOpen(true);
+	};
 
+	const handleConfirmRemove = async () => {
 		setIsRemoving(true);
 		try {
 			await onRemoveProject(workspace.id);
+			setConfirmOpen(false);
 			// The route for a removed project no longer resolves; fall back home.
 			if (selection.activeProjectId === workspace.id) selection.goHome();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Could not remove project";
 			setRemoveError(message);
-			window.alert(message);
 		} finally {
 			setIsRemoving(false);
 		}
@@ -584,20 +584,20 @@ function ProjectItem({
 				onClick={onProjectClick}
 				tooltip={workspace.name}
 				className={cn(
-					"relative h-9 gap-[9px] rounded-[5px] px-1.5 py-0 text-[13px] font-medium text-muted-foreground transition-[background-color,padding,color]",
+					"relative h-control-board gap-2.25 rounded-sm px-1.5 py-0 text-control font-medium text-muted-foreground transition-[background-color,padding,color]",
 					"before:absolute before:top-2 before:bottom-2 before:left-0 before:w-px before:rounded-full before:bg-transparent",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
 					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground data-[active=true]:before:bg-accent",
 					// Always reserve room for the action cluster (dashboard,
 					// orchestrator, kebab) — icons are always visible, not hover-gated.
-					"pr-[84px]",
+					"pr-sidebar-project-actions",
 					// Icon rail: the old 36px letter tile.
-					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
+					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
 			>
 				<ChevronRight
 					className={cn(
-						"h-[9px]! w-[9px]! shrink-0 text-passive transition-transform group-data-[collapsible=icon]:hidden",
+						"size-icon-xs! shrink-0 text-passive transition-transform group-data-[collapsible=icon]:hidden",
 						expanded && "rotate-90",
 					)}
 					strokeWidth={2.5}
@@ -616,7 +616,7 @@ function ProjectItem({
 			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
 			<div
 				className={cn(
-					"sidebar-expanded-chrome absolute top-0 right-1 z-10 flex h-9 items-center gap-px",
+					"sidebar-expanded-chrome absolute top-0 right-1 z-chrome flex h-control-board items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
 			>
@@ -678,15 +678,10 @@ function ProjectItem({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			{removeError && (
-				<span className="sr-only" role="status">
-					{removeError}
-				</span>
-			)}
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-[18px] translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
+				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-4.5 translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
 					{sessions.map((session) => (
 						<SessionRow
 							key={session.id}
@@ -697,6 +692,29 @@ function ProjectItem({
 					))}
 				</SidebarMenuSub>
 			)}
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={(open) => {
+					if (!isRemoving) setConfirmOpen(open);
+				}}
+				title={`Remove project`}
+				description={
+					<>
+						<p className="text-sm font-medium text-foreground">
+							This will remove <strong>{workspace.name}</strong> from AO
+						</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored
+							history on disk.
+						</p>
+					</>
+				}
+				confirmLabel={isRemoving ? "Removing…" : "Remove"}
+				destructive
+				busy={isRemoving}
+				error={removeError}
+				onConfirm={handleConfirmRemove}
+			/>
 		</SidebarMenuItem>
 	);
 }
@@ -737,12 +755,12 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	if (isEditing) {
 		return (
 			<SidebarMenuSubItem>
-				<div className="relative flex h-auto w-full items-center gap-[9px] rounded-[4px] py-[5px] pl-2.5 pr-1.5">
+				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-1.5">
 					<SessionDot session={session} />
 					<input
 						aria-label={`Rename ${session.title}`}
 						autoFocus
-						className="min-w-0 flex-1 rounded-[3px] border border-accent bg-transparent px-1 py-px text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
+						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
 						maxLength={MAX_DISPLAY_NAME_LEN}
 						onBlur={() => void commit()}
 						onChange={(e) => setDraft(e.target.value)}
@@ -770,7 +788,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				aria-current={active ? "page" : undefined}
 				aria-label={`Open ${session.title}`}
 				className={cn(
-					"relative flex h-auto w-full items-center gap-[9px] rounded-[4px] py-[5px] pl-2.5 pr-7 text-left outline-hidden transition-[color]",
+					"relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-7 text-left outline-hidden transition-[color]",
 					"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
 					"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 					active && "text-foreground before:bg-accent",
@@ -780,7 +798,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 			>
 				<SessionDot session={session} />
 				<span className="min-w-0 flex-1">
-					<span className={cn("block truncate text-[12px]", active ? "text-foreground" : "text-muted-foreground")}>
+					<span className={cn("block truncate text-xs", active ? "text-foreground" : "text-muted-foreground")}>
 						{session.title}
 					</span>
 				</span>
@@ -803,20 +821,23 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	);
 }
 
-function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+function CreateProjectButton({
+	onCreateProject,
+	onInitializeProject,
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
 	return (
-		<CreateProjectFlow onCreateProject={onCreateProject}>
+		<CreateProjectFlow mode="choose" onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
 							aria-label="New project"
-							className="grid h-[18px] w-[18px] place-items-center rounded-[4px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+							className="grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
 							disabled={disabled}
 							onClick={choosePath}
 							type="button"
 						>
-							<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+							<Plus className="size-icon-sm" aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>{label}</TooltipContent>
@@ -826,21 +847,24 @@ function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreatePr
 	);
 }
 
-function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+function CreateProjectListItem({
+	onCreateProject,
+	onInitializeProject,
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
 	return (
-		<CreateProjectFlow onCreateProject={onCreateProject}>
+		<CreateProjectFlow mode="choose" onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
 			{({ disabled, choosePath, label }) => (
 				<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label="New project"
-								className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+								className="grid h-control-board w-full place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
 								disabled={disabled}
 								onClick={choosePath}
 								type="button"
 							>
-								<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+								<Plus className="size-icon-sm" aria-hidden="true" />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right">{label}</TooltipContent>
@@ -849,451 +873,4 @@ function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreate
 			)}
 		</CreateProjectFlow>
 	);
-}
-
-function CreateProjectFlow({
-	children,
-	onCreateProject,
-}: Pick<SidebarProps, "onCreateProject"> & {
-	children: (state: { choosePath: () => void; disabled: boolean; label: string }) => ReactNode;
-}) {
-	const [error, setError] = useState<string | null>(null);
-	const [modePickerOpen, setModePickerOpen] = useState(false);
-	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-	const [selectedKind, setSelectedKind] = useState<ProjectKind>("single_repo");
-	const [selectedPath, setSelectedPath] = useState<string | null>(null);
-	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
-	const [isChoosingPath, setIsChoosingPath] = useState(false);
-	const [isCreating, setIsCreating] = useState(false);
-
-	const openFolderStep = (kind: ProjectKind) => {
-		setError(null);
-		setValidationScan(null);
-		setSelectedKind(kind);
-		setModePickerOpen(false);
-		window.requestAnimationFrame(() => setFolderPickerOpen(true));
-	};
-
-	const choosePath = async () => {
-		setError(null);
-		setIsChoosingPath(true);
-		try {
-			const path = await aoBridge.app.chooseDirectory(
-				selectedKind === "workspace" ? "Choose a workspace folder" : "Choose a project repository",
-			);
-			if (path) {
-				setValidationScan(null);
-				setSelectedPath(path);
-				setFolderPickerOpen(false);
-			}
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Could not add project");
-		} finally {
-			setIsChoosingPath(false);
-		}
-	};
-
-	const createProject = async (selection: CreateProjectAgentSelection) => {
-		if (!selectedPath) return;
-		setError(null);
-		setIsCreating(true);
-		try {
-			await onCreateProject({ path: selectedPath, asWorkspace: selectedKind === "workspace", ...selection });
-			setSelectedPath(null);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : "Could not add project";
-			setError(message);
-			if (shouldScanCreateFailure(message)) {
-				try {
-					const scan = await aoBridge.app.scanImportFolder({
-						path: selectedPath,
-						mode: selectedKind === "workspace" ? "workspace" : "project",
-					});
-					setValidationScan(scan);
-				} catch {
-					setValidationScan({ path: selectedPath, repos: [] });
-				}
-			} else {
-				setValidationScan(null);
-			}
-			setSelectedPath(null);
-			setFolderPickerOpen(true);
-		} finally {
-			setIsCreating(false);
-		}
-	};
-
-	const label = isChoosingPath ? "Opening..." : isCreating ? "Creating..." : "New project";
-
-	return (
-		<>
-			{children({ choosePath: () => setModePickerOpen(true), disabled: isChoosingPath || isCreating, label })}
-			<CreateProjectModeDialog
-				disabled={isChoosingPath || isCreating}
-				open={modePickerOpen}
-				onOpenChange={(open) => !isChoosingPath && !isCreating && setModePickerOpen(open)}
-				onSelect={openFolderStep}
-			/>
-			<CreateProjectFolderDialog
-				disabled={isChoosingPath || isCreating}
-				error={error}
-				kind={selectedKind}
-				open={folderPickerOpen}
-				scan={validationScan}
-				onBack={() => {
-					setError(null);
-					setValidationScan(null);
-					setFolderPickerOpen(false);
-					window.requestAnimationFrame(() => setModePickerOpen(true));
-				}}
-				onChooseFolder={() => void choosePath()}
-				onOpenChange={(open) => {
-					if (!isChoosingPath && !isCreating) {
-						setFolderPickerOpen(open);
-						if (!open) {
-							setError(null);
-							setValidationScan(null);
-						}
-					}
-				}}
-			/>
-			<CreateProjectAgentSheet
-				error={error}
-				isCreating={isCreating}
-				kind={selectedKind}
-				onOpenChange={(open) => {
-					if (!open) {
-						setSelectedPath(null);
-						if (!folderPickerOpen) setError(null);
-					}
-				}}
-				onSubmit={createProject}
-				open={selectedPath !== null}
-				path={selectedPath}
-			/>
-		</>
-	);
-}
-
-function shouldScanCreateFailure(message: string): boolean {
-	if (/daemon|server|conflict|already exists|not ready|start|orchestrator|permission denied/i.test(message))
-		return false;
-	if (/\b(?:PATH|ID)_ALREADY_REGISTERED\b/i.test(message) || /already registered/i.test(message)) return false;
-	return /workspace|repo|repository|git|path|folder|worktree|bare|branch|commit|remote/i.test(message);
-}
-
-function CreateProjectModeDialog({
-	disabled,
-	onOpenChange,
-	onSelect,
-	open,
-}: {
-	disabled: boolean;
-	onOpenChange: (open: boolean) => void;
-	onSelect: (kind: ProjectKind) => void;
-	open: boolean;
-}) {
-	return (
-		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(720px,calc(100svh-24px))] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
-					<div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-3 pt-4 sm:px-6 sm:pb-4 sm:pt-5">
-						<div className="min-w-0">
-							<Dialog.Title className="text-[18px] font-semibold text-foreground">
-								Import to Agent Orchestrator
-							</Dialog.Title>
-							<Dialog.Description className="mt-1 text-[13px] font-medium text-muted-foreground">
-								What are you importing?
-							</Dialog.Description>
-						</div>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-								aria-label="Close new project dialog"
-								disabled={disabled}
-							>
-								<X className="size-4" aria-hidden="true" />
-							</button>
-						</Dialog.Close>
-					</div>
-					<div className="grid min-h-0 gap-3 overflow-y-auto px-4 pb-4 sm:grid-cols-2 sm:px-6 sm:pb-6">
-						<ProjectModeButton
-							description="Several Git repos that live under one parent folder."
-							disabled={disabled}
-							kind="workspace"
-							onClick={() => onSelect("workspace")}
-						/>
-						<ProjectModeButton
-							description="A single Git repository — one codebase, tracked in one repo."
-							disabled={disabled}
-							kind="single_repo"
-							onClick={() => onSelect("single_repo")}
-						/>
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
-		</Dialog.Root>
-	);
-}
-
-function ProjectModeButton({
-	description,
-	disabled,
-	kind,
-	onClick,
-}: {
-	description: string;
-	disabled: boolean;
-	kind: ProjectKind;
-	onClick: () => void;
-}) {
-	const isWorkspace = kind === "workspace";
-	return (
-		<button
-			type="button"
-			aria-label={isWorkspace ? "Workspace" : "Project"}
-			className="flex min-h-[176px] w-full flex-col justify-end rounded-lg border border-border bg-card px-4 py-4 text-left transition-colors hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 sm:min-h-[220px] sm:px-5 sm:py-5"
-			disabled={disabled}
-			onClick={onClick}
-		>
-			<span className="mb-3 flex min-h-[70px] w-full items-center justify-center sm:mb-4 sm:min-h-[92px]">
-				{isWorkspace ? (
-					<span className="mx-auto w-[min(210px,100%)] rounded-lg border border-dashed border-border px-3 py-3">
-						<span className="mx-auto mb-2 flex w-[min(160px,100%)] items-center gap-2 font-mono text-[11px] font-semibold text-muted-foreground">
-							<Folder className="size-3.5" aria-hidden="true" />
-							my-workspace/
-						</span>
-						{["web-app", "api-server", "shared-libs"].map((repo) => (
-							<span
-								key={repo}
-								className="mx-auto mb-1.5 flex w-[min(170px,100%)] items-center gap-2 rounded-md bg-background px-2.5 py-1.5 font-mono text-[12px] font-semibold text-foreground last:mb-0"
-							>
-								<span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
-								{repo}
-							</span>
-						))}
-					</span>
-				) : (
-					<span className="mx-auto max-w-full rounded-lg border border-border bg-background px-4 py-3 font-mono text-[12px] font-semibold text-foreground sm:px-5 sm:py-3.5 sm:text-[13px]">
-						<span className="mr-2 inline-block size-1.5 rounded-full bg-success" aria-hidden="true" />
-						web-app <span className="px-2 text-muted-foreground">·</span>
-						<span className="text-muted-foreground">main</span>
-					</span>
-				)}
-			</span>
-			<span className="block text-[15px] font-semibold text-foreground sm:text-[16px]">
-				{isWorkspace ? "Workspace" : "Project"}
-			</span>
-			<span className="mt-2 block text-[12px] leading-5 text-muted-foreground sm:min-h-[40px] sm:text-[13px]">
-				{description}
-			</span>
-			<span className="mt-3 font-mono text-[12px] font-semibold text-passive">
-				<span className="mr-2 text-passive">•</span>
-				{isWorkspace ? "Multiple repositories" : "One repository"}
-			</span>
-		</button>
-	);
-}
-
-function CreateProjectFolderDialog({
-	disabled,
-	error,
-	kind,
-	onBack,
-	onChooseFolder,
-	onOpenChange,
-	open,
-	scan,
-}: {
-	disabled: boolean;
-	error: string | null;
-	kind: ProjectKind;
-	onBack: () => void;
-	onChooseFolder: () => void;
-	onOpenChange: (open: boolean) => void;
-	open: boolean;
-	scan: ImportFolderScan | null;
-}) {
-	const isWorkspace = kind === "workspace";
-	const failedRepos = scan?.repos.filter((repo) => repo.status === "error" || !repo.hasRemote) ?? [];
-	const hasScan = scan !== null;
-	return (
-		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
-					<div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-4 sm:gap-4 sm:px-6 sm:py-5">
-						<button
-							type="button"
-							className="grid size-8 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-							aria-label="Back to import type"
-							disabled={disabled}
-							onClick={onBack}
-						>
-							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
-						</button>
-						<div className="min-w-0 flex-1">
-							<Dialog.Title className="text-[18px] font-semibold text-foreground">
-								{isWorkspace ? "Import workspace" : "Import project"}
-							</Dialog.Title>
-							<Dialog.Description className="mt-1 max-w-[520px] text-[13px] font-medium leading-5 text-muted-foreground">
-								{isWorkspace
-									? "Pick a folder that contains your Git repositories. Each repo inside it joins the workspace."
-									: "Import a single Git repository as one project."}
-							</Dialog.Description>
-						</div>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-								aria-label="Close import dialog"
-								disabled={disabled}
-							>
-								<X className="size-4" aria-hidden="true" />
-							</button>
-						</Dialog.Close>
-					</div>
-					<div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
-						{hasScan ? (
-							<div className="space-y-4">
-								<div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
-									<Folder className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-									<div className="min-w-0 flex-1">
-										<div className="truncate font-mono text-[14px] font-semibold text-foreground">
-											{displayImportPath(scan.path)}
-										</div>
-										<div className="mt-0.5 text-[12px] text-muted-foreground">
-											{isWorkspace ? "Workspace root" : "Project folder"}
-										</div>
-									</div>
-									<Button type="button" variant="outline" disabled={disabled} onClick={onChooseFolder}>
-										Change
-									</Button>
-								</div>
-
-								{error && (
-									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
-										<div className="border-b border-destructive/30 px-4 py-3 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-destructive">
-											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
-											Import failed · {isWorkspace ? "workspace" : "project"} not registered
-										</div>
-										<div className="px-4 py-3 text-[12px] leading-5 text-destructive">{error}</div>
-										{failedRepos.length > 0 && (
-											<div className="border-t border-destructive/30">
-												{failedRepos.map((repo) => (
-													<ImportRepoRow key={repo.path} repo={repo} failed />
-												))}
-											</div>
-										)}
-									</div>
-								)}
-
-								{scan.repos
-									.filter((repo) => repo.status !== "error" && repo.hasRemote)
-									.map((repo) => (
-										<div key={repo.path} className="rounded-lg border border-border bg-background">
-											<ImportRepoRow repo={repo} />
-										</div>
-									))}
-
-								{scan.repos.length === 0 && (
-									<div className="rounded-lg border border-border bg-background px-4 py-4 text-[12px] text-muted-foreground">
-										No repositories detected in this folder.
-									</div>
-								)}
-							</div>
-						) : (
-							<button
-								type="button"
-								className="flex min-h-[132px] w-full flex-col items-center justify-center rounded-lg border border-dashed border-border bg-background px-4 py-5 text-center transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50 sm:min-h-[160px] sm:px-5 sm:py-6"
-								disabled={disabled}
-								onClick={onChooseFolder}
-							>
-								<span className="mb-4 grid size-11 place-items-center rounded-xl bg-card text-muted-foreground">
-									<FolderPlus className="size-5" aria-hidden="true" />
-								</span>
-								<span className="text-[15px] font-semibold text-foreground">
-									{isWorkspace ? "Choose a folder" : "Choose a project folder"}
-								</span>
-								<span className="mt-2 max-w-full text-pretty text-[12px] text-muted-foreground sm:text-[13px]">
-									{isWorkspace
-										? "Opens your system file picker — pick the folder that holds your repos"
-										: "Opens your system file picker — select one repo folder"}
-								</span>
-							</button>
-						)}
-						{error && !hasScan && (
-							<div
-								className={cn(
-									"mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive",
-								)}
-							>
-								{error}
-							</div>
-						)}
-					</div>
-					<div className="flex shrink-0 flex-col gap-3 border-t border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-						<p className="text-[12px] font-medium text-muted-foreground">
-							{hasScan && failedRepos.length > 0
-								? `Resolve ${failedRepos.length} failed ${failedRepos.length === 1 ? "repository" : "repositories"} to continue`
-								: isWorkspace
-									? "No repositories to import"
-									: "No project selected"}
-						</p>
-						<div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
-								Cancel
-							</Button>
-							<Button type="button" variant="primary" disabled>
-								{isWorkspace ? "Import workspace" : "Import project"}
-							</Button>
-						</div>
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
-		</Dialog.Root>
-	);
-}
-
-function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: ImportFolderScan["repos"][number] }) {
-	return (
-		<div className="flex items-center gap-3 px-4 py-3">
-			{failed ? (
-				<XCircle className="size-5 shrink-0 text-destructive" aria-hidden="true" />
-			) : (
-				<CheckCircle2 className="size-5 shrink-0 text-success" aria-hidden="true" />
-			)}
-			<div className="min-w-0 flex-1">
-				<div className="truncate text-[14px] font-semibold text-foreground">{repo.name}</div>
-				<div className="mt-0.5 truncate font-mono text-[12px] text-muted-foreground">
-					{displayImportPath(repo.path)}
-				</div>
-			</div>
-			<div
-				className={cn(
-					"hidden max-w-[260px] shrink-0 truncate text-right font-mono text-[12px] sm:block",
-					failed ? "text-muted-foreground" : "text-muted-foreground",
-				)}
-			>
-				{failed ? (repo.reason ?? "Repository cannot be imported") : `${repo.branch} ${remoteDisplay(repo.remote)}`}
-			</div>
-		</div>
-	);
-}
-
-function displayImportPath(value: string) {
-	return value.replace(/^\/Users\/[^/]+/, "~");
-}
-
-function remoteDisplay(remote: string) {
-	const ssh = remote.match(/^[^@]+@([^:]+):(.+)$/);
-	if (ssh?.[1] && ssh[2]) return `${ssh[1]}/${ssh[2].replace(/\.git$/, "")}`;
-	try {
-		const url = new URL(remote);
-		return `${url.host}${url.pathname.replace(/\.git$/, "")}`;
-	} catch {
-		return remote.replace(/^https?:\/\//, "").replace(/\.git$/, "");
-	}
 }

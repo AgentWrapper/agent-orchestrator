@@ -7,17 +7,19 @@ import { OrchestratorReplacementDialog } from "../components/OrchestratorReplace
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
+import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
-import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
+import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
+import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
@@ -31,10 +33,6 @@ export const Route = createFileRoute("/_shell")({
 	},
 	component: ShellLayout,
 });
-
-function systemTheme(): Theme {
-	return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
 
 function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
@@ -105,7 +103,8 @@ function ShellLayout() {
 				},
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error));
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
 				void captureRendererException(failure, {
 					source: "project-add",
 					operation: "project_add",
@@ -145,6 +144,17 @@ function ShellLayout() {
 		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
 	);
 
+	const initializeProjectRepository = useCallback(async (path: string) => {
+		const { error } = await apiClient.POST("/api/v1/projects/initialize", {
+			body: { path },
+		});
+		if (error) {
+			const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+			failure.code = apiErrorCode(error);
+			throw failure;
+		}
+	}, []);
+
 	const removeProject = useCallback(
 		async (projectId: string) => {
 			void addRendererExceptionStep("Project removal requested", {
@@ -157,7 +167,8 @@ function ShellLayout() {
 				params: { path: { id: projectId } },
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error));
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
 				void captureRendererException(failure, {
 					source: "project-remove",
 					operation: "project_remove",
@@ -189,8 +200,7 @@ function ShellLayout() {
 	);
 
 	useEffect(() => {
-		document.documentElement.dataset.theme = theme;
-		document.documentElement.style.colorScheme = theme;
+		applyDocumentTheme(theme);
 	}, [theme]);
 
 	useEffect(() => {
@@ -230,7 +240,7 @@ function ShellLayout() {
 	}, [navigate, workspaces]);
 
 	return (
-		<ShellProvider value={{ daemonStatus, createProject }}>
+		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
@@ -239,6 +249,9 @@ function ShellLayout() {
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
+				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
+            the chrome the frameless window drops. Renders null on macOS/Linux. */}
+				<WindowTitlebar />
 				<ShellTopbar />
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
@@ -247,12 +260,18 @@ function ShellLayout() {
 					className="min-h-0 flex-1 overflow-x-hidden"
 					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
 					open={isSidebarOpen}
-					style={{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as CSSProperties}
+					style={
+						{
+							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
+							"--sidebar-width-icon": "var(--size-sidebar-icon)",
+						} as CSSProperties
+					}
 				>
 					<Sidebar
 						daemonStatus={daemonStatus}
 						underTopbar={isLinux ? isSessionRoute : true}
 						onCreateProject={createProject}
+						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}

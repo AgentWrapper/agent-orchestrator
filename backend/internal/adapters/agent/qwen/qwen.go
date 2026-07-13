@@ -22,6 +22,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -78,8 +80,12 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+	systemPrompt, err := launchSystemPromptText(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
 
 	if cfg.Prompt != "" && cfg.Kind == domain.KindWorker {
@@ -126,8 +132,40 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 3)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	systemPrompt, err := restoreSystemPromptText(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", systemPrompt)
+	}
 	cmd = append(cmd, "-r", agentSessionID)
 	return cmd, true, nil
+}
+
+// Qwen Code's append-system-prompt flag accepts inline text only. The manager
+// normally supplies both inline text and an AO-owned file; if only the file is
+// present, read it and pass the contents inline.
+func launchSystemPromptText(cfg ports.LaunchConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func restoreSystemPromptText(cfg ports.RestoreConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func systemPromptTextFrom(inline, file string) (string, error) {
+	if inline != "" {
+		return inline, nil
+	}
+	if file == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return "", fmt.Errorf("qwen: read system prompt file: %w", err)
+	}
+	return string(data), nil
 }
 
 // SessionInfo surfaces Qwen Code hook-derived metadata. Metadata is

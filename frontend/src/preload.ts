@@ -14,6 +14,7 @@ export type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
 	visible: boolean;
+	parked?: boolean;
 };
 
 export type BrowserNavigateInput = {
@@ -47,6 +48,14 @@ const api = {
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
 	},
+	window: {
+		setOverlay: (overlay: { color: string; symbolColor: string }) =>
+			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+	},
+	menu: {
+		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,
+		notifyShellFocus: () => ipcRenderer.send("shell:focus"),
+	},
 	clipboard: {
 		writeText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
 		readText: () => ipcRenderer.invoke("clipboard:readText") as Promise<string>,
@@ -72,6 +81,8 @@ const api = {
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
 		clear: (viewId: string) => ipcRenderer.invoke("browser:clear", viewId) as Promise<BrowserNavState>,
+		capture: (viewId: string) => ipcRenderer.invoke("browser:capture", viewId) as Promise<string>,
+		requestMirror: (viewId: string) => ipcRenderer.invoke("browser:requestMirror", viewId) as Promise<boolean>,
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,

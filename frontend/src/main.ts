@@ -4,12 +4,14 @@ import {
 	clipboard,
 	dialog,
 	ipcMain,
+	Menu,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
 	shell,
 	WebContentsView,
+	webContents,
 	type OpenDialogOptions,
 } from "electron";
 import {
@@ -141,6 +143,11 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
+// Height (px) of the custom Windows title bar. Must stay in sync with the Window
+// Controls Overlay height passed to BrowserWindow and the .window-titlebar height
+// in styles.css, so the native min/max/close buttons line up with the app's bar.
+const TITLEBAR_HEIGHT = 36;
+
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
@@ -223,6 +230,44 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
 
+// Role-based menu installed on Windows where the native menu bar is hidden. The
+// bar stays out of sight, but the roles keep their accelerators alive (Reload,
+// DevTools, zoom, full screen, edit commands) and each acts on the *focused*
+// webContents — including a BrowserView panel — matching native menu behaviour.
+function buildWindowsAppMenu(): Menu {
+	return Menu.buildFromTemplate([
+		{
+			label: "Edit",
+			submenu: [
+				{ role: "undo" },
+				{ role: "redo" },
+				{ type: "separator" },
+				{ role: "cut" },
+				{ role: "copy" },
+				{ role: "paste" },
+				{ role: "selectAll" },
+			],
+		},
+		{
+			label: "View",
+			submenu: [
+				{ role: "reload" },
+				{ role: "toggleDevTools" },
+				{ type: "separator" },
+				{ role: "resetZoom" },
+				{ role: "zoomIn" },
+				{ role: "zoomOut" },
+				{ type: "separator" },
+				{ role: "togglefullscreen" },
+			],
+		},
+		{
+			label: "Window",
+			submenu: [{ role: "minimize" }, { role: "close" }],
+		},
+	]);
+}
+
 function createWindow(): void {
 	browserViewHost?.dispose();
 	browserViewHost = null;
@@ -234,12 +279,27 @@ function createWindow(): void {
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
-		titleBarStyle: "hiddenInset",
-		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
-		// line — so lights + nav cluster + header content share one row. macOS
-		// draws the 12pt disc 2pt below the given y (measured: center = y + 8),
-		// hence 20, not 22.
-		trafficLightPosition: { x: 14, y: 20 },
+		// Windows goes frameless with a Window Controls Overlay: Electron still draws
+		// native min/max/close on the right, while the renderer paints its own
+		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
+		// inset traffic-light chrome. Overlay colours are re-synced to the active
+		// theme from the renderer via the window:setOverlay IPC.
+		...(process.platform === "win32"
+			? {
+					titleBarStyle: "hidden" as const,
+					// Hide the native menu bar. A role-based menu is still installed (for
+					// accelerators) below; the visible menu is painted by WindowTitlebar.
+					autoHideMenuBar: true,
+					titleBarOverlay: { color: "#0f1014", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
+				}
+			: {
+					titleBarStyle: "hiddenInset" as const,
+					// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav
+					// center line — so lights + nav cluster + header content share one
+					// row. macOS draws the 12pt disc 2pt below the given y (measured:
+					// center = y + 8), hence 20, not 22.
+					trafficLightPosition: { x: 14, y: 20 },
+				}),
 		webPreferences: {
 			preload: preloadPath(),
 			contextIsolation: true,
@@ -247,6 +307,16 @@ function createWindow(): void {
 			sandbox: true,
 		},
 	});
+
+	// On Windows the app paints its own title bar (WindowTitlebar), so the native
+	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
+	// installed so its accelerators keep working and act on the focused pane;
+	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
+	// keep their native menus.
+	if (process.platform === "win32") {
+		Menu.setApplicationMenu(buildWindowsAppMenu());
+		mainWindow.setMenuBarVisibility(false);
+	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or
 	// navigate the privileged window away from the app origin. External links go to
@@ -891,6 +961,76 @@ ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
 });
+
+// Re-tint the native window-button overlay (min/max/close) to match the active
+// theme; the renderer calls this on theme change. No-op unless the window was
+// created with a titleBarOverlay (Windows only).
+ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolColor: string }) => {
+	if (process.platform !== "win32" || !mainWindow) return;
+	try {
+		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
+	} catch {
+		// Window has no overlay on this platform; ignore.
+	}
+});
+
+// Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
+ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
+
+// Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
+// action the native default menu would have performed.
+ipcMain.handle("menu:action", (_event, action: string) => {
+	const win = mainWindow;
+	if (!win) return;
+	// Clicking this shell-painted menu moves focus off the panel, so prefer the last-focused panel, else the focused contents, else the shell.
+	const focused = webContents.getFocusedWebContents();
+	const wc =
+		(focused && focused !== win.webContents ? focused : browserViewHost?.getLastFocusedPanelContents()) ??
+		win.webContents;
+	switch (action) {
+		case "edit.undo":
+			return wc.undo();
+		case "edit.redo":
+			return wc.redo();
+		case "edit.cut":
+			return wc.cut();
+		case "edit.copy":
+			return wc.copy();
+		case "edit.paste":
+			return wc.paste();
+		case "edit.selectAll":
+			return wc.selectAll();
+		case "view.reload":
+			return wc.reload();
+		case "view.devtools":
+			return wc.toggleDevTools();
+		case "view.zoomIn":
+			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
+		case "view.zoomOut":
+			return wc.setZoomLevel(wc.getZoomLevel() - 0.5);
+		case "view.zoomReset":
+			return wc.setZoomLevel(0);
+		case "view.fullscreen":
+			return win.setFullScreen(!win.isFullScreen());
+		case "window.minimize":
+			return win.minimize();
+		case "window.maximize":
+			return win.isMaximized() ? win.unmaximize() : win.maximize();
+		case "window.close":
+			return win.close();
+		case "app.quit":
+			return app.quit();
+		case "help.about":
+			void dialog.showMessageBox(win, {
+				type: "info",
+				title: "About Agent Orchestrator",
+				message: "Agent Orchestrator",
+				detail: `Version ${app.getVersion()}`,
+				buttons: ["OK"],
+			});
+			return;
+	}
+});
 ipcMain.handle("telemetry:getBootstrap", () =>
 	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
 );
@@ -899,7 +1039,11 @@ async function chooseDirectory(title: string): Promise<string | null> {
 		properties: ["openDirectory"],
 		title,
 	};
-	const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+	// On Windows, parenting the common file dialog forces a repaint of the main
+	// window while Explorer initializes, which produces a visible white flash.
+	// The unparented native dialog remains foregrounded by Electron without that
+	// compositor handoff.
+	const result = await dialog.showOpenDialog(options);
 
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;

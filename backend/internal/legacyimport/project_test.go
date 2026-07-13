@@ -1,6 +1,7 @@
 package legacyimport
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 // as raw nodes (tracker, scm, etc.), used to trigger the "dropped" note path.
 func nonNilNode() *yaml.Node {
 	return &yaml.Node{Kind: yaml.ScalarNode, Value: "x"}
+}
+
+func stringNode(value string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 }
 
 func TestMapPermission(t *testing.T) {
@@ -87,6 +92,29 @@ func TestBuildProjectConfig_NonMainBranchKept(t *testing.T) {
 	cfg := buildProjectConfig(legacyProjectConfig{DefaultBranch: "develop"}, &notes)
 	if cfg.DefaultBranch != "develop" {
 		t.Fatalf("defaultBranch = %q, want develop", cfg.DefaultBranch)
+	}
+}
+
+func TestBuildProjectConfig_CarriesPromptRules(t *testing.T) {
+	var notes []string
+	cfg := buildProjectConfig(legacyProjectConfig{
+		AgentRules:       stringNode("Run focused tests."),
+		AgentRulesFile:   stringNode(" docs/rules.md "),
+		OrchestratorRule: stringNode("Coordinate through workers."),
+	}, &notes)
+	if cfg.AgentRules != "Run focused tests." {
+		t.Fatalf("agentRules = %q", cfg.AgentRules)
+	}
+	if cfg.AgentRulesFile != "docs/rules.md" {
+		t.Fatalf("agentRulesFile = %q", cfg.AgentRulesFile)
+	}
+	if cfg.OrchestratorRules != "Coordinate through workers." {
+		t.Fatalf("orchestratorRules = %q", cfg.OrchestratorRules)
+	}
+	for _, note := range notes {
+		if strings.Contains(note, "rules") {
+			t.Fatalf("supported prompt rules should not be reported as dropped: %v", notes)
+		}
 	}
 }
 

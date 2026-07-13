@@ -11,6 +11,13 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 		},
+		window: {
+			setOverlay: async () => undefined,
+		},
+		menu: {
+			action: async () => undefined,
+			notifyShellFocus: () => undefined,
+		},
 		clipboard: {
 			writeText: async (text: string) => {
 				if (navigator.clipboard?.writeText) {
@@ -90,6 +97,8 @@ export const aoBridge: AoBridge =
 				isLoading: false,
 			}),
 			destroy: () => undefined,
+			capture: async () => "",
+			requestMirror: async () => false,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,

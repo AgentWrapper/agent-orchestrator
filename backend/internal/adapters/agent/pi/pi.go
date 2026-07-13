@@ -88,14 +88,14 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-	if cfg.SystemPromptFile != "" {
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+	} else if cfg.SystemPromptFile != "" {
 		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned launch config
 		if err != nil {
 			return nil, err
 		}
 		cmd = append(cmd, "--append-system-prompt", string(data))
-	} else if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
 	if cfg.Prompt != "" {
 		cmd = append(cmd, cfg.Prompt)
@@ -123,6 +123,12 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = []string{binary}
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+	} else if cfg.SystemPromptFile != "" {
+		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned launch config
+		if err != nil {
+			return nil, false, err
+		}
+		cmd = append(cmd, "--append-system-prompt", string(data))
 	}
 	cmd = append(cmd, "--session", agentSessionID)
 	return cmd, true, nil

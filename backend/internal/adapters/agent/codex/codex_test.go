@@ -45,7 +45,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 		Permissions:      ports.PermissionModeBypassPermissions,
 		Prompt:           "-fix this",
 		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
-		SystemPrompt:     "ignored",
+		SystemPrompt:     "inline wins",
 		WorkspacePath:    workspace,
 	})
 	if err != nil {
@@ -65,7 +65,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"-c", "model_instructions_file="+filepath.Join("tmp", "prompt with spaces.md"),
+		"-c", "developer_instructions="+codexTOMLConfigString("inline wins"),
 		"--", "-fix this",
 	)
 	if !reflect.DeepEqual(cmd, want) {
@@ -112,6 +112,44 @@ func TestResolveCodexBinaryFindsNVMInstallWhenPathIsSparse(t *testing.T) {
 	t.Cleanup(func() {
 		fileExists = origFileExists
 	})
+
+	got, err := ResolveCodexBinary(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveCodexBinary: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolveCodexBinary = %q, want %q", got, want)
+	}
+}
+
+func TestResolveCodexBinaryPrefersNPMOverWindowsAppsExecutable(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows resolver only")
+	}
+	root := t.TempDir()
+	appData := filepath.Join(root, "Roaming")
+	npmDir := filepath.Join(appData, "npm")
+	want := filepath.Join(npmDir, "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("native codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(npmDir, "codex.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	windowsApps := filepath.Join(root, "WindowsApps", "OpenAI.Codex_1.0.0.0_x64__test", "app", "resources")
+	if err := os.MkdirAll(windowsApps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(windowsApps, "codex.exe")
+	if err := os.WriteFile(blocked, []byte("blocked codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("APPDATA", appData)
+	t.Setenv("PATH", windowsApps)
 
 	got, err := ResolveCodexBinary(context.Background())
 	if err != nil {
@@ -430,7 +468,9 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	workspace := canonicalTempDir(t)
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Permissions: ports.PermissionModeAuto,
+		Permissions:      ports.PermissionModeAuto,
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: filepath.Join("tmp", "restore-system.md"),
 		Session: ports.SessionRef{
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
 			WorkspacePath: workspace,
@@ -457,6 +497,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
+		"-c", "developer_instructions="+codexTOMLConfigString("restore inline wins"),
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {

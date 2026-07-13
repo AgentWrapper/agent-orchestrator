@@ -9,12 +9,11 @@
 // non-interactive and streams transcript output without opening the TUI.
 // Sessions are resumed by id with `kimi --session <id>`.
 //
-// Kimi exposes no native lifecycle/hook system and is not documented as
-// Claude Code hook-compatible, so this is a Tier C adapter: hook installation
-// and SessionInfo are intentionally no-ops, and activity is left to the
-// lifecycle reaper. There is also no documented system-prompt flag, so AO's
-// system prompt is not injected. Both should be upgraded if/when Kimi adds the
-// corresponding CLI surface.
+// Kimi exposes no system-prompt launch flag, so AO injects standing
+// instructions through Kimi's documented project instruction file
+// (.kimi-code/AGENTS.md) in the per-session worktree. Kimi lifecycle hooks are
+// not installed yet, so native session metadata and activity are still left to
+// future adapter work.
 package kimi
 
 import (
@@ -66,8 +65,9 @@ func (p *Plugin) Manifest() adapters.Manifest {
 //
 // Prompted tasks are delivered after startup by the session manager rather than
 // via `-p`, so the dashboard keeps the interactive Kimi TUI instead of a plain
-// transcript stream. Kimi has no documented system-prompt flag, so
-// cfg.SystemPrompt / cfg.SystemPromptFile are not injected.
+// transcript stream. Kimi has no documented system-prompt flag, so standing
+// instructions are installed by GetAgentHooks as a project instruction file
+// instead of being passed in argv.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kimiBinary(ctx)
 	if err != nil {
@@ -113,8 +113,7 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 // to fresh launch behavior. Per Kimi docs, `--yolo` and `--auto` cannot be
 // combined with `--session` (or `--continue`) -- resumed sessions inherit the
 // approval settings of the original session -- so cfg.Permissions is
-// intentionally ignored here. Kimi has no lifecycle hook for AO to capture the
-// native session id from yet, so in practice this returns ok=false today.
+// intentionally ignored here.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err

@@ -80,12 +80,15 @@ func TestProjectConfigRoundTrips(t *testing.T) {
 	// A config with mixed field kinds (scalar, map, list, nested) survives the
 	// JSON round trip.
 	cfg := domain.ProjectConfig{
-		DefaultBranch: "develop",
-		Env:           map[string]string{"FOO": "bar"},
-		Symlinks:      []string{".env"},
-		PostCreate:    []string{"echo hi"},
-		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
-		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+		DefaultBranch:     "develop",
+		Env:               map[string]string{"FOO": "bar"},
+		Symlinks:          []string{".env"},
+		PostCreate:        []string{"echo hi"},
+		AgentRules:        "Run focused tests.",
+		AgentRulesFile:    "docs/agent-rules.md",
+		OrchestratorRules: "Keep workers unblocked.",
+		AgentConfig:       domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
+		Worker:            domain.RoleOverride{Harness: domain.HarnessCodex},
 	}
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
 		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, Config: cfg,

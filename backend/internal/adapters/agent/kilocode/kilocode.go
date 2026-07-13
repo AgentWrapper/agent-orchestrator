@@ -12,10 +12,9 @@
 //     .kilocode/plugins/ instead of merging JSON.
 //   - Its interactive TUI exposes no permission flag (the --auto flag lives only
 //     on `kilo run`, not the default TUI command AO launches) and no
-//     system-prompt flag. AO's graduated permission modes are delivered via the
-//     KILO_CONFIG_CONTENT env var, which Kilo deep-merges as the
-//     highest-precedence inline config; the system prompt defers to Kilo's own
-//     config.
+//     system-prompt flag. AO's graduated permission modes and standing
+//     instructions are delivered via the KILO_CONFIG_CONTENT env var, which Kilo
+//     deep-merges as the highest-precedence inline config.
 //
 // AO-managed sessions derive native session identity and display metadata from
 // the Kilo plugin's reported events, mirroring the opencode and Codex adapters.
@@ -24,6 +23,8 @@ package kilocode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -71,22 +72,29 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // GetLaunchCommand builds the argv to start a new interactive Kilo Code session.
 // Shape:
 //
-//	[env KILO_CONFIG_CONTENT=<json>] kilocode [--prompt <prompt>]
+//	[env KILO_CONFIG_CONTENT=<json>] kilocode [--agent <ao-agent>] [--prompt <prompt>]
 //
 // The session runs in the worktree (cwd is set by the runtime, as for opencode
-// and Codex). Kilo Code has no CLI flag to set a system prompt, so
-// cfg.SystemPrompt / SystemPromptFile are intentionally ignored here — Kilo
-// resolves instructions from its own config and AGENTS.md rules. The initial
-// task prompt is delivered via --prompt (its argument, so a leading "-" is not
-// read as a flag). Non-default permission modes prepend a KILO_CONFIG_CONTENT
-// env assignment rather than a flag (see kilocodePermissionEnvPrefix).
+// and Codex). Kilo Code has no CLI flag to set a system prompt, so AO injects a
+// per-session agent prompt through KILO_CONFIG_CONTENT and selects it with
+// --agent. The initial task prompt is delivered via --prompt (its argument, so a
+// leading "-" is not read as a flag). Non-default permission modes use the same
+// KILO_CONFIG_CONTENT env assignment rather than a flag.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kilocodeBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = append(kilocodePermissionEnvPrefix(cfg.Permissions), binary)
+	envPrefix, agentName, err := kilocodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	cmd = envPrefix
+	cmd = append(cmd, binary)
+	if agentName != "" {
+		cmd = append(cmd, "--agent", agentName)
+	}
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--prompt", cfg.Prompt)
 	}
@@ -94,11 +102,11 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Kilo Code
-// session: `[env KILO_CONFIG_CONTENT=<json>] kilocode --session <agentSessionId>`.
-// It re-applies the permission env (resume otherwise reverts to the configured
-// default) but not the prompt, which the session already carries. ok is false
-// when the plugin-derived native session id has not landed yet, so callers fall
-// back to fresh launch behavior — mirroring the opencode adapter.
+// session: `[env KILO_CONFIG_CONTENT=<json>] kilocode [--agent <ao-agent>] --session <agentSessionId>`.
+// It re-applies the permission env and per-session AO agent prompt (resume
+// otherwise reverts to configured defaults). ok is false when the plugin-derived
+// native session id has not landed yet, so callers fall back to fresh launch
+// behavior — mirroring the opencode adapter.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -113,7 +121,16 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = append(kilocodePermissionEnvPrefix(cfg.Permissions), binary, "--session", agentSessionID)
+	envPrefix, agentName, err := kilocodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	cmd = envPrefix
+	cmd = append(cmd, binary)
+	if agentName != "" {
+		cmd = append(cmd, "--agent", agentName)
+	}
+	cmd = append(cmd, "--session", agentSessionID)
 	return cmd, true, nil
 }
 
@@ -161,8 +178,18 @@ func kilocodePermissionConfig(mode ports.PermissionMode) map[string]string {
 	}
 }
 
-// kilocodePermissionEnvPrefix renders mode's permission config as an
-// `env KILO_CONFIG_CONTENT=<json>` argv prefix, or nil for the default mode.
+type kilocodeInlineConfig struct {
+	Permission map[string]string                `json:"permission,omitempty"`
+	Agent      map[string]kilocodeAgentSettings `json:"agent,omitempty"`
+}
+
+type kilocodeAgentSettings struct {
+	Prompt string `json:"prompt,omitempty"`
+}
+
+// kilocodeConfigEnvPrefix renders permission and system-prompt config as an
+// `env KILO_CONFIG_CONTENT=<json>` argv prefix. The returned agent name is non-
+// empty when the command must select AO's generated agent with --agent.
 //
 // The var must reach Kilo as a process env var, not an argv flag. The runtime
 // runs the argv through a shell, which execs `env`, which sets the var and execs
@@ -170,23 +197,70 @@ func kilocodePermissionConfig(mode ports.PermissionMode) map[string]string {
 // runtime shell-quotes every element, and a quoted token is run as a command
 // rather than read as an assignment — hence the explicit `env` wrapper.
 // POSIX-only, which matches the tmux runtime.
-func kilocodePermissionEnvPrefix(mode ports.PermissionMode) []string {
-	config := kilocodePermissionConfig(mode)
-	if len(config) == 0 {
-		return nil
-	}
-	// The inline config is the JSON object {"permission": {<tool>: <action>}}.
-	// Marshaling a map[string]string never errors and emits keys in sorted order,
-	// so the prefix is deterministic for tests and reproducible across launches.
-	blob, err := json.Marshal(map[string]map[string]string{"permission": config})
+func kilocodeConfigEnvPrefix(mode ports.PermissionMode, inlinePrompt, promptFile, sessionID string) ([]string, string, error) {
+	config := kilocodeInlineConfig{Permission: kilocodePermissionConfig(mode)}
+	agentName := ""
+	systemPrompt, err := kilocodeSystemPromptText(inlinePrompt, promptFile)
 	if err != nil {
-		// Should never happen for map[string]map[string]string, but a silent
-		// empty KILO_CONFIG_CONTENT would silently launch with default Kilo
-		// permissions regardless of the requested mode — drop the prefix
-		// entirely so the caller's mode choice can't be misrepresented.
-		return nil
+		return nil, "", err
 	}
-	return []string{"env", kilocodePermissionEnvVar + "=" + string(blob)}
+	if systemPrompt != "" {
+		agentName = kilocodeAOAgentName(sessionID)
+		config.Agent = map[string]kilocodeAgentSettings{
+			agentName: {Prompt: systemPrompt},
+		}
+	}
+	if len(config.Permission) == 0 && len(config.Agent) == 0 {
+		return nil, "", nil
+	}
+	blob, err := json.Marshal(config)
+	if err != nil {
+		// Should never happen for this static config shape, but a silent
+		// empty KILO_CONFIG_CONTENT would silently launch with default Kilo
+		// permissions/rules regardless of the requested mode — surface it.
+		return nil, "", err
+	}
+	return []string{"env", kilocodePermissionEnvVar + "=" + string(blob)}, agentName, nil
+}
+
+func kilocodeSystemPromptText(inline, file string) (string, error) {
+	if inline != "" {
+		return inline, nil
+	}
+	if file == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return "", fmt.Errorf("kilocode: read system prompt file: %w", err)
+	}
+	return string(data), nil
+}
+
+func kilocodeAOAgentName(sessionID string) string {
+	const fallback = "ao-system-prompt"
+	trimmed := strings.TrimSpace(sessionID)
+	if trimmed == "" {
+		return fallback
+	}
+	var b strings.Builder
+	for _, r := range trimmed {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '-',
+			r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-_")
+	if name == "" {
+		return fallback
+	}
+	return "ao-" + name
 }
 
 var kilocodeBinarySpec = binaryutil.BinarySpec{

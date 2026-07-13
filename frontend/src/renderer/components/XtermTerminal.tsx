@@ -29,6 +29,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
+import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
@@ -46,6 +47,8 @@ export type XtermTerminalProps = {
 	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
+	/** Called after a terminal hyperlink is opened in the OS browser. */
+	onLinkOpen?: (uri: string) => void;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
 	 * handle stays valid until unmount; cols/rows are live getters.
@@ -72,9 +75,7 @@ function loadRenderer(term: Terminal): void {
 	}
 }
 
-// xterm palette tracks the app theme (see lib/terminal-themes.ts + --term-* in
-// styles.css). The PTY content is still the agent's own ANSI output.
-const terminalThemes = buildTerminalThemes();
+// xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
 const SUPPRESS_NATIVE_PASTE_MS = 100;
 
 // Erase scrollback (3J) + display (2J) and home the cursor. Deliberately NOT
@@ -218,7 +219,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const term = termRef.current;
 		if (!term) return;
-		term.options.theme = props.theme === "dark" ? terminalThemes.dark : terminalThemes.light;
+		const { dark, light } = buildTerminalThemes();
+		term.options.theme = props.theme === "dark" ? dark : light;
 	}, [props.theme]);
 
 	useEffect(() => {
@@ -233,9 +235,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
+		const activateLink = (_event: MouseEvent, uri: string) => {
+			window.open(uri, "_blank", "noopener");
+			callbacksRef.current.onLinkOpen?.(uri);
+		};
 
 		let term: Terminal;
 		try {
+			const { dark, light } = buildTerminalThemes();
 			term = new Terminal({
 				// Required for the Unicode 11 width addon below.
 				allowProposedApi: true,
@@ -248,8 +255,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				fontFamily:
 					getComputedStyle(host).getPropertyValue("--font-mono").trim() ||
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
-				fontSize: props.fontSize ?? 12,
+				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
+				linkHandler: { activate: activateLink },
 				// Agent TUIs leave SGR bold active while using ANSI black for
 				// separators; keep bold weight-only so black stays black.
 				drawBoldTextInBrightColors: false,
@@ -265,7 +273,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// handler's normal-buffer branch). The scrollbar itself is hidden in
 				// CSS so FitAddon's ~14px reservation doesn't shift the grid.
 				scrollback: 5000,
-				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
+				theme: props.theme === "dark" ? dark : light,
 			});
 		} catch (error) {
 			callbacksRef.current.onError?.(error);
@@ -279,17 +287,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const unicode = new Unicode11Addon();
 		term.loadAddon(unicode);
 		term.unicode.activeVersion = "11";
-		// Open links in the OS browser. The default WebLinksAddon handler calls
+		// Open plain and OSC 8 links in the OS browser. The default handlers call
 		// window.open() with no URL and then assigns location.href, but the
 		// Electron main process denies every window.open and only forwards the URL
-		// passed to it (main.ts setWindowOpenHandler), so the default handler's
+		// passed to it (main.ts setWindowOpenHandler), so the default handlers'
 		// empty open is dropped and clicks silently no-op. Pass the matched URL to
 		// window.open directly so the main process routes it to shell.openExternal.
-		term.loadAddon(
-			new WebLinksAddon((_event, uri) => {
-				window.open(uri, "_blank", "noopener");
-			}),
-		);
+		term.loadAddon(new WebLinksAddon(activateLink));
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
@@ -348,6 +352,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				});
 		};
 		term.attachCustomKeyEventHandler((event) => {
+			// xterm invokes this same handler on keydown, keyup, AND keypress (see
+			// Terminal.ts _keyDown/_keyUp/_keyPress). Only keydown should trigger our
+			// shortcut actions (copy/paste/word-nav) — otherwise releasing the key
+			// re-matches the same combo and fires the action a second time (double
+			// paste, double word-delete, etc). keyup/keypress fall through to
+			// xterm's own default handling for that event type.
+			if (event.type === "keyup" || event.type === "keypress") return true;
 			if (isTerminalCopyShortcut(event)) {
 				if (copySelection()) {
 					consumeTerminalShortcut(event);
@@ -497,7 +508,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			} else if (event.deltaMode === 2 /* DOM_DELTA_PAGE */) {
 				lines = (Math.trunc(event.deltaY) || Math.sign(event.deltaY)) * term.rows;
 			} else {
-				const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
+				const rowHeight = (term.options.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT) * (term.options.lineHeight ?? 1);
 				wheelAccumPx += event.deltaY;
 				lines = Math.trunc(wheelAccumPx / rowHeight);
 				wheelAccumPx -= lines * rowHeight;

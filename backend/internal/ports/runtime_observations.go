@@ -26,8 +26,18 @@ type RuntimeFacts struct {
 
 // ActivitySignal is pushed by the agent hooks. Only a Valid signal is
 // authoritative; a stale/absent one is ignored rather than read as idleness.
+//
+// Event/ToolName/ToolUseID are optional correlation facts: the AO hook
+// sub-command that produced the state and, for tool-use hooks, the native
+// tool call it concerns. Lifecycle uses them to clear a stale blocked state
+// only when the specific approved tool finishes. A signal without an Event
+// (old CLIs, adapters with no tool identity) keeps plain last-writer-wins
+// state semantics.
 type ActivitySignal struct {
 	Valid     bool
 	State     domain.ActivityState
 	Timestamp time.Time
+	Event     string
+	ToolName  string
+	ToolUseID string
 }

@@ -61,6 +61,13 @@ if (typeof window !== "undefined") {
 			openExternal: async () => undefined,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 		},
+		window: {
+			setOverlay: async () => undefined,
+		},
+		menu: {
+			action: async () => undefined,
+			notifyShellFocus: () => undefined,
+		},
 		clipboard: {
 			writeText: async () => undefined,
 			readText: async () => "",
@@ -84,6 +91,8 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
+			capture: async () => "",
+			requestMirror: async () => false,
 			navigate: async ({ viewId }: { viewId: string }) => ({
 				viewId,
 				url: "",

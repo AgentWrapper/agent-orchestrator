@@ -250,6 +250,34 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 }
 
+func TestProjectsAPI_InitializeRepository(t *testing.T) {
+	srv := newTestServer(t)
+
+	plain := t.TempDir()
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(plain)+`}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST initialize plain = %d, want 200; body=%s", status, body)
+	}
+	if out, err := exec.Command("git", "-C", plain, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("plain folder was not committed: %v\\n%s", err, out)
+	}
+
+	unborn := filepath.Join(t.TempDir(), "unborn")
+	if out, err := exec.Command("git", "init", "-b", "main", unborn).CombinedOutput(); err != nil {
+		t.Fatalf("git init unborn fixture: %v\\n%s", err, out)
+	}
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(unborn)+`}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST initialize unborn = %d, want 200; body=%s", status, body)
+	}
+	if out, err := exec.Command("git", "-C", unborn, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("unborn repo was not committed: %v\\n%s", err, out)
+	}
+
+	committed := gitRepo(t, "committed")
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(committed)+`}`)
+	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_ALREADY_INITIALIZED")
+}
 func TestProjectsAPI_Delete(t *testing.T) {
 
 	srv := newTestServer(t)
@@ -332,18 +360,23 @@ func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"defaultBranch":"develop"},"surprise":"!"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
-	// PUT a config body with a removed field inside the nested config — the
-	// canonical regression: agentRules / tracker are no longer modelled, so
-	// projects can't sneak them back in.
+	// Prompt rules are now modeled and accepted in project config.
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"agentRules":"x"}}`)
-	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if status != http.StatusOK {
+		t.Fatalf("agentRules config = %d, want 200; body=%s", status, body)
+	}
+
+	// A still-unknown nested config field is rejected, so misspellings cannot be
+	// silently persisted.
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"tracker":{"plugin":"github"}}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
 	// POST /projects gets the same gate, so add-time config rides the same rail.
 	otherRepo := gitRepo(t, "rejects-unknown-add")
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(otherRepo)+`,"projectId":"rej2","config":{"orchestratorRules":"x"}}`)
-	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if status != http.StatusCreated {
+		t.Fatalf("orchestratorRules add config = %d, want 201; body=%s", status, body)
+	}
 }
 
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
@@ -514,7 +547,9 @@ func gitRepo(t *testing.T, name string) string {
 		t.Fatalf("git init fixture: %v\n%s", err, out)
 
 	}
-
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=ao@example.com", "-c", "user.name=AO Test", "commit", "--allow-empty", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit fixture: %v\n%s", err, out)
+	}
 	return dir
 
 }

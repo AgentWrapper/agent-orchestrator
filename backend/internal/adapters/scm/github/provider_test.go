@@ -755,6 +755,9 @@ func TestObserve_BotAuthorFiltering(t *testing.T) {
 			t.Errorf("comment %q marked Resolved=true; observation set is unresolved-only", c.ID)
 		}
 	}
+	if obs.Comments[0].ThreadID != "T1" || obs.Comments[0].URL != "https://github.com/octocat/hello/pull/42#discussion_r1" {
+		t.Fatalf("first comment lost URL/thread metadata: %#v", obs.Comments[0])
+	}
 }
 
 // TestObserve_AllBotThreadsYieldsNilComments pins that a PR whose review
