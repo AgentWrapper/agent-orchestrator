@@ -132,16 +132,19 @@ func connectionToken(r *http.Request) string {
 // with a valid token, so the WebView's follow-up subresource requests on the same
 // password-protected preview route authenticate too (they never carry our
 // Authorization header). The cookie is Path-scoped to this session's preview
-// files only, HttpOnly, and emitted once (skipped when already present). This
-// runs on the LAN listener only; the loopback/desktop preview path never reaches
-// authMiddleware, so desktop preview behavior is unchanged.
+// files only, HttpOnly, and re-sent only when it doesn't already match the token
+// that just authenticated — so a normal subresource costs no Set-Cookie, but a
+// cookie left over from a regenerated password is overwritten instead of being
+// kept until it 401s every image/CSS/JS on the page. This runs on the LAN
+// listener only; the loopback/desktop preview path never reaches authMiddleware,
+// so desktop preview behavior is unchanged.
 func maybeSetPreviewAuthCookie(w http.ResponseWriter, r *http.Request, tok string) {
 	path := previewFilesCookiePath(r.URL.Path)
 	if path == "" {
 		return
 	}
-	if _, err := r.Cookie(authCookieName); err == nil {
-		return // already have it; don't re-send Set-Cookie on every subresource
+	if c, err := r.Cookie(authCookieName); err == nil && c.Value == tok {
+		return // already current; don't re-send Set-Cookie on every subresource
 	}
 	//nolint:gosec // Secure is intentionally omitted: the LAN bridge is plaintext
 	// http by design (ADR 0001, home-network-only), and a Secure cookie would never

@@ -155,6 +155,32 @@ func TestPreviewFileSetsScopedCookie(t *testing.T) {
 	}
 }
 
+// After a password regenerate the WebView still holds the cookie minted under the
+// OLD password. The top-level load re-authenticates via the Bearer header (the
+// mobile app has the new password), so the server must overwrite the stale cookie
+// — otherwise the page's subresources keep sending the old token and 401.
+func TestPreviewCookieRefreshedAfterPasswordChange(t *testing.T) {
+	h, _ := newAuthUnderTest("newpass12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqPathCookie(http.MethodGet,
+		"/api/v1/sessions/abc/preview/files/index.html", "Bearer newpass12", "oldpass12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview index with new bearer + stale cookie: got %d want 200", w.Code)
+	}
+	var c *http.Cookie
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == authCookieName {
+			c = ck
+		}
+	}
+	if c == nil {
+		t.Fatal("expected stale auth cookie to be refreshed")
+	}
+	if c.Value != "newpass12" {
+		t.Errorf("cookie Value = %q, want the current token newpass12", c.Value)
+	}
+}
+
 // The cookie must NOT authenticate any non-preview endpoint: a preview page that
 // tries POST /kill with only the cookie is rejected. This is the server-side
 // half of the guarantee (the cookie's Path already stops the browser sending it
