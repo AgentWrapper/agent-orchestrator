@@ -260,7 +260,7 @@ func TestCreateUsesSameNamespacedSessionForCreateAndLookup(t *testing.T) {
 	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh", Namespace: "i-abc123"})
 	r.runner = fr
 	r.enterDelay = 0
-	fr.outputs = [][]byte{nil, nil, nil, nil}
+	fr.outputs = [][]byte{nil, nil, nil, nil, nil, nil}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -270,21 +270,28 @@ func TestCreateUsesSameNamespacedSessionForCreateAndLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if h.ID != "i-abc123-sess-1" {
-		t.Fatalf("handle ID = %q, want i-abc123-sess-1", h.ID)
+	const want = "i-abc123-sess-1"
+	if h.ID != want {
+		t.Fatalf("handle ID = %q, want %q", h.ID, want)
 	}
-	for i, want := range [][]string{
-		setStatusOffArgs("i-abc123-sess-1"),
-		setMouseOnArgs("i-abc123-sess-1"),
-		hasSessionArgs("i-abc123-sess-1"),
-	} {
-		got := fr.calls[i+1].args
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("call[%d] = %#v, want %#v", i+1, got, want)
+	// Create names the session with the namespaced id...
+	if !strings.Contains(strings.Join(fr.calls[0].args, " "), "-s "+want) {
+		t.Fatalf("new-session args missing namespaced id: %v", fr.calls[0].args)
+	}
+	// ...and the liveness lookup targets that exact same namespaced id, so create
+	// and lookup can never disagree. Match by command rather than a fixed call
+	// index so unrelated Create steps (e.g. window sizing) don't make this brittle.
+	var found bool
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == "has-session" {
+			found = true
+			if !reflect.DeepEqual(c.args, hasSessionArgs(want)) {
+				t.Fatalf("has-session args = %#v, want %#v", c.args, hasSessionArgs(want))
+			}
 		}
 	}
-	if !strings.Contains(strings.Join(fr.calls[0].args, " "), "-s i-abc123-sess-1") {
-		t.Fatalf("new-session args missing namespaced id: %v", fr.calls[0].args)
+	if !found {
+		t.Fatalf("no has-session lookup issued; calls = %#v", fr.calls)
 	}
 }
 
