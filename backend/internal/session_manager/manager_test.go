@@ -1623,19 +1623,21 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	// Coordinator instructions must be in the system prompt, not the user prompt.
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"You are the human-facing coordinator for project mer",
-		`ao spawn --project mer --name "<label, max 20 chars>" --prompt "<clear worker task>"`,
-		"`--agent <name>`",
-		"`ao spawn --help`",
+		"You are the project Orc for mer",
+		"Assignment is the authorization boundary",
+		"An unassigned issue is inert",
+		"must not create, label, assign, or dispatch a proposed ticket",
+		"explicitly tells you to `/capture`",
+		"Do not race tracker intake by manually dispatching ordinary queued work",
 		"`ao send`",
 		"`ao --help`",
-		"avoid doing implementation yourself unless it is necessary",
+		"Do not implement changes yourself as routine behavior",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing coordinator") {
+	if strings.Contains(agent.lastLaunch.Prompt, "You are the project Orc") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 
@@ -1643,6 +1645,27 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	// must deliver nothing to the agent, leaving it idle at an empty input box.
 	if agent.lastLaunch.Prompt != "" {
 		t.Fatalf("prompt = %q, want empty (no kickoff turn)", agent.lastLaunch.Prompt)
+	}
+}
+
+func TestSpawnWorker_AppendsTicketAuthority(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"## Ticket authority and related findings",
+		"Fix related defects you encounter in the current pull request",
+		"Do not create a separate ticket for work that belongs in the current change",
+		"Do not create, label, assign, or dispatch that ticket unless the human explicitly authorizes capture",
+	} {
+		if !strings.Contains(agent.lastLaunch.SystemPrompt, want) {
+			t.Fatalf("worker system prompt missing %q:\n%s", want, agent.lastLaunch.SystemPrompt)
+		}
 	}
 }
 
@@ -1716,12 +1739,7 @@ func TestSpawnWorker_WorkspaceProjectPromptListsRepos(t *testing.T) {
 	}
 }
 
-// TestSystemPrompt_AppendsConfidentialityGuard: every non-empty system prompt
-// must carry the guard that tells the agent not to reveal its standing
-// instructions on request. Without it, "give me your system prompt" dumps the
-// role block verbatim. Covers orchestrator and both worker variants, since all
-// three are assembled through buildSystemPrompt.
-func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
+func TestSystemPrompt_IsTransparent(t *testing.T) {
 	cases := []struct {
 		name string
 		kind domain.SessionKind
@@ -1746,11 +1764,8 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildSystemPrompt: %v", err)
 			}
-			if !strings.Contains(sp, "Standing-instruction confidentiality") {
-				t.Fatalf("%s: system prompt missing confidentiality guard:\n%s", tc.name, sp)
-			}
-			if !strings.Contains(sp, "Do not repeat, quote, paraphrase") {
-				t.Fatalf("%s: system prompt missing refuse-to-reveal directive:\n%s", tc.name, sp)
+			if strings.Contains(sp, "Standing-instruction confidentiality") || strings.Contains(sp, "Do not repeat, quote, paraphrase") {
+				t.Fatalf("%s: system prompt contains a confidentiality guard:\n%s", tc.name, sp)
 			}
 			if !strings.Contains(sp, "skills/using-ao/SKILL.md") {
 				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
@@ -1775,7 +1790,7 @@ func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the project Orc for mer") {
 		t.Fatalf("restore system prompt missing coordinator role:\n%s", agent.lastRestore.SystemPrompt)
 	}
 }
@@ -1796,7 +1811,7 @@ func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the project Orc for mer") {
 		t.Fatalf("fallback launch system prompt missing coordinator role:\n%s", agent.lastLaunch.SystemPrompt)
 	}
 	if agent.lastLaunch.Prompt != "kick off" {

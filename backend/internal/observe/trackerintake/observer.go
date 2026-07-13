@@ -222,11 +222,11 @@ func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool
 	assignee := strings.TrimSpace(cfg.Assignee)
 	switch {
 	case assignee == "":
-		return true
+		return false
 	case assignee == "*":
 		return len(issue.Assignees) > 0
 	case strings.EqualFold(assignee, "none"):
-		return len(issue.Assignees) == 0
+		return false
 	default:
 		return containsFold(issue.Assignees, assignee)
 	}
