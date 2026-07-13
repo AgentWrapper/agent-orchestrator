@@ -23,6 +23,12 @@ type persistedState struct {
 	MinimaxAPIKeySnake string `json:"minimax_api_key,omitempty"`
 }
 
+// FromEnvironment resolves app-wide provider credentials from the daemon
+// environment. AO never needs to persist the credential itself.
+func FromEnvironment(getenv func(string) string) State {
+	return State{MinimaxAPIKey: strings.TrimSpace(getenv("MINIMAX_API_KEY"))}
+}
+
 // Path returns the app-wide provider settings file under the AO data dir.
 func Path(dataDir string) string {
 	return filepath.Join(dataDir, "provider-settings.json")

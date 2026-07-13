@@ -1942,12 +1942,7 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 }
 
 func (m *Manager) providerEnv(model string) map[string]string {
-	state, err := providersettings.Load(providersettings.Path(m.dataDir))
-	if err != nil {
-		m.logger.Warn("provider settings unavailable; continuing without app-wide provider credentials",
-			"model", model, "error", err)
-		return nil
-	}
+	state := providersettings.FromEnvironment(os.Getenv)
 	return providersettings.ClaudeEnvForModel(model, state)
 }
 

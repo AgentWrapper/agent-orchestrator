@@ -46,12 +46,13 @@ type Options struct {
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary     string
-	shell      string
-	timeout    time.Duration
-	chunkSize  int
-	enterDelay time.Duration
-	runner     runner
+	binary          string
+	shell           string
+	timeout         time.Duration
+	chunkSize       int
+	enterDelay      time.Duration
+	runner          runner
+	waitEnvConsumed func(context.Context, string) error
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -101,12 +102,13 @@ func New(opts Options) *Runtime {
 		enterDelay = defaultEnterDelay
 	}
 	return &Runtime{
-		binary:     binary,
-		shell:      shellPath,
-		timeout:    timeout,
-		chunkSize:  chunkSize,
-		enterDelay: enterDelay,
-		runner:     execRunner{},
+		binary:          binary,
+		shell:           shellPath,
+		timeout:         timeout,
+		chunkSize:       chunkSize,
+		enterDelay:      enterDelay,
+		runner:          execRunner{},
+		waitEnvConsumed: waitForFileRemoval,
 	}
 }
 
@@ -127,10 +129,24 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 
-	launchCmd := buildLaunchCommand(cfg)
+	envPath, err := writeEnvFile(cfg.Env)
+	if err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: write environment: %w", err)
+	}
+	launchCmd := buildLaunchCommand(cfg, envPath)
 	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
 	if _, err := r.run(ctx, args...); err != nil {
+		_ = os.Remove(envPath)
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+	}
+	waitEnvConsumed := r.waitEnvConsumed
+	if waitEnvConsumed == nil {
+		waitEnvConsumed = waitForFileRemoval
+	}
+	if err := waitEnvConsumed(ctx, envPath); err != nil {
+		_ = os.Remove(envPath)
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: consume environment for %s: %w", id, err)
 	}
 
 	// Hide the status bar in the embedded terminal: it clutters the view and
@@ -498,32 +514,15 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// buildLaunchCommand builds the shell command string passed to `sh -c`. It
-// exports env vars, then runs argv, then execs a keep-alive interactive shell
-// so the tmux session survives the agent exiting.
-//
-// PATH from cfg.Env is exported last, after all other keys, so an explicit
-// override takes effect.
-func buildLaunchCommand(cfg ports.RuntimeConfig) string {
-	path := cfg.Env["PATH"]
-	if path == "" {
-		path = getenv("PATH")
-	}
-
+// buildLaunchCommand sources a mode-0600 one-shot environment file before
+// running argv. Environment values never enter the `sh -c` process argv.
+func buildLaunchCommand(cfg ports.RuntimeConfig, envPath string) string {
 	var b strings.Builder
-	for _, key := range sortedKeys(cfg.Env) {
-		if key == "PATH" {
-			continue
-		}
-		b.WriteString("export ")
-		b.WriteString(key)
-		b.WriteString("=")
-		b.WriteString(shellQuote(cfg.Env[key]))
-		b.WriteString("; ")
-	}
-	if path != "" {
-		b.WriteString("export PATH=")
-		b.WriteString(shellQuote(path))
+	if envPath != "" {
+		b.WriteString(". ")
+		b.WriteString(shellQuote(envPath))
+		b.WriteString("; rm -f ")
+		b.WriteString(shellQuote(envPath))
 		b.WriteString("; ")
 	}
 	// Quote each argv word so spaces inside a word are preserved.
@@ -537,6 +536,60 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	// the process env if set, otherwise falls back to /bin/sh.
 	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
 	return b.String()
+}
+
+func writeEnvFile(env map[string]string) (string, error) {
+	file, err := os.CreateTemp("", "ao-tmux-env-*")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	failed := true
+	defer func() {
+		_ = file.Close()
+		if failed {
+			_ = os.Remove(path)
+		}
+	}()
+	for _, key := range sortedKeys(env) {
+		if key == "PATH" {
+			continue
+		}
+		if _, err := fmt.Fprintf(file, "export %s=%s\n", key, shellQuote(env[key])); err != nil {
+			return "", err
+		}
+	}
+	pathValue := env["PATH"]
+	if pathValue == "" {
+		pathValue = getenv("PATH")
+	}
+	if pathValue != "" {
+		if _, err := fmt.Fprintf(file, "export PATH=%s\n", shellQuote(pathValue)); err != nil {
+			return "", err
+		}
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	failed = false
+	return path, nil
+}
+
+func waitForFileRemoval(ctx context.Context, path string) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // -- error type --
