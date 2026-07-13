@@ -85,3 +85,22 @@ func TestSpawnOrchestratorNotBlockedByPause(t *testing.T) {
 		t.Fatal("orchestrator spawn must not be blocked by pause")
 	}
 }
+
+// TestSpawnPrimeNotBlockedByPause: prime is the fleet's meta tier — the tier
+// through which the operator pauses and resumes projects — so neither a
+// host-project pause nor a fleet-wide pause may block a prime spawn. Prime's
+// only off-switch is the operator's activation config (#312).
+func TestSpawnPrimeNotBlockedByPause(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Paused: true}
+	st.fleetPaused = true
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnPrime(context.Background(), "mer", false); err != nil {
+		t.Fatalf("prime spawn on paused project/fleet: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("prime spawn must not be blocked by pause")
+	}
+}

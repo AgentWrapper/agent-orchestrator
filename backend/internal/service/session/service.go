@@ -245,10 +245,13 @@ func (s *Service) resolveIssueTitle(ctx context.Context, project domain.ProjectR
 // paused, unless the caller sets Force (`ao spawn --force`). Pause means "start
 // no new work": it gates worker spawns only. Orchestrator lifecycle during a
 // pause is governed by the orchestrator supervisor, not this guard, so an
-// orchestrator spawn is never blocked here. A nil store (bare test service)
+// orchestrator spawn is never blocked here. Prime is the fleet's meta tier —
+// the tier through which the operator pauses and resumes projects — so neither
+// a host-project nor a fleet-wide pause may block it; its only off-switch is
+// the operator's activation config (#312). A nil store (bare test service)
 // can't be paused, so the guard is a no-op there.
 func (s *Service) guardPaused(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig) error {
-	if cfg.Force || cfg.Kind == domain.KindOrchestrator || s.store == nil {
+	if cfg.Force || cfg.Kind == domain.KindOrchestrator || cfg.Kind == domain.KindPrime || s.store == nil {
 		return nil
 	}
 	scope := ""
