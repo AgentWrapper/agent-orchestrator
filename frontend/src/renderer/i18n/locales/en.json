@@ -236,7 +236,7 @@
 			"active": "Working",
 			"idle": "Idle",
 			"waiting": "Input Needed",
-			"blocked": "Blocked",
+			"blocked": "Awaiting Decision",
 			"exit": "Exited",
 			"unknown": "Unknown"
 		},

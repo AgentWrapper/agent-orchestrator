@@ -250,7 +250,7 @@
 			"active": "工作中",
 			"idle": "空闲",
 			"waiting": "等待输入",
-			"blocked": "受阻",
+			"blocked": "等待决策",
 			"exit": "已退出",
 			"unknown": "未知"
 		},
