@@ -148,7 +148,7 @@ After installing, open Agent Orchestrator and point it at the repository you wan
 <details>
 <summary>Install via npm (legacy CLI, no longer recommended)</summary>
 
-The `@aoagents/ao` npm package is frozen and no longer receives updates. It ships the `ao` CLI for existing users; `ao start` fetches and opens the same desktop build linked above. Prefer the desktop download for a fresh setup.
+npm still works but is no longer recommended. `0.10.0` is the final version published to npm, and the `@aoagents/ao` package is frozen and will not receive further updates. It stays available for existing users who have the `ao` CLI on their PATH; `ao start` fetches and opens the same desktop build linked above. For any new setup, prefer the desktop download.
 
 ```bash
 npm install -g @aoagents/ao
