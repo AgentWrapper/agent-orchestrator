@@ -13,6 +13,7 @@ import {
 	View,
 } from "react-native";
 import { getAgents, refreshAgents, type AgentCatalog, type AgentInfo } from "../lib/api";
+import { haptics } from "../lib/haptics";
 import { useApp } from "../lib/store";
 import { theme } from "../lib/theme";
 import { Button } from "../lib/ui";
@@ -112,8 +113,10 @@ export default function SpawnModal() {
 		setError(null);
 		try {
 			await spawn(prompt.trim() || undefined, projectId, harness || undefined);
+			haptics.success();
 			router.back();
 		} catch (e) {
+			haptics.error();
 			setError(e instanceof Error ? e.message : "Failed to spawn agent.");
 			setBusy(false);
 		}
@@ -132,7 +135,10 @@ export default function SpawnModal() {
 						<Pressable
 							key={p.id}
 							style={[styles.chip, projectId === p.id && styles.chipActive]}
-							onPress={() => setProjectId(p.id)}
+							onPress={() => {
+								haptics.select();
+								setProjectId(p.id);
+							}}
 						>
 							<Text style={[styles.chipText, projectId === p.id && styles.chipTextActive]}>{p.name}</Text>
 						</Pressable>
@@ -192,6 +198,7 @@ export default function SpawnModal() {
 									style={[styles.modalItem, harness === a.id && styles.modalItemActive]}
 									onPress={() => {
 										if (a.selectable) {
+											haptics.select();
 											setHarness(a.id);
 											setPickerOpen(false);
 										}

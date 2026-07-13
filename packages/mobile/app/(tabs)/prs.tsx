@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { DashboardPR, DashboardSession } from "../../lib/api";
+import { haptics } from "../../lib/haptics";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
 import { useApp, usePRs } from "../../lib/store";
 import { ciVisual, theme } from "../../lib/theme";
@@ -28,6 +29,7 @@ export default function PRsScreen() {
 	}, [prs, filter]);
 
 	const onRefresh = async () => {
+		haptics.tap();
 		setRefreshing(true);
 		await refresh();
 		setRefreshing(false);
