@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -102,14 +105,15 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
+		Runtime:             runtime,
+		Agents:              agents,
+		Workspace:           ws,
+		Store:               store,
+		Messenger:           messenger,
+		Lifecycle:           lcm,
+		DataDir:             cfg.DataDir,
+		Logger:              log,
+		ProviderCredentials: loadProviderCredentials(cfg.DataDir),
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
@@ -263,4 +267,23 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 		return "", fmt.Errorf("project %q has no repo path on record: %w", projectID, sessionmanager.ErrProjectNotResolvable)
 	}
 	return rec.Path, nil
+}
+
+// loadProviderCredentials reads ~/.ao/provider-credentials.json, tolerating
+// absence (returns zero value). dataDir is typically ~/.ao/data; the
+// credentials file lives one level up at ~/.ao/.
+func loadProviderCredentials(dataDir string) domain.ProviderCredentials {
+	credFile := filepath.Join(filepath.Dir(dataDir), "provider-credentials.json")
+	data, err := os.ReadFile(credFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return domain.ProviderCredentials{}
+		}
+		return domain.ProviderCredentials{}
+	}
+	var creds domain.ProviderCredentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return domain.ProviderCredentials{}
+	}
+	return creds
 }

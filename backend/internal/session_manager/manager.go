@@ -144,8 +144,9 @@ type Manager struct {
 	// sendConfirm bounds the best-effort post-send confirmation that the session
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
-	sendConfirm sendConfirmConfig
-	logger      *slog.Logger
+	sendConfirm   sendConfirmConfig
+	logger        *slog.Logger
+	providerCreds domain.ProviderCredentials
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -196,6 +197,9 @@ type Deps struct {
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
+	// ProviderCredentials are user-scoped provider credentials forwarded into
+	// every spawned session. Project Env overrides them on a key-by-key basis.
+	ProviderCredentials domain.ProviderCredentials
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -216,7 +220,8 @@ func New(d Deps) *Manager {
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
 		},
-		logger: d.Logger,
+		logger:        d.Logger,
+		providerCreds: d.ProviderCredentials,
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -2019,11 +2024,16 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 	return strings.Join(lines, "\n")
 }
 
-// spawnEnv builds the runtime environment: the per-project env vars first, then
-// the AO-internal vars last so they always win (a project cannot override
+// spawnEnv builds the runtime environment: provider credentials first, then
+// the per-project env vars (which can override provider creds), then the
+// AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+4)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, providerCreds domain.ProviderCredentials, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+4+3)
+	// provider creds go in first so project env can override key-by-key
+	for k, v := range providerCreds.Env() {
+		env[k] = v
+	}
 	for k, v := range projectEnv {
 		env[k] = v
 	}
@@ -2042,7 +2052,7 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+	env := spawnEnv(id, project, issue, m.dataDir, m.providerCreds, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",

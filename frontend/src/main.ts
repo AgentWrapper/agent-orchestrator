@@ -28,6 +28,11 @@ import {
 	type UpdateSettings,
 	type UpdateStatus,
 } from "./main/update-settings";
+import {
+	readProviderCredentials,
+	writeProviderCredentials,
+	type ProviderCredentials,
+} from "./main/provider-credentials";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -1242,6 +1247,16 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await writeUpdateSettings(path.dirname(runFile), settings);
+});
+ipcMain.handle("providerCredentials:get", async (): Promise<ProviderCredentials> => {
+	const runFile = runFilePath();
+	if (!runFile) return {};
+	return readProviderCredentials(path.dirname(runFile));
+});
+ipcMain.handle("providerCredentials:set", async (_event, creds: ProviderCredentials) => {
+	const runFile = runFilePath();
+	if (!runFile) return;
+	await writeProviderCredentials(path.dirname(runFile), creds);
 });
 
 ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
