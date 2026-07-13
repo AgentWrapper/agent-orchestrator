@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XtermTerminal } from "./XtermTerminal";
 
@@ -376,6 +376,119 @@ describe("XtermTerminal", () => {
 		expect(pasteEvent.defaultPrevented).toBe(true);
 		expect(onInput).toHaveBeenCalledTimes(1);
 		expect(onInput).toHaveBeenCalledWith("shortcut paste", "paste");
+	});
+
+	function fakeDropFile(name: string, bytes: number[]) {
+		return { name, arrayBuffer: async () => new Uint8Array(bytes).buffer };
+	}
+
+	function fireDrop(el: Element, files: ReturnType<typeof fakeDropFile>[]) {
+		const event = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
+		Object.defineProperty(event, "dataTransfer", { value: { files, types: ["Files"] } });
+		el.dispatchEvent(event);
+		return event;
+	}
+
+	it("prevents default and forwards the dropped file's bytes, then inserts the returned path", async () => {
+		const onInput = vi.fn();
+		const save = vi.fn(async (_input: { name: string; bytes: Uint8Array }) => "/drops/shot.png");
+		window.ao!.terminal.saveDroppedFile = save;
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = fireDrop(container.firstElementChild!, [fakeDropFile("shot.png", [1, 2, 3])]);
+
+		await waitFor(() => expect(onInput).toHaveBeenCalled());
+		expect(event.defaultPrevented).toBe(true);
+		expect(save).toHaveBeenCalledTimes(1);
+		expect(save.mock.calls[0][0].name).toBe("shot.png");
+		expect(Array.from(save.mock.calls[0][0].bytes)).toEqual([1, 2, 3]);
+		expect(onInput).toHaveBeenCalledWith("/drops/shot.png ", "paste");
+	});
+
+	it("ignores a drop with no files", () => {
+		const onInput = vi.fn();
+		const save = vi.fn(async () => "/drops/x");
+		window.ao!.terminal.saveDroppedFile = save;
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		fireDrop(container.firstElementChild!, []);
+
+		expect(save).not.toHaveBeenCalled();
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("inserts every dropped file but skips ones whose save fails", async () => {
+		const onInput = vi.fn();
+		window.ao!.terminal.saveDroppedFile = vi.fn(async ({ name }) => {
+			if (name === "bad.png") throw new Error("write failed");
+			return `/drops/${name}`;
+		});
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		fireDrop(container.firstElementChild!, [
+			fakeDropFile("a.png", [1]),
+			fakeDropFile("bad.png", [2]),
+			fakeDropFile("c.png", [3]),
+		]);
+
+		await waitFor(() => expect(onInput).toHaveBeenCalled());
+		expect(onInput).toHaveBeenCalledWith("/drops/a.png /drops/c.png ", "paste");
+	});
+
+	it("single-quotes a POSIX path containing a space", async () => {
+		setNavigatorPlatform("MacIntel");
+		const onInput = vi.fn();
+		window.ao!.terminal.saveDroppedFile = vi.fn(async () => "/Users/John Doe/shot.png");
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		fireDrop(container.firstElementChild!, [fakeDropFile("shot.png", [1])]);
+
+		await waitFor(() => expect(onInput).toHaveBeenCalled());
+		expect(onInput).toHaveBeenCalledWith("'/Users/John Doe/shot.png' ", "paste");
+	});
+
+	it("escapes embedded apostrophes when single-quoting a POSIX path", async () => {
+		setNavigatorPlatform("MacIntel");
+		const onInput = vi.fn();
+		window.ao!.terminal.saveDroppedFile = vi.fn(async () => "/Users/O'Brien/shot.png");
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		fireDrop(container.firstElementChild!, [fakeDropFile("shot.png", [1])]);
+
+		await waitFor(() => expect(onInput).toHaveBeenCalled());
+		expect(onInput).toHaveBeenCalledWith("'/Users/O'\\''Brien/shot.png' ", "paste");
+	});
+
+	it("quotes a POSIX path with shell metacharacters even without whitespace", async () => {
+		setNavigatorPlatform("MacIntel");
+		const onInput = vi.fn();
+		window.ao!.terminal.saveDroppedFile = vi.fn(async () => "/tmp/a$b;c.png");
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		fireDrop(container.firstElementChild!, [fakeDropFile("shot.png", [1])]);
+
+		await waitFor(() => expect(onInput).toHaveBeenCalled());
+		expect(onInput).toHaveBeenCalledWith("'/tmp/a$b;c.png' ", "paste");
+	});
+
+	it("double-quotes a Windows path containing a space", async () => {
+		setNavigatorPlatform("Win32");
+		const onInput = vi.fn();
+		window.ao!.terminal.saveDroppedFile = vi.fn(async () => "C:\\Users\\John Doe\\shot.png");
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		fireDrop(container.firstElementChild!, [fakeDropFile("shot.png", [1])]);
+
+		await waitFor(() => expect(onInput).toHaveBeenCalled());
+		expect(onInput).toHaveBeenCalledWith('"C:\\Users\\John Doe\\shot.png" ', "paste");
+	});
+
+	it("prevents default on dragover for a file drag so the drop can fire", () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const event = new Event("dragover", { bubbles: true, cancelable: true }) as DragEvent;
+		Object.defineProperty(event, "dataTransfer", { value: { files: [], types: ["Files"] } });
+		container.firstElementChild!.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(true);
 	});
 
 	it("supports classic Windows terminal copy and paste shortcuts", async () => {
