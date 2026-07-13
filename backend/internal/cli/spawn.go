@@ -8,15 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 )
 
 // maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
@@ -131,19 +128,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if claimed != "" {
 				claimLabel = fmt.Sprintf(" (claimed %s)", claimed)
 			}
-			if _, err := fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel); err != nil {
-				return err
-			}
-			// Print a copy-pasteable attach hint for the selected runtime.
-			// On Darwin/Linux: tmux attach-session using the sanitised session name.
-			// On Windows: ConPTY has no user-facing attach CLI; use the AO dashboard.
-			var attach string
-			if runtime.GOOS != "windows" {
-				attach = fmt.Sprintf("tmux attach -t %s", tmux.SessionName(res.Session.ID))
-			} else {
-				attach = "Attach from the AO dashboard (ConPTY sessions have no CLI attach command)"
-			}
-			_, err = fmt.Fprintf(out, "attach with: %s\n", attach)
+			_, err = fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel)
 			return err
 		},
 	}
