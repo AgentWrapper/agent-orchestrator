@@ -14,10 +14,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
 
-// commandTimeout bounds a mutating daemon call. Spawns do real work (git
-// worktree add, tmux launch, hook install), so it is generous compared to the
-// status probe timeout.
-const commandTimeout = 2 * time.Minute
+// commandTimeout bounds a mutating daemon call. A spawn may have to check out
+// tens of thousands of files and durably install workspace hooks before the
+// daemon can return a session, so this must cover large-repository cold starts.
+const commandTimeout = 10 * time.Minute
 
 // apiError is the subset of the daemon's JSON error envelope the CLI surfaces.
 // RequestID is surfaced so a failed command can be correlated with daemon logs.

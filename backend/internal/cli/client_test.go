@@ -1,6 +1,15 @@
 package cli
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestCommandTimeoutCoversLargeRepositoryProvisioning(t *testing.T) {
+	if commandTimeout < 10*time.Minute {
+		t.Fatalf("commandTimeout = %s, want at least 10m for large repository provisioning", commandTimeout)
+	}
+}
 
 // TestAPIErrorString covers how the CLI renders the daemon's error envelope,
 // including the requestId it now surfaces for log correlation.
