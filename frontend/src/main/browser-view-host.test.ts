@@ -3,6 +3,7 @@ import {
 	type BrowserNavState,
 	clampBoundsToWindow,
 	createBrowserViewHost,
+	DEFAULT_MAX_BROWSER_VIEWS,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
@@ -11,8 +12,15 @@ import {
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
 
-function setupHost() {
+type ContentsEventHandler = (...args: unknown[]) => unknown;
+type WindowOpenHandler = (details: { url: string }) => unknown;
+
+function setupHost(overrides: { openExternal?: (url: string) => Promise<void> } = {}) {
 	let currentURL = "";
+	// Handlers the host wires onto the view's own webContents (did-fail-load, …)
+	// and the window-open handler, so tests can drive them like Chromium would.
+	const contentsEvents = new Map<string, ContentsEventHandler[]>();
+	let windowOpenHandler: WindowOpenHandler | null = null;
 	const webContents = {
 		id: 99,
 		canGoBack: () => false,
@@ -26,10 +34,14 @@ function setupHost() {
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
-		on: () => undefined,
+		on: (event: string, handler: ContentsEventHandler) => {
+			contentsEvents.set(event, [...(contentsEvents.get(event) ?? []), handler]);
+		},
 		reload: () => undefined,
 		send: vi.fn(),
-		setWindowOpenHandler: () => undefined,
+		setWindowOpenHandler: (handler: WindowOpenHandler) => {
+			windowOpenHandler = handler;
+		},
 		stop: () => undefined,
 		close: () => undefined,
 	};
@@ -53,7 +65,7 @@ function setupHost() {
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
-		shell: { openExternal: async () => undefined },
+		shell: { openExternal: overrides.openExternal ?? (async () => undefined) },
 		WebContentsView: function () {
 			return view;
 		} as never,
@@ -66,7 +78,12 @@ function setupHost() {
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
-	return { emit, host, invoke, send, sent, view, webContents };
+	/** Fire an event on the view's own webContents, as Chromium would. */
+	const emitContents = (event: string, ...args: unknown[]) => {
+		for (const handler of contentsEvents.get(event) ?? []) handler(...args);
+	};
+	const openWindow = (url: string) => windowOpenHandler?.({ url });
+	return { emit, emitContents, host, invoke, openWindow, send, sent, view, webContents };
 }
 
 describe("normalizeBrowserURL", () => {
@@ -119,6 +136,114 @@ describe("browser:clear", () => {
 
 		expect(webContents.loadURL).toHaveBeenLastCalledWith("about:blank");
 		expect(state.url).toBe("");
+	});
+});
+
+// M14 (#293): the navigate/clear handlers let normalization, scheme validation and
+// loadURL rejections escape across IPC. The renderer's fire-and-forget call then
+// raised an unhandled rejection and the panel never learned anything failed. The
+// host now converts every navigation failure into a pushed nav state carrying the
+// error.
+describe("browser:navigate failures", () => {
+	it("reports an unsupported scheme as nav-state error instead of rejecting", async () => {
+		const { invoke, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const state = await invoke("browser:navigate", { viewId: "1:sess-1", url: "javascript:alert(1)" });
+
+		expect(state.error).toMatch(/Unsupported browser URL scheme/i);
+		expect(sent).toContainEqual({
+			channel: "browser:navState",
+			payload: expect.objectContaining({ viewId: "1:sess-1", error: expect.stringMatching(/Unsupported/i) }),
+		});
+	});
+
+	it("reports a failed loadURL as nav-state error", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		webContents.loadURL.mockRejectedValueOnce(new Error("net::ERR_CONNECTION_REFUSED"));
+
+		const state = await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:9/" });
+
+		expect(state.error).toMatch(/ERR_CONNECTION_REFUSED/);
+	});
+
+	it("treats an aborted load as a non-error (redirects and user stops abort loadURL)", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		webContents.loadURL.mockRejectedValueOnce(new Error("net::ERR_ABORTED (-3) loading 'http://localhost:3000/'"));
+
+		const state = await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000/" });
+
+		expect(state.error).toBeUndefined();
+	});
+
+	// M14 follow-up (#293): loadURL's rejection path suppressed ERR_ABORTED, but the
+	// did-fail-load EVENT path published it. Chromium fires did-fail-load with -3 /
+	// ERR_ABORTED for stopped, redirected and superseded navigations — typing a
+	// second URL while the first loads then painted a visible "ERR_ABORTED" error.
+	it("ignores an aborted did-fail-load (superseded navigation) instead of painting it as an error", async () => {
+		const { emitContents, invoke, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000/" });
+
+		emitContents("did-fail-load", {}, -3, "ERR_ABORTED", "http://localhost:3000/", true);
+
+		const states = sent.filter((message) => message.channel === "browser:navState");
+		expect((states.at(-1)?.payload as BrowserNavState).error).toBeUndefined();
+	});
+
+	it("still reports a genuine did-fail-load as a nav-state error", async () => {
+		const { emitContents, invoke, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emitContents("did-fail-load", {}, -105, "ERR_NAME_NOT_RESOLVED", "http://nope.invalid/", true);
+
+		const states = sent.filter((message) => message.channel === "browser:navState");
+		expect(states.at(-1)?.payload).toEqual(
+			expect.objectContaining({ error: expect.stringMatching(/ERR_NAME_NOT_RESOLVED/) }),
+		);
+	});
+
+	// M14 claims every navigation promise is observed; shell.openExternal was
+	// fire-and-forget and rejects (unhandled) when the OS has no handler for the URL.
+	it("surfaces a failed external open instead of rejecting unhandled", async () => {
+		const openExternal = vi.fn(async () => {
+			throw new Error("No application is registered for this URL");
+		});
+		const { invoke, openWindow, sent } = setupHost({ openExternal });
+		await invoke("browser:ensure", "sess-1");
+
+		openWindow("https://example.com/popup");
+		await vi.waitFor(() => {
+			const states = sent.filter((message) => message.channel === "browser:navState");
+			expect(states.at(-1)?.payload).toEqual(
+				expect.objectContaining({ error: expect.stringMatching(/No application is registered/) }),
+			);
+		});
+		expect(openExternal).toHaveBeenCalledWith("https://example.com/popup");
+	});
+
+	it("reports a failed clear as nav-state error instead of rejecting", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		webContents.loadURL.mockRejectedValueOnce(new Error("Object has been destroyed"));
+
+		const state = await invoke("browser:clear", "1:sess-1");
+
+		expect(state.error).toMatch(/Object has been destroyed/);
+	});
+
+	it("reports a throwing back/forward/reload/stop control as nav-state error", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		webContents.reload = () => {
+			throw new Error("Object has been destroyed");
+		};
+
+		const state = await invoke("browser:reload", "1:sess-1");
+
+		expect(state.error).toMatch(/Object has been destroyed/);
 	});
 });
 
@@ -191,6 +316,108 @@ describe("browser annotation IPC", () => {
 		send("browser:annotation:cancel", 99, { reason: "escape" });
 
 		expect(sent.some((entry) => entry.channel === "browser:annotation:canceled")).toBe(false);
+	});
+});
+
+// M12 (#293): every visited session used to leave a hidden WebContentsView behind
+// forever — each one a live page with its own memory, timers, sockets and network
+// activity. A long-running dashboard walking N sessions accumulated N pages. The
+// host now bounds the map and evicts least-recently-used views.
+function setupBoundedHost(maxViews: number) {
+	const handlers = new Map<string, InvokeHandler>();
+	const views: Array<{ id: number; closed: boolean; removed: boolean }> = [];
+	let nextWebContentsId = 100;
+	const removeChildView = vi.fn((view: { webContents: { id: number } }) => {
+		views.find((entry) => entry.id === view.webContents.id)!.removed = true;
+	});
+	const host = createBrowserViewHost({
+		mainWindow: {
+			contentView: { addChildView: () => undefined, removeChildView },
+			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+			webContents: { id: 1, send: () => undefined },
+		} as never,
+		ipcMain: {
+			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
+			on: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
+			removeHandler: () => undefined,
+			off: () => undefined,
+		} as never,
+		shell: { openExternal: async () => undefined },
+		WebContentsView: function () {
+			const id = nextWebContentsId++;
+			const record = { id, closed: false, removed: false };
+			views.push(record);
+			return {
+				webContents: {
+					id,
+					canGoBack: () => false,
+					canGoForward: () => false,
+					clearHistory: () => undefined,
+					getTitle: () => "",
+					getURL: () => "",
+					goBack: () => undefined,
+					goForward: () => undefined,
+					isLoading: () => false,
+					loadURL: async () => undefined,
+					on: () => undefined,
+					reload: () => undefined,
+					send: () => undefined,
+					setWindowOpenHandler: () => undefined,
+					stop: () => undefined,
+					close: () => {
+						record.closed = true;
+					},
+				},
+				setBounds: () => undefined,
+				setVisible: () => undefined,
+			};
+		} as never,
+		annotatePreloadPath: "/preload.js",
+		rendererOrigin: "http://localhost:5173",
+		maxViews,
+	});
+	const invoke = (channel: string, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<BrowserNavState>;
+	return { host, invoke, views };
+}
+
+describe("browser view lifetime", () => {
+	it("evicts the least-recently-used view once the cap is exceeded", async () => {
+		const { invoke, views } = setupBoundedHost(2);
+
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:ensure", "sess-2");
+		expect(views.map((view) => view.closed)).toEqual([false, false]);
+
+		// A third session must not simply pile up: the oldest hidden page is destroyed.
+		await invoke("browser:ensure", "sess-3");
+		expect(views).toHaveLength(3);
+		expect(views[0].closed).toBe(true);
+		expect(views[0].removed).toBe(true);
+		expect(views[1].closed).toBe(false);
+		expect(views[2].closed).toBe(false);
+	});
+
+	it("keeps a re-visited view alive by refreshing its recency", async () => {
+		const { invoke, views } = setupBoundedHost(2);
+
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:ensure", "sess-2");
+		// Re-visiting sess-1 makes sess-2 the least recently used.
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:ensure", "sess-3");
+
+		expect(views[0].closed).toBe(false); // sess-1: recently used
+		expect(views[1].closed).toBe(true); // sess-2: evicted
+		expect(views[2].closed).toBe(false); // sess-3: new
+	});
+
+	it("bounds the map even without an explicit cap", async () => {
+		const { invoke, views } = setupBoundedHost(DEFAULT_MAX_BROWSER_VIEWS);
+		for (let i = 0; i < DEFAULT_MAX_BROWSER_VIEWS + 3; i += 1) {
+			await invoke("browser:ensure", `sess-${i}`);
+		}
+		expect(views.filter((view) => !view.closed)).toHaveLength(DEFAULT_MAX_BROWSER_VIEWS);
 	});
 });
 

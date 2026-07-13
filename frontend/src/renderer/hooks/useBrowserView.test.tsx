@@ -212,7 +212,11 @@ describe("useBrowserView", () => {
 		}
 	});
 
-	it("hides the native view when inactive and on unmount without destroying session state", async () => {
+	// M12 (#293): unmounting a LIVE session still only hides its view — the page
+	// stays warm so switching back is instant, and the main process now bounds the
+	// number of hidden views with LRU eviction. What must never happen (and used to)
+	// is a view surviving the session itself; see the terminated cases below.
+	it("hides a live session's view when inactive and on unmount, keeping it warm", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();
 		const { result, rerender, unmount } = renderHook(
@@ -238,6 +242,117 @@ describe("useBrowserView", () => {
 			visible: false,
 		});
 		expect(bridge.destroy).not.toHaveBeenCalled();
+	});
+
+	// M12 (#293): a terminated session's page has nothing left to show and nobody to
+	// come back to it — it must be torn down, not parked hidden with its timers,
+	// sockets and memory intact.
+	it("destroys the view when the session is terminated", async () => {
+		const bridge = setupBridge();
+		const { rerender } = renderHook(
+			({ terminated }) =>
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					terminated,
+					previewUrl: "http://localhost:5173/",
+					previewRevision: 1,
+				}),
+			{ initialProps: { terminated: false } },
+		);
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
+
+		rerender({ terminated: true });
+		await waitFor(() => expect(bridge.destroy).toHaveBeenCalledWith("42:sess-1"));
+	});
+
+	// The teardown is async (clear, then destroy). If the route unmounts first, the
+	// unmount path cleared viewIdRef and the pending destroy would no-op — the view
+	// would outlive its session. Unmount must therefore destroy a terminated view.
+	it("destroys a terminated session's view even when the route unmounts mid-teardown", async () => {
+		const bridge = setupBridge();
+		const { result, rerender, unmount } = renderHook(
+			({ terminated }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, terminated }),
+			{ initialProps: { terminated: false } },
+		);
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		// Terminate and navigate away in the same tick, before clear() resolves.
+		rerender({ terminated: true });
+		unmount();
+
+		expect(bridge.destroy).toHaveBeenCalledWith("42:sess-1");
+		await waitFor(() => expect(bridge.destroy).toHaveBeenCalledTimes(1));
+	});
+
+	it("destroys an already-terminated session's view exactly once, mount through unmount", async () => {
+		const bridge = setupBridge();
+		const { unmount } = renderHook(() =>
+			useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, terminated: true }),
+		);
+		await waitFor(() => expect(bridge.destroy).toHaveBeenCalledWith("42:sess-1"));
+
+		// Unmount must not double-destroy an already-torn-down view.
+		unmount();
+		expect(bridge.destroy).toHaveBeenCalledTimes(1);
+	});
+
+	// M14 (#293): navigation was fire-and-forget. normalizeBrowserURL, the scheme
+	// allowlist and loadURL can all reject across IPC, but the hook never caught
+	// them: navState.error stayed undefined (the panel showed nothing at all, as if
+	// the address bar submit had been ignored) and each attempt raised an unhandled
+	// promise rejection.
+	it("converts a rejected navigation into a visible nav-state error", async () => {
+		const bridge = setupBridge();
+		bridge.navigate.mockRejectedValue(new Error("Unsupported browser URL scheme: javascript:"));
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(async () => {
+			await result.current.navigate("javascript:alert(1)");
+		});
+
+		await waitFor(() => expect(result.current.navState.error).toMatch(/Unsupported browser URL scheme/i));
+		expect(result.current.navState.isLoading).toBe(false);
+	});
+
+	it("does not leave a rejected navigation unhandled", async () => {
+		const bridge = setupBridge();
+		bridge.navigate.mockRejectedValue(new Error("net::ERR_CONNECTION_REFUSED"));
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		// The panel calls this as `void navigate(url)`; the promise must resolve.
+		await expect(result.current.navigate("http://localhost:9/")).resolves.toBeUndefined();
+		await waitFor(() => expect(result.current.navState.error).toMatch(/ERR_CONNECTION_REFUSED/));
+	});
+
+	it("surfaces rejected back/forward/reload/stop controls too", async () => {
+		const bridge = setupBridge();
+		bridge.reload.mockRejectedValue(new Error("Object has been destroyed"));
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await expect(result.current.reload()).resolves.toBeUndefined();
+		await waitFor(() => expect(result.current.navState.error).toMatch(/Object has been destroyed/));
+	});
+
+	it("clears a stale nav error once a navigation succeeds", async () => {
+		const bridge = setupBridge();
+		bridge.navigate.mockRejectedValueOnce(new Error("Unsupported browser URL"));
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(async () => {
+			await result.current.navigate("wat://nope");
+		});
+		await waitFor(() => expect(result.current.navState.error).toBeTruthy());
+
+		await act(async () => {
+			await result.current.navigate("http://localhost:5173/");
+		});
+		await waitFor(() => expect(result.current.navState.error).toBeUndefined());
 	});
 
 	it("updates nav state only for the current view", async () => {
@@ -374,5 +489,55 @@ describe("useBrowserView", () => {
 		rerender({ terminated: true });
 		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
+
+	// #293: destroy() disabled annotation mode with a bare `void`, unlike the unmount
+	// path's catching helper. Teardown and LRU eviction are exactly when the view is
+	// already gone, so that IPC rejects ("Object has been destroyed") — unhandled.
+	it("does not leak an unhandled rejection when destroy() disables annotation mode on a dead view", async () => {
+		const bridge = setupBridge();
+		const rejections: unknown[] = [];
+		const onUnhandled = (reason: unknown) => rejections.push(reason);
+		process.on("unhandledRejection", onUnhandled);
+		try {
+			const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+			await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+			// A loaded page: annotation mode is only meaningful (and only stays on) for
+			// a view that has a URL.
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+
+			await act(async () => {
+				await result.current.setAnnotationMode(true);
+			});
+			expect(result.current.annotationMode).toBe(true);
+
+			// The view dies underneath us (destroyed page / evicted view). A plain
+			// function, not a vi.fn: vitest observes a mock's returned promise to record
+			// its settled result, which would itself handle the rejection and hide the
+			// leak this test exists to catch.
+			const disableCalls: Array<{ viewId: string; enabled: boolean }> = [];
+			window.ao!.browser.setAnnotationMode = (payload: { viewId: string; enabled: boolean }) => {
+				disableCalls.push(payload);
+				return Promise.reject(new Error("Object has been destroyed"));
+			};
+			act(() => result.current.destroy());
+
+			expect(disableCalls).toEqual([{ viewId: "42:sess-1", enabled: false }]);
+			// Let any unhandled rejection reach the process hook.
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(rejections).toEqual([]);
+			expect(bridge.destroy).toHaveBeenCalledWith("42:sess-1");
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+		}
 	});
 });

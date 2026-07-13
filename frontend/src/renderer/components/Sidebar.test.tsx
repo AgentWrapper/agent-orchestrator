@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { useUiStore } from "../stores/ui-store";
 
 const { getMock, navigateMock, mockParams, renameSessionMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -15,6 +17,7 @@ const { getMock, navigateMock, mockParams, renameSessionMock } = vi.hoisted(() =
 }));
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: vi.fn() }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
@@ -737,5 +740,73 @@ describe("Sidebar", () => {
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-[106px]");
+	});
+});
+
+// M13 (#293): the sidebar's orchestrator launcher swallowed spawn failures into
+// console.error. The button un-spun and nothing told the user why no orchestrator
+// appeared. Failures belong in the shared startup-error UI (the same store the
+// board reads), telemetry retained.
+describe("Sidebar orchestrator launch failure", () => {
+	beforeEach(() => {
+		useUiStore.getState().setOrchestratorStartupError("proj-1", null);
+		vi.mocked(spawnOrchestrator).mockReset();
+	});
+
+	it("routes a spawn failure into the shared orchestrator startup error", async () => {
+		vi.mocked(spawnOrchestrator).mockRejectedValue(new Error("daemon refused: no agent binary"));
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Spawn Project One orchestrator" }));
+
+		await waitFor(() => expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toMatch(/no agent binary/i));
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("button", { name: "Spawn Project One orchestrator" })).toBeEnabled();
+	});
+
+	// The shared store is only RENDERED by that project's board or by ShellTopbar
+	// when that project is the current route — but the sidebar launches an
+	// orchestrator for ANY listed project without navigating to it. Storing the
+	// failure somewhere the user is not looking is still a silent failure, so the
+	// sidebar must show it where the user actually clicked.
+	it("shows the failure on the project row itself, not only in the shared store", async () => {
+		vi.mocked(spawnOrchestrator).mockRejectedValue(new Error("daemon refused: no agent binary"));
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Spawn Project One orchestrator" }));
+
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent(/no agent binary/i);
+	});
+
+	// 3a (#293 cycle 2): the row's inline error and the shared project-keyed store
+	// are two views of ONE failure. Dismissing the row while the store kept the
+	// message meant navigating to that project re-displayed the error the user had
+	// just dismissed. A dismissal clears both.
+	it("clears the shared startup error too when the row's failure is dismissed", async () => {
+		vi.mocked(spawnOrchestrator).mockRejectedValue(new Error("daemon refused: no agent binary"));
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Spawn Project One orchestrator" }));
+		const alert = await screen.findByRole("alert");
+		await waitFor(() => expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toBeDefined());
+
+		await userEvent.click(alert);
+
+		await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+		expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toBeUndefined();
+	});
+
+	it("clears the row's failure when the next launch is attempted", async () => {
+		vi.mocked(spawnOrchestrator).mockRejectedValueOnce(new Error("daemon refused: no agent binary"));
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Spawn Project One orchestrator" }));
+		expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+		vi.mocked(spawnOrchestrator).mockResolvedValueOnce("proj-1-orc");
+		await userEvent.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
+
+		await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 	});
 });

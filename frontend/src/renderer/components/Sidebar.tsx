@@ -3,6 +3,7 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
 	BellRing,
+	CircleAlert,
 	Gauge,
 	GitPullRequest,
 	LayoutDashboard,
@@ -570,11 +571,16 @@ function ProjectItem({
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	// The sidebar can launch an orchestrator for ANY listed project without
+	// navigating to it, so the shared (project-keyed) startup error may be rendered
+	// on a route the user is not looking at. Keep a local copy for the row itself.
+	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const [isPausing, setIsPausing] = useState(false);
 	// Badge reflects the effective state (draining/paused, incl. fleet pause);
 	// the toggle flips this project's own bit (workspace.paused).
 	const pauseBadge = pauseStateLabel(workspace.pauseState, workspace.drainingWorkers);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
@@ -592,12 +598,24 @@ function ProjectItem({
 			return;
 		}
 		setIsSpawning(true);
+		setSpawnError(null);
+		setOrchestratorStartupError(workspace.id, null);
 		try {
 			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			selection.goSession(workspace.id, sessionId);
 		} catch (err) {
+			// A missing binary, expired auth, bad config or a daemon rejection must
+			// reach the user, not just the console (M13, #293). Two surfaces, because
+			// the sidebar launches orchestrators for projects the user has not opened:
+			// the board's shared startup-error store (keyed by project, so the message
+			// is there whenever the project IS opened) AND an inline error on this row
+			// — where the user actually clicked, and the only surface they are
+			// guaranteed to be looking at.
 			console.error("Failed to spawn orchestrator:", err);
+			const message = err instanceof Error ? err.message : "Could not spawn orchestrator";
+			setSpawnError(message);
+			setOrchestratorStartupError(workspace.id, message);
 		} finally {
 			setIsSpawning(false);
 		}
@@ -785,6 +803,28 @@ function ProjectItem({
 				<span className="sr-only" role="status">
 					{removeError}
 				</span>
+			)}
+			{/* Orchestrator launch failure, shown on the row the user clicked (M13,
+			#293) — the board/topbar surface only renders for the CURRENT project, and
+			this button launches for any project in the list. Click to dismiss: the row
+			copy and the shared project-keyed store are two views of ONE failure, so
+			dismissing clears both — otherwise opening that project would re-display the
+			error the user just dismissed. */}
+			{spawnError && (
+				<button
+					type="button"
+					role="alert"
+					aria-label={`Orchestrator launch failed for ${workspace.name}: ${spawnError}. Dismiss.`}
+					title={spawnError}
+					onClick={() => {
+						setSpawnError(null);
+						setOrchestratorStartupError(workspace.id, null);
+					}}
+					className="sidebar-expanded-chrome mt-0.5 flex w-full items-start gap-1 rounded-sm bg-destructive/10 px-1.5 py-1 text-left text-[11px] leading-tight text-destructive group-data-[collapsible=icon]:hidden"
+				>
+					<CircleAlert className="mt-px size-3 shrink-0" aria-hidden="true" />
+					<span className="min-w-0 flex-1 break-words">{spawnError}</span>
+				</button>
 			)}
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}

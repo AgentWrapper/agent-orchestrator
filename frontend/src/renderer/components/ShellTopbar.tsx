@@ -67,6 +67,8 @@ export function ShellTopbar() {
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const orchestratorStartupErrors = useUiStore((state) => state.orchestratorStartupErrors);
+	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const workspaceData = useWorkspaceQuery().data;
@@ -92,6 +94,9 @@ export function ShellTopbar() {
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	// Shown on the session route only: on a board route the same shared message is
+	// already rendered by the board's own subhead, and two copies is noise.
+	const spawnFailure = projectId ? (orchestratorStartupErrors[projectId] ?? null) : null;
 
 	if (isLinux && !isSessionRoute) {
 		return null;
@@ -131,6 +136,7 @@ export function ShellTopbar() {
 			return;
 		}
 		setIsSpawning(true);
+		setOrchestratorStartupError(projectId, null);
 		try {
 			const sessionId = await spawnOrchestrator(projectId, "topbar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -146,6 +152,9 @@ export function ShellTopbar() {
 				project_id: projectId,
 			});
 			console.error("Failed to spawn orchestrator:", error);
+			// Telemetry is for us; the user needs the daemon's reason on screen
+			// (M13, #293). Same shared per-project surface the board reads.
+			setOrchestratorStartupError(projectId, apiErrorMessage(error, "Could not spawn orchestrator"));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -185,6 +194,11 @@ export function ShellTopbar() {
 			<div className="min-w-0 flex-1" />
 
 			<div className="flex shrink-0 items-center gap-1.5">
+				{isSessionRoute && spawnFailure ? (
+					<TopbarKillError className="max-w-content-max truncate" style={noDragStyle} title={spawnFailure}>
+						{spawnFailure}
+					</TopbarKillError>
+				) : null}
 				{!isLinux ? <NotificationCenter style={noDragStyle} /> : null}
 				{isSessionRoute ? (
 					<>

@@ -53,6 +53,22 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
+/**
+ * Fire-and-forget teardown of annotation mode (unmount, destroy). Nothing is left
+ * to render an error into by then, but the promise must still be observed so a
+ * rejecting IPC call cannot become an unhandled rejection (M14, #293).
+ */
+function disableAnnotationMode(viewId: string): void {
+	void Promise.resolve(window.ao?.browser.setAnnotationMode({ viewId, enabled: false })).catch(() => undefined);
+}
+
+/** IPC rejections arrive as Errors whose message carries the main-process reason. */
+function browserErrorMessage(error: unknown): string {
+	if (error instanceof Error && error.message) return error.message;
+	if (typeof error === "string" && error !== "") return error;
+	return "Navigation failed";
+}
+
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
 // Inside the collapsible inspector the slot sits in a `min-w-[280px]` wrapper,
@@ -184,6 +200,13 @@ export function useBrowserView({
 		[scheduleMeasure],
 	);
 
+	// The mount/unmount effect must see the CURRENT terminated flag without
+	// re-running (and re-ensuring the view) every time it flips.
+	const terminatedRef = useRef(Boolean(terminated));
+	useEffect(() => {
+		terminatedRef.current = Boolean(terminated);
+	}, [terminated]);
+
 	useEffect(() => {
 		let disposed = false;
 		if (!hasNativeBrowser) {
@@ -201,22 +224,37 @@ export function useBrowserView({
 				viewIdRef.current = "";
 			};
 		}
-		window.ao?.browser.ensure(sessionId).then((state) => {
-			if (disposed) return;
-			viewIdRef.current = state.viewId;
-			setViewId(state.viewId);
-			setNavState(state);
-			scheduleSettleMeasure();
-		});
+		window.ao?.browser
+			.ensure(sessionId)
+			.then((state) => {
+				if (disposed) return;
+				viewIdRef.current = state.viewId;
+				setViewId(state.viewId);
+				setNavState(state);
+				scheduleSettleMeasure();
+			})
+			.catch((error: unknown) => {
+				// A view that cannot even be created leaves the panel dead; say so
+				// rather than raising an unhandled rejection (M14, #293).
+				if (disposed) return;
+				setNavState((current) => ({ ...current, isLoading: false, error: browserErrorMessage(error) }));
+			});
 		return () => {
 			disposed = true;
 			const id = viewIdRef.current;
 			if (id) {
 				if (annotationModeRef.current) {
-					void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+					disableAnnotationMode(id);
 					setAnnotationModeState(false);
 				}
 				sendHiddenBounds(id);
+				// A live session's view is kept warm (hidden) so returning to it is
+				// instant — the main process bounds those with LRU eviction. A
+				// terminated session will never be returned to, so its page is torn
+				// down here rather than parked with live timers and sockets (M12).
+				if (terminatedRef.current) {
+					window.ao?.browser.destroy(id);
+				}
 			}
 			viewIdRef.current = "";
 		};
@@ -250,11 +288,24 @@ export function useBrowserView({
 		};
 	}, [cancelScheduledMeasure, scheduleMeasure]);
 
+	// Every browser control crosses IPC and can REJECT — a malformed target, a
+	// blocked scheme, a refused connection, a destroyed view. Callers fire these as
+	// `void navigate(url)`, so an escaping rejection was both invisible (navState.error
+	// never set: the panel looked like it had ignored the user) and an unhandled
+	// promise rejection (M14, #293). Observe every one and convert it into nav state.
 	const withView = useCallback(async (fn: (id: string) => Promise<BrowserNavState | void>) => {
 		const id = viewIdRef.current;
 		if (!id) return;
-		const next = await fn(id);
-		if (next) setNavState(next);
+		try {
+			const next = await fn(id);
+			if (next) setNavState(next);
+		} catch (error) {
+			setNavState((current) => ({
+				...current,
+				isLoading: false,
+				error: browserErrorMessage(error),
+			}));
+		}
 	}, []);
 
 	const setAnnotationMode = useCallback(
@@ -285,7 +336,11 @@ export function useBrowserView({
 
 	useEffect(() => {
 		if (navState.url || !annotationModeRef.current) return;
-		void setAnnotationMode(false);
+		// Observed, not fired-and-forgotten: setAnnotationMode rejects on a destroyed
+		// view, and this effect has no caller to catch for it (M14, #293).
+		setAnnotationMode(false).catch((error: unknown) => {
+			setNavState((current) => ({ ...current, error: browserErrorMessage(error) }));
+		});
 	}, [navState.url, setAnnotationMode]);
 
 	const navigate = useCallback(
@@ -313,13 +368,6 @@ export function useBrowserView({
 		return withView((id) => window.ao!.browser.clear(id));
 	}, [hasNativeBrowser, withView]);
 
-	// When the session is terminated, clear the view and stop reacting to
-	// daemon-driven preview changes so stale content does not remain visible.
-	useEffect(() => {
-		if (!terminated) return;
-		void clear();
-	}, [clear, terminated]);
-
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
@@ -342,13 +390,29 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		if (!id) return;
 		if (annotationModeRef.current) {
-			void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+			// Catching helper, like the unmount path: teardown and LRU eviction are
+			// exactly when the view is already gone, so this IPC rejects ("Object has
+			// been destroyed") — a bare `void` leaks that as an unhandled rejection.
+			disableAnnotationMode(id);
 			setAnnotationModeState(false);
 		}
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
 	}, [sendHiddenBounds]);
+
+	// When the session is terminated, clear the view and stop reacting to
+	// daemon-driven preview changes so stale content does not remain visible — then
+	// destroy the page outright (M12, #293). A terminated session is never returned
+	// to, so keeping its WebContentsView hidden-but-alive only leaks memory, timers
+	// and background network for the rest of the app's life.
+	useEffect(() => {
+		if (!terminated) return;
+		void (async () => {
+			await clear();
+			destroy();
+		})();
+	}, [clear, destroy, terminated]);
 
 	return {
 		viewId,

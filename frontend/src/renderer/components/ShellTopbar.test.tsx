@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { captureRendererException } from "../lib/telemetry";
+import { useUiStore } from "../stores/ui-store";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -243,5 +246,28 @@ describe("TopbarKillButton", () => {
 		await waitFor(() => {
 			expect(onKilledMock).toHaveBeenCalledWith("proj-1", undefined);
 		});
+	});
+});
+
+// M13 (#293): a failed orchestrator launch from the topbar went to console and
+// telemetry only — the button simply un-spun and the user was told nothing about
+// the missing binary / expired auth / bad config / daemon rejection.
+describe("ShellTopbar orchestrator launch failure", () => {
+	beforeEach(() => {
+		useUiStore.getState().setOrchestratorStartupError("proj-1", null);
+	});
+
+	it("surfaces a spawn failure in the shared startup-error UI and keeps telemetry", async () => {
+		vi.mocked(spawnOrchestrator).mockRejectedValue(new Error("worktree is dirty"));
+		renderTopbar(sessionWith({ activity: { state: "idle", lastActivityAt: "2026-06-10T00:00:00Z" } }));
+
+		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
+
+		expect(await screen.findByText(/worktree is dirty/i)).toBeInTheDocument();
+		await waitFor(() =>
+			expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toMatch(/worktree is dirty/i),
+		);
+		expect(captureRendererException).toHaveBeenCalled();
+		expect(screen.getByRole("button", { name: "Open orchestrator" })).toBeEnabled();
 	});
 });

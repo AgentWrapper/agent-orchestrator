@@ -28,7 +28,7 @@ import {
 } from "./main/update-settings";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { readdir, readFile, readlink, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -43,7 +43,24 @@ import {
 	resolveDaemonFromPort,
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
-import { shouldReplacePortHolder } from "./shared/daemon-takeover";
+import {
+	decidePortHolderAction,
+	portUnconfirmedReadyStatus,
+	unverifiedPortHolderAdvisory,
+	withTakeoverAdvisory,
+} from "./shared/daemon-takeover";
+import {
+	parseProcBootTimeMs,
+	parseProcCmdline,
+	parseProcStat,
+	parsePsArgv,
+	parsePsStartTimeMs,
+	type ProcessIdentity,
+	procStartTimeMs,
+	readConsistentProcessEvidence,
+	verifyDaemonProcessIdentity,
+} from "./shared/daemon-identity";
+import { signalVerifiedDaemon, type DaemonSignalDeps, type DaemonSignalReason } from "./main/daemon-signal";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
@@ -93,6 +110,13 @@ let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
+/**
+ * Set when the last takeover attempt refused to signal a live process it could not
+ * verify (2c, #293). That process may still hold the daemon port, so if the
+ * replacement daemon then dies, its failure message carries the PID to stop rather
+ * than a bare "exited with code 1". Cleared as soon as a daemon binds.
+ */
+let takeoverAdvisory: string | null = null;
 let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
@@ -424,6 +448,165 @@ function processAlive(pid: number): boolean {
 	}
 }
 
+/**
+ * The executable backing a live PID, or null when the OS will not tell us (an
+ * unsupported platform, a process we may not inspect, a PID that just exited).
+ * Used only to decide whether a PID may be signalled, so "unknown" must always
+ * read as "not ours".
+ */
+async function processExecutablePath(pid: number): Promise<string | null> {
+	if (!pid) return null;
+	try {
+		if (process.platform === "linux") {
+			return await readlink(`/proc/${pid}/exe`);
+		}
+		if (process.platform === "darwin") {
+			// macOS `ps -o comm=` prints the executable's full path.
+			const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "comm="]);
+			const executable = stdout.trim();
+			return executable || null;
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
+
+/**
+ * Everything the OS will tell us about a live PID: its argv and its real start
+ * time. Null whenever the OS declines (unsupported platform — notably Windows —
+ * an unreadable /proc entry, or a PID that just exited): "unknown" must read as
+ * "not ours" everywhere this is consumed.
+ *
+ * Note the reads are separate syscalls, and so is the eventual kill(); see
+ * main/daemon-signal.ts for the residual TOCTOU window this does NOT close.
+ */
+async function readProcessIdentity(pid: number): Promise<ProcessIdentity | null> {
+	if (!pid || pid <= 0) return null;
+	try {
+		if (process.platform === "linux") {
+			const [statRaw, cmdlineRaw, bootRaw] = await Promise.all([
+				readFile(`/proc/${pid}/stat`, "utf8"),
+				readFile(`/proc/${pid}/cmdline`, "utf8"),
+				readFile("/proc/stat", "utf8"),
+			]);
+			const stat_ = parseProcStat(statRaw);
+			if (!stat_) return null;
+			const bootTimeMs = parseProcBootTimeMs(bootRaw);
+			return {
+				pid,
+				startTimeMs: bootTimeMs === null ? null : procStartTimeMs(bootTimeMs, stat_.startTimeTicks),
+				argv: parseProcCmdline(cmdlineRaw),
+			};
+		}
+		if (process.platform === "darwin") {
+			// One field per call: `lstart` and `args` both contain spaces, so a
+			// combined format string cannot be split back apart reliably.
+			const field = async (format: string): Promise<string> => {
+				const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", format]);
+				return stdout.trim();
+			};
+			// `comm` (the executable path) is read alongside `args` so parsePsArgv can
+			// carve the exact argv[0] off the flattened line — a packaged path like
+			// "/Applications/Agent Orchestrator.app/.../ao" contains spaces, and a
+			// naive split would mangle it into "/Applications/Agent" and reject the
+			// genuine daemon.
+			const [lstart, args, comm] = await Promise.all([field("lstart="), field("args="), field("comm=")]);
+			return {
+				pid,
+				startTimeMs: parsePsStartTimeMs(lstart),
+				argv: parsePsArgv(args, comm || null),
+			};
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
+
+/**
+ * H3 (#293): is this live PID the daemon that wrote THIS running.json? A stale
+ * running.json outlives a crash and the OS recycles its PID into somebody else's
+ * editor/database/build process — so PID liveness never authorizes a SIGTERM. Nor
+ * does an `ao`-shaped executable: an ordinary `ao status` CLI call and a second AO
+ * installation both carry that name. We require the AO binary, running the `daemon`
+ * subcommand (the only code path that writes running.json), whose real OS start
+ * time agrees with the `startedAt` the daemon recorded in that very file.
+ *
+ * Returns the verified identity, or null. Every unverifiable answer is null.
+ */
+async function verifiedDaemonIdentity(
+	pid: number,
+	launch: DaemonLaunchSpec,
+	runFileStartedAtMs: number,
+): Promise<ProcessIdentity | null> {
+	// Sequential and kernel-executable-bracketed, NEVER concurrent: two concurrent
+	// reads can straddle an execve() and pair the kernel's answer about the old image
+	// with the new image's argv (cycle-5 1a). Same gathering on both authorization
+	// paths — daemon-signal.ts's port-owner path uses the identical helper.
+	const evidence = await readConsistentProcessEvidence(pid, {
+		readIdentity: readProcessIdentity,
+		readExecutablePath: processExecutablePath,
+	});
+	const identity = evidence.identity;
+	const verdict = verifyDaemonProcessIdentity({
+		...evidence,
+		// A bundled app knows the exact binary it would launch; require that path.
+		// Dev (`go run ./cmd/ao`) and configured launches go through a shell/toolchain,
+		// so their daemon binary path is not launch.command — argv + start time carry
+		// the identity there.
+		requiredExecutablePath: launch.source === "bundled" ? launch.command : null,
+		runFileStartedAtMs,
+		platform: process.platform,
+	});
+	if (!verdict.verified) {
+		if (identity) {
+			console.warn(`AO: pid ${pid} is not this daemon (${verdict.reason}); it will not be signalled.`);
+		}
+		return null;
+	}
+	return identity;
+}
+
+/**
+ * The I/O the takeover's signal step needs. The decision itself — including the
+ * absolute rule that we signal the verified PID and NEVER its process group — lives
+ * in main/daemon-signal.ts, where it is unit-tested. `kill` here is always handed a
+ * positive PID; nothing in this file passes a negative (group) target to
+ * process.kill except killDaemon(), which signals a child WE spawned.
+ *
+ * Both OS reads are supplied on both paths: readProcessIdentity() (argv + start
+ * time, process-supplied) and processExecutablePath() (the kernel's own answer).
+ * The port-owner path used to get only the former, which let an impostor's argv
+ * authorize a SIGTERM (cycle-4 1a).
+ */
+function daemonSignalDeps(launch: DaemonLaunchSpec, runFileStartedAtMs: number): DaemonSignalDeps {
+	return {
+		verifyIdentity: (pid) => verifiedDaemonIdentity(pid, launch, runFileStartedAtMs),
+		readIdentity: (pid) => readProcessIdentity(pid),
+		readExecutablePath: (pid) => processExecutablePath(pid),
+		// Same rule as the run-file path: a bundled app knows the exact binary it would
+		// launch, so pin it. Dev (`go run ./cmd/ao`) and configured launches go through
+		// a shell/toolchain, so their daemon binary path is not launch.command — there
+		// the kernel-reported executable is required to be an `ao` binary, but cannot be
+		// pinned to one path.
+		requiredExecutablePath: launch.source === "bundled" ? launch.command : null,
+		kill: (pid, signal) => process.kill(pid, signal),
+		platform: process.platform,
+		warn: (message) => console.warn(message),
+	};
+}
+
+/** SIGTERM the one process the takeover is authorized to signal (see daemon-signal). */
+function signalTakeoverTarget(
+	pid: number,
+	reason: DaemonSignalReason,
+	launch: DaemonLaunchSpec,
+	runFileStartedAtMs: number,
+): Promise<boolean> {
+	return signalVerifiedDaemon(pid, reason, daemonSignalDeps(launch, runFileStartedAtMs));
+}
+
 async function readDaemonProbe(port: number, endpoint: "healthz" | "readyz"): Promise<DaemonProbe | null> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
@@ -652,58 +835,82 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 
-	// Wedged-orphan kill+replace: both attach paths returned null, but a process
-	// may still be holding the port. The only reachable case here is a hung/wedged
-	// holder whose run-file PID is still alive but is not answering /healthz (e.g.
-	// our own daemon that bound the port and then deadlocked). Two cases are
-	// intentionally NOT handled: an identity-mismatched but healthy AO daemon is
-	// already surfaced as an error status upstream by resolveDaemonFromPort (not
-	// killed here), and a foreign non-AO process holding the port with a dead
-	// run-file PID is not replaced (out of scope). When no holder is detectable,
-	// skip straight to spawn.
+	// Wedged-orphan kill+replace: both attach paths returned null, but a process may
+	// still be holding the port. Signalling is authorized ONLY by the KERNEL's own
+	// answer about the PID — the executable it exec'd (/proc/<pid>/exe, `ps -o comm=`)
+	// — on BOTH candidate paths (H3, #293): the run-file's live PID and the PID a
+	// /healthz response names. Neither a live PID from a stale handshake, nor a PID a
+	// responder reports about itself, nor the argv a process publishes about itself
+	// proves anything: after a crash the OS recycles the run-file's PID into an
+	// unrelated process (the old code SIGTERMed that process's whole group), a
+	// self-reported PID is a claim, and /proc/<pid>/cmdline is written by the process.
+	// signalVerifiedDaemon() re-proves both against the kernel and refuses when it
+	// cannot. It still cannot prove PORT OWNERSHIP (Node has no way to read a
+	// listener's owning PID) — only that what we signal is an AO daemon.
+	// Unverifiable handshakes are discarded (run-file removed, nothing signalled) and
+	// the spawn's own bind failure — plus the advisory naming the PID — is what
+	// surfaces.
 	const orphanProbe = await readDaemonProbe(resolvedDaemonPort(), "healthz");
 	const runFilePath_ = runFilePath();
 	let runFilePid: number | null = null;
+	let runFileStartedAtMs = 0;
 	if (runFilePath_) {
 		try {
-			runFilePid = parseRunFile(await readFile(runFilePath_, "utf8"))?.pid ?? null;
+			const info = parseRunFile(await readFile(runFilePath_, "utf8"));
+			runFilePid = info?.pid ?? null;
+			runFileStartedAtMs = info?.startedAtMs ?? 0;
 		} catch {
 			// run-file absent or unreadable; proceed without a PID.
 		}
 	}
-	// process.kill(pid, 0) does not kill; it throws iff the PID is not live.
-	let holderPidAlive = false;
-	if (runFilePid) {
-		try {
-			process.kill(runFilePid, 0);
-			holderPidAlive = true;
-		} catch {
-			holderPidAlive = false;
+	const runFilePidAlive = runFilePid !== null && processAlive(runFilePid);
+	const action = decidePortHolderAction({
+		probe: orphanProbe,
+		runFilePid,
+		runFilePidAlive,
+		runFilePidIsAoDaemon:
+			runFilePid !== null && runFilePidAlive
+				? (await verifiedDaemonIdentity(runFilePid, launch, runFileStartedAtMs)) !== null
+				: false,
+	});
+	// A live process we refused to signal may still be sitting on the port. Failing
+	// closed is right; failing SILENTLY is not (2c, #293) — remember the PID so the
+	// daemon's eventual bind failure can tell the user what to stop. Windows reaches
+	// this on every wedged daemon: it exposes no identity evidence at all, so
+	// verification can never succeed there.
+	takeoverAdvisory = null;
+	if (action.kind === "discard-stale-handshake") {
+		console.warn(
+			`AO: ignoring stale daemon handshake (pid ${runFilePid ?? "unknown"}${
+				runFilePidAlive ? ", alive but not verifiable as an AO daemon" : ", not running"
+			}); it will not be signalled.`,
+		);
+		if (runFilePidAlive) {
+			takeoverAdvisory = unverifiedPortHolderAdvisory({ pid: runFilePid, port: resolvedDaemonPort() });
+			if (takeoverAdvisory) console.warn(`AO: ${takeoverAdvisory}`);
 		}
 	}
-	if (shouldReplacePortHolder(orphanProbe, holderPidAlive)) {
-		// Use the run-file PID when available; fall back to the probe's reported
-		// PID as a last resort (a wedged daemon may not have written a fresh run-file).
-		const pidToKill = runFilePid ?? orphanProbe?.pid ?? null;
-		if (pidToKill) {
-			try {
-				process.kill(-pidToKill, "SIGTERM");
-			} catch {
-				try {
-					process.kill(pidToKill, "SIGTERM");
-				} catch {
-					// process already gone; proceed
+	if (action.kind === "kill" || action.kind === "discard-stale-handshake") {
+		if (action.kind === "kill") {
+			const signalled = await signalTakeoverTarget(action.pid, action.reason, launch, runFileStartedAtMs);
+			if (!signalled) {
+				// The pre-signal re-check refused (or the process had already exited).
+				// Same deal: if something is still on the port, say which PID it is.
+				takeoverAdvisory = unverifiedPortHolderAdvisory({ pid: action.pid, port: resolvedDaemonPort() });
+			}
+			// Poll until the port is free (probe returns null) or 8 s elapses. Skipped
+			// when the pre-signal re-check refused: nothing was signalled, so there is
+			// nothing to wait for — the spawn's own bind failure surfaces instead.
+			if (signalled) {
+				const TAKEOVER_TIMEOUT_MS = 8_000;
+				const TAKEOVER_POLL_MS = 200;
+				const deadline = Date.now() + TAKEOVER_TIMEOUT_MS;
+				while (Date.now() < deadline) {
+					const still = await readDaemonProbe(resolvedDaemonPort(), "healthz");
+					if (!still) break;
+					await new Promise<void>((r) => setTimeout(r, TAKEOVER_POLL_MS));
 				}
 			}
-		}
-		// Poll until the port is free (probe returns null) or 8 s elapses.
-		const TAKEOVER_TIMEOUT_MS = 8_000;
-		const TAKEOVER_POLL_MS = 200;
-		const deadline = Date.now() + TAKEOVER_TIMEOUT_MS;
-		while (Date.now() < deadline) {
-			const still = await readDaemonProbe(resolvedDaemonPort(), "healthz");
-			if (!still) break;
-			await new Promise<void>((r) => setTimeout(r, TAKEOVER_POLL_MS));
 		}
 		// Remove the stale run-file so the new daemon can write a fresh one.
 		if (runFilePath_) {
@@ -760,6 +967,9 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		portConfirmed = true;
 		stopDiscovery();
+		// The daemon bound the port, so whatever we declined to signal was not in the
+		// way after all: the recovery advice no longer applies.
+		takeoverAdvisory = null;
 		setDaemonStatus({ state: "ready", port });
 
 		// Establish the OS-native liveness link unconditionally: this callback fires
@@ -806,15 +1016,17 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 	// Last resort: neither source confirmed (e.g. an older daemon build). Report
 	// the configured port so the renderer is not stuck on "starting" forever.
+	//
+	// This "ready" is a guess, not an observation, so — unlike reportBoundPort — it
+	// does NOT clear takeoverAdvisory (cycle-5 1b). Nothing here proves the port was
+	// free, so a PID we refused to signal may still be holding it with our child alive
+	// and unable to serve; the advisory naming that PID is carried INTO this banner
+	// (portUnconfirmedReadyStatus) instead of being silently dropped, and it stays set
+	// so a later exit still tells the user the same, still-current thing.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		stopDiscovery();
-		setDaemonStatus({
-			state: "ready",
-			port: resolvedDaemonPort(),
-			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
-			code: "port_unconfirmed",
-		});
+		setDaemonStatus(portUnconfirmedReadyStatus(resolvedDaemonPort(), takeoverAdvisory));
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
 	child.once("error", (error) => {
@@ -822,7 +1034,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
+		setDaemonStatus({
+			state: "error",
+			message: withTakeoverAdvisory(error.message, takeoverAdvisory),
+			code: "spawn_failed",
+		});
 	});
 
 	child.once("exit", (code, signal) => {
@@ -839,9 +1055,13 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			setDaemonStatus({ state: "stopped" });
 			return;
 		}
+		// A replacement daemon that dies right after a refused takeover almost
+		// certainly lost the port bind to the process we declined to signal — tell the
+		// user which PID to stop instead of leaving them with a bare exit code (2c).
+		const exitMessage = signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`;
 		setDaemonStatus({
 			state: "stopped",
-			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			message: withTakeoverAdvisory(exitMessage, takeoverAdvisory),
 			code: "exited",
 			exitCode: code,
 			signal,

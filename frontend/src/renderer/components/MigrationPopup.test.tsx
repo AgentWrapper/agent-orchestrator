@@ -78,6 +78,45 @@ describe("MigrationPopup", () => {
 		expect(screen.queryByText(/Import projects from your earlier AO/i)).not.toBeInTheDocument();
 	});
 
+	// M11 (#293): a THROWN failure (fetch/IPC/query rejection) used to escape
+	// `proceed` with no catch/finally, so busy stayed true forever: Proceed, Skip
+	// and Don't Migrate all stayed disabled and the popup could never be dismissed
+	// or retried. The rejection must be surfaced and busy always cleared.
+	it("a rejected import surfaces the error and re-enables every action", async () => {
+		postMock.mockRejectedValue(new Error("Failed to fetch"));
+		renderPopup();
+		await screen.findByText(/Import projects from your earlier AO/i);
+		await userEvent.click(screen.getByRole("button", { name: "Proceed" }));
+
+		expect(await screen.findByText(/Failed to fetch/i)).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByRole("button", { name: /Retry/i })).toBeEnabled());
+		expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Don't Migrate" })).toBeEnabled();
+		expect(setMigration).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
+	});
+
+	// The same trap sits behind the post-success bookkeeping: a rejected IPC marker
+	// write or query invalidation must not strand the popup in its busy state.
+	it("a rejected marker write after a successful import still clears busy", async () => {
+		setMigration.mockRejectedValue(new Error("app state is read-only"));
+		renderPopup();
+		await screen.findByText(/Import projects from your earlier AO/i);
+		await userEvent.click(screen.getByRole("button", { name: "Proceed" }));
+
+		expect(await screen.findByText(/app state is read-only/i)).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByRole("button", { name: /Retry/i })).toBeEnabled());
+	});
+
+	it("a failed Don't Migrate surfaces the error instead of failing silently", async () => {
+		setMigration.mockRejectedValue(new Error("marker write failed"));
+		renderPopup();
+		await screen.findByText(/Import projects from your earlier AO/i);
+		await userEvent.click(screen.getByRole("button", { name: "Don't Migrate" }));
+
+		expect(await screen.findByText(/marker write failed/i)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Don't Migrate" })).toBeEnabled();
+	});
+
 	it("a failed import shows the lossless reassurance and marks failed", async () => {
 		postMock.mockResolvedValue({ data: undefined, error: { message: "disk full" } });
 		renderPopup();

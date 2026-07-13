@@ -26,35 +26,65 @@ export function MigrationPopup() {
 	const legacyRoot = offer.data?.legacyRoot || "your earlier AO";
 	const nowIso = () => new Date().toISOString();
 
+	// Best-effort failure marker: the popup is already reporting the error to the
+	// user, so a marker write that ALSO fails must not throw on top of it.
+	const recordFailure = async (message: string) => {
+		try {
+			await aoBridge.appState.setMigration({ status: "failed", lastAttemptAt: nowIso(), error: message });
+		} catch {
+			// The marker is bookkeeping; the visible error is the contract.
+		}
+	};
+
+	// Every await here can REJECT, not just return an api error: the fetch can fail
+	// (offline daemon), the IPC bridge can throw, and query invalidation can reject.
+	// Before #293 those rejections escaped `proceed` uncaught, leaving busy=true —
+	// Proceed/Skip/Don't Migrate stayed disabled forever and the popup could not
+	// even be dismissed. One try/catch/finally around the whole operation: surface
+	// the message, always clear busy.
 	const proceed = async () => {
 		setBusy(true);
 		setError(undefined);
-		const { data, error: apiErr } = await apiClient.POST("/api/v1/import");
-		if (apiErr) {
-			const msg = apiErrorMessage(apiErr);
+		try {
+			const { data, error: apiErr } = await apiClient.POST("/api/v1/import");
+			if (apiErr) {
+				const msg = apiErrorMessage(apiErr);
+				setError(msg);
+				await recordFailure(msg);
+				return;
+			}
+			const report = data?.report;
+			await aoBridge.appState.setMigration({
+				status: "completed",
+				lastAttemptAt: nowIso(),
+				completedAt: nowIso(),
+				report: report
+					? { projectsImported: report.projectsImported, projectsSkipped: report.projectsSkipped }
+					: undefined,
+			});
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			await queryClient.invalidateQueries({ queryKey: migrationOfferQueryKey });
+			setSkipped(true);
+		} catch (err) {
+			const msg = apiErrorMessage(err, "Migration failed");
 			setError(msg);
-			await aoBridge.appState.setMigration({ status: "failed", lastAttemptAt: nowIso(), error: msg });
+			await recordFailure(msg);
+		} finally {
 			setBusy(false);
-			return;
 		}
-		const report = data?.report;
-		await aoBridge.appState.setMigration({
-			status: "completed",
-			lastAttemptAt: nowIso(),
-			completedAt: nowIso(),
-			report: report
-				? { projectsImported: report.projectsImported, projectsSkipped: report.projectsSkipped }
-				: undefined,
-		});
-		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		await queryClient.invalidateQueries({ queryKey: migrationOfferQueryKey });
-		setSkipped(true);
-		setBusy(false);
 	};
 
 	const dontMigrate = async () => {
-		await aoBridge.appState.setMigration({ status: "declined", lastAttemptAt: nowIso() });
-		await queryClient.invalidateQueries({ queryKey: migrationOfferQueryKey });
+		setBusy(true);
+		setError(undefined);
+		try {
+			await aoBridge.appState.setMigration({ status: "declined", lastAttemptAt: nowIso() });
+			await queryClient.invalidateQueries({ queryKey: migrationOfferQueryKey });
+		} catch (err) {
+			setError(apiErrorMessage(err, "Could not record your choice"));
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	return (

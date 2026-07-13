@@ -2,6 +2,7 @@ import { createFileRoute, Outlet, useMatchRoute, useNavigate } from "@tanstack/r
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef } from "react";
 import { BuildFreshnessBanner } from "../components/BuildFreshnessBanner";
+import { DaemonAdvisoryBanner } from "../components/DaemonAdvisoryBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
@@ -277,6 +278,11 @@ function ShellLayout() {
 			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
 				<ShellTopbar />
 				<BuildFreshnessBanner />
+				{/* Whatever the supervisor has to say about the daemon — notably the
+              takeover refusal advisory naming a PID the user must stop themselves
+              (#293). Refusing to signal an unverifiable process is only defensible
+              if the user is TOLD; the sidebar tooltip showed the bare state. */}
+				<DaemonAdvisoryBanner status={daemonStatus} />
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}

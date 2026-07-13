@@ -207,6 +207,9 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		sessionId: session.id,
 		active,
 		poppedOut,
+		// Same contract as SessionView's hook call: a terminated session's native
+		// view is torn down rather than parked hidden forever (M12, #293).
+		terminated: session.status === "terminated",
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
 	});

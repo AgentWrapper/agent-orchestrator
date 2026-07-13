@@ -73,6 +73,16 @@ type ShellLike = {
 
 type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPreferences }) => BrowserViewLike;
 
+/**
+ * How many session-scoped WebContentsViews may exist at once (M12, #293). Each one
+ * is a live Chromium page: memory, timers, sockets, background network. Hidden
+ * views are kept warm so returning to a session is instant, but they must not
+ * accumulate for every session a long-running dashboard ever visited. Beyond this
+ * cap the least recently used view is destroyed; re-entering that session simply
+ * re-creates it.
+ */
+export const DEFAULT_MAX_BROWSER_VIEWS = 6;
+
 export type BrowserViewHostOptions = {
 	mainWindow: BrowserWindowLike;
 	ipcMain: Pick<IpcMain, "handle" | "on" | "removeHandler" | "off">;
@@ -80,6 +90,8 @@ export type BrowserViewHostOptions = {
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
+	/** Bound on live session views; defaults to {@link DEFAULT_MAX_BROWSER_VIEWS}. */
+	maxViews?: number;
 };
 
 export type BrowserViewHost = {
@@ -154,13 +166,21 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 }
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
+	// Map iteration order is insertion order, so re-inserting on touch makes this a
+	// least-recently-used list: the first key is the coldest view.
 	const entries = new Map<string, BrowserEntry>();
 	const viewIdsByWebContentsId = new Map<number, string>();
 	const ipcDisposers: Array<() => void> = [];
+	const maxViews = Math.max(1, options.maxViews ?? DEFAULT_MAX_BROWSER_VIEWS);
 
 	const ensure = (viewId: string): BrowserEntry => {
 		const existing = entries.get(viewId);
-		if (existing) return existing;
+		if (existing) {
+			// Refresh recency so an actively used view is never the eviction victim.
+			entries.delete(viewId);
+			entries.set(viewId, existing);
+			return existing;
+		}
 
 		const view = new options.WebContentsView({
 			webPreferences: {
@@ -180,7 +200,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
+		evictColdViews(viewId);
 		return entry;
+	};
+
+	// Destroy least-recently-used views until the map is back within its bound. The
+	// just-ensured view is never a candidate, even at maxViews === 1.
+	const evictColdViews = (keepViewId: string): void => {
+		while (entries.size > maxViews) {
+			const coldest = [...entries.keys()].find((id) => id !== keepViewId);
+			if (!coldest) return;
+			destroy(coldest);
+		}
 	};
 
 	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput, zoomFactor = 1): void => {
@@ -199,14 +230,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.view.setVisible?.(bounds.width > 0 && bounds.height > 0);
 	};
 
+	// Every failure mode here — a malformed target, a blocked scheme, a refused
+	// connection — must come back as a nav state the panel can render (M14, #293).
+	// Rejecting across IPC only produced an unhandled rejection in the renderer and
+	// a panel that silently ignored the user's input.
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
 		const entry = ensure(viewId);
 		cancelAnnotation(options, entry, "navigation");
-		const normalized = normalizeBrowserURL(url);
-		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
-			throw new Error("Unsupported browser URL");
+		try {
+			const normalized = normalizeBrowserURL(url);
+			if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
+				throw new Error("Unsupported browser URL");
+			}
+			await entry.view.webContents.loadURL(normalized.href);
+		} catch (error) {
+			return failNavState(options, entry, error);
 		}
-		await entry.view.webContents.loadURL(normalized.href);
 		return pushNavState(options, entry);
 	};
 
@@ -219,8 +258,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		cancelAnnotation(options, entry, "navigation");
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
-		await entry.view.webContents.loadURL("about:blank");
-		entry.view.webContents.clearHistory();
+		try {
+			await entry.view.webContents.loadURL("about:blank");
+			entry.view.webContents.clearHistory();
+		} catch (error) {
+			return failNavState(options, entry, error);
+		}
 		return pushNavState(options, entry);
 	};
 
@@ -247,7 +290,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = entries.get(viewId);
 		if (!entry) return emptyNavState(viewId);
 		if (cancelForNavigation) cancelAnnotation(options, entry, "navigation");
-		action(entry.view.webContents);
+		try {
+			action(entry.view.webContents);
+		} catch (error) {
+			return failNavState(options, entry, error);
+		}
 		return pushNavState(options, entry);
 	};
 
@@ -398,7 +445,12 @@ function isRendererOwnedViewId(event: IpcMainInvokeEvent, viewId: string): boole
 function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
 	contents.setWindowOpenHandler(({ url }) => {
 		if (isAllowedBrowserURL(url, options.rendererOrigin)) {
-			void options.shell.openExternal(url);
+			// Fire-and-forget would reject unhandled when the OS has no handler for the
+			// URL — and the user would watch a click do nothing. Observe it like every
+			// other navigation promise and surface the failure in the panel (M14, #293).
+			void Promise.resolve(options.shell.openExternal(url)).catch((error: unknown) => {
+				failNavState(options, entry, error);
+			});
 		}
 		return { action: "deny" };
 	});
@@ -425,7 +477,16 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 		update();
 	});
 	contents.on("did-stop-loading", update);
-	contents.on("did-fail-load", (_event, _errorCode, errorDescription) => {
+	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+		// Chromium fires did-fail-load with -3 / ERR_ABORTED for the same stopped,
+		// redirected and superseded navigations that reject loadURL — typing a second
+		// URL while the first is still loading aborts the first. The rejection path
+		// already suppresses those; the event path must too, or the abort still lands
+		// in the panel as a visible error (M14 follow-up, #293).
+		if (isAbortedLoadFailure(errorCode, errorDescription)) {
+			pushNavState(options, entry);
+			return;
+		}
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		options.mainWindow.webContents.send("browser:navState", entry.state);
 	});
@@ -440,6 +501,42 @@ function cancelAnnotation(
 	entry.annotationEnabled = false;
 	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
 	options.mainWindow.webContents.send("browser:annotation:canceled", { viewId: entry.state.viewId, reason });
+}
+
+/**
+ * Chromium aborts the in-flight load on a redirect, a user stop, or a second
+ * navigation issued while the first is still resolving. loadURL rejects with
+ * ERR_ABORTED in all three, none of which is a failure the user must be told
+ * about — did-fail-load reports genuine load failures separately.
+ */
+function isAbortedNavigation(error: unknown): boolean {
+	return error instanceof Error && error.message.includes("ERR_ABORTED");
+}
+
+/** net::ERR_ABORTED — the did-fail-load event form of the same non-failure. */
+const ERR_ABORTED_CODE = -3;
+
+function isAbortedLoadFailure(errorCode: unknown, errorDescription: unknown): boolean {
+	if (errorCode === ERR_ABORTED_CODE) return true;
+	return typeof errorDescription === "string" && errorDescription.includes("ERR_ABORTED");
+}
+
+function navErrorMessage(error: unknown): string {
+	if (error instanceof Error && error.message) return error.message;
+	if (typeof error === "string" && error !== "") return error;
+	return "Navigation failed";
+}
+
+/**
+ * Turn a navigation/control failure into the visible nav state (M14, #293): read
+ * whatever the page is now, stamp the error, push it to the renderer, return it to
+ * the caller. Aborted loads carry no error.
+ */
+function failNavState(options: BrowserViewHostOptions, entry: BrowserEntry, error: unknown): BrowserNavState {
+	if (isAbortedNavigation(error)) return pushNavState(options, entry);
+	entry.state = { ...readNavState(entry), error: navErrorMessage(error) };
+	options.mainWindow.webContents.send("browser:navState", entry.state);
+	return entry.state;
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {
