@@ -9,7 +9,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -86,7 +86,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
-		intakeAssignee: intake.assignee ?? "",
+		intakeLabels: intake.labels ?? [],
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -107,17 +107,16 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
 		repo: form.intakeRepo,
-		assignee: form.intakeAssignee,
+		labels: form.intakeLabels,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
 			intakeRepo: patch.repo ?? f.intakeRepo,
-			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+			intakeLabels: patch.labels ?? f.intakeLabels,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
-	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -179,10 +178,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setReplacementError(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
-					return;
-				}
-				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
 					return;
 				}
 				setValidationError(null);
@@ -342,7 +337,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-control">Tracker intake</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
+					<IntakeFields
+						form={intakeForm}
+						onChange={patchIntake}
+						repoPreview={{ value: effectiveIntakeRepo }}
+						projectId={projectId}
+					/>
 				</CardContent>
 			</Card>
 

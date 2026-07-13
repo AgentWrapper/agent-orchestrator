@@ -52,6 +52,18 @@ type TrackerRepo struct {
 	Native   string          `json:"native"`
 }
 
+// TrackerUser identifies the account currently authenticated with a tracker.
+type TrackerUser struct {
+	Login string `json:"login"`
+}
+
+// TrackerLabel is repository-owned label metadata used by intake filters.
+type TrackerLabel struct {
+	Name        string `json:"name"`
+	Color       string `json:"color"`
+	Description string `json:"description,omitempty"`
+}
+
 // ListStateFilter narrows Tracker.List results by the provider's coarse
 // state (open vs closed). It is intentionally NOT the 5-value normalized
 // enum — finer filtering (e.g. "only in-review issues") goes through the
@@ -79,8 +91,6 @@ type ListFilter struct {
 }
 
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
-// Enabled requires an explicit assignee eligibility rule so turning intake on
-// cannot accidentally drain an entire issue backlog.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
@@ -88,9 +98,8 @@ type TrackerIntakeConfig struct {
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
-	// Assignee narrows eligible issues to one assignee. Provider-specific values
-	// such as "*" are passed through unchanged.
-	Assignee string `json:"assignee,omitempty"`
+	// Labels narrows intake to issues carrying every selected repository label.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // WithDefaults fills the provider only when intake is enabled. Disabled intake
@@ -102,7 +111,7 @@ func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
 	return c
 }
 
-// Validate rejects accidental broad intake and unknown providers.
+// Validate rejects unknown providers and malformed repository scopes.
 func (c TrackerIntakeConfig) Validate() error {
 	if !c.Enabled {
 		return nil
@@ -114,11 +123,13 @@ func (c TrackerIntakeConfig) Validate() error {
 	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
 		return err
 	}
-	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
-		return err
-	}
-	if strings.TrimSpace(c.Assignee) == "" {
-		return fmt.Errorf("trackerIntake: assignee is required when enabled")
+	for index, label := range c.Labels {
+		if strings.TrimSpace(label) == "" {
+			return fmt.Errorf("trackerIntake.labels: label names must not be empty")
+		}
+		if err := validateNoWhitespaceField(fmt.Sprintf("trackerIntake.labels[%d]", index), label); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -5,8 +5,8 @@ import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
-import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import type { ProjectKind } from "../types/workspace";
+import { buildIntake, type IntakeForm, IntakeFields } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -21,7 +21,7 @@ export type CreateProjectAgentSelection = {
 	trackerIntake?: TrackerIntakeConfig;
 };
 
-const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
+const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", labels: [] };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
@@ -114,8 +114,7 @@ export function CreateProjectAgentSheet({
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
-	const intakeIncomplete = intakeNeedsRule(intake);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isBusy && !isLoadingAgents;
+	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isBusy && !isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
 
 	useEffect(() => {

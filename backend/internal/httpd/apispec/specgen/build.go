@@ -142,6 +142,12 @@ var schemaNames = map[string]string{
 	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
+	"ControllersTrackerIntakeIdentityResponse":    "TrackerIntakeIdentityResponse",
+	"ControllersTrackerIntakeLabelsQuery":         "TrackerIntakeLabelsQuery",
+	"ControllersTrackerIntakeLabelsResponse":      "TrackerIntakeLabelsResponse",
+	"ControllersTrackerIntakePreviewRequest":      "TrackerIntakePreviewRequest",
+	"ControllersTrackerIntakePreviewResponse":     "TrackerIntakePreviewResponse",
+	"DomainTrackerLabel":                          "TrackerLabel",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
@@ -300,7 +306,47 @@ func operations() []operation {
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, importOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, trackerIntakeOperations()...)
 	return ops
+}
+
+func trackerIntakeOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/tracker-intake/github/user", id: "getTrackerIntakeIdentity", tag: "tracker-intake",
+			summary: "Return the authenticated GitHub account bound to issue intake",
+			resps: []respUnit{
+				{http.StatusOK, controllers.TrackerIntakeIdentityResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/tracker-intake/github/labels", id: "listTrackerIntakeLabels", tag: "tracker-intake",
+			summary:    "List labels from the project's GitHub repository",
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.TrackerIntakeLabelsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.TrackerIntakeLabelsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/tracker-intake/github/preview", id: "previewTrackerIntakeIssues", tag: "tracker-intake",
+			summary:    "Count open GitHub issues matching proposed intake filters",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    controllers.TrackerIntakePreviewRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.TrackerIntakePreviewResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func agentOperations() []operation {

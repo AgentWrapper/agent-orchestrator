@@ -12,6 +12,8 @@ import (
 //     to hydrate the agent prompt.
 //   - List returns a filtered slice of issues in a repo, used when the SM
 //     needs to enumerate work (e.g. backlog view, status sweeps).
+//   - AuthenticatedUser returns the tracker account bound to intake.
+//   - ListLabels returns repository-owned label metadata for filter controls.
 //   - Preflight verifies the configured credential is actually valid against
 //     the provider so daemons fail fast at startup, not at first request.
 //
@@ -21,5 +23,7 @@ import (
 type Tracker interface {
 	Get(ctx context.Context, id domain.TrackerID) (domain.Issue, error)
 	List(ctx context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error)
+	AuthenticatedUser(ctx context.Context) (domain.TrackerUser, error)
+	ListLabels(ctx context.Context, repo domain.TrackerRepo) ([]domain.TrackerLabel, error)
 	Preflight(ctx context.Context) error
 }

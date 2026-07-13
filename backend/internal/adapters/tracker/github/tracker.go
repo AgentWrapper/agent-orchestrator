@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -88,10 +87,9 @@ type Options struct {
 // Tracker implements ports.Tracker against the GitHub REST API.
 //
 // Construction performs a fail-fast token presence check (no network call).
-// The first Preflight call validates the token against GitHub itself; a
-// successful preflight is cached for the lifetime of the Tracker so repeat
-// calls are free, while failures are intentionally NOT cached so a
-// transient startup glitch doesn't permanently brick the adapter.
+// The first AuthenticatedUser or Preflight call validates the token against
+// GitHub and caches the returned identity. Failures are intentionally not
+// cached so a transient startup glitch remains recoverable.
 type Tracker struct {
 	http      *http.Client
 	tokens    TokenSource
@@ -103,18 +101,23 @@ type Tracker struct {
 	// eviction is needed here.
 	listCacheMu sync.Mutex
 	listCache   map[string]listCacheEntry
+	labelCache  map[string]labelCacheEntry
 
-	// preflightOK is the fast-path: once a Preflight succeeds, every
-	// subsequent call short-circuits via atomic.Load without touching the
-	// mutex. preflightMu serializes the one-time network call so concurrent
-	// first-callers don't all fire GET /user against GitHub.
-	preflightOK atomic.Bool
-	preflightMu sync.Mutex
+	// identityMu serializes the one-time GET /user call and protects the cached
+	// identity so the observer and API can share one adapter safely.
+	identityMu        sync.Mutex
+	authenticatedUser *domain.TrackerUser
 }
 
 type listCacheEntry struct {
 	etag     string
 	issues   []domain.Issue
+	nextPath string
+}
+
+type labelCacheEntry struct {
+	etag     string
+	labels   []domain.TrackerLabel
 	nextPath string
 }
 
@@ -129,11 +132,12 @@ func New(opts Options) (*Tracker, error) {
 		return nil, err
 	}
 	t := &Tracker{
-		http:      opts.HTTPClient,
-		tokens:    src,
-		baseURL:   opts.BaseURL,
-		userAgent: opts.UserAgent,
-		listCache: map[string]listCacheEntry{},
+		http:       opts.HTTPClient,
+		tokens:     src,
+		baseURL:    opts.BaseURL,
+		userAgent:  opts.UserAgent,
+		listCache:  map[string]listCacheEntry{},
+		labelCache: map[string]labelCacheEntry{},
 	}
 	if t.http == nil {
 		t.http = &http.Client{Timeout: 30 * time.Second}
@@ -172,7 +176,9 @@ type ghIssue struct {
 }
 
 type ghLabel struct {
-	Name string `json:"name"`
+	Name        string `json:"name"`
+	Color       string `json:"color"`
+	Description string `json:"description"`
 }
 
 type ghUser struct {
@@ -389,9 +395,100 @@ func cloneIssues(in []domain.Issue) []domain.Issue {
 	return out
 }
 
+// ListLabels returns every label configured on a GitHub repository. Each page
+// is conditionally revalidated with its ETag so callers can refresh cheaply.
+func (t *Tracker) ListLabels(ctx context.Context, repo domain.TrackerRepo) ([]domain.TrackerLabel, error) {
+	if repo.Provider != domain.TrackerProviderGitHub {
+		return nil, fmt.Errorf("%w: provider=%q", ErrWrongProvider, repo.Provider)
+	}
+	owner, repoName, err := parseGitHubRepo(repo.Native)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/repos/%s/%s/labels?per_page=%d", owner, repoName, listPageSize)
+	labels := make([]domain.TrackerLabel, 0)
+	for page := 0; path != ""; page++ {
+		if page >= maxListPages {
+			return nil, fmt.Errorf("github tracker: label pagination exceeded %d pages", maxListPages)
+		}
+		t.listCacheMu.Lock()
+		cached, hasCached := t.labelCache[path]
+		t.listCacheMu.Unlock()
+
+		resp, etag, nextPath, notModified, err := t.roundTrip(ctx, http.MethodGet, path, nil, cached.etag)
+		if err != nil {
+			return nil, err
+		}
+		if notModified {
+			if !hasCached {
+				return nil, fmt.Errorf("github tracker: unexpected 304 for uncached labels")
+			}
+			labels = append(labels, cloneLabels(cached.labels)...)
+			path = cached.nextPath
+			continue
+		}
+		var raw []ghLabel
+		if err := json.Unmarshal(resp, &raw); err != nil {
+			return nil, fmt.Errorf("github tracker: decode labels: %w", err)
+		}
+		pageLabels := make([]domain.TrackerLabel, 0, len(raw))
+		for _, label := range raw {
+			if strings.TrimSpace(label.Name) == "" {
+				continue
+			}
+			pageLabels = append(pageLabels, domain.TrackerLabel{
+				Name:        label.Name,
+				Color:       label.Color,
+				Description: label.Description,
+			})
+		}
+		t.listCacheMu.Lock()
+		if etag == "" {
+			delete(t.labelCache, path)
+		} else {
+			t.labelCache[path] = labelCacheEntry{etag: etag, labels: cloneLabels(pageLabels), nextPath: nextPath}
+		}
+		t.listCacheMu.Unlock()
+		labels = append(labels, pageLabels...)
+		path = nextPath
+	}
+	return labels, nil
+}
+
+func cloneLabels(in []domain.TrackerLabel) []domain.TrackerLabel {
+	out := make([]domain.TrackerLabel, len(in))
+	copy(out, in)
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // Preflight
 // ---------------------------------------------------------------------------
+
+// AuthenticatedUser returns the login accepted by GitHub's GET /user endpoint.
+// Successful checks are cached for the lifetime of the Tracker. Failures are
+// not cached so callers can recover from transient GitHub errors.
+func (t *Tracker) AuthenticatedUser(ctx context.Context) (domain.TrackerUser, error) {
+	t.identityMu.Lock()
+	defer t.identityMu.Unlock()
+	if t.authenticatedUser != nil {
+		return *t.authenticatedUser, nil
+	}
+	body, err := t.do(ctx, http.MethodGet, "/user", nil)
+	if err != nil {
+		return domain.TrackerUser{}, err
+	}
+	var user domain.TrackerUser
+	if err := json.Unmarshal(body, &user); err != nil {
+		return domain.TrackerUser{}, fmt.Errorf("github tracker: decode authenticated user: %w", err)
+	}
+	user.Login = strings.TrimSpace(user.Login)
+	if user.Login == "" {
+		return domain.TrackerUser{}, errors.New("github tracker: authenticated user response has no login")
+	}
+	t.authenticatedUser = &user
+	return user, nil
+}
 
 // Preflight verifies the configured token is currently accepted by GitHub
 // (one GET /user). It does NOT prove the token has the repo scope or
@@ -401,27 +498,10 @@ func cloneIssues(in []domain.Issue) []domain.Issue {
 // "token can do everything the SM will ask of it." Per-repo authorization
 // is detected lazily at the first Get/List against that repo.
 //
-// Successful checks are cached for the lifetime of the Tracker via a
-// double-checked atomic+mutex pattern: the hot path is one atomic.Load
-// with no contention; concurrent first-callers serialize on the mutex so
-// only one GET /user is in flight. Failures are intentionally NOT cached
-// so a transient startup glitch is recoverable on a subsequent call.
+// Successful checks share the cached identity used by AuthenticatedUser.
 func (t *Tracker) Preflight(ctx context.Context) error {
-	if t.preflightOK.Load() {
-		return nil
-	}
-	t.preflightMu.Lock()
-	defer t.preflightMu.Unlock()
-	// Re-check after acquiring the lock — another goroutine may have raced
-	// us through the network call and stored success while we were waiting.
-	if t.preflightOK.Load() {
-		return nil
-	}
-	if _, err := t.do(ctx, http.MethodGet, "/user", nil); err != nil {
-		return err
-	}
-	t.preflightOK.Store(true)
-	return nil
+	_, err := t.AuthenticatedUser(ctx)
+	return err
 }
 
 // ---------------------------------------------------------------------------

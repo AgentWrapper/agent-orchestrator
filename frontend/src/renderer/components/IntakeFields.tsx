@@ -1,5 +1,8 @@
 import { Info } from "lucide-react";
 import type { components } from "../../api/schema";
+import { useTrackerIntakeIdentity } from "../hooks/useTrackerIntakeIdentity";
+import { LabelPicker } from "./LabelPicker";
+import { MatchingIssuesPreview } from "./MatchingIssuesPreview";
 import { Label } from "./ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
@@ -12,20 +15,13 @@ type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 export type IntakeForm = {
 	enabled: boolean;
 	repo: string;
-	assignee: string;
+	labels: string[];
 };
 
 // Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
 // backend's openapi enum). Adding Linear/Jira later means: the backend enum
 // grows, IntakeFields gains a provider <Select> + per-provider scope fields,
 // and buildIntake switches the scope field it emits.
-
-// intakeNeedsRule mirrors the backend guard (TrackerIntakeConfig.Validate):
-// enabling intake requires an assignee so it cannot drain an entire issue
-// backlog. v1 intake is assignee-only.
-export function intakeNeedsRule(form: IntakeForm): boolean {
-	return form.enabled && form.assignee.trim() === "";
-}
 
 // buildIntake produces the payload field, scrubbing empties so a disabled or
 // blank intake serializes to `undefined` (omit) rather than an empty object the
@@ -35,12 +31,12 @@ export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 		enabled: form.enabled || undefined,
 		provider: form.enabled ? "github" : undefined,
 		repo: form.repo.trim() || undefined,
-		assignee: form.assignee.trim() || undefined,
+		labels: form.labels.length > 0 ? form.labels : undefined,
 	};
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
 }
 
-// deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (observer.go):
+// deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (scope.go):
 // derive "owner/repo" from a git origin URL for display only. The daemon does
 // the authoritative derivation server-side at poll time; this is purely so a
 // settings card can show which repo intake will actually poll.
@@ -49,10 +45,14 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 	if (!trimmed) return undefined;
 	let path: string | undefined;
 	if (trimmed.startsWith("git@")) {
-		path = trimmed.split(":")[1];
+		const [hostPart, repoPath] = trimmed.slice("git@".length).split(":", 2);
+		if (!isGitHubHost(hostPart)) return undefined;
+		path = repoPath;
 	} else {
 		try {
-			path = new URL(trimmed).pathname;
+			const url = new URL(trimmed);
+			if (!isGitHubHost(url.host)) return undefined;
+			path = url.pathname;
 		} catch {
 			path = trimmed;
 		}
@@ -68,6 +68,14 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 	return owner && repo ? `${owner}/${repo}` : undefined;
 }
 
+function isGitHubHost(host: string): boolean {
+	const normalized = host
+		.trim()
+		.toLowerCase()
+		.replace(/^www\./, "");
+	return normalized === "github.com" || normalized.endsWith(".github.com") || normalized.endsWith(".ghe.io");
+}
+
 // IntakeFields renders the shared "Tracker intake" controls: an enable checkbox
 // that reveals the eligibility inputs. It is deliberately card-agnostic (no
 // <Card> wrapper) so the create sheet and the settings form can frame it
@@ -81,16 +89,33 @@ export function IntakeFields({
 	form,
 	onChange,
 	repoPreview,
+	projectId,
 	compact = false,
 }: {
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
 	repoPreview?: { value?: string };
+	projectId?: string;
 	// compact drops the descriptive/help prose and folds the explanation into an
 	// info-icon tooltip — used by the create-project sheet, which stays minimal.
 	compact?: boolean;
 }) {
-	const needsRule = intakeNeedsRule(form);
+	const showDetails = form.enabled && !compact;
+	const identityQuery = useTrackerIntakeIdentity(showDetails);
+	const assignee = identityQuery.data ? (
+		<a
+			href={`https://github.com/${identityQuery.data.login}`}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="truncate text-[13px] text-accent hover:underline"
+		>
+			{identityQuery.data.login}
+		</a>
+	) : (
+		<span className="truncate text-[13px] text-muted-foreground">
+			{identityQuery.isError ? "Could not resolve authenticated GitHub user" : "Resolving authenticated GitHub user…"}
+		</span>
+	);
 	return (
 		<div className="flex flex-col gap-4">
 			{!compact && (
@@ -125,38 +150,40 @@ export function IntakeFields({
 					</TooltipProvider>
 				)}
 			</div>
-			{form.enabled && (
+			{showDetails && (
 				<>
-					{repoPreview && (
-						<IntakeField label="Repository">
-							{repoPreview.value ? (
-								<a
-									href={`https://github.com/${repoPreview.value}`}
-									target="_blank"
-									rel="noopener noreferrer"
-									className="text-control text-accent hover:underline"
-								>
-									{repoPreview.value}
-								</a>
-							) : (
-								<span className="text-control text-muted-foreground">
-									Could not detect a GitHub repo from this project's git origin.
-								</span>
-							)}
-						</IntakeField>
+					<div className={repoPreview ? "grid grid-cols-2 gap-3" : undefined}>
+						{repoPreview && (
+							<IntakeField label="Repository">
+								{repoPreview.value ? (
+									<a
+										href={`https://github.com/${repoPreview.value}`}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="truncate text-[13px] text-accent hover:underline"
+									>
+										{repoPreview.value}
+									</a>
+								) : (
+									<span className="truncate text-[13px] text-muted-foreground">
+										Could not detect a GitHub repo from this project's git origin.
+									</span>
+								)}
+							</IntakeField>
+						)}
+						<IntakeField label="Assignee">{assignee}</IntakeField>
+					</div>
+					{identityQuery.isError && !compact && (
+						<p className="text-[12px] leading-5 text-error">Check GitHub authentication and try again.</p>
 					)}
-					<IntakeField label="Assignee" htmlFor="intakeAssignee">
-						<input
-							id="intakeAssignee"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.assignee}
-							onChange={(e) => onChange({ assignee: e.target.value })}
-							placeholder="type username or * for any"
-						/>
-					</IntakeField>
-					{!compact && needsRule && (
-						<p className="text-xs leading-row text-error">Enabling intake requires an assignee.</p>
-					)}
+					{projectId ? (
+						<>
+							<IntakeField label="Labels">
+								<LabelPicker projectId={projectId} value={form.labels} onChange={(labels) => onChange({ labels })} />
+							</IntakeField>
+							<MatchingIssuesPreview projectId={projectId} labels={form.labels} />
+						</>
+					) : null}
 				</>
 			)}
 		</div>
@@ -165,8 +192,8 @@ export function IntakeFields({
 
 function IntakeField({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
 	return (
-		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={htmlFor} className="text-xs text-muted-foreground">
+		<div className="flex min-w-0 flex-col gap-1.5">
+			<Label htmlFor={htmlFor} className="text-[12px] text-muted-foreground">
 				{label}
 			</Label>
 			{children}

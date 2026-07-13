@@ -87,10 +87,10 @@ type roleOverride struct {
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
 type trackerIntakeConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	Assignee string `json:"assignee,omitempty"`
+	Enabled  bool     `json:"enabled,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+	Repo     string   `json:"repo,omitempty"`
+	Labels   []string `json:"labels,omitempty"`
 }
 
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
@@ -132,7 +132,7 @@ type projectSetConfigOptions struct {
 	postCreate        []string
 	trackerIntake     bool
 	trackerRepo       string
-	trackerAssignee   string
+	trackerLabels     []string
 	configJSON        string
 	clear             bool
 	json              bool
@@ -323,7 +323,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
 	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
 	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
-	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.StringArrayVar(&opts.trackerLabels, "tracker-label", nil, "GitHub label required for issue intake (repeatable)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -366,7 +366,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 			Enabled:  opts.trackerIntake,
 			Provider: trackerProviderForFlags(opts),
 			Repo:     opts.trackerRepo,
-			Assignee: opts.trackerAssignee,
+			Labels:   opts.trackerLabels,
 		},
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
@@ -376,7 +376,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 }
 
 func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
+	if opts.trackerIntake || opts.trackerRepo != "" || len(opts.trackerLabels) > 0 {
 		return "github"
 	}
 	return ""
