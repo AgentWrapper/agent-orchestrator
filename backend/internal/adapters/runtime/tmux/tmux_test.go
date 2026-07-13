@@ -284,10 +284,13 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 }
 
 func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
-	// Use a specialized fakeRunner that returns an exit error only for the 3rd call.
+	// Every setup command succeeds; only the has-session liveness probe reports the
+	// session as gone, so Create must fail on the liveness check specifically.
 	r2, _ := newTestRuntime(0)
-	fr3 := &fakeRunnerSelectiveErr{exitErrAt: 3}
-	fr3.outputs = [][]byte{nil, nil, nil, []byte("can't find session: sess-1")}
+	fr3 := &fakeRunnerSelectiveErr{
+		exitErrOn: "has-session",
+		errOutput: []byte("can't find session: sess-1"),
+	}
 	r2.runner = fr3
 
 	_, err := r2.Create(context.Background(), ports.RuntimeConfig{
@@ -297,6 +300,21 @@ func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Create: got nil, want error when session not alive after create")
+	}
+	// The failure must come from the liveness probe, not from an earlier setup
+	// command. Without this the test would still pass if a newly inserted tmux
+	// call took the injected error first — which is exactly what happened once.
+	if !strings.Contains(err.Error(), "exited before ready") {
+		t.Fatalf("Create err = %v, want the liveness-check failure (exited before ready)", err)
+	}
+	sawHasSession := false
+	for _, c := range fr3.calls {
+		if len(c.args) > 0 && c.args[0] == "has-session" {
+			sawHasSession = true
+		}
+	}
+	if !sawHasSession {
+		t.Fatal("Create never reached the has-session liveness probe")
 	}
 	// Verify Destroy was called (kill-session).
 	hasKill := false
@@ -310,25 +328,23 @@ func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	}
 }
 
-// fakeRunnerSelectiveErr returns an exec.ExitError for the call at index exitErrAt.
+// fakeRunnerSelectiveErr returns an exec.ExitError (carrying errOutput) for the
+// call whose tmux subcommand is exitErrOn, and succeeds for every other call.
+// Matching on the subcommand rather than a call index is deliberate: Create's
+// command sequence grows over time, and an index would silently retarget the
+// injected failure onto whichever command was inserted before the intended one.
 type fakeRunnerSelectiveErr struct {
 	calls     []runnerCall
-	outputs   [][]byte
-	exitErrAt int
+	exitErrOn string
+	errOutput []byte
 }
 
 func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
-	idx := len(f.calls)
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
-	var out []byte
-	if len(f.outputs) > 0 {
-		out = f.outputs[0]
-		f.outputs = f.outputs[1:]
+	if len(args) > 0 && args[0] == f.exitErrOn {
+		return f.errOutput, &exec.ExitError{}
 	}
-	if idx == f.exitErrAt {
-		return out, &exec.ExitError{}
-	}
-	return out, nil
+	return nil, nil
 }
 
 // -- Destroy tests --
