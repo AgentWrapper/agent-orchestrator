@@ -11,7 +11,6 @@ import { useTranslation } from "react-i18next";
 
 export const updateSettingsQueryKey = ["update-settings"] as const;
 
-
 // UpdatesSection is the Global Settings card for the desktop auto-update channel
 // (issue #2207). It reads/writes ~/.ao/update-settings.json via the main process
 // (the same file auto-updater.ts consumes), letting a user pick Stable vs Nightly.
@@ -20,7 +19,7 @@ export function UpdatesSection() {
 	const { t } = useTranslation();
 	const CHANNEL_OPTIONS: { value: UpdateChannel; label: string }[] = [
 		{ value: "latest", label: t("settings.updates.stable") },
-		{ value: "nightly", label:  t("settings.updates.nightly") },
+		{ value: "nightly", label: t("settings.updates.nightly") },
 	];
 	const queryClient = useQueryClient();
 	const query = useQuery({
@@ -90,21 +89,21 @@ export function UpdatesSection() {
 				</div>
 
 				{form.channel === "nightly" && form.enabled && (
-					<p className="text-xs leading-row text-warning">
-						{t("settings.updates.nightlyWarning")}
-					</p>
+					<p className="text-xs leading-row text-warning">{t("settings.updates.nightlyWarning")}</p>
 				)}
 
 				<div className="flex items-center gap-3">
 					<Button type="button" variant="primary" onClick={() => save.mutate(form)} disabled={save.isPending}>
-						{save.isPending? t("settings.updates.saving") : t("settings.updates.saveChanges")}
+						{save.isPending ? t("settings.updates.saving") : t("settings.updates.saveChanges")}
 					</Button>
 					{save.isError && (
 						<span className="text-xs text-error">
 							{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}
 						</span>
 					)}
-					{savedAt && !save.isPending && !save.isError && <span className="text-xs text-success">{t("settings.updates.saved")}</span>}
+					{savedAt && !save.isPending && !save.isError && (
+						<span className="text-xs text-success">{t("settings.updates.saved")}</span>
+					)}
 				</div>
 
 				<UpdateActions />
@@ -151,7 +150,9 @@ function UpdateActions() {
 
 				{status.state === "available" && (
 					<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-						{status.version? t("settings.updates.updateTo", {version: `v${status.version}`}) : t("settings.updates.updateLatest")}
+						{status.version
+							? t("settings.updates.updateTo", { version: `v${status.version}` })
+							: t("settings.updates.updateLatest")}
 					</Button>
 				)}
 				{status.state === "downloaded" && (
@@ -178,7 +179,11 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 				</span>
 			);
 		case "downloading":
-			return <span className="text-xs text-muted-foreground">{t("settings.updates.downloading", {percent: status.percent ?? 0})}</span>;
+			return (
+				<span className="text-xs text-muted-foreground">
+					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
+				</span>
+			);
 		case "downloaded":
 			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
 		case "not-available":

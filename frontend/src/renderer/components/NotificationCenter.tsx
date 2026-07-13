@@ -70,7 +70,7 @@ export function NotificationRuntime() {
 }
 
 export function NotificationCenter({ style }: NotificationCenterProps) {
-	const{ t } = useTranslation();
+	const { t } = useTranslation();
 	const notificationsQuery = useNotificationsQuery();
 	const markRead = useMarkNotificationReadMutation();
 	const markAllRead = useMarkAllNotificationsReadMutation();
@@ -107,7 +107,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
 				<TopbarButton
-					aria-label={unreadCount > 0 ? t("notifications.aria.unread", { count: unreadCount }): t("notifications.title")}
+					aria-label={
+						unreadCount > 0 ? t("notifications.aria.unread", { count: unreadCount }) : t("notifications.title")
+					}
 					className="relative"
 					style={style}
 					variant="icon"
@@ -136,7 +138,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				</div>
 				{actionError ? <div className="border-b border-border px-3 py-2 text-xs text-error">{actionError}</div> : null}
 				{notificationsQuery.isError && unreadCount === 0 ? (
-					<div className="px-3 py-8 text-center text-control text-muted-foreground">{t("notifications.errors.load")}</div>
+					<div className="px-3 py-8 text-center text-control text-muted-foreground">
+						{t("notifications.errors.load")}
+					</div>
 				) : unreadCount === 0 ? (
 					<div className="px-3 py-8 text-center text-control text-muted-foreground">{t("notifications.empty")}</div>
 				) : (

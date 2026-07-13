@@ -53,11 +53,7 @@ export function PullRequestsPage() {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead
-				title={t("pullRequests.title")}
-				subtitle={t("pullRequests.subtitle")}
-				count={rows.length}
-			/>
+			<DashboardSubhead title={t("pullRequests.title")} subtitle={t("pullRequests.subtitle")} count={rows.length} />
 
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				{rows.length === 0 ? (
@@ -111,10 +107,11 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 			return data;
 		},
 		onSuccess: (data) => {
-			setNote({ ok: true, text: t("pullRequests.messages.merged", {method: data?.method ?? "squash"}) })
+			setNote({ ok: true, text: t("pullRequests.messages.merged", { method: data?.method ?? "squash" }) });
 			refresh();
 		},
-		onError: (e) => setNote({ ok: false, text: e instanceof Error ? e.message : t("pullRequests.messages.mergeFailed") }),
+		onError: (e) =>
+			setNote({ ok: false, text: e instanceof Error ? e.message : t("pullRequests.messages.mergeFailed") }),
 	});
 
 	const resolve = useMutation({
@@ -128,7 +125,8 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 			setNote({ ok: true, text: t("pullRequests.messages.commentsResolved") });
 			refresh();
 		},
-		onError: (e) => setNote({ ok: false, text: e instanceof Error ? e.message : t("pullRequests.messages.resolveFailed") }),
+		onError: (e) =>
+			setNote({ ok: false, text: e instanceof Error ? e.message : t("pullRequests.messages.resolveFailed") }),
 	});
 
 	const actionable = row.pr.state === "open" || row.pr.state === "draft";

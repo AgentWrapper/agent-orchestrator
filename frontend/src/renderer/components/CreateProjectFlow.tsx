@@ -529,7 +529,9 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Impor
 					failed ? "text-muted-foreground" : "text-muted-foreground",
 				)}
 			>
-				{failed ? (repo.reason ?? t("createProject.folder.repoCannotImport")) : `${repo.branch} ${remoteDisplay(repo.remote)}`}
+				{failed
+					? (repo.reason ?? t("createProject.folder.repoCannotImport"))
+					: `${repo.branch} ${remoteDisplay(repo.remote)}`}
 			</div>
 		</div>
 	);

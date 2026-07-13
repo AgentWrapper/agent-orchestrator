@@ -36,7 +36,8 @@
 			"approved": "已批准",
 			"ready": "准备就绪",
 			"merged": "已合并",
-			"terminated": "已终止"
+			"terminated": "已终止",
+			"idle": "空闲"
 		},
 
 		"lifecycle": {

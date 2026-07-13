@@ -36,7 +36,8 @@
 			"approved": "Approved",
 			"ready": "Ready",
 			"merged": "Merged",
-			"terminated": "Terminated"
+			"terminated": "Terminated",
+			"idle": "Idle"
 		},
 
 		"lifecycle": {
