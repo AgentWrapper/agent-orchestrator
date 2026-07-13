@@ -134,7 +134,12 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 							</div>
 							<div className="flex shrink-0 items-center gap-2">
 								{busy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-								<Switch checked={enabled} onCheckedChange={onToggle} disabled={busy} aria-label={t("connectMobile.toggle.title")} />
+								<Switch
+									checked={enabled}
+									onCheckedChange={onToggle}
+									disabled={busy}
+									aria-label={t("connectMobile.toggle.title")}
+								/>
 							</div>
 						</div>
 

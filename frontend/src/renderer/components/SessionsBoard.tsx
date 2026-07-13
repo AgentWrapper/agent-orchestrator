@@ -83,7 +83,6 @@ const COLUMNS: Column[] = [
 	},
 ];
 
-
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -239,13 +238,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			{/* The first-launch welcome carries its own orientation; a "Board"
 			    header above it would describe a board that isn't rendered
 			    (review feedback on #2432). */}
-			{!showWelcome && (
-				<DashboardSubhead
-					title={t("board.title")}
-					subtitle={t("board.subtitle")}
-					actions={actions}
-				/>
-			)}
+			{!showWelcome && <DashboardSubhead title={t("board.title")} subtitle={t("board.subtitle")} actions={actions} />}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
 				{projectId && health.state !== "ok" ? (

@@ -8,7 +8,7 @@ type Locale = "en" | "zh-CN"
 const LOCAL_STORAGE_KEY = "ao.locale";
 
 function getStoredLocale() : Locale | null{
-    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const stored = typeof localStorage !== "undefined"? localStorage.getItem(LOCAL_STORAGE_KEY) : null;
     if (stored === "en" || stored === "zh-CN") {
         return stored;
     }
@@ -18,10 +18,16 @@ function getStoredLocale() : Locale | null{
 function detectLocale(): Locale {
     const stored = getStoredLocale();
     if(stored) return stored;
-    return navigator.language.startsWith("zh") ? "zh-CN" : "en";
+    if (typeof navigator !== "undefined") {
+        return navigator.language.startsWith("zh") ? "zh-CN" : "en";
+    }
+    return "en";
 }
 
 function saveLocale(locale : Locale){
+    if (typeof localStorage === "undefined") {
+        return;
+    }
     localStorage.setItem(LOCAL_STORAGE_KEY, locale);
 }
 
@@ -29,7 +35,9 @@ i18n.on("languageChanged", (language) => {
     if (language === "en" || language === "zh-CN") {
         saveLocale(language);
     }
-    document.documentElement.lang = language;
+    if (typeof document !== "undefined") {
+        document.documentElement.lang = language;
+    }
 });
 
 export function initialiseI18n(){

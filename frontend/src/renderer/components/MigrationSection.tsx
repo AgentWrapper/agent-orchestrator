@@ -114,23 +114,26 @@ export function MigrationSection() {
 				<CardTitle className="text-control">{t("settings.migration.title")}</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
-				<p className="text-xs leading-row text-muted-foreground">
-					{t("settings.migration.description")}
-				</p>
+				<p className="text-xs leading-row text-muted-foreground">{t("settings.migration.description")}</p>
 
 				<div className="flex flex-col gap-2 text-xs">
 					<Row label={t("settings.migration.labels.status")}>
 						<span className={statusClass(migration.status)}>{STATUS_LABEL[migration.status]}</span>
 					</Row>
 					{formatTime(migration.completedAt || migration.lastAttemptAt) && (
-						<Row label={completed ? t("settings.migration.labels.completed") : t("settings.migration.labels.lastAttempt")}>
+						<Row
+							label={completed ? t("settings.migration.labels.completed") : t("settings.migration.labels.lastAttempt")}
+						>
 							<span className="text-foreground">{formatTime(migration.completedAt || migration.lastAttemptAt)}</span>
 						</Row>
 					)}
 					{report && (
 						<Row label={t("settings.migration.labels.lastReport")}>
 							<span className="text-foreground">
-								{t("settings.migration.messages.report",{imported: report.projectsImported,skipped: report.projectsSkipped,})}
+								{t("settings.migration.messages.report", {
+									imported: report.projectsImported,
+									skipped: report.projectsSkipped,
+								})}
 							</span>
 						</Row>
 					)}
@@ -138,7 +141,9 @@ export function MigrationSection() {
 						{query.isLoading ? (
 							<span className="text-passive">{t("settings.migration.messages.checking")}</span>
 						) : available ? (
-							<span className="font-mono text-caption text-foreground">{legacyRoot || t("settings.migration.messages.found")}</span>
+							<span className="font-mono text-caption text-foreground">
+								{legacyRoot || t("settings.migration.messages.found")}
+							</span>
 						) : (
 							<span className="text-passive">{t("settings.migration.messages.noneFound")}</span>
 						)}
@@ -147,8 +152,7 @@ export function MigrationSection() {
 
 				{migration.status === "failed" && migration.error && (
 					<p className="text-xs leading-row text-error">
-						{migration.error}.{" "}
-						{t("settings.migration.messages.legacyUntouched")}
+						{migration.error}. {t("settings.migration.messages.legacyUntouched")}
 					</p>
 				)}
 				{run.isError && (
@@ -156,7 +160,9 @@ export function MigrationSection() {
 						{run.error instanceof Error ? run.error.message : t("settings.migration.messages.migrationFailed")}
 					</p>
 				)}
-				{run.isSuccess && !run.isPending && <p className="text-xs leading-row text-success">{t("settings.migration.messages.migrationComplete")}</p>}
+				{run.isSuccess && !run.isPending && (
+					<p className="text-xs leading-row text-success">{t("settings.migration.messages.migrationComplete")}</p>
+				)}
 
 				<div className="flex items-center gap-3">
 					<Button

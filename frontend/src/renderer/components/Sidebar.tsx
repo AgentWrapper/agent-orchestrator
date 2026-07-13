@@ -309,12 +309,12 @@ export function Sidebar({
 							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
 								<p className="text-xs text-passive">{t("sidebar.errors.noProjects")}</p>
 								<p className="mt-1 text-caption text-passive">
-								  <Trans
-								    i18nKey="sidebar.errors.registerRepo"
-								    components={{
-								      plus: <span className="text-foreground">+</span>,
-								    }}
-								  />
+									<Trans
+										i18nKey="sidebar.errors.registerRepo"
+										components={{
+											plus: <span className="text-foreground">+</span>,
+										}}
+									/>
 								</p>
 							</div>
 						) : (
@@ -405,7 +405,7 @@ export function Sidebar({
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<span
-								aria-label={t("sidebar.aria.daemon", {state: daemonStatus.state,})}
+								aria-label={t("sidebar.aria.daemon", { state: daemonStatus.state })}
 								className={cn(
 									"absolute right-1.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full",
 									daemonStatus.state === "ready" && eventsConnection !== "disconnected" ? "bg-success" : "bg-amber",
@@ -413,7 +413,7 @@ export function Sidebar({
 							/>
 						</TooltipTrigger>
 						<TooltipContent side="top">
-							{t("sidebar.aria.daemon", {state: daemonStatus.state})}
+							{t("sidebar.aria.daemon", { state: daemonStatus.state })}
 							{eventsConnection === "disconnected" && `${t("sidebar.aria.eventsOffline")}`}
 						</TooltipContent>
 					</Tooltip>
@@ -655,7 +655,11 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label={orchestrator ? t("sidebar.aria.openOrchestrator", { name: workspace.name }) : t("sidebar.aria.spawnOrchestrator", { name: workspace.name })}
+							aria-label={
+								orchestrator
+									? t("sidebar.aria.openOrchestrator", { name: workspace.name })
+									: t("sidebar.aria.spawnOrchestrator", { name: workspace.name })
+							}
 							className={HOVER_ACTION_CLASS}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
@@ -676,7 +680,11 @@ function ProjectItem({
 				</Tooltip>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<button aria-label={t("sidebar.aria.projectActions", { name: workspace.name })} className={HOVER_ACTION_CLASS} type="button">
+						<button
+							aria-label={t("sidebar.aria.projectActions", { name: workspace.name })}
+							className={HOVER_ACTION_CLASS}
+							type="button"
+						>
 							<MoreVertical aria-hidden="true" />
 						</button>
 					</DropdownMenuTrigger>

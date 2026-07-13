@@ -27,6 +27,7 @@ import {
 	topbarProjectLabelClass,
 } from "./TopbarButton";
 import { useTranslation } from "react-i18next";
+import { LanguageToggle } from "./ui/languageToggle";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const isLinux =
@@ -36,7 +37,6 @@ const isLinux =
 		.includes("linux");
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
-
 
 // Topbar shows only the raw agent activity state. SCM/context badges stay in
 // the inspector Summary > Activity row.
@@ -52,12 +52,11 @@ const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { tone: string; breathe
 const TOPBAR_ACTIVITY_LABEL_KEY: Record<SessionActivityState, string> = {
 	active: "topbar.status.active",
 	idle: "topbar.status.idle",
-	waiting_input: 'topbar.status.waiting',
+	waiting_input: "topbar.status.waiting",
 	blocked: "topbar.status.blocked",
 	exited: "topbar.status.exit",
 	unknown: "topbar.status.unknown",
 };
-
 
 // The one app topbar (.dashboard-app-header), rendered by the shell layout
 // across the full window width — above both the sidebar and the route outlet —
@@ -193,6 +192,7 @@ export function ShellTopbar() {
 			<div className="min-w-0 flex-1" />
 
 			<div className="flex shrink-0 items-center gap-1.5">
+				<LanguageToggle />
 				{!isLinux ? <NotificationCenter style={noDragStyle} /> : null}
 				{isSessionRoute ? (
 					<>
@@ -208,7 +208,12 @@ export function ShellTopbar() {
 									<Plus className="size-icon-md" aria-hidden="true" />
 									{t("topbar.newTask")}
 								</TopbarButton>
-								<TopbarButton aria-label={t("topbar.openKanban")} onClick={openBoard} style={noDragStyle} variant="accent">
+								<TopbarButton
+									aria-label={t("topbar.openKanban")}
+									onClick={openBoard}
+									style={noDragStyle}
+									variant="accent"
+								>
 									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
 									{t("topbar.kanban")}
 								</TopbarButton>
@@ -241,7 +246,11 @@ export function ShellTopbar() {
 								variant="primary"
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-								{isProjectRestarting ? t("topbar.restarting") : isSpawning ? t("topbar.spawning") : t("topbar.orchestrator")}
+								{isProjectRestarting
+									? t("topbar.restarting")
+									: isSpawning
+										? t("topbar.spawning")
+										: t("topbar.orchestrator")}
 							</TopbarButton>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}

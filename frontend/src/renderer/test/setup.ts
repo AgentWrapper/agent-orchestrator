@@ -3,7 +3,7 @@ import { beforeAll } from "vitest";
 import { initialiseI18n } from "../i18n";
 
 beforeAll(async () => {
-    await initialiseI18n();
+	await initialiseI18n();
 });
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
