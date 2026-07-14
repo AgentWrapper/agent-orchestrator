@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 type sessionRequestLog struct {
@@ -245,6 +248,35 @@ func TestSessionGet_JSONOutputDecodes(t *testing.T) {
 	}
 	if got.Session.ID != "demo-1" || got.Session.ProjectID != "demo" || got.Session.Status != "working" {
 		t.Fatalf("unexpected session JSON: %#v", got.Session)
+	}
+}
+
+func TestWriteSessionDetails_TerminalReasonShownOnlyWhenSet(t *testing.T) {
+	// A terminated session with a known reason renders it.
+	var withReason bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&withReason)
+	if err := writeSessionDetails(cmd, sessionDTO{
+		ID:                    "demo-1",
+		ProjectID:             "demo",
+		IsTerminated:          true,
+		TerminalFailureReason: "killed via session kill",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(withReason.String(), "terminal reason: killed via session kill") {
+		t.Fatalf("detail should show the terminal reason, got:\n%s", withReason.String())
+	}
+
+	// A clean (empty-reason) session omits the row entirely.
+	var noReason bytes.Buffer
+	cmd2 := &cobra.Command{}
+	cmd2.SetOut(&noReason)
+	if err := writeSessionDetails(cmd2, sessionDTO{ID: "demo-2", ProjectID: "demo", IsTerminated: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(noReason.String(), "terminal reason") {
+		t.Fatalf("empty reason must not render a terminal reason row, got:\n%s", noReason.String())
 	}
 }
 

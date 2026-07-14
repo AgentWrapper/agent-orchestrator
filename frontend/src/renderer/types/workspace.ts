@@ -157,6 +157,12 @@ export type WorkspaceSession = {
 	 * absent it is derived from {@link SessionStatus} via {@link workerDisplayStatus}.
 	 */
 	displayStatus?: WorkerDisplayStatus;
+	/**
+	 * Operator-facing reason this session ended, when the daemon knows one (e.g.
+	 * "killed via session kill", "runtime probe reported dead"). Empty/undefined
+	 * means it ended normally — never "unknown failure".
+	 */
+	terminalFailureReason?: string;
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in

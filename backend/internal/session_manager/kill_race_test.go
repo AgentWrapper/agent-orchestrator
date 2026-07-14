@@ -65,7 +65,11 @@ func (s *raceStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 	return nil
 }
 
-func (s *raceStore) ClearSessionPendingDecision(context.Context, domain.SessionID, time.Time) (bool, error) {
+func (s *raceStore) ClearSessionPendingDecision(context.Context, domain.SessionID, string, time.Time) (bool, error) {
+	return false, nil
+}
+
+func (s *raceStore) RestoreSessionPendingDecision(context.Context, domain.SessionID, domain.PendingDecision, time.Time) (bool, error) {
 	return false, nil
 }
 

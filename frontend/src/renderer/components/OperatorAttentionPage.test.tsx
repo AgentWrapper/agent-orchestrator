@@ -1,22 +1,58 @@
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorAttentionPage } from "./OperatorAttentionPage";
 
-const { navigateMock, openMock, useOperatorAttentionQueryMock } = vi.hoisted(() => ({
+const { navigateMock, openMock, useOperatorAttentionQueryMock, getMock, postMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	openMock: vi.fn(),
 	useOperatorAttentionQueryMock: vi.fn(),
+	getMock: vi.fn(),
+	postMock: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigateMock }));
 vi.mock("../hooks/useOperatorAttentionQuery", () => ({
 	useOperatorAttentionQuery: () => useOperatorAttentionQueryMock(),
+	operatorAttentionQueryKey: ["operator-attention"],
 }));
+vi.mock("../lib/api-client", () => ({
+	apiClient: { GET: getMock, POST: postMock },
+	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
+		if (error instanceof Error) return error.message;
+		if (typeof error === "object" && error !== null && "message" in error) {
+			return String((error as { message: unknown }).message);
+		}
+		return fallback;
+	},
+}));
+
+function renderWithQuery(children: ReactNode) {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+}
+
+const questionItem = {
+	id: "session:ao-1:decision",
+	kind: "decision" as const,
+	projectId: "ao",
+	sessionId: "ao-1",
+	sessionTitle: "Deploy question",
+	reason: "Session is waiting on an operator decision.",
+	action: "Answer the session question.",
+	deepLink: "/projects/ao/sessions/ao-1",
+	decisionKind: "question" as const,
+	question: "Deploy now?",
+	updatedAt: "2026-07-11T03:20:00Z",
+};
 
 beforeEach(() => {
 	navigateMock.mockReset();
 	openMock.mockReset();
+	getMock.mockReset();
+	postMock.mockReset();
 	Object.defineProperty(window, "open", { configurable: true, value: openMock });
 });
 
@@ -130,5 +166,101 @@ describe("OperatorAttentionPage", () => {
 		for (const action of screen.getAllByRole("button", { name: /Fix main-branch CI/i })) {
 			expect(action).toBeDisabled();
 		}
+	});
+});
+
+describe("OperatorAttentionPage decision answering", () => {
+	it("answers a question decision by selecting an option and posts to the decision endpoint", async () => {
+		useOperatorAttentionQueryMock.mockReturnValue({ data: [questionItem], isError: false });
+		getMock.mockResolvedValue({
+			data: { kind: "question", question: "Deploy now?", options: ["Yes", "No"], sessionId: "ao-1", revision: "rev-a" },
+		});
+		postMock.mockResolvedValue({ data: { ok: true, sessionId: "ao-1" } });
+		const user = userEvent.setup();
+		renderWithQuery(<OperatorAttentionPage />);
+
+		// Answer control is offered for question decisions.
+		await user.click(screen.getAllByRole("button", { name: /^Answer$/i })[0]);
+
+		await waitFor(() => expect(screen.getAllByRole("button", { name: /1\. Yes/ }).length).toBeGreaterThan(0));
+		await user.click(screen.getAllByRole("button", { name: /1\. Yes/ })[0]);
+
+		await waitFor(() => expect(postMock).toHaveBeenCalled());
+		const call = postMock.mock.calls[0];
+		expect(call[0]).toBe("/api/v1/sessions/{sessionId}/decision");
+		expect(call[1]).toMatchObject({ params: { path: { sessionId: "ao-1" } }, body: { option: 1, revision: "rev-a" } });
+	});
+
+	it("surfaces a not-answerable (409) error instead of swallowing it", async () => {
+		useOperatorAttentionQueryMock.mockReturnValue({ data: [questionItem], isError: false });
+		getMock.mockResolvedValue({
+			data: { kind: "question", question: "Deploy now?", options: ["Yes"], sessionId: "ao-1", revision: "rev-a" },
+		});
+		postMock.mockResolvedValue({
+			error: {
+				code: "SESSION_DECISION_NOT_ANSWERABLE",
+				message: "Pending permission decisions cannot be answered programmatically",
+			},
+		});
+		const user = userEvent.setup();
+		renderWithQuery(<OperatorAttentionPage />);
+
+		await user.click(screen.getAllByRole("button", { name: /^Answer$/i })[0]);
+		await waitFor(() => expect(screen.getAllByRole("button", { name: /1\. Yes/ }).length).toBeGreaterThan(0));
+		await user.click(screen.getAllByRole("button", { name: /1\. Yes/ })[0]);
+
+		await waitFor(() => expect(screen.getAllByText(/cannot be answered programmatically/i).length).toBeGreaterThan(0));
+	});
+
+	it("does not offer an answer control for permission decisions", () => {
+		useOperatorAttentionQueryMock.mockReturnValue({
+			data: [{ ...questionItem, decisionKind: "permission", question: "Claude needs your permission" }],
+			isError: false,
+		});
+		renderWithQuery(<OperatorAttentionPage />);
+
+		expect(screen.queryByRole("button", { name: /^Answer$/i })).not.toBeInTheDocument();
+	});
+
+	it("keeps a stale question item display-only when the live decision is now a permission prompt", async () => {
+		// The attention item still says question, but the session has since moved
+		// on to a permission dialog: the LIVE fetched decision wins, and no answer
+		// controls may render (permission prompts are display-only by contract).
+		useOperatorAttentionQueryMock.mockReturnValue({ data: [questionItem], isError: false });
+		getMock.mockResolvedValue({
+			data: { kind: "permission", question: "Claude needs your permission", sessionId: "ao-1" },
+		});
+		const user = userEvent.setup();
+		renderWithQuery(<OperatorAttentionPage />);
+
+		await user.click(screen.getAllByRole("button", { name: /^Answer$/i })[0]);
+
+		await waitFor(() => expect(screen.getAllByText(/attend in the/i).length).toBeGreaterThan(0));
+		expect(screen.queryByRole("button", { name: /^1\./ })).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Free-text answer")).not.toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("drops the fetched decision after answering so a follow-up question is fetched fresh", async () => {
+		useOperatorAttentionQueryMock.mockReturnValue({ data: [questionItem], isError: false });
+		getMock.mockResolvedValue({
+			data: { kind: "question", question: "Deploy now?", options: ["Yes", "No"], sessionId: "ao-1", revision: "rev-a" },
+		});
+		postMock.mockResolvedValue({ data: { ok: true, sessionId: "ao-1" } });
+		const user = userEvent.setup();
+		renderWithQuery(<OperatorAttentionPage />);
+
+		await user.click(screen.getAllByRole("button", { name: /^Answer$/i })[0]);
+		await waitFor(() => expect(screen.getAllByRole("button", { name: /1\. Yes/ }).length).toBeGreaterThan(0));
+		const decisionFetches = () =>
+			getMock.mock.calls.filter((call) => call[0] === "/api/v1/sessions/{sessionId}/decision").length;
+		const fetchesBeforeAnswer = decisionFetches();
+		await user.click(screen.getAllByRole("button", { name: /1\. Yes/ })[0]);
+		await waitFor(() => expect(postMock).toHaveBeenCalled());
+
+		// Panel closed on success; re-opening the (still-listed) item must fetch
+		// the decision AGAIN — the consumed one was removed from the cache.
+		await user.click(screen.getAllByRole("button", { name: /^Answer$/i })[0]);
+		await waitFor(() => expect(decisionFetches()).toBeGreaterThan(fetchesBeforeAnswer));
 	});
 });

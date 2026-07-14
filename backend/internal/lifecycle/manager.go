@@ -6,9 +6,12 @@ package lifecycle
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +86,23 @@ type Manager struct {
 	// flights tracks, per session, the in-flight tool executions and the
 	// pending permission dialog's identity (see toolFlight). Guarded by mu.
 	flights map[domain.SessionID]*toolFlight
+	// terminationIntents holds the declared cause of an in-progress teardown
+	// (kill, retirement), recorded BEFORE the runtime is destroyed and keyed by
+	// a per-teardown token. Every terminal attributor consults it: the reaper
+	// attributes a death observed during the teardown window to the intent
+	// instead of its generic probe reason, a clean harness exit VOIDS the
+	// intent (a session that finished on its own was not "killed"), and the
+	// teardown's final mark may set its own cause only while its token still
+	// matches. In-memory by design: the window is in-process seconds, and a
+	// daemon restart mid-teardown degrades to the generic reaper attribution
+	// rather than fabricating causality. Guarded by mu.
+	terminationIntents map[domain.SessionID]terminationIntent
+}
+
+// terminationIntent is one declared teardown cause (see Manager.terminationIntents).
+type terminationIntent struct {
+	cause string
+	token string
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -100,6 +120,7 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 		switching:               make(map[domain.SessionID]struct{}),
 		switchExitSuppressUntil: make(map[domain.SessionID]time.Time),
 		flights:                 make(map[domain.SessionID]*toolFlight),
+		terminationIntents:      make(map[domain.SessionID]terminationIntent),
 	}
 	if messenger != nil {
 		m.guard = sessionguard.New(store, messenger, nil)
@@ -145,7 +166,15 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		}
 		next := cur
 		next.IsTerminated = true
-		next.TerminalFailureReason = runtimeTerminalFailureReason(f)
+		// A death observed while a teardown intent is declared is attributed to
+		// that intent (the kill/retirement destroyed the runtime); the generic
+		// probe reason speaks only when nothing else has. The intent stays
+		// recorded so the teardown's final mark still owns its token.
+		if intent, ok := m.terminationIntents[id]; ok { // under m.mu (mutate holds it)
+			next.TerminalFailureReason = intent.cause
+		} else {
+			next.TerminalFailureReason = runtimeTerminalFailureReason(f)
+		}
 		next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
 		// Reaper-driven death (crash/SIGKILL) never fires a session-end hook,
 		// so this is the last chance to release the session's tool-flight
@@ -201,7 +230,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	prevAt := rec.Activity.LastActivityAt
 	next := rec
 	act := domain.Activity{State: s.State, LastActivityAt: timeOr(s.Timestamp, now)}
-	pendingDecision := nextPendingDecision(s)
+	pendingDecision := stampDecisionRevision(rec.Metadata.PendingDecision, nextPendingDecision(s))
 	// A same-state repeat is still a write when it is the FIRST signal for
 	// this spawn: the receipt itself is a durable fact (it clears the
 	// no_signal display status). Hook deliveries are best-effort, so the
@@ -219,6 +248,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	if s.State == domain.ActivityExited {
 		next.IsTerminated = true
 		next.TerminalFailureReason = ""
+		// A harness that reports its own exit ended cleanly — even mid-teardown.
+		// Void any declared teardown intent so neither the reaper nor the
+		// teardown's final mark can rewrite a clean ending as killed/retired.
+		delete(m.terminationIntents, id) // under m.mu (held here)
 	}
 	next.UpdatedAt = now
 	if err := m.store.UpdateSession(ctx, next); err != nil {
@@ -262,6 +295,35 @@ func nextPendingDecision(s ports.ActivitySignal) *domain.PendingDecision {
 		return &decision
 	}
 	return &domain.PendingDecision{Kind: domain.DecisionKindPermission}
+}
+
+// stampDecisionRevision gives the incoming pending decision its durable
+// identity: a dialog whose content matches the currently stored one keeps the
+// stored revision (hook repeats must not churn identity), while new or changed
+// content mints a fresh revision. AnswerDecision compare-and-swaps against this
+// revision, so question B replacing A can never be answered with an option
+// prepared against A.
+func stampDecisionRevision(current, next *domain.PendingDecision) *domain.PendingDecision {
+	if next == nil {
+		return nil
+	}
+	if pendingDecisionEqual(current, next) && current.Revision != "" {
+		next.Revision = current.Revision
+		return next
+	}
+	next.Revision = newDecisionRevision()
+	return next
+}
+
+// newDecisionRevision mints a random 64-bit hex token. Uniqueness matters only
+// within one session's short-lived stream of dialogs; on the improbable
+// rand.Read failure a timestamp still distinguishes consecutive dialogs.
+func newDecisionRevision() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 func shouldEmitNeedsInputNotification(prev, next domain.SessionRecord) bool {
@@ -528,6 +590,8 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	now := m.clock()
 	rec.IsTerminated = false
 	rec.TerminalFailureReason = ""
+	// A fresh runtime invalidates any teardown intent from a previous one.
+	delete(m.terminationIntents, id) // under m.mu (held here)
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
 	// a relaunch with broken hooks degrades to no_signal instead of inheriting
@@ -538,15 +602,105 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	return m.store.UpdateSession(ctx, rec)
 }
 
-// MarkTerminated marks a session terminated without tearing down external resources.
+// MarkTerminated marks a session terminated without tearing down external
+// resources and records no failure reason (an empty reason reads as "ended
+// normally", never "unknown failure"). An already-terminated row is untouched.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
 		cur.IsTerminated = true
+		cur.TerminalFailureReason = ""
 		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
 		delete(m.flights, id) // runs under m.mu (mutate holds it)
+		return cur, true
+	})
+}
+
+// RecordTerminationIntent declares, BEFORE any teardown I/O starts, that the
+// caller is about to terminate the session for the given cause. It returns the
+// token the teardown's final MarkTerminatedIntent must present. Every other
+// terminal attributor consults the intent during the teardown window: the
+// reaper attributes a death to it instead of the generic probe reason, and a
+// clean harness exit voids it (finishing on your own is not being killed).
+//
+// A session that is ALREADY terminated gets no intent (empty token): a cleanup
+// teardown of a long-dead session must not rewrite how it actually ended.
+func (m *Manager) RecordTerminationIntent(ctx context.Context, id domain.SessionID, cause string) (string, error) {
+	cause = strings.TrimSpace(cause)
+	if cause == "" {
+		return "", nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if !ok || rec.IsTerminated {
+		return "", nil
+	}
+	token := newDecisionRevision() // same cheap random-token shape
+	m.terminationIntents[id] = terminationIntent{cause: cause, token: token}
+	return token, nil
+}
+
+// CancelTerminationIntent voids a declared teardown intent by its token. A
+// teardown that exits WITHOUT completing (runtime destroy failed, dirty
+// workspace preserved, any error return) must cancel, or the lingering intent
+// would misattribute a later unrelated death to a teardown that never finished.
+// Token-scoped so a teardown can only void its own declaration; cancelling
+// after a successful final mark is a harmless no-op (the mark consumed the
+// token).
+func (m *Manager) CancelTerminationIntent(id domain.SessionID, token string) {
+	if token == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if intent, ok := m.terminationIntents[id]; ok && intent.token == token {
+		delete(m.terminationIntents, id)
+	}
+}
+
+// MarkTerminatedIntent is the final mark of a teardown that declared its intent
+// up front. While the presented token still matches the recorded intent, the
+// mark owns causality: it terminates the row (if the reaper has not already)
+// and sets its own cause — including over the reaper's attribution for the same
+// intent. A mismatching or empty token means the intent was voided (the session
+// exited cleanly during the teardown) or was never recorded (cleanup of an
+// already-terminated session): the mark then only ensures the row is terminated
+// and never touches an existing cause — a clean-exit record is never upgraded.
+func (m *Manager) MarkTerminatedIntent(ctx context.Context, id domain.SessionID, token, cause string) error {
+	cause = strings.TrimSpace(cause)
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		intent, intentHeld := m.terminationIntents[id] // under m.mu (mutate holds it)
+		owns := token != "" && intentHeld && intent.token == token
+		if owns {
+			delete(m.terminationIntents, id)
+		}
+		if cur.IsTerminated {
+			// While the token matches, the only reasons a terminated row can
+			// carry are the reaper's attributions for this same teardown (the
+			// generic probe reason, or this intent's cause): a clean exit would
+			// have voided the intent and a foreign teardown is excluded by the
+			// per-session command slot. Owning the intent therefore owns the
+			// cause; not owning it may touch nothing.
+			if owns && cur.TerminalFailureReason != cause {
+				cur.TerminalFailureReason = cause
+				return cur, true
+			}
+			return cur, false
+		}
+		cur.IsTerminated = true
+		if owns {
+			cur.TerminalFailureReason = cause
+		} else {
+			cur.TerminalFailureReason = ""
+		}
+		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+		delete(m.flights, id)
 		return cur, true
 	})
 }
@@ -621,6 +775,8 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	rec.Harness = harness
 	rec.IsTerminated = false
 	rec.TerminalFailureReason = ""
+	// A fresh runtime invalidates any teardown intent from the retired one.
+	delete(m.terminationIntents, id) // under m.mu (held here)
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	rec.FirstSignalAt = time.Time{}
 	rec.Metadata.RuntimeHandleID = metadata.RuntimeHandleID
@@ -675,9 +831,15 @@ func staleRuntimeTokenSignal(rec domain.SessionRecord, s ports.ActivitySignal) b
 	return signalToken == "" || signalToken != currentToken
 }
 
+// runtimeProbeDeadReason is the GENERIC death reason the reaper records when it
+// observes a dead runtime without knowing why it died. MarkTerminatedReason
+// treats it as upgradeable: a later explicit cause (a kill, a retirement) may
+// replace it, never the reverse.
+const runtimeProbeDeadReason = "runtime probe reported dead"
+
 func runtimeTerminalFailureReason(f ports.RuntimeFacts) string {
 	if f.Probe == ports.ProbeDead {
-		return "runtime probe reported dead"
+		return runtimeProbeDeadReason
 	}
 	return ""
 }

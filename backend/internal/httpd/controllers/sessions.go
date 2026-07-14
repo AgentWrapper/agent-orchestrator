@@ -534,7 +534,7 @@ func (c *SessionsController) decision(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_DECISION_NOT_FOUND", "No pending decision is known for this session", nil)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SessionDecisionResponse{SessionID: sessionID(r), Kind: decision.Kind, Question: decision.Question, Options: decision.Options})
+	envelope.WriteJSON(w, http.StatusOK, SessionDecisionResponse{SessionID: sessionID(r), Kind: decision.Kind, Question: decision.Question, Options: decision.Options, Revision: decision.Revision})
 }
 
 func (c *SessionsController) answerDecision(w http.ResponseWriter, r *http.Request) {
@@ -560,7 +560,7 @@ func (c *SessionsController) answerDecision(w http.ResponseWriter, r *http.Reque
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DECISION_TEXT_TOO_LONG", "Decision answer text is too long", nil)
 		return
 	}
-	answer := domain.DecisionAnswer{Option: in.Option, Text: domain.SanitizeControlChars(in.Text)}
+	answer := domain.DecisionAnswer{Option: in.Option, Text: domain.SanitizeControlChars(in.Text), Revision: strings.TrimSpace(in.Revision)}
 	if err := c.Svc.AnswerDecision(r.Context(), sessionID(r), answer); err != nil {
 		envelope.WriteError(w, r, err)
 		return

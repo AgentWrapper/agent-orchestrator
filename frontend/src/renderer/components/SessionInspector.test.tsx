@@ -374,6 +374,23 @@ describe("SessionInspector tabs", () => {
 		expect(screen.getByText("Issue")).toBeInTheDocument();
 		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
 	});
+
+	it("shows the terminal exit reason for a terminated session", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], { status: "terminated", terminalFailureReason: "killed via session kill" })}
+			/>,
+		);
+
+		expect(screen.getByText("Ended")).toBeInTheDocument();
+		expect(screen.getByText("killed via session kill")).toBeInTheDocument();
+	});
+
+	it("omits the Ended row for a clean session with no terminal reason", () => {
+		renderWithQuery(<SessionInspector session={session([], { status: "terminated" })} />);
+
+		expect(screen.queryByText("Ended")).not.toBeInTheDocument();
+	});
 });
 
 describe("SessionInspector reviews tab", () => {

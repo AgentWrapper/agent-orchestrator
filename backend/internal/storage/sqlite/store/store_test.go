@@ -392,6 +392,7 @@ func TestSessionPendingDecisionRoundTrips(t *testing.T) {
 		Kind:     domain.DecisionKindQuestion,
 		Question: "Choose lane",
 		Options:  []string{"API", "Terminal"},
+		Revision: "rev-1",
 	}
 	created, err := s.CreateSession(ctx, rec)
 	if err != nil {
@@ -414,8 +415,22 @@ func TestSessionPendingDecisionRoundTrips(t *testing.T) {
 	if err := s.UpdateSession(ctx, got); err != nil {
 		t.Fatalf("update unrelated fields: %v", err)
 	}
+	// A clear naming a DIFFERENT revision must not remove the stored decision:
+	// the compare-and-swap protects a dialog that replaced the answered one.
 	clearAt := got.UpdatedAt.Add(time.Second)
-	ok, err = s.ClearSessionPendingDecision(ctx, created.ID, clearAt)
+	ok, err = s.ClearSessionPendingDecision(ctx, created.ID, "rev-other", clearAt)
+	if err != nil {
+		t.Fatalf("stale clear: %v", err)
+	}
+	if ok {
+		t.Fatal("stale-revision clear reported ok=true, want CAS refusal")
+	}
+	still, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok || still.Metadata.PendingDecision == nil {
+		t.Fatalf("decision should survive a stale clear: ok=%v err=%v decision=%#v", ok, err, still.Metadata.PendingDecision)
+	}
+
+	ok, err = s.ClearSessionPendingDecision(ctx, created.ID, "rev-1", clearAt)
 	if err != nil || !ok {
 		t.Fatalf("clear pending decision: ok=%v err=%v", ok, err)
 	}
@@ -431,6 +446,27 @@ func TestSessionPendingDecisionRoundTrips(t *testing.T) {
 	}
 	if !cleared.UpdatedAt.Equal(clearAt) {
 		t.Fatalf("UpdatedAt after clear = %s, want %s", cleared.UpdatedAt, clearAt)
+	}
+
+	// Restore puts a claimed decision back only while nothing newer arrived.
+	restoreAt := clearAt.Add(time.Second)
+	ok, err = s.RestoreSessionPendingDecision(ctx, created.ID, domain.PendingDecision{
+		Kind: domain.DecisionKindQuestion, Question: "Choose lane", Options: []string{"API", "Terminal"}, Revision: "rev-1",
+	}, restoreAt)
+	if err != nil || !ok {
+		t.Fatalf("restore pending decision: ok=%v err=%v", ok, err)
+	}
+	restored, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok || restored.Metadata.PendingDecision == nil || restored.Metadata.PendingDecision.Revision != "rev-1" {
+		t.Fatalf("decision after restore = %#v", restored.Metadata.PendingDecision)
+	}
+	// A second restore is refused: the slot is occupied.
+	ok, err = s.RestoreSessionPendingDecision(ctx, created.ID, domain.PendingDecision{Kind: domain.DecisionKindQuestion, Revision: "rev-2"}, restoreAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("occupied restore: %v", err)
+	}
+	if ok {
+		t.Fatal("restore over an existing decision reported ok=true, want refusal")
 	}
 }
 

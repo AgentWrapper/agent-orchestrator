@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -227,6 +228,46 @@ type projectSetConfigOptions struct {
 	configJSON                   string
 	clear                        bool
 	json                         bool
+	allowProductionConfig        bool
+}
+
+// allowProductionConfigEnv is the operator-set escape hatch that pairs with the
+// --allow-production-config flag for the config-mutation guard below.
+const allowProductionConfigEnv = "AO_ALLOW_PRODUCTION_CONFIG"
+
+// guardProductionConfigMutation is a COOPERATIVE containment check, not a
+// security boundary. An ao-spawned agent session inherits AO_SESSION_ID (and the
+// production AO_RUN_FILE) from the daemon that launched it, so a worker running
+// `ao project set-config` would rewrite the LIVE daemon's config for the whole
+// fleet — the exact failure that crash-looped production in #305. When a session
+// id is present we refuse the mutation unless an operator deliberately overrides
+// it. An operator's own shell has no AO_SESSION_ID, so it is never affected.
+func guardProductionConfigMutation(allowFlag bool) error {
+	sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
+	if sessionID == "" {
+		// Not an ao-spawned session (e.g. an operator's own shell): no guard.
+		return nil
+	}
+	if allowFlag || envIsTruthy(os.Getenv(allowProductionConfigEnv)) {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to mutate live project config from inside an ao-spawned session (AO_SESSION_ID=%s): "+
+			"a worker writing the production daemon's config can crash-loop the whole fleet (#305). "+
+			"If you are an operator and intend this, re-run with --allow-production-config or set %s=1. "+
+			"(Only ao-spawned sessions inherit AO_SESSION_ID; your own shell is unaffected.)",
+		sessionID, allowProductionConfigEnv,
+	)
+}
+
+// envIsTruthy treats the common affirmative env-var spellings as true.
+func envIsTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 type projectListResult struct {
@@ -409,6 +450,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardProductionConfigMutation(opts.allowProductionConfig); err != nil {
+				return err
+			}
 			id := strings.TrimSpace(args[0])
 			opts.trackerIntakeSet = cmd.Flags().Changed("tracker-intake")
 			opts.autonomousMergeSet = cmd.Flags().Changed("autonomous-merge")
@@ -484,6 +528,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Reset config to standard defaults")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
+	f.BoolVar(&opts.allowProductionConfig, "allow-production-config", false, "Operator override: allow this config mutation even when run inside an ao-spawned session")
 	cmd.MarkFlagsMutuallyExclusive("clear", "config-json")
 	return cmd
 }

@@ -341,6 +341,79 @@ func TestProjectSetConfig_FlagMergeBackfillsSpawnableBaseline(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_RefusesFromSpawnedSession(t *testing.T) {
+	cfg := setConfigEnv(t)
+	// Simulate running inside an ao-spawned worker session.
+	t.Setenv("AO_SESSION_ID", "agent-orchestrator-999")
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--autonomous-merge")
+	if err == nil {
+		t.Fatal("set-config from a spawned session should be refused")
+	}
+	if !strings.Contains(err.Error(), "AO_SESSION_ID") || !strings.Contains(err.Error(), "--allow-production-config") {
+		t.Fatalf("error should explain the guard and the override, got: %v", err)
+	}
+	if capture.method == http.MethodPut || strings.Contains(capture.path, "/config") {
+		t.Fatalf("guard must refuse BEFORE any config write, but the server saw %s %s", capture.method, capture.path)
+	}
+}
+
+func TestProjectSetConfig_OverrideFlagAllowsFromSpawnedSession(t *testing.T) {
+	cfg := setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "agent-orchestrator-999")
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--autonomous-merge", "--allow-production-config")
+	if err != nil {
+		t.Fatalf("override flag should allow the mutation: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPut {
+		t.Fatalf("expected a PUT config write, got %s %s", capture.method, capture.path)
+	}
+}
+
+func TestProjectSetConfig_OverrideEnvAllowsFromSpawnedSession(t *testing.T) {
+	cfg := setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "agent-orchestrator-999")
+	t.Setenv("AO_ALLOW_PRODUCTION_CONFIG", "1")
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--autonomous-merge")
+	if err != nil {
+		t.Fatalf("override env should allow the mutation: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPut {
+		t.Fatalf("expected a PUT config write, got %s %s", capture.method, capture.path)
+	}
+}
+
+func TestProjectSetConfig_OperatorShellUnaffected(t *testing.T) {
+	cfg := setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "") // an operator's own shell has no session id
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--autonomous-merge")
+	if err != nil {
+		t.Fatalf("operator shell (no AO_SESSION_ID) must not be guarded: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPut {
+		t.Fatalf("expected a PUT config write, got %s %s", capture.method, capture.path)
+	}
+}
+
 func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)

@@ -162,6 +162,55 @@ func TestActivitySignal_StoresPendingQuestionDecision(t *testing.T) {
 	if !reflect.DeepEqual(got.Options, []string{"API", "Terminal"}) {
 		t.Fatalf("options = %#v", got.Options)
 	}
+	if got.Revision == "" {
+		t.Fatal("a newly stored decision must carry a minted revision")
+	}
+}
+
+// TestActivitySignal_DecisionRevisionIdentity: hook repeats of the SAME dialog
+// keep its revision (identity is stable), while a dialog with different content
+// mints a fresh one — that fresh revision is what makes a stale answer
+// detectable.
+func TestActivitySignal_DecisionRevisionIdentity(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+
+	signal := func(question string) ports.ActivitySignal {
+		return ports.ActivitySignal{
+			Valid: true,
+			State: domain.ActivityBlocked,
+			PendingDecision: &domain.PendingDecision{
+				Kind:     domain.DecisionKindQuestion,
+				Question: question,
+				Options:  []string{"A", "B"},
+			},
+		}
+	}
+	if err := m.ApplyActivitySignal(ctx, "mer-1", signal("Question A")); err != nil {
+		t.Fatal(err)
+	}
+	first := st.sessions["mer-1"].Metadata.PendingDecision
+	if first == nil || first.Revision == "" {
+		t.Fatalf("first decision = %#v, want minted revision", first)
+	}
+
+	// A repeat of the same content keeps the identity.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", signal("Question A")); err != nil {
+		t.Fatal(err)
+	}
+	repeat := st.sessions["mer-1"].Metadata.PendingDecision
+	if repeat == nil || repeat.Revision != first.Revision {
+		t.Fatalf("repeat revision = %#v, want stable identity %q", repeat, first.Revision)
+	}
+
+	// Different content (question B replaces A) mints a fresh identity.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", signal("Question B")); err != nil {
+		t.Fatal(err)
+	}
+	replaced := st.sessions["mer-1"].Metadata.PendingDecision
+	if replaced == nil || replaced.Revision == "" || replaced.Revision == first.Revision {
+		t.Fatalf("replacement revision = %#v, want a fresh identity distinct from %q", replaced, first.Revision)
+	}
 }
 
 func TestActivitySignal_ClearsPendingDecisionWhenUnblocked(t *testing.T) {
@@ -425,6 +474,164 @@ func TestMarkTerminated(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+	if got.TerminalFailureReason != "" {
+		t.Fatalf("plain MarkTerminated should record no reason, got %q", got.TerminalFailureReason)
+	}
+}
+
+// TestTerminationIntent_FinalMarkOwnsCause: the plain path — intent declared,
+// nothing raced, the final mark terminates the row with its cause.
+func TestTerminationIntent_FinalMarkOwnsCause(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	token, err := m.RecordTerminationIntent(ctx, "mer-1", "killed via session kill")
+	if err != nil || token == "" {
+		t.Fatalf("record intent: token=%q err=%v", token, err)
+	}
+	if err := m.MarkTerminatedIntent(ctx, "mer-1", token, "killed via session kill"); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+	if got.TerminalFailureReason != "killed via session kill" {
+		t.Fatalf("TerminalFailureReason = %q, want the intent's cause", got.TerminalFailureReason)
+	}
+}
+
+// TestTerminationIntent_ReaperAttributesToIntent is the kill-vs-reaper race:
+// the runtime is destroyed before the final mark, so the reaper can observe the
+// death first. With an intent declared it attributes the death to the intent's
+// cause — the generic probe reason speaks only when nothing else has — and the
+// final mark (same token) settles on the same cause.
+func TestTerminationIntent_ReaperAttributesToIntent(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+	token, err := m.RecordTerminationIntent(ctx, "mer-1", "killed via session kill")
+	if err != nil || token == "" {
+		t.Fatalf("record intent: token=%q err=%v", token, err)
+	}
+	// The reaper wins the race; it must attribute to the intent, not generic.
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.TerminalFailureReason != "killed via session kill" {
+		t.Fatalf("reaper attribution = %+v, want the declared kill intent's cause", got)
+	}
+	// The final mark still owns its token and settles the same cause.
+	if err := m.MarkTerminatedIntent(ctx, "mer-1", token, "killed via session kill"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "killed via session kill" {
+		t.Fatalf("TerminalFailureReason = %q, want the kill cause after the final mark", got)
+	}
+}
+
+// TestTerminationIntent_CrashDuringRetireAttributesToIntent: a death the reaper
+// observes during a declared retirement window is attributed to the retirement.
+func TestTerminationIntent_CrashDuringRetireAttributesToIntent(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+	token, err := m.RecordTerminationIntent(ctx, "mer-1", "retired for replacement")
+	if err != nil || token == "" {
+		t.Fatalf("record intent: token=%q err=%v", token, err)
+	}
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "retired for replacement" {
+		t.Fatalf("TerminalFailureReason = %q, want the retirement intent's cause", got)
+	}
+	if err := m.MarkTerminatedIntent(ctx, "mer-1", token, "retired for replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "retired for replacement" {
+		t.Fatalf("TerminalFailureReason = %q after final mark", got)
+	}
+}
+
+// TestTerminationIntent_CleanExitDuringTeardownStaysClean: a harness that
+// reports its own exit DURING a kill teardown ended cleanly; the exit voids the
+// intent, and neither the reaper nor the final mark may rewrite the clean
+// record as "killed".
+func TestTerminationIntent_CleanExitDuringTeardownStaysClean(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	token, err := m.RecordTerminationIntent(ctx, "mer-1", "killed via session kill")
+	if err != nil || token == "" {
+		t.Fatalf("record intent: token=%q err=%v", token, err)
+	}
+	// The harness exits cleanly mid-teardown.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.TerminalFailureReason != "" {
+		t.Fatalf("clean exit should terminate with empty reason, got %+v", got)
+	}
+	// The kill's final mark arrives with a now-voided token: it must not
+	// upgrade the clean record.
+	if err := m.MarkTerminatedIntent(ctx, "mer-1", token, "killed via session kill"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "" {
+		t.Fatalf("TerminalFailureReason = %q, a clean-exit record must never be rewritten as killed", got)
+	}
+}
+
+// TestTerminationIntent_CancelVoidsAbandonedIntent: a teardown that exits
+// without reaching its final mark cancels its intent; a later unrelated death
+// must fall back to the generic probe attribution, never to the abandoned
+// teardown's cause. Cancellation is token-scoped: a wrong token voids nothing.
+func TestTerminationIntent_CancelVoidsAbandonedIntent(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+	token, err := m.RecordTerminationIntent(ctx, "mer-1", "killed via session kill")
+	if err != nil || token == "" {
+		t.Fatalf("record intent: token=%q err=%v", token, err)
+	}
+	// A foreign token cancels nothing.
+	m.CancelTerminationIntent("mer-1", "not-the-token")
+	// The abandoned teardown cancels with its own token.
+	m.CancelTerminationIntent("mer-1", token)
+
+	// A later (unrelated) death is attributed generically, not to the kill.
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "runtime probe reported dead" {
+		t.Fatalf("TerminalFailureReason = %q, want generic attribution after the intent was canceled", got)
+	}
+}
+
+// TestTerminationIntent_NoIntentForTerminatedSession: a cleanup teardown of an
+// already-terminated session records no intent and its final mark (empty token)
+// touches nothing.
+func TestTerminationIntent_NoIntentForTerminatedSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.IsTerminated = true
+	rec.TerminalFailureReason = ""
+	st.sessions["mer-1"] = rec
+	token, err := m.RecordTerminationIntent(ctx, "mer-1", "killed via session kill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		t.Fatalf("token = %q, want none for an already-terminated session", token)
+	}
+	if err := m.MarkTerminatedIntent(ctx, "mer-1", token, "killed via session kill"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "" {
+		t.Fatalf("TerminalFailureReason = %q, cleanup must not rewrite how the session ended", got)
 	}
 }
 

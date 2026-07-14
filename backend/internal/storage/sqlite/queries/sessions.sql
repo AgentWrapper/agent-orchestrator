@@ -40,7 +40,18 @@ FROM sessions ORDER BY project_id, num;
 UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
 
 -- name: ClearSessionPendingDecision :execrows
-UPDATE sessions SET pending_decision = '', updated_at = ? WHERE id = ?;
+-- Compare-and-swap: clears the pending decision only while it is still the
+-- exact revision the caller answered, so answering dialog A can never wipe a
+-- dialog B that replaced it concurrently.
+UPDATE sessions SET pending_decision = '', updated_at = ?
+WHERE id = ? AND pending_decision <> '' AND json_extract(pending_decision, '$.revision') = sqlc.arg(revision);
+
+-- name: RestoreSessionPendingDecision :execrows
+-- Puts a claimed-but-undelivered decision back, but only while no newer dialog
+-- has been recorded meanwhile (the answer path claims before sending; a failed
+-- send restores so the dialog stays operator-visible).
+UPDATE sessions SET pending_decision = ?, updated_at = ?
+WHERE id = ? AND pending_decision = '';
 
 -- name: SetSessionIssue :execrows
 UPDATE sessions SET issue_id = ?, display_name = ?, updated_at = ? WHERE id = ?;

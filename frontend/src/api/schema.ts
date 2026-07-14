@@ -921,6 +921,8 @@ export interface components {
         AnswerSessionDecisionRequest: {
             /** @description One-based option number to select. */
             option?: number;
+            /** @description Revision of the fetched decision this answer was prepared against (from GET /decision). The answer is compare-and-swapped against it; a stale revision is rejected with 409 SESSION_DECISION_STALE. */
+            revision: string;
             /** @description Free-text answer for question dialogs that accept text. */
             text?: string;
         };
@@ -1402,6 +1404,8 @@ export interface components {
             kind: "question" | "permission";
             options?: string[];
             question?: string;
+            /** @description Durable identity of this dialog instance. Pass it back when answering; a mismatch with the then-current dialog is rejected as stale. */
+            revision?: string;
             sessionId: string;
         };
         SessionPRCISummary: {

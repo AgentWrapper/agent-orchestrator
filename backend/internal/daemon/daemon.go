@@ -146,7 +146,15 @@ func Run() error {
 	// computed session names) and the intake loop, so a single token
 	// resolution covers both and neither blocks daemon readiness.
 	trackerAdapter := newLazyGitHubTracker(log)
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, trackerAdapter, log)
+	// The agent service is built before the session service so its cached model
+	// probe state can gate spawns (pre-launch resolved-model validation, #305).
+	agentSvc := agentsvc.New()
+	go func() {
+		if _, err := agentSvc.Refresh(ctx); err != nil {
+			log.Warn("initial agent catalog refresh failed", "err", err)
+		}
+	}()
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, trackerAdapter, agentSvc, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -160,12 +168,6 @@ func Run() error {
 	// a terminal/idle state, via the session service's clean Kill path.
 	drainDone := drain.New(store, sessionSvc, drain.Config{Telemetry: telemetrySink, Logger: log}).Start(ctx)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
-	agentSvc := agentsvc.New()
-	go func() {
-		if _, err := agentSvc.Refresh(ctx); err != nil {
-			log.Warn("initial agent catalog refresh failed", "err", err)
-		}
-	}()
 
 	// The projects service is shared between the API surface and the agent-health
 	// monitor (which reads project configs to discover the harness set to probe).

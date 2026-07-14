@@ -124,6 +124,12 @@ type Service struct {
 	modelMu        sync.Mutex
 	modelRefreshMu sync.Mutex
 	modelCache     modelAvailabilityCache
+	// pinVerdicts holds the latest per-pin reachability verdict recorded by ANY
+	// probe path — availability views, config-save validation, and the daily
+	// model-health revalidation. The spawn gate consumes it via
+	// ValidateSpawnModel WITHOUT network I/O; a missing or stale entry fails
+	// open there. Guarded by modelMu.
+	pinVerdicts map[string]pinVerdict
 }
 
 type modelAvailabilityCache struct {
@@ -131,6 +137,19 @@ type modelAvailabilityCache struct {
 	checkedAt time.Time
 	response  ModelAvailabilityResponse
 }
+
+// pinVerdict is one cached per-pin reachability verdict.
+type pinVerdict struct {
+	status    ModelStatus
+	reason    string
+	checkedAt time.Time
+}
+
+// spawnPinVerdictTTL bounds how old a cached pin verdict may be and still gate a
+// spawn. The daily model-health revalidation (default 24h) refreshes verdicts;
+// two missed cycles means AO no longer holds a current opinion and the spawn
+// gate fails open rather than blocking on ancient state.
+const spawnPinVerdictTTL = 48 * time.Hour
 
 // New returns an agent inventory service backed by the daemon's shipped
 // adapter registry.
@@ -329,12 +348,148 @@ func (s *Service) ValidateModel(ctx context.Context, harness domain.AgentHarness
 		probeCtx, cancel := context.WithTimeout(ctx, agentModelProbeTimeout)
 		err := validator.ValidateModel(probeCtx, model)
 		cancel()
+		s.recordPinVerdict(harness, model, verdictFromProbeError(err))
 		if err != nil {
 			return err
 		}
 		return nil
 	}
 	return fmt.Errorf("unsupported agent %q", harness)
+}
+
+// verdictFromProbeError classifies a raw AgentModelValidator error the same way
+// classifyModel does: nil is reachable, an unavailable/cancelled probe is
+// unknown, anything else is a definitive provider rejection.
+func verdictFromProbeError(err error) pinVerdict {
+	switch {
+	case err == nil:
+		return pinVerdict{status: ModelStatusReachable}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), ports.ProbeUnavailable(err):
+		return pinVerdict{status: ModelStatusUnknown, reason: err.Error()}
+	default:
+		return pinVerdict{status: ModelStatusUnreachable, reason: err.Error()}
+	}
+}
+
+// maxPinVerdicts caps the per-pin verdict cache. Real deployments hold a
+// handful of configured pins; the cap only matters under config churn (many
+// distinct historical pins), where evicting the oldest entries merely degrades
+// the spawn gate to fail-open for pins nobody probes anymore.
+const maxPinVerdicts = 256
+
+// recordPinVerdict stores the latest reachability verdict for one harness+model
+// pin so the cache-only spawn gate can consume it. Writes prune expired entries
+// and enforce maxPinVerdicts (oldest-first eviction), so config churn cannot
+// grow the map for the daemon's lifetime.
+func (s *Service) recordPinVerdict(harness domain.AgentHarness, model string, v pinVerdict) {
+	model = strings.TrimSpace(model)
+	if harness == "" || model == "" {
+		return
+	}
+	if v.checkedAt.IsZero() {
+		v.checkedAt = time.Now()
+	}
+	s.modelMu.Lock()
+	defer s.modelMu.Unlock()
+	if s.pinVerdicts == nil {
+		s.pinVerdicts = map[string]pinVerdict{}
+	}
+	for key, existing := range s.pinVerdicts {
+		if time.Since(existing.checkedAt) >= spawnPinVerdictTTL {
+			delete(s.pinVerdicts, key)
+		}
+	}
+	s.pinVerdicts[modelPinKey(harness, model)] = v
+	for len(s.pinVerdicts) > maxPinVerdicts {
+		s.evictOnePinVerdictLocked()
+	}
+}
+
+// likelyUnconfiguredPinAge marks a verdict as belonging to a pin that is
+// probably no longer configured: the daily model-health revalidation (default
+// 24h) refreshes every ACTIVE pin, so an entry a full cycle old (plus slack)
+// has fallen out of the configured set.
+const likelyUnconfiguredPinAge = 25 * time.Hour
+
+// evictOnePinVerdictLocked removes one entry, preferring the ones whose loss is
+// cheapest: first a pin the revalidation cycle no longer refreshes (likely
+// unconfigured), then a fresh non-blocking verdict, and only as a last resort a
+// fresh definitive rejection — evicting one of those degrades the spawn gate to
+// fail-open for a pin that is still actively blocking bad launches. Caller
+// holds modelMu.
+func (s *Service) evictOnePinVerdictLocked() {
+	oldestMatching := func(pred func(pinVerdict) bool) (string, bool) {
+		key := ""
+		var at time.Time
+		for candidate, existing := range s.pinVerdicts {
+			if !pred(existing) {
+				continue
+			}
+			if key == "" || existing.checkedAt.Before(at) {
+				key, at = candidate, existing.checkedAt
+			}
+		}
+		return key, key != ""
+	}
+	if key, ok := oldestMatching(func(v pinVerdict) bool { return time.Since(v.checkedAt) >= likelyUnconfiguredPinAge }); ok {
+		delete(s.pinVerdicts, key)
+		return
+	}
+	if key, ok := oldestMatching(func(v pinVerdict) bool { return v.status != ModelStatusUnreachable }); ok {
+		delete(s.pinVerdicts, key)
+		return
+	}
+	if key, ok := oldestMatching(func(pinVerdict) bool { return true }); ok {
+		delete(s.pinVerdicts, key)
+	}
+}
+
+// cachedPinVerdict returns the latest recorded verdict for a pin, if it exists
+// and is fresh enough to gate a spawn.
+func (s *Service) cachedPinVerdict(harness domain.AgentHarness, model string) (pinVerdict, bool) {
+	s.modelMu.Lock()
+	defer s.modelMu.Unlock()
+	v, ok := s.pinVerdicts[modelPinKey(harness, model)]
+	if !ok || time.Since(v.checkedAt) >= spawnPinVerdictTTL {
+		return pinVerdict{}, false
+	}
+	return v, true
+}
+
+// ValidateSpawnModel renders a reachability verdict for a RESOLVED spawn
+// harness+model by consuming ONLY the cached per-pin verdicts recorded by
+// earlier probes (availability views, config-save validation, and the daily
+// model-health revalidation). It performs NO network I/O and never waits — the
+// session manager calls it while holding its spawn mutex, so a fresh provider
+// probe here would serialize every spawn behind a slow provider.
+//
+// The three-way error contract matches the config-write validator: nil when the
+// cached verdict is reachable (or the spawn is unpinned); a
+// *ports.ProbeUnavailableError when AO holds no fresh verdict (missing or stale
+// cache entry, or an unknown probe result) so the caller can fail open; and a
+// definitive error ONLY when the last real probe saw the provider/account
+// reject the model. A spawn must block solely on the definitive case.
+func (s *Service) ValidateSpawnModel(_ context.Context, harness domain.AgentHarness, model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	v, ok := s.cachedPinVerdict(harness, model)
+	if !ok {
+		return &ports.ProbeUnavailableError{Reason: fmt.Sprintf("no fresh cached reachability verdict for model %q on agent %q", model, harness)}
+	}
+	switch v.status {
+	case ModelStatusReachable:
+		return nil
+	case ModelStatusUnreachable:
+		reason := v.reason
+		if reason == "" {
+			reason = "provider rejected the model"
+		}
+		return fmt.Errorf("model %q is not reachable for agent %q: %s", model, harness, reason)
+	default:
+		return &ports.ProbeUnavailableError{Reason: fmt.Sprintf("model %q reachability unknown for agent %q", model, harness)}
+	}
 }
 
 // ModelAvailability returns candidate model lists per harness and classifies
@@ -508,9 +663,12 @@ func (s *Service) classifyModel(ctx context.Context, item agentregistry.HarnessA
 	validator, ok := item.Agent.(ports.AgentModelValidator)
 	if !ok {
 		row.Reason = "harness has no model reachability probe"
+		s.recordPinVerdict(item.Harness, model, pinVerdict{status: row.Status, reason: row.Reason})
 		return row
 	}
 	if err := ctx.Err(); err != nil {
+		// A dead request context is not a provider verdict; do not record it over
+		// a previously recorded real verdict.
 		row.Reason = "model probe context already done: " + err.Error()
 		return row
 	}
@@ -519,18 +677,18 @@ func (s *Service) classifyModel(ctx context.Context, item agentregistry.HarnessA
 	cancel()
 	if err == nil {
 		row.Status = ModelStatusReachable
+		s.recordPinVerdict(item.Harness, model, pinVerdict{status: row.Status})
 		return row
 	}
 	row.Reason = err.Error()
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		row.Status = ModelStatusUnknown
-		return row
-	}
-	if ports.ProbeUnavailable(err) {
+	} else if ports.ProbeUnavailable(err) {
 		row.Status = ModelStatusUnknown
-		return row
+	} else {
+		row.Status = ModelStatusUnreachable
 	}
-	row.Status = ModelStatusUnreachable
+	s.recordPinVerdict(item.Harness, model, pinVerdict{status: row.Status, reason: row.Reason})
 	return row
 }
 

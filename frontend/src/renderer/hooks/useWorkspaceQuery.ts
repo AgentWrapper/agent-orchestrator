@@ -53,6 +53,7 @@ function toWorkspaceSession(
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
 		prs: (session.prs ?? []).map(toPullRequestFacts),
+		terminalFailureReason: session.terminalFailureReason,
 	};
 }
 

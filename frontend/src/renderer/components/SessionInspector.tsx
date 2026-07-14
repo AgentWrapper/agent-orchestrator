@@ -256,6 +256,9 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Row k="Branch" v={branchLabel} mono />
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />
+					{session.status === "terminated" && session.terminalFailureReason ? (
+						<Row k="Ended" v={session.terminalFailureReason} />
+					) : null}
 				</dl>
 			</Section>
 		</div>

@@ -30,6 +30,12 @@ type PendingDecision struct {
 	Kind     DecisionKind `json:"kind"`
 	Question string       `json:"question,omitempty"`
 	Options  []string     `json:"options,omitempty"`
+	// Revision is the durable identity of THIS dialog instance. Lifecycle mints
+	// a fresh one whenever the pending decision's content changes, so an answer
+	// can name exactly which dialog it is answering: question B replacing A
+	// invalidates any answer prepared against A (compare-and-swap in
+	// AnswerDecision) instead of silently receiving A's option index.
+	Revision string `json:"revision,omitempty"`
 }
 
 // DecisionAnswer is the API/CLI input for answering an answerable decision.
@@ -37,6 +43,10 @@ type PendingDecision struct {
 type DecisionAnswer struct {
 	Option int    `json:"option,omitempty"`
 	Text   string `json:"text,omitempty"`
+	// Revision names the dialog instance this answer was prepared against (from
+	// GET /decision). Answering requires it; a mismatch with the CURRENT pending
+	// decision is rejected as stale rather than answering the wrong dialog.
+	Revision string `json:"revision,omitempty"`
 }
 
 // SessionKind distinguishes a worker session from an orchestrator session.

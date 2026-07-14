@@ -79,6 +79,16 @@ var (
 	// ErrInvalidDecisionAnswer means the caller supplied neither a valid
 	// one-based option nor non-empty free text.
 	ErrInvalidDecisionAnswer = errors.New("session: invalid decision answer")
+	// ErrDecisionRevisionRequired means the answer named no decision revision.
+	// Answers must be prepared against a fetched decision (GET /decision) and
+	// carry its revision, or a dialog replaced between fetch and answer would
+	// silently receive the wrong option. The API maps it to a 400.
+	ErrDecisionRevisionRequired = errors.New("session: decision revision is required; fetch the pending decision first")
+	// ErrDecisionStale means the pending decision changed between the caller's
+	// fetch and their answer (or was answered/cleared concurrently). The caller
+	// must re-fetch and re-decide against the CURRENT dialog. The API maps it
+	// to a 409.
+	ErrDecisionStale = errors.New("session: pending decision changed since it was fetched; fetch it again and re-answer")
 	// ErrModelHarnessMismatch means an explicit per-spawn model belongs to a
 	// different provider than the resolved harness (e.g. a Claude model on a
 	// Codex spawn). Passing it would hang the agent, so spawn fails loudly
@@ -93,7 +103,27 @@ var (
 	// repo root, which the mode forbids, so the spawn fails loudly before any
 	// durable state is created. The API maps it to a 400.
 	ErrBranchNotAllowedInPlace = errors.New("session: a branch cannot be checked out in the shared repo root under in-place workspace mode")
+	// ErrModelUnreachable means the resolved harness+model was DEFINITIVELY
+	// rejected by the provider/account before launch. Only a definitive rejection
+	// blocks a spawn; an unknown verdict or a failed probe fails open. The API
+	// maps it to a 400.
+	ErrModelUnreachable = errors.New("session: resolved model is not reachable")
 )
+
+// SpawnModelValidator renders a reachability verdict for the RESOLVED spawn
+// harness+model. Implementations MUST be cache-only — Spawn calls this while
+// holding the global spawn mutex, so any network I/O or blocking wait here
+// serializes every spawn in the daemon. The agent service satisfies it by
+// consuming per-pin verdicts recorded by earlier probes (availability views,
+// config-save validation, the daily model-health revalidation); a missing or
+// stale verdict fails open. Three-way error contract, same as the config-write
+// validator: nil means proceed (reachable, unpinned, or no validator), a
+// *ports.ProbeUnavailableError means AO holds no verdict (proceed, but
+// unverified), and any other error is a definitive provider rejection (refuse
+// the spawn).
+type SpawnModelValidator interface {
+	ValidateSpawnModel(ctx context.Context, harness domain.AgentHarness, model string) error
+}
 
 // Env vars a spawned process reads to learn who it is.
 const (
@@ -129,6 +159,19 @@ const hookBinaryName = "ao"
 type lifecycleRecorder interface {
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
+	// RecordTerminationIntent declares a teardown's cause BEFORE any teardown
+	// I/O, so every terminal attributor (reaper, clean exit, final mark) can
+	// attribute the death correctly during the teardown window. Empty token
+	// means no intent was recorded (session already terminated).
+	RecordTerminationIntent(ctx context.Context, id domain.SessionID, cause string) (string, error)
+	// MarkTerminatedIntent is the teardown's final mark: it owns the cause only
+	// while its token still matches the recorded intent (a clean exit during
+	// teardown voids it and is never rewritten).
+	MarkTerminatedIntent(ctx context.Context, id domain.SessionID, token, cause string) error
+	// CancelTerminationIntent voids a declared intent by token. Every teardown
+	// exit that did NOT reach its final mark must cancel, so an abandoned intent
+	// cannot misattribute a later unrelated death.
+	CancelTerminationIntent(id domain.SessionID, token string)
 	// MarkSwitched re-points a session at a new harness and persists the launch
 	// metadata (runtime handle, workspace path/branch, launched-harnesses set),
 	// clearing the harness-specific native resume id (AgentSessionID).
@@ -165,7 +208,13 @@ type Store interface {
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
-	ClearSessionPendingDecision(ctx context.Context, id domain.SessionID, updatedAt time.Time) (bool, error)
+	// ClearSessionPendingDecision compare-and-swaps the pending decision away:
+	// it clears only while the stored decision still carries the given revision,
+	// so answering dialog A can never wipe a dialog B that replaced it.
+	ClearSessionPendingDecision(ctx context.Context, id domain.SessionID, revision string, updatedAt time.Time) (bool, error)
+	// RestoreSessionPendingDecision puts a claimed-but-undelivered decision back,
+	// but only while no newer dialog has been recorded meanwhile.
+	RestoreSessionPendingDecision(ctx context.Context, id domain.SessionID, decision domain.PendingDecision, updatedAt time.Time) (bool, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionIssue(ctx context.Context, id domain.SessionID, issueID domain.IssueID, displayName string, updatedAt time.Time) (bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
@@ -205,9 +254,12 @@ type Manager struct {
 	guard     *sessionguard.Guard
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
-	dataDir   string
-	runFile   string
-	clock     func() time.Time
+	// modelValidator gates a spawn on the RESOLVED harness+model. Nil disables
+	// the check (tests, or a daemon wired without an agent service).
+	modelValidator SpawnModelValidator
+	dataDir        string
+	runFile        string
+	clock          func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -335,6 +387,9 @@ type Deps struct {
 	Store     Store
 	Messenger ports.AgentMessenger
 	Lifecycle lifecycleRecorder
+	// ModelValidator gates a spawn on the resolved harness+model by consuming the
+	// agent service's cached probe state. Nil disables the pre-launch check.
+	ModelValidator SpawnModelValidator
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
@@ -362,17 +417,18 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:    d.Runtime,
-		agents:     d.Agents,
-		workspace:  d.Workspace,
-		store:      d.Store,
-		messenger:  d.Messenger,
-		lcm:        d.Lifecycle,
-		dataDir:    d.DataDir,
-		runFile:    d.RunFile,
-		clock:      d.Clock,
-		lookPath:   d.LookPath,
-		executable: d.Executable,
+		runtime:        d.Runtime,
+		agents:         d.Agents,
+		workspace:      d.Workspace,
+		store:          d.Store,
+		messenger:      d.Messenger,
+		lcm:            d.Lifecycle,
+		modelValidator: d.ModelValidator,
+		dataDir:        d.DataDir,
+		runFile:        d.RunFile,
+		clock:          d.Clock,
+		lookPath:       d.LookPath,
+		executable:     d.Executable,
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -452,6 +508,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		}
 	}
 	var mixBucket *domain.BucketKey
+	// Captured BEFORE mix selection: the mix fills cfg.Model in when the spawn
+	// named none, so afterwards cfg.Model alone cannot tell an explicit override
+	// from a bucket pin (spawnModelSource needs the distinction).
+	explicitSpawnModel := strings.TrimSpace(cfg.Model) != ""
 	// A configured worker mix distributes worker spawns across weighted
 	// agent/model buckets. It applies only to a worker spawn that names no
 	// explicit harness; an explicit --agent (e.g. the haiku deploy pool) always
@@ -501,6 +561,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
+
+	// Validate the RESOLVED harness+model before any durable state is created, so
+	// a definitively-invalid pin (the kind that crash-looped the fleet in #305)
+	// fails loudly here instead of launching an agent that can never reach its
+	// model. Only a definitive provider rejection blocks the spawn; an unknown or
+	// unavailable verdict fails open, same narrow philosophy as #184.
+	if err := m.validateSpawnModel(ctx, cfg.Harness, agentConfig.Model, spawnModelSource(explicitSpawnModel, mixBucket)); err != nil {
+		return domain.SessionRecord{}, err
+	}
+
 	var actualBucket *domain.BucketKey
 	if cfg.Kind == domain.KindWorker {
 		key := domain.BucketKey{Harness: cfg.Harness, Model: strings.TrimSpace(cfg.Model)}
@@ -868,6 +938,48 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spa
 	return agentconfig.Effective(kind, cfg, spawnModel, harness)
 }
 
+// validateSpawnModel gates a spawn on the resolved harness+model. It mirrors the
+// config-write validator's three-way switch (see project service): nil and a
+// probe-unavailable verdict both proceed (the latter unverified, logged), and
+// only a definitive provider rejection refuses the spawn with an operator-facing
+// error naming the harness, model, and where the pin came from. The validator is
+// cache-only (see SpawnModelValidator), so this never blocks or performs I/O —
+// it is safe to call under the spawn mutex.
+func (m *Manager) validateSpawnModel(ctx context.Context, harness domain.AgentHarness, model, source string) error {
+	if m.modelValidator == nil {
+		return nil
+	}
+	err := m.modelValidator.ValidateSpawnModel(ctx, harness, model)
+	switch {
+	case err == nil:
+		return nil
+	case ports.ProbeUnavailable(err):
+		// The probe rendered no verdict, so AO knows nothing about this model.
+		// Launching unverified is the deliberate fail-open (#182/#184): a probe
+		// defect must never become a spawn blocker.
+		m.logger.Warn("spawn: model probe unavailable; launching unverified",
+			"harness", string(harness), "model", model, "source", source, "error", err)
+		return nil
+	default:
+		return fmt.Errorf("spawn: %w: harness %q model %q from %s: %w", ErrModelUnreachable, harness, model, source, err)
+	}
+}
+
+// spawnModelSource labels where the resolved model pin came from, for the refusal
+// message. An explicit per-spawn model wins (it overrides everything, including a
+// selected mix bucket's model); then a worker-mix bucket; otherwise the
+// project/role config or harness default. explicitModel is captured BEFORE mix
+// selection, because the mix fills cfg.Model in when the spawn named none.
+func spawnModelSource(explicitModel bool, mixBucket *domain.BucketKey) string {
+	if explicitModel {
+		return "explicit spawn model"
+	}
+	if mixBucket != nil {
+		return "worker-mix bucket"
+	}
+	return "project/role config"
+}
+
 func (m *Manager) liveWorkerCount(ctx context.Context, projectID domain.ProjectID) (int, error) {
 	recs, err := m.store.ListSessions(ctx, projectID)
 	if err != nil {
@@ -1073,6 +1185,20 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if !ok {
 		return false, nil // already gone: benign race
 	}
+	// Declare the teardown's cause BEFORE destroying anything, so a death the
+	// reaper observes mid-teardown is attributed to this kill instead of its
+	// generic probe reason — and a clean harness exit during the window voids
+	// the intent (its record is never rewritten as killed). A session that was
+	// already terminated gets no intent: this is a cleanup, not a cause.
+	killIntentToken, err := m.lcm.RecordTerminationIntent(ctx, id, killedViaSessionKillReason)
+	if err != nil {
+		return false, fmt.Errorf("kill %s: record intent: %w", id, err)
+	}
+	// Any exit that does not reach the final mark abandons the teardown: void
+	// the intent so it cannot misattribute a later unrelated death to this kill.
+	// After a successful MarkTerminatedIntent the token is already consumed and
+	// this is a no-op.
+	defer m.lcm.CancelTerminationIntent(id, killIntentToken)
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfo(rec)
 
@@ -1119,11 +1245,17 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
 		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
 	}
-	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+	if err := m.lcm.MarkTerminatedIntent(ctx, id, killIntentToken, killedViaSessionKillReason); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
 	return freed, nil
 }
+
+// Operator-facing causes recorded via the termination-intent machinery.
+const (
+	killedViaSessionKillReason  = "killed via session kill"
+	retiredForReplacementReason = "retired for replacement"
+)
 
 // RetireForReplacement terminates a live orchestrator and releases its branch
 // for a replacement session. Unlike Kill, this captures uncommitted work before
@@ -1152,6 +1284,16 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if !ok || rec.IsTerminated {
 		return nil
 	}
+	// Declare the retirement's cause before any teardown I/O — same intent
+	// contract as Kill: a reaper-observed death during teardown is attributed to
+	// the retirement, and a clean exit during the window voids it.
+	retireIntentToken, err := m.lcm.RecordTerminationIntent(ctx, id, retiredForReplacementReason)
+	if err != nil {
+		return fmt.Errorf("retire replacement %s: record intent: %w", id, err)
+	}
+	// Same contract as Kill: an exit that never reached the final mark voids the
+	// intent (no-op after a successful mark, which consumes the token).
+	defer m.lcm.CancelTerminationIntent(id, retireIntentToken)
 	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
@@ -1162,7 +1304,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 			}
 		}
-		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+		if err := m.lcm.MarkTerminatedIntent(ctx, id, retireIntentToken, retiredForReplacementReason); err != nil {
 			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
 		}
 		return nil
@@ -1170,7 +1312,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return fmt.Errorf("retire replacement %s: workspace rows: %w", id, rowErr)
 	} else if ok {
-		return m.retireWorkspaceProjectForReplacement(ctx, rec, rows)
+		return m.retireWorkspaceProjectForReplacement(ctx, rec, rows, retireIntentToken)
 	}
 
 	ws := workspaceInfo(rec)
@@ -1189,13 +1331,13 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		return fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
 	}
-	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+	if err := m.lcm.MarkTerminatedIntent(ctx, rec.ID, retireIntentToken, retiredForReplacementReason); err != nil {
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
 	}
 	return nil
 }
 
-func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
+func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo, retireIntentToken string) error {
 	for _, row := range rows {
 		if _, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row)); err != nil {
 			return fmt.Errorf("retire replacement %s repo %s: stash: %w", rec.ID, row.RepoName, err)
@@ -1215,7 +1357,7 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 		return fmt.Errorf("retire replacement %s: clear restore markers: %w", rec.ID, err)
 	}
-	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+	if err := m.lcm.MarkTerminatedIntent(ctx, rec.ID, retireIntentToken, retiredForReplacementReason); err != nil {
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", rec.ID, err)
 	}
 	return nil
@@ -2464,6 +2606,17 @@ func (m *Manager) Decision(ctx context.Context, id domain.SessionID) (domain.Pen
 // not route through sessionguard.Deliver because the session is expected to be
 // blocked; this method performs the stricter decision-kind check immediately
 // before writing.
+//
+// Answering is a compare-and-swap against the decision's revision, in
+// claim-then-send order: the answer must name the revision it was prepared
+// against (fetched via Decision), the pending decision is atomically claimed
+// (cleared) only while it still carries that exact revision, and only a
+// successful claim sends the answer into the pane. A dialog that was replaced
+// concurrently fails the claim and surfaces ErrDecisionStale instead of
+// delivering an option index meant for the previous dialog — and the cleared
+// state is provably the answered one, never a newer dialog. A claim whose send
+// then fails restores the decision (only while nothing newer arrived) so the
+// dialog stays operator-visible.
 func (m *Manager) AnswerDecision(ctx context.Context, id domain.SessionID, answer domain.DecisionAnswer) error {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -2485,6 +2638,12 @@ func (m *Manager) AnswerDecision(ctx context.Context, id domain.SessionID, answe
 	if decision.Kind != domain.DecisionKindQuestion {
 		return fmt.Errorf("answer decision %s: %w", id, ErrDecisionNotAnswerable)
 	}
+	if strings.TrimSpace(answer.Revision) == "" {
+		return fmt.Errorf("answer decision %s: %w", id, ErrDecisionRevisionRequired)
+	}
+	if decision.Revision == "" || answer.Revision != decision.Revision {
+		return fmt.Errorf("answer decision %s: %w", id, ErrDecisionStale)
+	}
 	msg, err := renderDecisionAnswer(decision, answer)
 	if err != nil {
 		return fmt.Errorf("answer decision %s: %w", id, err)
@@ -2492,15 +2651,24 @@ func (m *Manager) AnswerDecision(ctx context.Context, id domain.SessionID, answe
 	if m.messenger == nil {
 		return fmt.Errorf("answer decision %s: messenger unavailable", id)
 	}
-	if err := m.messenger.Send(ctx, id, msg); err != nil {
-		return fmt.Errorf("answer decision %s: send: %w", id, err)
-	}
-	ok, err = m.store.ClearSessionPendingDecision(ctx, id, m.clock())
+	// Claim before sending: the CAS is the serialization point against a
+	// concurrent replacement. Sending first would leave a window where the
+	// rendered option lands in a dialog the store no longer holds.
+	claimed, err := m.store.ClearSessionPendingDecision(ctx, id, decision.Revision, m.clock())
 	if err != nil {
-		return fmt.Errorf("answer decision %s: clear decision: %w", id, err)
+		return fmt.Errorf("answer decision %s: claim decision: %w", id, err)
 	}
-	if !ok {
-		return fmt.Errorf("answer decision %s: %w", id, ErrNotFound)
+	if !claimed {
+		return fmt.Errorf("answer decision %s: %w", id, ErrDecisionStale)
+	}
+	if err := m.messenger.Send(ctx, id, msg); err != nil {
+		// Undelivered: put the claimed decision back (only while nothing newer
+		// arrived) so the dialog stays visible and answerable.
+		if _, restoreErr := m.store.RestoreSessionPendingDecision(ctx, id, decision, m.clock()); restoreErr != nil {
+			m.logger.Warn("answer decision: restore after failed send failed",
+				"sessionID", id, "error", restoreErr)
+		}
+		return fmt.Errorf("answer decision %s: send: %w", id, err)
 	}
 	return nil
 }

@@ -142,6 +142,7 @@ ao project set-config <id> [flags]
 
 | Flag | Meaning | Default / Required |
 |---|---|---|
+| `--allow-production-config` | Operator override: allow this config mutation even when run inside an ao-spawned session | - |
 | `--clear` | Reset config to standard defaults | - |
 | `--config-json string` | Full config as a JSON object (overrides field flags) | - |
 | `--default-branch string` | Base branch new session worktrees are created from | - |
@@ -167,3 +168,13 @@ ao project set-config agent-orchestrator --default-branch main --model claude-op
 # Set an env var and a post-create command
 ao project set-config agent-orchestrator --env "NODE_ENV=development" --post-create "npm install"
 ```
+
+**Production-config guard (cooperative):** when this command runs inside an
+ao-spawned agent session — detected by the inherited `AO_SESSION_ID` env var —
+the mutation is refused, because a worker writing the live daemon's config can
+crash-loop the whole fleet. An operator who genuinely intends the write
+overrides with the `--allow-production-config` flag or by setting
+`AO_ALLOW_PRODUCTION_CONFIG=1`. Only ao-spawned sessions inherit
+`AO_SESSION_ID`, so an operator's own shell is never guarded, and read-only
+commands (`get`, `ls`) are unaffected. This is cooperative containment, not a
+security boundary.

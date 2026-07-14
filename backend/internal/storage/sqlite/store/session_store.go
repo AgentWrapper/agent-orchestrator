@@ -43,17 +43,38 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
-// ClearSessionPendingDecision clears only the pending decision metadata for an
-// existing session. It avoids rewriting lifecycle fields from a stale snapshot.
-func (s *Store) ClearSessionPendingDecision(ctx context.Context, id domain.SessionID, updatedAt time.Time) (bool, error) {
+// ClearSessionPendingDecision clears the pending decision metadata for an
+// existing session ONLY while the stored decision still carries the given
+// revision (compare-and-swap). ok=false means the decision was already gone or
+// has been replaced by a different dialog — the caller's answer is stale. It
+// avoids rewriting lifecycle fields from a stale snapshot.
+func (s *Store) ClearSessionPendingDecision(ctx context.Context, id domain.SessionID, revision string, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.ClearSessionPendingDecision(ctx, gen.ClearSessionPendingDecisionParams{
 		ID:        id,
 		UpdatedAt: updatedAt,
+		Revision:  revision,
 	})
 	if err != nil {
 		return false, fmt.Errorf("clear pending decision for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// RestoreSessionPendingDecision puts a claimed-but-undelivered decision back,
+// but only while no newer dialog has been recorded meanwhile. ok=false means a
+// newer decision arrived (or the session vanished) and the restore was skipped.
+func (s *Store) RestoreSessionPendingDecision(ctx context.Context, id domain.SessionID, decision domain.PendingDecision, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.RestoreSessionPendingDecision(ctx, gen.RestoreSessionPendingDecisionParams{
+		ID:              id,
+		UpdatedAt:       updatedAt,
+		PendingDecision: pendingDecisionPayload(&decision),
+	})
+	if err != nil {
+		return false, fmt.Errorf("restore pending decision for session %s: %w", id, err)
 	}
 	return rows > 0, nil
 }

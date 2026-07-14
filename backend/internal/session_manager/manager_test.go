@@ -64,6 +64,10 @@ type fakeStore struct {
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
 	sharedLog *[]string
+	// beforeClearDecision, when non-nil, runs at the top of
+	// ClearSessionPendingDecision — race tests use it to replace the stored
+	// decision between AnswerDecision's read and its CAS claim.
+	beforeClearDecision func(*fakeStore)
 }
 
 func newFakeStore() *fakeStore {
@@ -93,12 +97,30 @@ func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 	f.sessions[rec.ID] = rec
 	return nil
 }
-func (f *fakeStore) ClearSessionPendingDecision(_ context.Context, id domain.SessionID, updatedAt time.Time) (bool, error) {
+func (f *fakeStore) ClearSessionPendingDecision(_ context.Context, id domain.SessionID, revision string, updatedAt time.Time) (bool, error) {
+	if f.beforeClearDecision != nil {
+		f.beforeClearDecision(f)
+	}
 	rec, ok := f.sessions[id]
 	if !ok {
 		return false, nil
 	}
+	// Mirror the store's compare-and-swap: only the exact answered revision may
+	// be cleared.
+	if rec.Metadata.PendingDecision == nil || rec.Metadata.PendingDecision.Revision != revision || revision == "" {
+		return false, nil
+	}
 	rec.Metadata.PendingDecision = nil
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return true, nil
+}
+func (f *fakeStore) RestoreSessionPendingDecision(_ context.Context, id domain.SessionID, decision domain.PendingDecision, updatedAt time.Time) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok || rec.Metadata.PendingDecision != nil {
+		return false, nil
+	}
+	rec.Metadata.PendingDecision = &decision
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
 	return true, nil
@@ -201,6 +223,12 @@ type fakeLCM struct {
 	completed int
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
+	// terminatedReason records the last cause the intent mark OWNED per id.
+	terminatedReason map[domain.SessionID]string
+	// intents mirrors the lifecycle manager's recorded teardown intents.
+	intents map[domain.SessionID]string
+	// canceledIntents counts CancelTerminationIntent calls that voided a live intent.
+	canceledIntents int
 	// switched counts MarkSwitched calls; switching tracks the in-flight guard.
 	switched      int
 	switching     map[domain.SessionID]bool
@@ -222,7 +250,70 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	}
 	l.terminated[id]++
 	rec := l.store.sessions[id]
+	if rec.IsTerminated {
+		return nil
+	}
 	rec.IsTerminated = true
+	rec.TerminalFailureReason = ""
+	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
+	l.store.sessions[id] = rec
+	return nil
+}
+
+// RecordTerminationIntent / MarkTerminatedIntent mirror the real lifecycle
+// manager's intent contract: no intent for an already-terminated session, and
+// the final mark owns the cause only while its token matches.
+func (l *fakeLCM) RecordTerminationIntent(_ context.Context, id domain.SessionID, cause string) (string, error) {
+	rec, ok := l.store.sessions[id]
+	if !ok || rec.IsTerminated {
+		return "", nil
+	}
+	if l.intents == nil {
+		l.intents = map[domain.SessionID]string{}
+	}
+	token := fmt.Sprintf("intent-%s-%d", id, len(l.intents)+1)
+	l.intents[id] = token + "\x00" + cause
+	return token, nil
+}
+func (l *fakeLCM) CancelTerminationIntent(id domain.SessionID, token string) {
+	if token == "" {
+		return
+	}
+	if stored, ok := l.intents[id]; ok && strings.HasPrefix(stored, token+"\x00") {
+		delete(l.intents, id)
+		l.canceledIntents++
+	}
+}
+func (l *fakeLCM) MarkTerminatedIntent(_ context.Context, id domain.SessionID, token, cause string) error {
+	if l.terminated == nil {
+		l.terminated = map[domain.SessionID]int{}
+	}
+	l.terminated[id]++
+	if l.terminatedReason == nil {
+		l.terminatedReason = map[domain.SessionID]string{}
+	}
+	stored := l.intents[id]
+	owns := token != "" && stored != "" && stored == token+"\x00"+cause
+	if owns {
+		delete(l.intents, id)
+	}
+	l.terminatedReason[id] = ""
+	rec := l.store.sessions[id]
+	if rec.IsTerminated {
+		if owns && rec.TerminalFailureReason != cause {
+			rec.TerminalFailureReason = cause
+			l.terminatedReason[id] = cause
+			l.store.sessions[id] = rec
+		}
+		return nil
+	}
+	rec.IsTerminated = true
+	if owns {
+		rec.TerminalFailureReason = cause
+		l.terminatedReason[id] = cause
+	} else {
+		rec.TerminalFailureReason = ""
+	}
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
 	l.store.sessions[id] = rec
 	return nil
@@ -1180,6 +1271,74 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if got, ok := rt.lastCfg.Env["POLYPOWERS_AUTOMERGE"]; ok {
 		t.Fatalf("runtime env POLYPOWERS_AUTOMERGE = %q, want unset for project without autonomous merge", got)
+	}
+}
+
+// fakeSpawnModelValidator records the harness/model it was asked about and
+// returns a canned verdict, mirroring the three-way contract the manager acts on.
+type fakeSpawnModelValidator struct {
+	err        error
+	gotHarness domain.AgentHarness
+	gotModel   string
+	callCount  int
+}
+
+func (f *fakeSpawnModelValidator) ValidateSpawnModel(_ context.Context, harness domain.AgentHarness, model string) error {
+	f.callCount++
+	f.gotHarness = harness
+	f.gotModel = model
+	return f.err
+}
+
+func spawnManagerWithValidator(v SpawnModelValidator) (*Manager, *fakeStore) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, ModelValidator: v})
+	return m, st
+}
+
+// A definitive rejection from the validator refuses the spawn BEFORE any durable
+// session row is created.
+func TestSpawn_RefusesDefinitivelyInvalidModel(t *testing.T) {
+	v := &fakeSpawnModelValidator{err: errors.New("400 model not available")}
+	m, st := spawnManagerWithValidator(v)
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "bogus-model"})
+	if !errors.Is(err, ErrModelUnreachable) {
+		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
+	}
+	if v.gotModel != "bogus-model" {
+		t.Fatalf("validator saw model %q, want the resolved bogus-model", v.gotModel)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("a refused spawn must not create a session row, got %d", len(st.sessions))
+	}
+}
+
+// A probe-unavailable verdict fails open: the spawn proceeds unverified.
+func TestSpawn_ProbeUnavailableModelProceeds(t *testing.T) {
+	v := &fakeSpawnModelValidator{err: &ports.ProbeUnavailableError{Reason: "probe defect"}}
+	m, _ := spawnManagerWithValidator(v)
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "unprobed"}); err != nil {
+		t.Fatalf("probe-unavailable must fail open (proceed), got %v", err)
+	}
+	if v.callCount != 1 {
+		t.Fatalf("validator call count = %d, want 1", v.callCount)
+	}
+}
+
+// A reachable (nil) verdict proceeds normally.
+func TestSpawn_ReachableModelProceeds(t *testing.T) {
+	v := &fakeSpawnModelValidator{}
+	m, _ := spawnManagerWithValidator(v)
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "good"}); err != nil {
+		t.Fatalf("reachable model must proceed, got %v", err)
+	}
+	if v.gotHarness != domain.HarnessClaudeCode {
+		t.Fatalf("validator saw harness %q, want the resolved claude-code", v.gotHarness)
 	}
 }
 
@@ -2217,6 +2376,70 @@ func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("session should be terminated even without a handle")
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "killed via session kill" {
+		t.Fatalf("TerminalFailureReason = %q, want the explicit kill reason", got)
+	}
+}
+
+// TestKill_AlreadyTerminatedRecordsNoReason: a cleanup-kill of a session that
+// was ALREADY terminated (e.g. it exited cleanly hours ago and the operator is
+// reclaiming its workspace) must not rewrite how it ended — only a kill of a
+// live session records "killed via session kill".
+func TestKill_AlreadyTerminatedRecordsNoReason(t *testing.T) {
+	m, st, _, _ := newManager()
+	rec := mkLive("mer-1")
+	rec.IsTerminated = true
+	rec.Activity = domain.Activity{State: domain.ActivityExited}
+	st.sessions["mer-1"] = rec
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	lcm := m.lcm.(*fakeLCM)
+	if got := lcm.terminatedReason["mer-1"]; got != "" {
+		t.Fatalf("kill of an already-terminated session passed reason %q, want empty (no history rewrite)", got)
+	}
+}
+
+// TestKill_FailedTeardownCancelsIntent: a kill that errors before its final
+// mark must void its declared termination intent, or a later unrelated crash
+// would be misattributed to a kill that never completed.
+func TestKill_FailedTeardownCancelsIntent(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	rt.destroyErr = errors.New("tmux: server not responding")
+
+	if _, err := m.Kill(ctx, "mer-1"); err == nil {
+		t.Fatal("kill should surface the runtime destroy failure")
+	}
+	lcm := m.lcm.(*fakeLCM)
+	if len(lcm.intents) != 0 {
+		t.Fatalf("intents = %#v, want the abandoned kill's intent canceled", lcm.intents)
+	}
+	if lcm.canceledIntents != 1 {
+		t.Fatalf("canceled intents = %d, want 1", lcm.canceledIntents)
+	}
+}
+
+// TestKill_SuccessfulTeardownConsumesIntentWithoutCancel: the happy path's
+// deferred cancel is a no-op because the final mark already consumed the token.
+func TestKill_SuccessfulTeardownConsumesIntentWithoutCancel(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	lcm := m.lcm.(*fakeLCM)
+	if len(lcm.intents) != 0 {
+		t.Fatalf("intents = %#v, want consumed by the final mark", lcm.intents)
+	}
+	if lcm.canceledIntents != 0 {
+		t.Fatalf("canceled intents = %d, want 0 (mark consumed the token)", lcm.canceledIntents)
+	}
+	if got := st.sessions["mer-1"].TerminalFailureReason; got != "killed via session kill" {
+		t.Fatalf("TerminalFailureReason = %q, want the kill cause", got)
 	}
 }
 
@@ -5247,13 +5470,14 @@ func TestAnswerDecision_QuestionOptionBypassesSendGuard(t *testing.T) {
 				Kind:     domain.DecisionKindQuestion,
 				Question: "Pick a direction",
 				Options:  []string{"Use API", "Use terminal"},
+				Revision: "rev-a",
 			},
 		},
 	}
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 2}); err != nil {
+	if err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 2, Revision: "rev-a"}); err != nil {
 		t.Fatalf("AnswerDecision: %v", err)
 	}
 	if !reflect.DeepEqual(msg.msgs, []string{"2"}) {
@@ -5261,6 +5485,123 @@ func TestAnswerDecision_QuestionOptionBypassesSendGuard(t *testing.T) {
 	}
 	if got := st.sessions["s1"].Metadata.PendingDecision; got != nil {
 		t.Fatalf("PendingDecision = %#v, want cleared after answer", got)
+	}
+}
+
+// TestAnswerDecision_RequiresRevision: an answer that names no revision was not
+// prepared against a fetched decision and is refused outright.
+func TestAnswerDecision_RequiresRevision(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "Q", Options: []string{"A"}, Revision: "rev-a"},
+		},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 1})
+	if !errors.Is(err, ErrDecisionRevisionRequired) {
+		t.Fatalf("AnswerDecision error = %v, want ErrDecisionRevisionRequired", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("sent = %#v, want nothing without a revision", msg.msgs)
+	}
+	if st.sessions["s1"].Metadata.PendingDecision == nil {
+		t.Fatal("decision must survive a refused answer")
+	}
+}
+
+// TestAnswerDecision_StaleRevisionRejected: an answer prepared against a
+// decision that has since been replaced is refused as stale — the new dialog
+// must never receive an option index meant for the old one.
+func TestAnswerDecision_StaleRevisionRejected(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			// Question B has replaced the A the caller fetched.
+			PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "B", Options: []string{"B1", "B2"}, Revision: "rev-b"},
+		},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 1, Revision: "rev-a"})
+	if !errors.Is(err, ErrDecisionStale) {
+		t.Fatalf("AnswerDecision error = %v, want ErrDecisionStale", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("sent = %#v, want no cross-answer into dialog B", msg.msgs)
+	}
+	if got := st.sessions["s1"].Metadata.PendingDecision; got == nil || got.Revision != "rev-b" {
+		t.Fatalf("dialog B = %#v, want untouched by the stale answer", got)
+	}
+}
+
+// TestAnswerDecision_ConcurrentReplacementNeverCrossAnswers is the TOCTOU race:
+// the decision is replaced AFTER AnswerDecision read it but BEFORE the claim.
+// The CAS claim must fail, nothing may be sent, and the replacement dialog must
+// survive (the clear only ever removes the answered decision).
+func TestAnswerDecision_ConcurrentReplacementNeverCrossAnswers(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "A", Options: []string{"A1", "A2"}, Revision: "rev-a"},
+		},
+	}
+	// Between the read and the CAS claim, question B replaces A.
+	st.beforeClearDecision = func(f *fakeStore) {
+		rec := f.sessions["s1"]
+		rec.Metadata.PendingDecision = &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "B", Options: []string{"B1"}, Revision: "rev-b"}
+		f.sessions["s1"] = rec
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 2, Revision: "rev-a"})
+	if !errors.Is(err, ErrDecisionStale) {
+		t.Fatalf("AnswerDecision error = %v, want ErrDecisionStale from the failed claim", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("sent = %#v, want NOTHING — A's option must never reach dialog B", msg.msgs)
+	}
+	if got := st.sessions["s1"].Metadata.PendingDecision; got == nil || got.Revision != "rev-b" {
+		t.Fatalf("dialog B = %#v, want it to survive the failed answer (clear only removes the answered decision)", got)
+	}
+}
+
+// TestAnswerDecision_FailedSendRestoresDecision: a claimed answer whose pane
+// delivery fails puts the decision back so the dialog stays operator-visible.
+func TestAnswerDecision_FailedSendRestoresDecision(t *testing.T) {
+	st := newFakeStore()
+	decision := &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "Q", Options: []string{"A", "B"}, Revision: "rev-a"}
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1", PendingDecision: decision},
+	}
+	msg := &fakeMessenger{err: errors.New("pane gone")}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 1, Revision: "rev-a"})
+	if err == nil {
+		t.Fatal("AnswerDecision should surface the send failure")
+	}
+	if got := st.sessions["s1"].Metadata.PendingDecision; got == nil || got.Revision != "rev-a" {
+		t.Fatalf("decision = %#v, want restored after the failed send", got)
 	}
 }
 
@@ -5299,13 +5640,13 @@ func TestAnswerDecision_RefusesOptionForTextQuestion(t *testing.T) {
 		Activity: domain.Activity{State: domain.ActivityBlocked},
 		Metadata: domain.SessionMetadata{
 			RuntimeHandleID: "h1",
-			PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "What should I call this?"},
+			PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "What should I call this?", Revision: "rev-a"},
 		},
 	}
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 1})
+	err := m.AnswerDecision(context.Background(), "s1", domain.DecisionAnswer{Option: 1, Revision: "rev-a"})
 	if !errors.Is(err, ErrInvalidDecisionAnswer) {
 		t.Fatalf("AnswerDecision error = %v, want ErrInvalidDecisionAnswer", err)
 	}

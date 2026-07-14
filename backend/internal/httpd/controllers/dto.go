@@ -315,12 +315,14 @@ type SessionDecisionResponse struct {
 	Kind      domain.DecisionKind `json:"kind" enum:"question,permission"`
 	Question  string              `json:"question,omitempty"`
 	Options   []string            `json:"options,omitempty"`
+	Revision  string              `json:"revision,omitempty" description:"Durable identity of this dialog instance. Pass it back when answering; a mismatch with the then-current dialog is rejected as stale."`
 }
 
 // AnswerSessionDecisionRequest is the body of POST /api/v1/sessions/{sessionId}/decision.
 type AnswerSessionDecisionRequest struct {
-	Option int    `json:"option,omitempty" minimum:"1" description:"One-based option number to select."`
-	Text   string `json:"text,omitempty" maxLength:"4096" description:"Free-text answer for question dialogs that accept text."`
+	Option   int    `json:"option,omitempty" minimum:"1" description:"One-based option number to select."`
+	Text     string `json:"text,omitempty" maxLength:"4096" description:"Free-text answer for question dialogs that accept text."`
+	Revision string `json:"revision" description:"Revision of the fetched decision this answer was prepared against (from GET /decision). The answer is compare-and-swapped against it; a stale revision is rejected with 409 SESSION_DECISION_STALE."`
 }
 
 // AnswerSessionDecisionResponse is the body of POST /api/v1/sessions/{sessionId}/decision.

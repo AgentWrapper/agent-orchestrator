@@ -31,8 +31,9 @@ type sessionCleanupOptions struct {
 }
 
 type sessionDecideOptions struct {
-	option int
-	text   string
+	option   int
+	text     string
+	revision string
 }
 
 type sessionClaimPROptions struct {
@@ -55,10 +56,14 @@ type sessionDTO struct {
 	DisplayName  string          `json:"displayName,omitempty"`
 	Activity     sessionActivity `json:"activity"`
 	IsTerminated bool            `json:"isTerminated"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
-	Status       string          `json:"status"`
-	PRs          []sessionPRDTO  `json:"prs,omitempty"`
+	// TerminalFailureReason is the operator-facing reason a session ended, when
+	// AO knows one (e.g. "killed via session kill", "runtime probe reported
+	// dead"). Empty means it ended normally.
+	TerminalFailureReason string         `json:"terminalFailureReason,omitempty"`
+	CreatedAt             time.Time      `json:"createdAt"`
+	UpdatedAt             time.Time      `json:"updatedAt"`
+	Status                string         `json:"status"`
+	PRs                   []sessionPRDTO `json:"prs,omitempty"`
 }
 
 type sessionActivity struct {
@@ -113,11 +118,24 @@ type claimPRRequest struct {
 type answerDecisionRequest struct {
 	Option int    `json:"option,omitempty"`
 	Text   string `json:"text,omitempty"`
+	// Revision names the dialog instance the answer targets, from the GET the
+	// CLI performs just before answering. The daemon rejects a stale revision
+	// instead of delivering the answer into a dialog that replaced it.
+	Revision string `json:"revision,omitempty"`
 }
 
 type answerDecisionResponse struct {
 	OK        bool   `json:"ok"`
 	SessionID string `json:"sessionId"`
+}
+
+// sessionDecisionGetResponse mirrors GET /api/v1/sessions/{id}/decision.
+type sessionDecisionGetResponse struct {
+	SessionID string   `json:"sessionId"`
+	Kind      string   `json:"kind"`
+	Question  string   `json:"question,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	Revision  string   `json:"revision,omitempty"`
 }
 
 type sessionPRDTO struct {
@@ -361,7 +379,13 @@ func newSessionDecideCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "decide <id>",
 		Short: "Answer a pending session question dialog",
-		Args:  oneSessionIDArg,
+		Long: "Answer a pending session question dialog.\n\n" +
+			"Without --revision, the answer binds to the LATEST pending dialog fetched at execution time — " +
+			"the deliberate non-interactive semantic, so a dialog that changed since you looked is answered " +
+			"as it now stands. Pass --revision (from GET /sessions/{id}/decision) to pin the answer to one " +
+			"specific dialog instance; a stale revision is rejected (SESSION_DECISION_STALE) instead of " +
+			"answering whatever replaced it.",
+		Args: oneSessionIDArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := normalizeSessionID(args[0])
 			if err != nil {
@@ -372,6 +396,7 @@ func newSessionDecideCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&opts.option, "option", 0, "One-based option number to select")
 	cmd.Flags().StringVar(&opts.text, "text", "", "Free-text answer")
+	cmd.Flags().StringVar(&opts.revision, "revision", "", "Pin the answer to one dialog instance (default: bind to the latest pending dialog)")
 	return cmd
 }
 
@@ -449,8 +474,20 @@ func (c *commandContext) answerSessionDecision(ctx context.Context, id string, o
 	if opts.option > 0 && text != "" {
 		return usageError{errors.New("use either --option or --text, not both")}
 	}
+	// An explicit --revision pins the answer to one dialog instance and is
+	// passed straight through to the daemon's compare-and-swap: stale → 409.
+	// Without it, fetch the CURRENT decision and bind to its revision — the
+	// documented non-interactive semantic (answer whatever is pending NOW).
+	revision := strings.TrimSpace(opts.revision)
+	if revision == "" {
+		var decision sessionDecisionGetResponse
+		if err := c.getJSON(ctx, "sessions/"+url.PathEscape(id)+"/decision", &decision); err != nil {
+			return err
+		}
+		revision = decision.Revision
+	}
 	var res answerDecisionResponse
-	req := answerDecisionRequest{Option: opts.option, Text: opts.text}
+	req := answerDecisionRequest{Option: opts.option, Text: opts.text, Revision: revision}
 	return c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/decision", req, &res)
 }
 
@@ -886,6 +923,7 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 		{"harness", sess.Harness},
 		{"issue", sess.IssueID},
 		{"terminated", fmt.Sprintf("%t", sess.IsTerminated)},
+		{"terminal reason", sess.TerminalFailureReason},
 	}
 	for _, field := range fields {
 		if field[1] == "" {

@@ -932,6 +932,12 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_DECISION_NOT_ANSWERABLE", "Pending permission decisions cannot be answered programmatically", nil)
 	case errors.Is(err, sessionmanager.ErrInvalidDecisionAnswer):
 		return apierr.Invalid("INVALID_DECISION_ANSWER", "Provide a valid one-based option or non-empty text answer", nil)
+	case errors.Is(err, sessionmanager.ErrDecisionRevisionRequired):
+		return apierr.Invalid("DECISION_REVISION_REQUIRED",
+			"Answers must name the decision revision they were prepared against; fetch GET /api/v1/sessions/{id}/decision and pass its revision", nil)
+	case errors.Is(err, sessionmanager.ErrDecisionStale):
+		return apierr.Conflict("SESSION_DECISION_STALE",
+			"The pending decision changed since it was fetched; fetch it again and re-answer the current dialog", nil)
 	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
 	case errors.Is(err, sessionmanager.ErrNotResumable):
@@ -961,6 +967,8 @@ func toAPIError(err error) error {
 		return apierr.Conflict("WORKER_MIX_BUCKET_DOWN", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrModelHarnessMismatch):
 		return apierr.Invalid("MODEL_HARNESS_MISMATCH", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrModelUnreachable):
+		return apierr.Invalid("MODEL_UNREACHABLE", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrBranchNotAllowedInPlace):
 		return apierr.Invalid("BRANCH_NOT_ALLOWED_IN_PLACE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):

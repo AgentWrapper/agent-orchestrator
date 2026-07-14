@@ -14,16 +14,21 @@ import (
 )
 
 const clearSessionPendingDecision = `-- name: ClearSessionPendingDecision :execrows
-UPDATE sessions SET pending_decision = '', updated_at = ? WHERE id = ?
+UPDATE sessions SET pending_decision = '', updated_at = ?
+WHERE id = ? AND pending_decision <> '' AND json_extract(pending_decision, '$.revision') = ?3
 `
 
 type ClearSessionPendingDecisionParams struct {
 	UpdatedAt time.Time
 	ID        domain.SessionID
+	Revision  string
 }
 
+// Compare-and-swap: clears the pending decision only while it is still the
+// exact revision the caller answered, so answering dialog A can never wipe a
+// dialog B that replaced it concurrently.
 func (q *Queries) ClearSessionPendingDecision(ctx context.Context, arg ClearSessionPendingDecisionParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, clearSessionPendingDecision, arg.UpdatedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, clearSessionPendingDecision, arg.UpdatedAt, arg.ID, arg.Revision)
 	if err != nil {
 		return 0, err
 	}
@@ -365,6 +370,28 @@ type RenameSessionParams struct {
 
 func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, renameSession, arg.DisplayName, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const restoreSessionPendingDecision = `-- name: RestoreSessionPendingDecision :execrows
+UPDATE sessions SET pending_decision = ?, updated_at = ?
+WHERE id = ? AND pending_decision = ''
+`
+
+type RestoreSessionPendingDecisionParams struct {
+	PendingDecision string
+	UpdatedAt       time.Time
+	ID              domain.SessionID
+}
+
+// Puts a claimed-but-undelivered decision back, but only while no newer dialog
+// has been recorded meanwhile (the answer path claims before sending; a failed
+// send restores so the dialog stays operator-visible).
+func (q *Queries) RestoreSessionPendingDecision(ctx context.Context, arg RestoreSessionPendingDecisionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreSessionPendingDecision, arg.PendingDecision, arg.UpdatedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
