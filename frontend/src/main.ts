@@ -1394,6 +1394,7 @@ app.on("before-quit", () => {
 // exits without tearing down sessions, which survive for the next boot to adopt.
 // When the link IS connected we do nothing here and rely on the OS closing the
 // fd on exit, which covers crash and SIGKILL uniformly.
+
 process.on("exit", () => {
 	if (daemonProcess && !supervisorLink?.connected) {
 		killDaemon(daemonProcess);
