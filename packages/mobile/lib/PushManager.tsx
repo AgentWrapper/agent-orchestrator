@@ -1,0 +1,97 @@
+// Headless component mounted once under the root layout. It owns the runtime
+// side of push notifications: register after pairing (+ refresh on foreground),
+// unregister when switching/leaving a daemon, and route notification taps
+// (warm + cold start). See docs/adr/0001-mobile-push-notifications.md (D6, D7, D9).
+import * as Notifications from "expo-notifications";
+import { useRootNavigationState, useRouter } from "expo-router";
+import { useEffect, useRef } from "react";
+import { AppState } from "react-native";
+import { markNotificationRead } from "./api";
+import { cleanHostKey } from "./config";
+import { configurePushHandler, ensureAndroidChannel, registerForPush, unregisterFromPush } from "./push";
+import { useApp } from "./store";
+
+// Set the foreground presentation policy before any notification can arrive.
+configurePushHandler();
+
+type PushData = {
+	type?: string;
+	sessionId?: string;
+	projectId?: string;
+	prUrl?: string;
+	notificationId?: string;
+};
+
+export function PushManager(): null {
+	const { config, connection } = useApp();
+	const router = useRouter();
+	const navState = useRootNavigationState();
+
+	// The daemon identity (host) we last registered against, so switching daemons
+	// unregisters the token from the old one before registering with the new.
+	const registeredHostRef = useRef<string | null>(null);
+	const handledColdStart = useRef(false);
+
+	// Create the Android channel once at startup.
+	useEffect(() => {
+		void ensureAndroidChannel();
+	}, []);
+
+	// Register after a successful pairing/connection (D7: only prompt once the
+	// feature is meaningful), refresh on every foreground while connected, and
+	// unregister from a daemon we move away from.
+	useEffect(() => {
+		if (!config || connection !== "open") return;
+		const host = cleanHostKey(config.host);
+
+		// Switched to a different daemon: drop the token from the previous one.
+		const prev = registeredHostRef.current;
+		if (prev && prev !== host) {
+			void unregisterFromPush({ ...config, host: prev });
+		}
+		registeredHostRef.current = host;
+
+		void registerForPush(config);
+		const sub = AppState.addEventListener("change", (s) => {
+			if (s === "active") void registerForPush(config);
+		});
+		return () => sub.remove();
+	}, [config, connection]);
+
+	// Route notification taps: warm via the response listener, cold start via
+	// getLastNotificationResponseAsync (the listener alone misses the launch tap).
+	useEffect(() => {
+		if (!navState?.key) return; // wait until navigation is ready to accept routes
+
+		const handle = (resp: Notifications.NotificationResponse | null) => {
+			if (!resp) return;
+			route((resp.notification.request.content.data ?? {}) as PushData);
+		};
+
+		if (!handledColdStart.current) {
+			handledColdStart.current = true;
+			void Notifications.getLastNotificationResponseAsync().then(handle);
+		}
+		const sub = Notifications.addNotificationResponseReceivedListener(handle);
+		return () => sub.remove();
+		// route() reads the latest config via ref-free closure; re-bind when it changes.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [navState?.key, config]);
+
+	function route(data: PushData) {
+		// Best-effort mark-read so unread counts stay consistent with the dashboard.
+		if (config && data.notificationId) {
+			markNotificationRead(config, data.notificationId).catch(() => {});
+		}
+		if (data.type === "needs_input" && data.sessionId) {
+			// The session screen handles a terminated/missing session itself
+			// (offers Restore), so navigate straight in.
+			router.navigate(`/session/${data.sessionId}`);
+			return;
+		}
+		// PR notifications (ready_to_merge / pr_merged / pr_closed_unmerged) → PRs tab.
+		router.navigate("/prs");
+	}
+
+	return null;
+}
