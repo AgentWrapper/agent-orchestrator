@@ -63,7 +63,7 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 				review.Status = ReviewStateUpToDate
 			case run.Verdict == domain.VerdictChangesRequested:
 				review.Status = ReviewStateChangesRequested
-			case run.Status == domain.ReviewRunFailed:
+			case run.Status == domain.ReviewRunFailed || run.Status == domain.ReviewRunCancelled:
 				review.Status = ReviewStateNeedsReview
 			default:
 				review.Status = ReviewStateNeedsReview

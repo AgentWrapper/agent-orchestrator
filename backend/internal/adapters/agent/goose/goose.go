@@ -1,14 +1,16 @@
 // Package goose implements the Goose (Block) agent adapter: launching new
-// headless sessions, resuming hook-tracked sessions, installing
+// interactive sessions, resuming hook-tracked sessions, installing
 // workspace-local lifecycle hooks, and reading hook-derived session info.
 //
-// Goose (binary "goose") runs headlessly via `goose run -t "<text>"`. It has a
-// native Claude-Code-style lifecycle hook system (released 2026-05): a plugin
-// directory under <workspace>/.agents/plugins/<name>/hooks/hooks.json is
-// auto-discovered at startup and its commands run on SessionStart /
-// UserPromptSubmit / Stop / etc. AO installs its hooks there, so AO derives
-// native session identity and activity from Goose hooks (Tier A), the same way
-// the Codex adapter does.
+// Goose (binary "goose") is launched as `goose run -t "" --interactive`, and
+// AO injects prompted tasks after startup. Its non-interactive
+// `goose run -t "<text>"` mode exits after the prompt completes, which is not a
+// usable lifecycle for AO worker terminals. Goose has a native
+// Claude-Code-style lifecycle hook system (released 2026-05): a plugin directory
+// under <workspace>/.agents/plugins/<name>/hooks/hooks.json is auto-discovered
+// at startup and its commands run on SessionStart / UserPromptSubmit / Stop /
+// etc. AO installs its hooks there, so AO derives native session identity and
+// activity from Goose hooks (Tier A), the same way the Codex adapter does.
 //
 // Permission/approval is controlled by the GOOSE_MODE environment variable
 // (auto / approve / chat / smart_approve), not a CLI flag, so non-default modes
@@ -71,17 +73,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds the argv to start a new headless Goose session:
+// GetLaunchCommand builds the argv to start a new interactive Goose session:
 //
-//	[env GOOSE_MODE=<mode>] goose run [--system <text>] -t <prompt>
+//	[env GOOSE_MODE=<mode>] goose run [--system <text>] -t "" --interactive
 //
-// The prompt is delivered in-command via `-t`. A non-default permission mode is
-// rendered as an `env GOOSE_MODE=<mode>` prefix because Goose reads its approval
-// mode from the environment, not from a flag. System instructions, when present,
-// are passed via `--system`. Goose requires one of --instructions, --text, or
-// --recipe even when AO intentionally starts a promptless orchestrator, so empty
-// prompts are delivered as `-t "" --interactive` to land in an input-ready
-// terminal without inventing an initial task.
+// Prompted tasks are delivered after startup by the session manager rather than
+// via `-t <prompt>`, because that mode exits when the prompt completes. A
+// non-default permission mode is rendered as an `env GOOSE_MODE=<mode>` prefix
+// because Goose reads its approval mode from the environment, not from a flag.
+// System instructions, when present, are passed via `--system`. Goose requires
+// one of --instructions, --text, or --recipe, so AO supplies empty text plus
+// --interactive to land in an input-ready terminal without inventing an initial
+// task.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.gooseBinary(ctx)
 	if err != nil {
@@ -98,12 +101,19 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--system", systemPrompt)
 	}
 
-	cmd = append(cmd, "-t", cfg.Prompt)
-	if cfg.Prompt == "" {
-		cmd = append(cmd, "--interactive")
-	}
+	cmd = append(cmd, "-t", "", "--interactive")
 
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that AO should inject prompted Goose tasks
+// into the interactive terminal after startup. Goose's `-t <prompt>` mode exits
+// after the single prompt completes.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryAfterStart, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Goose session:
@@ -126,7 +136,15 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = append(gooseModeEnvPrefix(cfg.Permissions), binary, "run", "--resume", "--session-id", agentSessionID)
+	cmd = append(gooseModeEnvPrefix(cfg.Permissions), binary, "run")
+	systemPrompt, err := restoreSystemPromptText(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--system", systemPrompt)
+	}
+	cmd = append(cmd, "--resume", "--session-id", agentSessionID)
 	return cmd, true, nil
 }
 
@@ -142,20 +160,30 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 
 // systemPromptText returns the system instructions to inject. Goose's `--system`
 // flag takes inline text only (no file variant), so a system-prompt file is read
-// from disk and its contents inlined. A read failure is surfaced as an error so a
-// misconfigured prompt file does not silently fall back to the inline
-// SystemPrompt string; only an empty-after-trim file falls back.
+// from disk only when inline instructions are unavailable.
 func systemPromptText(cfg ports.LaunchConfig) (string, error) {
-	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned launch config
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", cfg.SystemPromptFile, err)
-		}
-		if text := strings.TrimSpace(string(data)); text != "" {
-			return text, nil
-		}
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func restoreSystemPromptText(cfg ports.RestoreConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func systemPromptTextFrom(inline, file string) (string, error) {
+	if inline != "" {
+		return inline, nil
 	}
-	return cfg.SystemPrompt, nil
+	if file == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", file, err)
+	}
+	if text := strings.TrimSpace(string(data)); text != "" {
+		return text, nil
+	}
+	return "", nil
 }
 
 // gooseModeEnvPrefix renders mode as an `env GOOSE_MODE=<mode>` argv prefix, or

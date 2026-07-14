@@ -160,6 +160,10 @@ func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (pro
 	return projectsvc.Project{ID: id, Path: in.Path}, nil
 }
 
+func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projectsvc.InitializeRepositoryInput) (projectsvc.InitializeRepositoryResult, error) {
+	return projectsvc.InitializeRepositoryResult(in), nil
+}
+
 func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, in projectsvc.SetConfigInput) (projectsvc.Project, error) {
 	cfg := in.Config
 	return projectsvc.Project{ID: id, Config: &cfg}, nil

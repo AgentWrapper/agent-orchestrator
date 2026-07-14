@@ -75,6 +75,14 @@ describe("daemon failure telemetry", () => {
 		expect(captureMock).not.toHaveBeenCalled();
 	});
 
+	it("does not count ready-state daemon warnings as failures", () => {
+		stop = startDaemonFailureTelemetry();
+
+		pushStatus({ state: "ready", code: "port_unconfirmed" });
+
+		expect(captureMock).not.toHaveBeenCalled();
+	});
+
 	it("dedupes identical consecutive failures and resets on recovery", () => {
 		stop = startDaemonFailureTelemetry();
 

@@ -109,15 +109,15 @@ export function MigrationSection() {
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="text-[13px]">Migration</CardTitle>
+				<CardTitle className="text-control">Migration</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
-				<p className="text-[12px] leading-5 text-muted-foreground">
+				<p className="text-xs leading-row text-muted-foreground">
 					Import projects and orchestrator sessions from an earlier Agent Orchestrator install. Your old files are never
 					modified, and this is safe to run more than once.
 				</p>
 
-				<div className="flex flex-col gap-2 text-[12px]">
+				<div className="flex flex-col gap-2 text-xs">
 					<Row label="Status">
 						<span className={statusClass(migration.status)}>{STATUS_LABEL[migration.status]}</span>
 					</Row>
@@ -137,7 +137,7 @@ export function MigrationSection() {
 						{query.isLoading ? (
 							<span className="text-passive">Checking…</span>
 						) : available ? (
-							<span className="font-mono text-[11px] text-foreground">{legacyRoot || "found"}</span>
+							<span className="font-mono text-caption text-foreground">{legacyRoot || "found"}</span>
 						) : (
 							<span className="text-passive">None found</span>
 						)}
@@ -145,16 +145,16 @@ export function MigrationSection() {
 				</div>
 
 				{migration.status === "failed" && migration.error && (
-					<p className="text-[12px] leading-5 text-error">
+					<p className="text-xs leading-row text-error">
 						{migration.error}. Your legacy projects are untouched (nothing is ever deleted).
 					</p>
 				)}
 				{run.isError && (
-					<p className="text-[12px] leading-5 text-error">
+					<p className="text-xs leading-row text-error">
 						{run.error instanceof Error ? run.error.message : "Migration failed."}
 					</p>
 				)}
-				{run.isSuccess && !run.isPending && <p className="text-[12px] leading-5 text-success">Migration complete.</p>}
+				{run.isSuccess && !run.isPending && <p className="text-xs leading-row text-success">Migration complete.</p>}
 
 				<div className="flex items-center gap-3">
 					<Button
@@ -163,11 +163,11 @@ export function MigrationSection() {
 						onClick={() => run.mutate()}
 						disabled={run.isPending || (!available && !completed)}
 					>
-						{run.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+						{run.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
 						{buttonLabel}
 					</Button>
 					{!available && !query.isLoading && (
-						<span className="text-[12px] text-passive">Nothing to import from a legacy install.</span>
+						<span className="text-xs text-passive">Nothing to import from a legacy install.</span>
 					)}
 				</div>
 			</CardContent>

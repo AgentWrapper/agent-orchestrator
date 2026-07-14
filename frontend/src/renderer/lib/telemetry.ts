@@ -1,5 +1,6 @@
 import posthog from "posthog-js/dist/module.full.no-external";
 import { aoBridge } from "./bridge";
+import { isLoopbackHostname } from "./loopback";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
@@ -7,13 +8,97 @@ const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POS
 const RELEASE_TAG = "2026-01-30";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
+const DAILY_ACTIVE_STORAGE_KEY = "ao.telemetry.lastActiveDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
+let telemetryContext: TelemetryProperties = {};
+let fallbackDailyActiveDate = "";
 
 type TelemetryProperties = Record<string, unknown>;
+type DailyActiveStorage = Pick<Storage, "getItem" | "setItem">;
+type DailyActiveEventTarget = {
+	addEventListener: (type: string, listener: EventListener, options?: AddEventListenerOptions) => void;
+	removeEventListener: (type: string, listener: EventListener, options?: EventListenerOptions) => void;
+};
+
+export type DailyActiveHeartbeatOptions = {
+	storage?: DailyActiveStorage;
+	now?: () => Date;
+	capture: () => void;
+	window: DailyActiveEventTarget;
+	document: DailyActiveEventTarget & Pick<Document, "visibilityState">;
+};
+
+export function buildTelemetryContext(appVersion: string, platform: string): TelemetryProperties {
+	const version = appVersion.trim() || "unknown";
+	return {
+		app_version: version,
+		ao_version: version,
+		platform,
+		build_mode: import.meta.env.DEV ? "dev" : "packaged",
+	};
+}
+
+function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
+	return { ...telemetryContext, ...properties };
+}
+
+export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
+	const utcDate = now.toISOString().slice(0, 10);
+	if (!storage) {
+		if (fallbackDailyActiveDate === utcDate) return false;
+		fallbackDailyActiveDate = utcDate;
+		return true;
+	}
+	try {
+		if (storage.getItem(DAILY_ACTIVE_STORAGE_KEY) === utcDate) return false;
+		storage.setItem(DAILY_ACTIVE_STORAGE_KEY, utcDate);
+		return true;
+	} catch {
+		if (fallbackDailyActiveDate === utcDate) return false;
+		fallbackDailyActiveDate = utcDate;
+		return true;
+	}
+}
+
+export function startDailyActiveHeartbeat({
+	storage,
+	now = () => new Date(),
+	capture,
+	window,
+	document,
+}: DailyActiveHeartbeatOptions): () => void {
+	const maybeCapture = () => {
+		if (reserveDailyActiveCapture(storage, now())) {
+			capture();
+		}
+	};
+	const onVisibilityChange = () => {
+		if (document.visibilityState === "visible") {
+			maybeCapture();
+		}
+	};
+	const activityEvents = ["pointerdown", "keydown"] as const;
+	const passiveOptions = { passive: true };
+
+	maybeCapture();
+	window.addEventListener("focus", maybeCapture);
+	document.addEventListener("visibilitychange", onVisibilityChange);
+	for (const event of activityEvents) {
+		document.addEventListener(event, maybeCapture, passiveOptions);
+	}
+
+	return () => {
+		window.removeEventListener("focus", maybeCapture);
+		document.removeEventListener("visibilitychange", onVisibilityChange);
+		for (const event of activityEvents) {
+			document.removeEventListener(event, maybeCapture);
+		}
+	};
+}
 
 function normalizeException(reason: unknown): Error {
 	if (reason instanceof Error) return reason;
@@ -55,13 +140,10 @@ async function hashedTelemetryID(value: unknown): Promise<string | undefined> {
 function isLocalURL(value: string): boolean {
 	try {
 		const url = new URL(value);
-		const hostname = url.hostname.replace(/^\[(.*)\]$/, "$1");
 		return (
 			url.protocol === "file:" ||
 			(url.protocol === "app:" && url.host === "renderer") ||
-			hostname === "localhost" ||
-			hostname === "127.0.0.1" ||
-			hostname === "::1"
+			isLoopbackHostname(url.hostname)
 		);
 	} catch {
 		return false;
@@ -187,7 +269,9 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.notification_opened":
 			if (properties?.target === "pr" || properties?.target === "session") safe.target = properties.target;
 			break;
-		case "ao.renderer.notification_marked_read":
+		case "ao.renderer.notification_mark_read_requested":
+		case "ao.renderer.notification_mark_read_succeeded":
+		case "ao.renderer.notification_mark_read_failed":
 			if (properties?.scope === "single" || properties?.scope === "all") safe.scope = properties.scope;
 			break;
 		case "ao.renderer.daemon_failure":
@@ -249,6 +333,7 @@ export async function initTelemetry(): Promise<boolean> {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
 		if (!bootstrap) return false;
+		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform);
 		posthog.init(POSTHOG_KEY, {
 			api_host: POSTHOG_HOST,
 			defaults: RELEASE_TAG,
@@ -267,19 +352,34 @@ export async function initTelemetry(): Promise<boolean> {
 			},
 		});
 		posthog.identify(bootstrap.distinctId, {
-			app_version: bootstrap.appVersion,
-			platform: bootstrap.platform,
+			...telemetryContext,
 			surface: "renderer",
 		});
 		posthog.register({
-			app_version: bootstrap.appVersion,
-			platform: bootstrap.platform,
+			...telemetryContext,
 			surface: "renderer",
-			build_mode: import.meta.env.DEV ? "dev" : "packaged",
 		});
 		bindErrorHandlers();
-		posthog.capture("ao.app.active", await sanitizeRendererProperties("ao.app.active", { channel: "renderer" }));
-		posthog.capture("ao.renderer.loaded");
+		let storage: DailyActiveStorage | undefined;
+		try {
+			storage = window.localStorage;
+		} catch {
+			storage = undefined;
+		}
+		startDailyActiveHeartbeat({
+			storage,
+			window,
+			document,
+			capture: () => {
+				void (async () => {
+					posthog.capture(
+						"ao.app.active",
+						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
+					);
+				})();
+			},
+		});
+		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
 		return true;
 	})().catch(() => false);
 	return initPromise;
@@ -287,19 +387,19 @@ export async function initTelemetry(): Promise<boolean> {
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
-	const safeProperties = await sanitizeRendererProperties(event, properties);
+	const safeProperties = withTelemetryContext(await sanitizeRendererProperties(event, properties));
 	posthog.capture(event, safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
-	const safeProperties = await sanitizeRendererExceptionProperties(error, properties);
+	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));
 	posthog.captureException(normalizeException(error), safeProperties);
 }
 
 export async function addRendererExceptionStep(message: string, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
-	const safeProperties = await sanitizeRendererContextProperties(properties);
+	const safeProperties = withTelemetryContext(await sanitizeRendererContextProperties(properties));
 	posthog.addExceptionStep(message, safeProperties);
 }
 

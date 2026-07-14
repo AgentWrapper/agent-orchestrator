@@ -64,6 +64,7 @@ const (
 	ReviewRunComplete  ReviewRunStatus = "complete"
 	ReviewRunDelivered ReviewRunStatus = "delivered"
 	ReviewRunFailed    ReviewRunStatus = "failed"
+	ReviewRunCancelled ReviewRunStatus = "cancelled"
 )
 
 // ReviewVerdict is the outcome a reviewer reports. The empty verdict marks a

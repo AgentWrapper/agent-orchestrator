@@ -17,7 +17,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:  ports.PermissionModeBypassPermissions,
-		Prompt:       "-fix this",
+		Prompt:       "hi",
 		SystemPrompt: "be careful",
 	})
 	if err != nil {
@@ -26,13 +26,17 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 
 	want := []string{
 		"cline",
-		"--json",
 		"--yolo",
 		"-s", "be careful",
-		"--", "-fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if contains(cmd, "--json") {
+		t.Fatalf("prompted Cline launch must use readable terminal output, got: %#v", cmd)
+	}
+	if contains(cmd, "hi") {
+		t.Fatalf("prompted Cline launch must inject prompt after startup, got: %#v", cmd)
 	}
 }
 
@@ -113,15 +117,25 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	}
 }
 
-func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
+func TestGetPromptDeliveryStrategyIsAfterStart(t *testing.T) {
 	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.PromptDeliveryInCommand {
+	if got != ports.PromptDeliveryAfterStart {
 		t.Fatalf("unexpected strategy: %q", got)
+	}
+}
+
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
 	}
 }
 
@@ -265,7 +279,8 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cline"}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Permissions: ports.PermissionModeAuto,
+		Permissions:  ports.PermissionModeAuto,
+		SystemPrompt: "restore instructions",
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "session-123"},
 		},
@@ -279,6 +294,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	want := []string{
 		"cline",
 		"--auto-approve", "true",
+		"-s", "restore instructions",
 		"--id", "session-123",
 	}
 	if !reflect.DeepEqual(cmd, want) {

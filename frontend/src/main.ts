@@ -4,12 +4,14 @@ import {
 	clipboard,
 	dialog,
 	ipcMain,
+	Menu,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
 	shell,
 	WebContentsView,
+	webContents,
 	type OpenDialogOptions,
 } from "electron";
 import {
@@ -26,12 +28,13 @@ import {
 	type UpdateSettings,
 	type UpdateStatus,
 } from "./main/update-settings";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { type DaemonLaunchSpec, bundledTmuxPath, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
@@ -50,6 +53,7 @@ import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
+import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -70,6 +74,14 @@ process.stderr.on("error", ignoreStdStreamError);
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
 
+// Windows shows native toasts only when the app declares an AppUserModelID that
+// matches its installer shortcut (the NSIS maker's appId). Without it,
+// Notification.isSupported() still returns true but show() silently drops the
+// toast, so notifications never appear. No-op on macOS/Linux.
+if (process.platform === "win32") {
+	app.setAppUserModelId("dev.agent-orchestrator.desktop");
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
@@ -88,7 +100,53 @@ let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
+const execFileAsync = promisify(execFile);
+
+type GitRepoScanResult = {
+	name: string;
+	path: string;
+	relativePath: string;
+	branch: string;
+	remote: string;
+	hasRemote: boolean;
+	status: "ok" | "error";
+	reason?: string;
+};
+
+type ImportFolderScanResult = {
+	path: string;
+	repos: GitRepoScanResult[];
+};
+
+const IMPORT_SCAN_CONCURRENCY = 8;
+const IMPORT_SCAN_MAX_ENTRIES = 200;
+const IMPORT_SCAN_SKIP_DIRS = new Set([
+	".git",
+	"node_modules",
+	"dist",
+	"build",
+	".cache",
+	".turbo",
+	"target",
+	"coverage",
+	"tmp",
+	"temp",
+	"Library",
+]);
+
 const isDev = !app.isPackaged;
+
+// Dev mode uses a separate port and state subdirectory so it never collides with
+// a concurrently running installed-app daemon. The subdir also isolates supervise.sock
+// on Unix (backend derives it as dir(RunFilePath)/supervise.sock) and the named pipe
+// on Windows (supervisorPipeFromRunFile derives it from the same dir basename).
+const DEV_DAEMON_PORT = 3002;
+const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
+
+// Height (px) of the custom Windows title bar. Must stay in sync with the Window
+// Controls Overlay height passed to BrowserWindow and the .window-titlebar height
+// in styles.css, so the native min/max/close buttons line up with the app's bar.
+const TITLEBAR_HEIGHT = 36;
 
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
@@ -172,6 +230,44 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
 
+// Role-based menu installed on Windows where the native menu bar is hidden. The
+// bar stays out of sight, but the roles keep their accelerators alive (Reload,
+// DevTools, zoom, full screen, edit commands) and each acts on the *focused*
+// webContents — including a BrowserView panel — matching native menu behaviour.
+function buildWindowsAppMenu(): Menu {
+	return Menu.buildFromTemplate([
+		{
+			label: "Edit",
+			submenu: [
+				{ role: "undo" },
+				{ role: "redo" },
+				{ type: "separator" },
+				{ role: "cut" },
+				{ role: "copy" },
+				{ role: "paste" },
+				{ role: "selectAll" },
+			],
+		},
+		{
+			label: "View",
+			submenu: [
+				{ role: "reload" },
+				{ role: "toggleDevTools" },
+				{ type: "separator" },
+				{ role: "resetZoom" },
+				{ role: "zoomIn" },
+				{ role: "zoomOut" },
+				{ type: "separator" },
+				{ role: "togglefullscreen" },
+			],
+		},
+		{
+			label: "Window",
+			submenu: [{ role: "minimize" }, { role: "close" }],
+		},
+	]);
+}
+
 function createWindow(): void {
 	browserViewHost?.dispose();
 	browserViewHost = null;
@@ -183,12 +279,27 @@ function createWindow(): void {
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
-		titleBarStyle: "hiddenInset",
-		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
-		// line — so lights + nav cluster + header content share one row. macOS
-		// draws the 12pt disc 2pt below the given y (measured: center = y + 8),
-		// hence 20, not 22.
-		trafficLightPosition: { x: 14, y: 20 },
+		// Windows goes frameless with a Window Controls Overlay: Electron still draws
+		// native min/max/close on the right, while the renderer paints its own
+		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
+		// inset traffic-light chrome. Overlay colours are re-synced to the active
+		// theme from the renderer via the window:setOverlay IPC.
+		...(process.platform === "win32"
+			? {
+					titleBarStyle: "hidden" as const,
+					// Hide the native menu bar. A role-based menu is still installed (for
+					// accelerators) below; the visible menu is painted by WindowTitlebar.
+					autoHideMenuBar: true,
+					titleBarOverlay: { color: "#0f1014", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
+				}
+			: {
+					titleBarStyle: "hiddenInset" as const,
+					// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav
+					// center line — so lights + nav cluster + header content share one
+					// row. macOS draws the 12pt disc 2pt below the given y (measured:
+					// center = y + 8), hence 20, not 22.
+					trafficLightPosition: { x: 14, y: 20 },
+				}),
 		webPreferences: {
 			preload: preloadPath(),
 			contextIsolation: true,
@@ -197,11 +308,21 @@ function createWindow(): void {
 		},
 	});
 
+	// On Windows the app paints its own title bar (WindowTitlebar), so the native
+	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
+	// installed so its accelerators keep working and act on the focused pane;
+	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
+	// keep their native menus.
+	if (process.platform === "win32") {
+		Menu.setApplicationMenu(buildWindowsAppMenu());
+		mainWindow.setMenuBarVisibility(false);
+	}
+
 	// Harden navigation: never let renderer/terminal content open in-app windows or
 	// navigate the privileged window away from the app origin. External links go to
 	// the OS browser. Keep this in place before exposing any daemon output to the renderer.
 	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-		if (/^https?:\/\//.test(url)) {
+		if (isAllowedAppExternalURL(url)) {
 			void shell.openExternal(url);
 		}
 		return { action: "deny" };
@@ -249,6 +370,7 @@ const DAEMON_PROBE_TIMEOUT_MS = 2_000;
 
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
+	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "running.json");
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
@@ -333,14 +455,23 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// supervisor on attach (headless `ao start` daemons get no AO_OWNER and stay
 	// unlinked, preserving their persistence across app quit).
 	const ownerTag = { AO_OWNER: "app" };
+	// In dev mode, inject isolation defaults so the dev daemon never collides with
+	// the installed app. User-set env vars take priority (checked first).
+	const devExtras: Record<string, string> = {};
+	if (isDev) {
+		if (!process.env.AO_PORT) devExtras.AO_PORT = String(DEV_DAEMON_PORT);
+		if (!process.env.AO_RUN_FILE) devExtras.AO_RUN_FILE = runFilePath() ?? "";
+		if (!process.env.AO_DATA_DIR) devExtras.AO_DATA_DIR = path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+	}
 	// Windows keeps the old behavior exactly: no shell probe, no unix PATH floor.
 	if (process.platform === "win32") {
-		return { ...process.env, ...telemetryOverrides(), ...ownerTag };
+		return { ...process.env, ...devExtras, ...telemetryOverrides(), ...ownerTag };
 	}
 	// Point the daemon at the bundled tmux fallback; it is used only when no
 	// system tmux resolves from PATH (see backend tmux.ResolveBinary).
 	const bundledTmux = bundledTmuxPath(app.isPackaged, process.resourcesPath, process.platform, existsSync);
 	return buildDaemonEnv(process.env, cachedShellEnv, {
+		...devExtras,
 		...telemetryOverrides(),
 		...ownerTag,
 		...(bundledTmux ? { AO_BUNDLED_TMUX: bundledTmux } : {}),
@@ -422,11 +553,18 @@ function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): stri
  * headless `ao start` daemons stay unlinked so they remain persistent after
  * app quit.
  */
+function supervisorPipeFromRunFile(rfp: string | null): string {
+	if (!rfp) return "\\\\.\\pipe\\ao-supervise";
+	const dir = path.basename(path.dirname(rfp));
+	if (dir === ".ao" || dir === "." || dir === "") return "\\\\.\\pipe\\ao-supervise";
+	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
 function establishSupervisorLink(): void {
 	const rfp = runFilePath();
 	const addr =
 		process.platform === "win32"
-			? "\\\\.\\pipe\\ao-supervise"
+			? supervisorPipeFromRunFile(rfp)
 			: rfp
 				? path.join(path.dirname(rfp), "supervise.sock")
 				: null;
@@ -505,6 +643,13 @@ async function startDaemon(): Promise<DaemonStatus> {
 	return daemonStartPromise;
 }
 
+// The port this Electron instance expects the daemon to bind. In dev mode a
+// separate port isolates the dev daemon from the installed-app daemon.
+// AO_PORT always wins if set explicitly.
+function resolvedDaemonPort(): number {
+	return isDev && !process.env.AO_PORT ? DEV_DAEMON_PORT : expectedDaemonPort(process.env);
+}
+
 async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
@@ -555,7 +700,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// port the Go child would bind and collide on — probing a hardcoded 3001 would
 	// miss an AO_PORT override.
 	const directDaemon = await resolveDaemonFromPort({
-		expectedPort: expectedDaemonPort(process.env),
+		expectedPort: resolvedDaemonPort(),
 		probe: readDaemonProbe,
 		identityError: (probe) => daemonIdentityError(launch, probe),
 	});
@@ -595,7 +740,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// killed here), and a foreign non-AO process holding the port with a dead
 	// run-file PID is not replaced (out of scope). When no holder is detectable,
 	// skip straight to spawn.
-	const orphanProbe = await readDaemonProbe(expectedDaemonPort(process.env), "healthz");
+	const orphanProbe = await readDaemonProbe(resolvedDaemonPort(), "healthz");
 	const runFilePath_ = runFilePath();
 	let runFilePid: number | null = null;
 	if (runFilePath_) {
@@ -635,7 +780,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		const TAKEOVER_POLL_MS = 200;
 		const deadline = Date.now() + TAKEOVER_TIMEOUT_MS;
 		while (Date.now() < deadline) {
-			const still = await readDaemonProbe(expectedDaemonPort(process.env), "healthz");
+			const still = await readDaemonProbe(resolvedDaemonPort(), "healthz");
 			if (!still) break;
 			await new Promise<void>((r) => setTimeout(r, TAKEOVER_POLL_MS));
 		}
@@ -745,7 +890,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		stopDiscovery();
 		setDaemonStatus({
 			state: "ready",
-			port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
+			port: resolvedDaemonPort(),
 			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
 			code: "port_unconfirmed",
 		});
@@ -821,18 +966,247 @@ ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
+ipcMain.handle("app:openExternal", async (_event, url: string) => {
+	await openAllowedAppExternalURL(url, shell);
+});
+
+// Re-tint the native window-button overlay (min/max/close) to match the active
+// theme; the renderer calls this on theme change. No-op unless the window was
+// created with a titleBarOverlay (Windows only).
+ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolColor: string }) => {
+	if (process.platform !== "win32" || !mainWindow) return;
+	try {
+		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
+	} catch {
+		// Window has no overlay on this platform; ignore.
+	}
+});
+
+// Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
+ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
+
+// Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
+// action the native default menu would have performed.
+ipcMain.handle("menu:action", (_event, action: string) => {
+	const win = mainWindow;
+	if (!win) return;
+	// Clicking this shell-painted menu moves focus off the panel, so prefer the last-focused panel, else the focused contents, else the shell.
+	const focused = webContents.getFocusedWebContents();
+	const wc =
+		(focused && focused !== win.webContents ? focused : browserViewHost?.getLastFocusedPanelContents()) ??
+		win.webContents;
+	switch (action) {
+		case "edit.undo":
+			return wc.undo();
+		case "edit.redo":
+			return wc.redo();
+		case "edit.cut":
+			return wc.cut();
+		case "edit.copy":
+			return wc.copy();
+		case "edit.paste":
+			return wc.paste();
+		case "edit.selectAll":
+			return wc.selectAll();
+		case "view.reload":
+			return wc.reload();
+		case "view.devtools":
+			return wc.toggleDevTools();
+		case "view.zoomIn":
+			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
+		case "view.zoomOut":
+			return wc.setZoomLevel(wc.getZoomLevel() - 0.5);
+		case "view.zoomReset":
+			return wc.setZoomLevel(0);
+		case "view.fullscreen":
+			return win.setFullScreen(!win.isFullScreen());
+		case "window.minimize":
+			return win.minimize();
+		case "window.maximize":
+			return win.isMaximized() ? win.unmaximize() : win.maximize();
+		case "window.close":
+			return win.close();
+		case "app.quit":
+			return app.quit();
+		case "help.about":
+			void dialog.showMessageBox(win, {
+				type: "info",
+				title: "About Agent Orchestrator",
+				message: "Agent Orchestrator",
+				detail: `Version ${app.getVersion()}`,
+				buttons: ["OK"],
+			});
+			return;
+	}
+});
 ipcMain.handle("telemetry:getBootstrap", () =>
 	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
 );
-ipcMain.handle("app:chooseDirectory", async () => {
+async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
-		title: "Choose a git repository",
+		title,
 	};
-	const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+	// On Windows, parenting the common file dialog forces a repaint of the main
+	// window while Explorer initializes, which produces a visible white flash.
+	// The unparented native dialog remains foregrounded by Electron without that
+	// compositor handoff.
+	const result = await dialog.showOpenDialog(options);
 
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
+}
+
+async function gitOutput(cwd: string, args: string[]): Promise<string> {
+	const { stdout } = await execFileAsync("git", args, { cwd, env: daemonEnv(), timeout: 5000 });
+	return String(stdout).trim();
+}
+
+async function isGitRepo(repoPath: string): Promise<boolean> {
+	try {
+		const gitInfo = await stat(path.join(repoPath, ".git"));
+		if (!gitInfo.isDirectory()) return false;
+		await gitOutput(repoPath, ["rev-parse", "--show-toplevel"]);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function resolveDefaultBranch(repoPath: string): Promise<string> {
+	try {
+		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+		if (ref) return ref.replace(/^origin\//, "");
+	} catch {
+		// Fall back to the checked-out branch when origin/HEAD is unavailable.
+	}
+	try {
+		const branch = await gitOutput(repoPath, ["branch", "--show-current"]);
+		if (branch) return branch;
+	} catch {
+		// Detached or unreadable HEAD is represented below.
+	}
+	return "HEAD";
+}
+
+async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoScanResult | null> {
+	const relativePath = repoPath === rootPath ? "." : path.relative(rootPath, repoPath);
+	const name = path.basename(repoPath);
+	try {
+		const gitInfo = await stat(path.join(repoPath, ".git"));
+		if (!gitInfo.isDirectory()) {
+			return {
+				name,
+				path: repoPath,
+				relativePath,
+				branch: "HEAD",
+				remote: "",
+				hasRemote: false,
+				status: "error",
+				reason: "Linked worktree children cannot be imported.",
+			};
+		}
+	} catch {
+		try {
+			if ((await gitOutput(repoPath, ["rev-parse", "--is-bare-repository"])) === "true") {
+				return {
+					name,
+					path: repoPath,
+					relativePath,
+					branch: "HEAD",
+					remote: "",
+					hasRemote: false,
+					status: "error",
+					reason: "Bare repositories cannot be imported.",
+				};
+			}
+		} catch {
+			// Not a git repository.
+		}
+		return null;
+	}
+	if (!(await isGitRepo(repoPath))) return null;
+	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
+		resolveDefaultBranch(repoPath),
+		gitOutput(repoPath, ["remote", "get-url", "origin"]),
+		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"]),
+		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"]),
+	]);
+	const validationReason = scanRepoValidationReason(
+		name,
+		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		bareResult.status === "fulfilled" && bareResult.value === "true",
+		headResult.status === "fulfilled",
+	);
+	return {
+		name,
+		path: repoPath,
+		relativePath,
+		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
+		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		status: validationReason ? "error" : "ok",
+		reason: validationReason,
+	};
+}
+
+function scanRepoValidationReason(
+	name: string,
+	branch: string,
+	hasRemote: boolean,
+	isBare: boolean,
+	hasHead: boolean,
+): string | undefined {
+	if (name === "__root__") return "Repository name is reserved by AO.";
+	if (isBare) return "Bare repositories cannot be imported.";
+	if (!hasHead) return "Repository must have at least one commit.";
+	if (branch === "HEAD") return "Repository must have a checked-out branch.";
+	if (!hasRemote) return "Origin remote is required.";
+	return undefined;
+}
+
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+	const out = new Array<R>(items.length);
+	let next = 0;
+	await Promise.all(
+		Array.from({ length: Math.min(limit, items.length) }, async () => {
+			for (;;) {
+				const index = next++;
+				if (index >= items.length) return;
+				out[index] = await fn(items[index]);
+			}
+		}),
+	);
+	return out;
+}
+
+async function scanImportFolder(rootPath: string, mode: "project" | "workspace"): Promise<ImportFolderScanResult> {
+	if (mode === "project") {
+		const repo = await scanGitRepo(rootPath, rootPath);
+		return { path: rootPath, repos: repo ? [repo] : [] };
+	}
+
+	const entries = (await readdir(rootPath, { withFileTypes: true }))
+		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
+		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
+	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
+		scanGitRepo(path.join(rootPath, entry.name), rootPath),
+	);
+	return {
+		path: rootPath,
+		repos: repos
+			.filter((repo): repo is GitRepoScanResult => repo !== null)
+			.sort((a, b) => a.name.localeCompare(b.name)),
+	};
+}
+
+ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
+	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
+});
+ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
+	await ensureShellEnv();
+	return scanImportFolder(input.path, input.mode);
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
@@ -841,6 +1215,20 @@ ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	}
 });
 ipcMain.handle("clipboard:readText", () => clipboard.readText());
+
+// A file dropped onto the terminal is delivered as raw bytes (its original path
+// is unavailable to the sandboxed renderer on macOS — see webUtils.getPathForFile
+// regressions in Electron 30-33). Stash the bytes under the app's own state dir
+// and return the path so the terminal can insert it, mirroring how a native
+// terminal inserts a dropped file's path.
+ipcMain.handle("terminal:saveDroppedFile", async (_event, input: { name: string; bytes: Uint8Array }) => {
+	const dir = path.join(app.getPath("userData"), "terminal-drops");
+	await mkdir(dir, { recursive: true });
+	const base = path.basename(input.name || "").replace(/[^\w.-]+/g, "_") || "dropped";
+	const target = path.join(dir, `${Date.now()}-${base}`);
+	await writeFile(target, Buffer.from(input.bytes));
+	return target;
+});
 
 ipcMain.handle("appState:getMigration", async (): Promise<MigrationState> => {
 	const runFile = runFilePath();

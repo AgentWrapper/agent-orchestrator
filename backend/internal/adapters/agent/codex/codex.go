@@ -36,6 +36,17 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// EmitsSubmitActivity signals Codex fires a user-prompt-submit hook under AO's
+// launch. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity is false: codex reports permission prompts as
+// waiting_input — it installs no post-tool-use hook, so a blocked state could
+// never be cleared mid-turn. confirmActive must not nudge it (an Enter could
+// answer a pending decision it cannot report as blocked). See
+// ports.ActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return false }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -73,10 +84,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 
-	if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
-	} else if cfg.SystemPrompt != "" {
+	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
+	} else if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
 	}
 
 	if cfg.Prompt != "" {
@@ -113,6 +124,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
+	} else if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	}
 	cmd = append(cmd, agentSessionID)
 	return cmd, true, nil
 }
@@ -154,26 +170,13 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,
-// searching PATH then a handful of well-known install locations
-// (Homebrew, Cargo, npm global, NVM). Returns "codex" as a last-ditch
-// fallback so callers see a clear "command not found" rather than an empty
-// argv.
+// searching platform-specific well-known install locations and PATH.
 func ResolveCodexBinary(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 
 	if runtime.GOOS == "windows" {
-		for _, name := range []string{"codex.exe", "codex.cmd", "codex"} {
-			path, err := exec.LookPath(name)
-			if err == nil && path != "" {
-				return resolveNativeWindowsCodex(path), nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
 		candidates := []string{}
 		if appData := os.Getenv("APPDATA"); appData != "" {
 			shim := filepath.Join(appData, "npm", "codex.cmd")
@@ -189,6 +192,19 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 		for _, candidate := range candidates {
 			if fileExists(candidate) {
 				return resolveNativeWindowsCodex(candidate), nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+
+		for _, name := range []string{"codex.cmd", "codex", "codex.exe"} {
+			path, err := exec.LookPath(name)
+			if err == nil && path != "" {
+				if isWindowsAppsCodexExecutable(path) {
+					continue
+				}
+				return resolveNativeWindowsCodex(path), nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
@@ -252,6 +268,16 @@ func windowsNativeCodexCandidatesForShim(shim string) []string {
 		filepath.Join(dir, "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"),
 		filepath.Join(dir, "node_modules", "@openai", "codex", "bin", "codex.exe"),
 	}
+}
+
+func isWindowsAppsCodexExecutable(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	clean := strings.ToLower(filepath.Clean(path))
+	base := filepath.Base(clean)
+	return (base == "codex.exe" || base == "codex") &&
+		strings.Contains(clean, string(filepath.Separator)+"windowsapps"+string(filepath.Separator)+"openai.codex_")
 }
 
 func (p *Plugin) codexBinary(ctx context.Context) (string, error) {

@@ -2,9 +2,15 @@ package crush
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -13,6 +19,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:   ports.PermissionModeBypassPermissions,
+		Kind:          domain.KindWorker,
 		Prompt:        "fix this",
 		WorkspacePath: "/tmp/workspace",
 		SessionID:     "test-session-id",
@@ -27,7 +34,6 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 		"crush",
 		"--cwd", "/tmp/workspace",
 		"--yolo",
-		"--", "fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
@@ -99,6 +105,44 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 
 	if got != ports.PromptDeliveryInCommand {
 		t.Fatalf("unexpected prompt delivery strategy: got %v, want %v", got, ports.PromptDeliveryInCommand)
+	}
+}
+
+func TestGetPromptDeliveryStrategyPromptedSessionsAreAfterStart(t *testing.T) {
+	tests := []struct {
+		name string
+		kind domain.SessionKind
+	}{
+		{name: "worker", kind: domain.KindWorker},
+		{name: "orchestrator", kind: domain.KindOrchestrator},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{}
+
+			got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{
+				Kind:   tt.kind,
+				Prompt: "fix this",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != ports.PromptDeliveryAfterStart {
+				t.Fatalf("unexpected prompt delivery strategy: got %v, want %v", got, ports.PromptDeliveryAfterStart)
+			}
+		})
+	}
+}
+
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
 	}
 }
 
@@ -203,35 +247,217 @@ func TestGetConfigSpecReturnsEmpty(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksIsNoOp(t *testing.T) {
-	plugin := &Plugin{}
+func TestGetAgentHooksInstallsSystemPromptContext(t *testing.T) {
+	workspace := t.TempDir()
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("AO standing instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
-		WorkspacePath: "/tmp/workspace",
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath:    workspace,
+		SystemPrompt:     "inline should lose",
+		SystemPromptFile: promptFile,
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(crushSystemPromptFile(workspace))
+	if err != nil {
+		t.Fatalf("read system prompt: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{crushSystemPromptMarker, "AO standing instructions"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "inline should lose") {
+		t.Fatalf("system prompt used inline prompt when file was provided:\n%s", text)
+	}
+
+	cfg := readCrushConfigForTest(t, crushConfigFile(workspace))
+	paths := cfg["options"].(map[string]any)["context_paths"].([]any)
+	if !jsonArrayContainsString(paths, crushSystemPromptPath) {
+		t.Fatalf("context_paths = %#v, want %q", paths, crushSystemPromptPath)
+	}
+}
+
+func TestGetAgentHooksMergesExistingCrushConfig(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"options":{"context_paths":["CRUSH.md"],"debug":true},"providers":{"local":{"base_url":"http://localhost"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+			WorkspacePath: workspace,
+			SystemPrompt:  "AO standing instructions",
+		}); err != nil {
+			t.Fatalf("GetAgentHooks err = %v", err)
+		}
+	}
+
+	cfg := readCrushConfigForTest(t, configPath)
+	options := cfg["options"].(map[string]any)
+	if options["debug"] != true {
+		t.Fatalf("options.debug = %#v, want true", options["debug"])
+	}
+	if cfg["providers"].(map[string]any)["local"] == nil {
+		t.Fatalf("providers.local was dropped: %#v", cfg)
+	}
+	paths := options["context_paths"].([]any)
+	if !jsonArrayContainsString(paths, "CRUSH.md") || !jsonArrayContainsString(paths, crushSystemPromptPath) {
+		t.Fatalf("context_paths = %#v", paths)
+	}
+	if countJSONStrings(paths, crushSystemPromptPath) != 1 {
+		t.Fatalf("context_paths duplicated AO path: %#v", paths)
+	}
+}
+
+func TestGetAgentHooksGitignoresManagedCrushFiles(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(workspace, crushConfigDirName, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read gitignore: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{hookutil.GitignoreSentinel, "/" + crushSystemPromptName} {
+		if !strings.Contains(text, want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "/"+crushConfigFileName) {
+		t.Fatalf(".gitignore should not ignore project config %q:\n%s", crushConfigFileName, text)
+	}
+}
+
+func TestGetAgentHooksRefusesForeignSystemPromptFile(t *testing.T) {
+	workspace := t.TempDir()
+	path := crushSystemPromptFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("user file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error from GetAgentHooks (no-op): %v", err)
+	if err == nil {
+		t.Fatal("expected error for foreign system prompt file")
+	}
+	if !strings.Contains(err.Error(), "refusing to overwrite non-AO file") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestUninstallHooksIsNoOp(t *testing.T) {
-	plugin := &Plugin{}
-
-	err := plugin.UninstallHooks(context.Background(), "/tmp/workspace")
-	if err != nil {
-		t.Fatalf("unexpected error from UninstallHooks (no-op): %v", err)
+func TestGetAgentHooksEmptyPromptIsNoOp(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+	if _, err := os.Stat(crushSystemPromptFile(workspace)); !os.IsNotExist(err) {
+		t.Fatalf("system prompt file stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(crushConfigFile(workspace)); !os.IsNotExist(err) {
+		t.Fatalf("config file stat err = %v, want not exist", err)
 	}
 }
 
-func TestAreHooksInstalledReturnsFalse(t *testing.T) {
-	plugin := &Plugin{}
+func TestUninstallHooksRemovesManagedCrushContext(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"options":{"context_paths":["CRUSH.md"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
 
-	installed, err := plugin.AreHooksInstalled(context.Background(), "/tmp/workspace")
+	if err := (&Plugin{}).UninstallHooks(context.Background(), workspace); err != nil {
+		t.Fatalf("UninstallHooks err = %v", err)
+	}
+
+	if _, err := os.Stat(crushSystemPromptFile(workspace)); !os.IsNotExist(err) {
+		t.Fatalf("system prompt file stat err = %v, want not exist", err)
+	}
+	cfg := readCrushConfigForTest(t, configPath)
+	paths := cfg["options"].(map[string]any)["context_paths"].([]any)
+	if !jsonArrayContainsString(paths, "CRUSH.md") || jsonArrayContainsString(paths, crushSystemPromptPath) {
+		t.Fatalf("context_paths = %#v", paths)
+	}
+}
+
+func TestUninstallHooksPreservesForeignSystemPromptFile(t *testing.T) {
+	workspace := t.TempDir()
+	path := crushSystemPromptFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("user file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeCrushContextPath(crushConfigFile(workspace), crushSystemPromptPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).UninstallHooks(context.Background(), workspace); err != nil {
+		t.Fatalf("UninstallHooks err = %v", err)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("unexpected error from AreHooksInstalled (no-op): %v", err)
+		t.Fatalf("read foreign prompt: %v", err)
+	}
+	if string(data) != "user file\n" {
+		t.Fatalf("foreign prompt changed: %q", data)
+	}
+}
+
+func TestAreHooksInstalledReportsManagedSystemPrompt(t *testing.T) {
+	plugin := &Plugin{}
+	workspace := t.TempDir()
+
+	installed, err := plugin.AreHooksInstalled(context.Background(), workspace)
+	if err != nil {
+		t.Fatalf("AreHooksInstalled err = %v", err)
 	}
 	if installed {
-		t.Fatalf("unexpected installed status: got true, want false (hooks are no-op for Crush)")
+		t.Fatal("installed = true before install, want false")
+	}
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+	installed, err = plugin.AreHooksInstalled(context.Background(), workspace)
+	if err != nil {
+		t.Fatalf("AreHooksInstalled err = %v", err)
+	}
+	if !installed {
+		t.Fatal("installed = false after install, want true")
 	}
 }
 
@@ -260,4 +486,31 @@ func containsSubsequence(haystack, needle []string) bool {
 		}
 	}
 	return false
+}
+
+func readCrushConfigForTest(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse config %s: %v\n%s", path, err, data)
+	}
+	return cfg
+}
+
+func jsonArrayContainsString(items []any, want string) bool {
+	return countJSONStrings(items, want) > 0
+}
+
+func countJSONStrings(items []any, want string) int {
+	count := 0
+	for _, item := range items {
+		if item == want {
+			count++
+		}
+	}
+	return count
 }

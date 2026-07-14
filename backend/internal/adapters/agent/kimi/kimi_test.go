@@ -3,7 +3,10 @@ package kimi
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -44,80 +47,56 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if s != ports.PromptDeliveryInCommand {
-		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryInCommand)
+	if s != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryAfterStart)
 	}
 }
 
-// Kimi docs: `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`
-// — non-interactive mode already runs under the `auto` permission policy. The
-// adapter must not emit approval flags on the `-p` launch path regardless of
-// the requested AO PermissionMode.
-func TestGetLaunchCommandWithPromptOmitsApprovalFlags(t *testing.T) {
-	modes := []ports.PermissionMode{
-		ports.PermissionModeDefault,
-		"",
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions,
+func TestPromptReadinessHints(t *testing.T) {
+	hints, err := (&Plugin{}).PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatalf("err: %v", err)
 	}
-
-	for _, mode := range modes {
-		t.Run(string(mode), func(t *testing.T) {
-			p := &Plugin{resolvedBinary: "kimi"}
-			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-				Permissions: mode,
-				Prompt:      "-add a health check",
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			want := []string{"kimi", "-p", "-add a health check"}
-			if !reflect.DeepEqual(cmd, want) {
-				t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
-			}
-			for _, arg := range cmd {
-				switch arg {
-				case "--auto", "-y", "--yolo", "--yes", "--auto-approve", "--plan":
-					t.Fatalf("cmd = %#v unexpectedly contains approval/plan flag %q", cmd, arg)
-				}
-			}
-		})
+	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
+		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
 	}
 }
 
-// Without a prompt the launch is interactive, so approval flags are valid and
-// the AO PermissionMode mapping applies.
+// Kimi prompt mode is non-interactive, so AO launches the TUI and lets the
+// session manager inject the task after startup. Because the prompt is not
+// carried with `-p`, approval flags remain valid for prompted workers.
 func TestGetLaunchCommandInteractiveMapsPermissionModes(t *testing.T) {
 	tests := []struct {
 		name       string
 		mode       ports.PermissionMode
+		prompt     string
 		want       []string
 		wantAbsent string
 	}{
-		{"default omits flag", ports.PermissionModeDefault, []string{"kimi"}, "--auto"},
-		{"empty omits flag", "", []string{"kimi"}, "--auto"},
-		{"accept edits", ports.PermissionModeAcceptEdits, []string{"kimi", "--auto"}, "-y"},
-		{"auto", ports.PermissionModeAuto, []string{"kimi", "--auto"}, "-y"},
-		{"bypass", ports.PermissionModeBypassPermissions, []string{"kimi", "-y"}, "--auto"},
+		{"default omits flag", ports.PermissionModeDefault, "fix it", []string{"kimi"}, "--auto"},
+		{"empty omits flag", "", "fix it", []string{"kimi"}, "--auto"},
+		{"accept edits", ports.PermissionModeAcceptEdits, "-add a health check", []string{"kimi", "--auto"}, "-y"},
+		{"auto", ports.PermissionModeAuto, "fix it", []string{"kimi", "--auto"}, "-y"},
+		{"bypass", ports.PermissionModeBypassPermissions, "fix it", []string{"kimi", "-y"}, "--auto"},
+		{"promptless interactive", ports.PermissionModeAuto, "", []string{"kimi", "--auto"}, "-p"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &Plugin{resolvedBinary: "kimi"}
-			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: tt.mode})
+			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: tt.mode, Prompt: tt.prompt})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(cmd, tt.want) {
 				t.Fatalf("cmd = %#v, want %#v", cmd, tt.want)
 			}
-			if tt.wantAbsent != "" {
-				for _, arg := range cmd {
-					if arg == tt.wantAbsent {
-						t.Fatalf("cmd = %#v unexpectedly contains %q", cmd, tt.wantAbsent)
-					}
+			for _, arg := range cmd {
+				if arg == "-p" || arg == "--prompt" {
+					t.Fatalf("cmd = %#v unexpectedly uses non-interactive prompt mode", cmd)
+				}
+				if tt.wantAbsent != "" && arg == tt.wantAbsent {
+					t.Fatalf("cmd = %#v unexpectedly contains %q", cmd, tt.wantAbsent)
 				}
 			}
 		})
@@ -135,8 +114,9 @@ func TestGetLaunchCommandIgnoresSystemPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Kimi has no documented system-prompt flag, so neither is injected.
-	want := []string{"kimi", "-p", "do the thing"}
+	// Kimi has no documented system-prompt flag, and prompted tasks are injected
+	// after startup rather than through non-interactive `-p`.
+	want := []string{"kimi"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -212,9 +192,160 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksNoOp(t *testing.T) {
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err != nil {
-		t.Fatalf("GetAgentHooks err = %v, want nil", err)
+func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
+	workspace := t.TempDir()
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "follow AO rules\n",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	path := kimiInstructionsPath(workspace)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		kimiInstructionsSentinel,
+		"# Agent Orchestrator Session Instructions",
+		"follow AO rules",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions missing %q:\n%s", want, text)
+		}
+	}
+
+	gitignore, err := os.ReadFile(filepath.Join(workspace, kimiInstructionsDirName, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignore), "/AGENTS.md\n") {
+		t.Fatalf("gitignore does not ignore AGENTS.md:\n%s", gitignore)
+	}
+}
+
+func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
+	workspace := t.TempDir()
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath:    workspace,
+		SystemPromptFile: promptFile,
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(kimiInstructionsPath(workspace))
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	if !strings.Contains(string(data), "file rules") {
+		t.Fatalf("instructions missing file rules:\n%s", data)
+	}
+}
+
+func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	path := kimiInstructionsPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("user instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO rules",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"user instructions",
+		kimiInstructionsSentinel,
+		"AO rules",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "user instructions") > strings.Index(text, kimiInstructionsSentinel) {
+		t.Fatalf("user instructions should stay before AO-managed block:\n%s", text)
+	}
+}
+
+func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	path := kimiInstructionsPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(kimiInstructionsSentinel+"\n\nold\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "new rules",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "new rules") || strings.Contains(text, "old") {
+		t.Fatalf("managed instructions not rewritten cleanly:\n%s", text)
+	}
+}
+
+func TestGetAgentHooksRewritesManagedBlockAndPreservesSurroundingUserInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	path := kimiInstructionsPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	existing := "before\n\n" + kimiInstructionFile("old rules") + "\nafter\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "new rules",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"before", "after", "new rules"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "old rules") {
+		t.Fatalf("stale managed instructions preserved:\n%s", text)
+	}
+	if strings.Count(text, kimiInstructionsSentinel) != 1 {
+		t.Fatalf("managed block duplicated:\n%s", text)
 	}
 }
 

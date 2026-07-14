@@ -23,6 +23,11 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"symlink parent escape", ProjectConfig{Symlinks: []string{"../escape"}}, true},
 		{"symlink embedded parent", ProjectConfig{Symlinks: []string{"a/../../b"}}, true},
 		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
+		{"good prompt rules", ProjectConfig{AgentRules: "Run tests.", AgentRulesFile: "docs/agent-rules.md", OrchestratorRules: "Delegate work."}, false},
+		{"agent rules file absolute path", ProjectConfig{AgentRulesFile: "/etc/passwd"}, true},
+		{"agent rules file parent escape", ProjectConfig{AgentRulesFile: "../rules.md"}, true},
+		{"agent rules file cleans to dot", ProjectConfig{AgentRulesFile: "docs/.."}, true},
+		{"agent rules file bare dot", ProjectConfig{AgentRulesFile: "."}, true},
 		{"good reviewers", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}, false},
 		{"good codex reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCodex}}}, false},
 		{"good opencode reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerOpenCode}}}, false},
@@ -98,19 +103,23 @@ func TestResolveReviewerHarness(t *testing.T) {
 		t.Fatalf("configured reviewer = %q, want claude-code", got)
 	}
 
-	// No reviewer configured: always use claude-code, regardless of the worker
-	// harness (see #2241).
+	// No reviewer configured: reuse the worker's harness when it is itself a
+	// supported reviewer.
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerClaudeCode {
-		t.Fatalf("default = %q, want reviewer claude-code", got)
+		t.Fatalf("claude-code worker = %q, want reviewer claude-code", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerClaudeCode {
-		t.Fatalf("default = %q, want reviewer claude-code", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerCodex {
+		t.Fatalf("codex worker = %q, want reviewer codex", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerClaudeCode {
-		t.Fatalf("default = %q, want reviewer claude-code", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerOpenCode {
+		t.Fatalf("opencode worker = %q, want reviewer opencode", got)
 	}
 
-	// A worker harness that is not claude-code also falls back to claude-code.
+	// A worker harness that is not itself a reviewer (e.g. crush, aider) falls
+	// back to claude-code.
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCrush); got != FallbackReviewerHarness {
+		t.Fatalf("crush worker = %q, want %q", got, FallbackReviewerHarness)
+	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != FallbackReviewerHarness {
 		t.Fatalf("fallback = %q, want %q", got, FallbackReviewerHarness)
 	}

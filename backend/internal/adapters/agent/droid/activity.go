@@ -20,8 +20,12 @@ import (
 // Droid's payload shapes differ from Claude Code's in one way that matters here:
 // the Notification payload carries no notification_type discriminator (it only
 // has a free-form message), but Droid only fires Notification when it needs a
-// permission decision or has been idle awaiting input for 60s — both mean the
-// agent is blocked on the user — so every Notification maps to waiting_input.
+// permission decision or has been idle awaiting input for 60s. AO cannot tell
+// which, so every Notification maps to waiting_input: it suppresses automated
+// nudges (NeedsInput) in both cases, and blocked is reserved for harnesses that
+// can clear it mid-turn via the pre/post-tool-use trio — droid installs no tool
+// hooks, so a blocked state would linger until the turn boundary and reject
+// user sends at a safely idle prompt.
 func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "user-prompt-submit":

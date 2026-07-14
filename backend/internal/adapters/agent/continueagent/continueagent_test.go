@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -45,8 +46,18 @@ func TestGetConfigSpecEmpty(t *testing.T) {
 	}
 }
 
-func TestGetPromptDeliveryStrategy(t *testing.T) {
+func TestGetPromptDeliveryStrategyNoPrompt(t *testing.T) {
 	s, err := (&Plugin{}).GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if s != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want after_start", s)
+	}
+}
+
+func TestGetPromptDeliveryStrategyWithPrompt(t *testing.T) {
+	s, err := (&Plugin{}).GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{Prompt: "fix it"})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -55,51 +66,93 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandBypass(t *testing.T) {
+func TestGetPromptDeliveryStrategyContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (&Plugin{}).GetPromptDeliveryStrategy(ctx, ports.LaunchConfig{}); err == nil {
+		t.Fatal("expected error from canceled context, got nil")
+	}
+}
+
+func TestGetLaunchCommandWorkerBypassIsInteractive(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cn"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:        domain.KindWorker,
 		Prompt:      "do the thing",
 		Permissions: ports.PermissionModeBypassPermissions,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--auto", "--", "do the thing"}
+	want := []string{"cn", "--auto", "--", "do the thing"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestGetLaunchCommandAuto(t *testing.T) {
+func TestGetLaunchCommandWorkerAutoIsInteractive(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cn"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:        domain.KindWorker,
 		Prompt:      "refactor auth",
 		Permissions: ports.PermissionModeAuto,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--auto", "--", "refactor auth"}
+	want := []string{"cn", "--auto", "--", "refactor auth"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestGetLaunchCommandDefaultPerms(t *testing.T) {
+func TestGetLaunchCommandWorkerDefaultPermsIsInteractive(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cn"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:   domain.KindWorker,
 		Prompt: "fix it",
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--", "fix it"}
+	want := []string{"cn", "--", "fix it"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 	joined := strings.Join(cmd, " ")
-	if strings.Contains(joined, "--auto") || strings.Contains(joined, "--readonly") {
-		t.Fatal("should not emit a permission flag for default perms")
+	if strings.Contains(joined, "--print") || strings.Contains(joined, "--auto") || strings.Contains(joined, "--readonly") {
+		t.Fatal("should launch interactively and emit no permission flag for default perms")
+	}
+}
+
+func TestGetLaunchCommandAppendsInlineRule(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:           "fix it",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: "/tmp/system.md",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"cn", "--rule", "follow AO rules", "--", "fix it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandAppendsRuleFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:           "fix it",
+		SystemPromptFile: "/tmp/system.md",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"cn", "--rule", "/tmp/system.md", "--", "fix it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
@@ -112,7 +165,7 @@ func TestGetLaunchCommandAcceptEditsNoFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print", "--", "tidy up"}
+	want := []string{"cn", "--", "tidy up"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v (accept-edits should emit no flag)", cmd, want)
 	}
@@ -124,7 +177,21 @@ func TestGetLaunchCommandNoPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"cn", "--print"}
+	want := []string{"cn"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandNoPromptWithAuto(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions: ports.PermissionModeAuto,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"cn", "--auto"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -156,7 +223,7 @@ func TestGetRestoreCommand(t *testing.T) {
 	if !ok {
 		t.Fatal("ok=false, want true")
 	}
-	want := []string{"cn", "--print", "--auto", "--fork", "sess-abc123"}
+	want := []string{"cn", "--auto", "--fork", "sess-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -177,7 +244,29 @@ func TestGetRestoreCommandDefaultPerms(t *testing.T) {
 	if !ok {
 		t.Fatal("ok=false, want true")
 	}
-	want := []string{"cn", "--print", "--fork", "sess-xyz"}
+	want := []string{"cn", "--fork", "sess-xyz"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandAppendsRule(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPrompt: "restore rules",
+		Session: ports.SessionRef{
+			Metadata: map[string]string{
+				ports.MetadataKeyAgentSessionID: "sess-xyz",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+	want := []string{"cn", "--rule", "restore rules", "--fork", "sess-xyz"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

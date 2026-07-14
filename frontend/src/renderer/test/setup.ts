@@ -58,6 +58,18 @@ if (typeof window !== "undefined") {
 		app: {
 			getVersion: async () => "0.0.0-test",
 			chooseDirectory: async () => null,
+			openExternal: async () => undefined,
+			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+		},
+		terminal: {
+			saveDroppedFile: async () => "",
+		},
+		window: {
+			setOverlay: async () => undefined,
+		},
+		menu: {
+			action: async () => undefined,
+			notifyShellFocus: () => undefined,
 		},
 		clipboard: {
 			writeText: async () => undefined,
@@ -82,6 +94,8 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
+			capture: async () => "",
+			requestMirror: async () => false,
 			navigate: async ({ viewId }: { viewId: string }) => ({
 				viewId,
 				url: "",
@@ -131,7 +145,10 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			destroy: () => undefined,
+			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onAnnotationSubmit: () => () => undefined,
+			onAnnotationCancel: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

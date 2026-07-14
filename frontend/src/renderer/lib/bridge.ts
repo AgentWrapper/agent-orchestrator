@@ -6,6 +6,20 @@ export const aoBridge: AoBridge =
 		app: {
 			getVersion: async () => "0.0.0-preview",
 			chooseDirectory: async () => null,
+			openExternal: async (url: string) => {
+				window.open(url, "_blank", "noopener,noreferrer");
+			},
+			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
+		},
+		terminal: {
+			saveDroppedFile: async () => "",
+		},
+		window: {
+			setOverlay: async () => undefined,
+		},
+		menu: {
+			action: async () => undefined,
+			notifyShellFocus: () => undefined,
 		},
 		clipboard: {
 			writeText: async (text: string) => {
@@ -86,7 +100,12 @@ export const aoBridge: AoBridge =
 				isLoading: false,
 			}),
 			destroy: () => undefined,
+			capture: async () => "",
+			requestMirror: async () => false,
+			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onAnnotationSubmit: () => () => undefined,
+			onAnnotationCancel: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

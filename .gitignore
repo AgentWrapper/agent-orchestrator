@@ -61,6 +61,8 @@ Thumbs.db
 # electron-forge / vite build output
 .vite/
 dist-electron/
+# TanStack Router codegen, regenerated on every dev/build run
+frontend/src/renderer/routeTree.gen.ts
 # electron-builder debug dump, written to the cwd on every NSIS build
 builder-debug.yml
 
@@ -72,3 +74,7 @@ frontend/daemon/
 
 # fetched static tmux binary bundled into the installers (fetch-tmux.mjs)
 frontend/tmux-dist/
+
+# Locally-added agent skills (not for the team)
+.agents/
+skills-lock.json

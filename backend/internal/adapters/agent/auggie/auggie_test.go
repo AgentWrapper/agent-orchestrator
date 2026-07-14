@@ -96,35 +96,39 @@ func TestGetLaunchCommandPermissionModesEmitNoFlag(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandAppendsSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandAppendsRulesFile(t *testing.T) {
 	p := &Plugin{resolvedBinary: "auggie"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		SystemPrompt: "follow repo rules",
-		Prompt:       "do the thing",
+		SystemPromptFile: "/tmp/system.md",
+		Prompt:           "do the thing",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"auggie", "--print", "--instruction", "follow repo rules", "--", "do the thing"}
+	want := []string{"auggie", "--print", "--rules", "/tmp/system.md", "--", "do the thing"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestGetLaunchCommandPrefersSystemPromptFileFlag(t *testing.T) {
+func TestGetLaunchCommandIgnoresInlineSystemPromptWithoutFile(t *testing.T) {
 	p := &Plugin{resolvedBinary: "auggie"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		SystemPromptFile: "/tmp/system.md",
-		SystemPrompt:     "inline ignored",
+		SystemPrompt: "inline ignored",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"auggie", "--print", "--instruction-file", "/tmp/system.md"}
+	want := []string{"auggie", "--print"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	for _, arg := range cmd {
+		if arg == "--instruction" || arg == "inline ignored" {
+			t.Fatalf("cmd = %#v unexpectedly contains inline instruction text", cmd)
+		}
 	}
 }
 
@@ -134,7 +138,9 @@ func TestGetRestoreCommand(t *testing.T) {
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-abc123"},
 		},
-		Permissions: ports.PermissionModeBypassPermissions,
+		Permissions:      ports.PermissionModeBypassPermissions,
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: "/tmp/system.md",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +149,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	want := []string{"auggie", "--print", "--resume", "sess-abc123"}
+	want := []string{"auggie", "--print", "--rules", "/tmp/system.md", "--resume", "sess-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

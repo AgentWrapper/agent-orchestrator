@@ -30,6 +30,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
+var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
 // reviewerAllowedTools is the read-only tool allowlist the reviewer launches
 // with. The reviewer runs headless (no human to approve prompts) but must stay
@@ -104,4 +105,10 @@ func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) er
 // review a new commit — AO's central review prompt.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
+}
+
+// ReviewCancel stops the active Claude Code reviewer turn while preserving the
+// terminal pane for inspection.
+func (r *Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
 }

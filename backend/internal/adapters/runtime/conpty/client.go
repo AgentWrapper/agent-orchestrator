@@ -61,8 +61,27 @@ func clientSendMessage(addr, message string) error {
 	}
 
 	// Brief pause before Enter (matches TS: Enter sent as a separate frame).
-	time.Sleep(ptyInputEnterDelay)
+	// Skipped for an empty message — an Enter-only nudge has no paste to let
+	// settle, and the pause would only widen the guard-read→Enter window
+	// (mirrors the tmux runtime's enterDelay contract).
+	if len(runes) > 0 {
+		time.Sleep(ptyInputEnterDelay)
+	}
 	frame, err := EncodeMessage(MsgTerminalInput, []byte("\r"))
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(frame)
+	return err
+}
+
+func clientSendInput(addr, input string) error {
+	conn, err := dialHost(addr, dialTimeout)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	frame, err := EncodeMessage(MsgTerminalInput, []byte(input))
 	if err != nil {
 		return err
 	}

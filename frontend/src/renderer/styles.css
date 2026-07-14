@@ -1,166 +1,276 @@
 @import "tailwindcss";
+@import "../styles/tokens.css";
+
+@custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
 /*
- * Design system — see DESIGN.md (source of truth). emdash-matched: flat near-black
+ * Design system — see DESIGN_TOKENS.md. emdash-matched: flat near-black
  * neutral ramp, hairline borders, system font, refined-blue accent (not emdash's
  * jade). Dark is primary (:root); light is the supported override
- * (:root[data-theme="light"]). The Zustand theme toggle sets data-theme on <html>.
+ * (:root[data-theme="light"]). apply-initial-theme runs before CSS load; the
+ * Zustand theme toggle updates data-theme on <html>.
  */
 @theme inline {
-	--font-sans:
-		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue",
-		sans-serif;
-	/* Nerd Font stack (ported from yyork): the terminal reads --font-mono so
-   * agent TUIs get powerline separators and file-type icons. These are
-   * system-installed fonts — the app bundles none — and the browser picks the
-   * first one present, falling back to plain monospace (no icon glyphs) if a
-   * user has no Nerd Font. JetBrainsMono Nerd Font is the primary target. */
-	--font-mono:
-		"JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono", "FiraCode Nerd Font",
-		"MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font", "Hack Nerd Font Mono", "Hack Nerd Font",
-		"Symbols Nerd Font Mono", "Symbols Nerd Font", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-		"Liberation Mono", "Courier New", monospace;
+	--font-sans: var(--font-family-base);
+	--font-mono: var(--font-family-mono);
+
+	/* Typography — align Tailwind text-* with token scale */
+	--text-xs: var(--font-size-sm);
+	--text-sm: var(--font-size-md);
+	--text-base: var(--font-size-md);
+
+	/* Typography — token-named half-steps (text-control = dense 13px chrome) */
+	--text-micro: var(--font-size-xs);
+	--text-2xs: var(--font-size-2xs);
+	--text-caption: var(--font-size-caption);
+	--text-sm-md: var(--font-size-sm-md);
+	--text-md-sm: var(--font-size-md-sm);
+	--text-control: var(--font-size-base);
+	--text-brand: var(--font-size-brand);
+	--text-subtitle: var(--font-size-subtitle);
+	--text-heading-sm: var(--font-size-heading-sm);
+	--text-heading: var(--font-size-heading);
+	--text-heading-lg: var(--font-size-heading-lg);
+
+	/* Radius — align Tailwind rounded-* with token scale */
+	--radius-xs: var(--radius-xs);
+	--radius-sm: var(--radius-sm);
+	--radius-md: var(--radius-md);
+	--radius-lg: var(--radius-lg);
+	--radius-panel: var(--radius-panel);
+	--radius-full: var(--radius-full);
+
+	/* Breakpoints — for Tailwind max-* variants */
+	--breakpoint-layout-narrow: 680px;
+	--breakpoint-inspector-compact: 300px;
+
+	/* Spacing — align Tailwind p-*, gap-*, etc. with token scale */
+	--spacing-0_5: var(--space-0_5);
+	--spacing-0_75: var(--space-0_75);
+	--spacing-1: var(--space-1);
+	--spacing-1_25: var(--space-1_25);
+	--spacing-1_5: var(--space-1_5);
+	--spacing-1_75: var(--space-1_75);
+	--spacing-2: var(--space-2);
+	--spacing-2_25: var(--space-2_25);
+	--spacing-2_5: var(--space-2_5);
+	--spacing-2_75: var(--space-2_75);
+	--spacing-3: var(--space-3);
+	--spacing-3_25: var(--space-3_25);
+	--spacing-3_5: var(--space-3_5);
+	--spacing-3_75: var(--space-3_75);
+	--spacing-4: var(--space-4);
+	--spacing-4_5: var(--space-4_5);
+	--spacing-5: var(--space-5);
+	--spacing-5_5: var(--space-5_5);
+	--spacing-6: var(--space-6);
+	--spacing-8: var(--space-8);
+	--spacing-10: var(--space-10);
+
+	/* Z-index — z-chrome, z-titlebar, z-overlay */
+	--z-index-chrome: var(--z-chrome);
+	--z-index-titlebar: var(--z-titlebar);
+	--z-index-overlay: var(--z-overlay);
+
+	/* Ring width — ring-focus for dense control focus rings */
+	--ring-width-focus: var(--ring-width-focus);
+
+	/* Elevation — align Tailwind shadow-* with token scale */
+	--shadow-sm: var(--elevation-sm);
+	--shadow-md: var(--elevation-md);
+	--shadow-lg: var(--elevation-lg);
+	--shadow-xl: var(--elevation-xl);
 
 	/* Surfaces */
-	--color-background: var(--bg);
-	--color-foreground: var(--fg);
-	--color-surface: var(--bg-1);
-	--color-card: var(--bg-1);
-	--color-card-foreground: var(--fg);
-	--color-raised: var(--bg-2);
-	--color-overlay: var(--bg-3);
-	--color-popover: var(--bg-1);
-	--color-popover-foreground: var(--fg);
-	/* shadcn input border uses border-input; map to our hairline border */
-	--color-input: var(--border);
-	--color-sidebar: var(--sidebar-bg);
-	--color-sidebar-foreground: var(--fg-muted);
-	--color-sidebar-primary: var(--accent);
-	--color-sidebar-primary-foreground: var(--accent-fg);
-	--color-sidebar-accent: var(--bg-2);
-	--color-sidebar-accent-foreground: var(--fg);
-	--color-sidebar-border: var(--border);
-	--color-sidebar-ring: var(--accent);
-	--color-terminal: var(--term-bg);
+	--color-background: var(--color-bg-primary);
+	--color-foreground: var(--color-text-primary);
+	--color-surface: var(--color-bg-secondary);
+	--color-card: var(--color-bg-secondary);
+	--color-card-foreground: var(--color-text-primary);
+	--color-raised: var(--color-bg-tertiary);
+	--color-overlay: var(--color-bg-elevated);
+	--color-popover: var(--color-bg-secondary);
+	--color-popover-foreground: var(--color-text-primary);
+	--color-input: var(--bridge-border);
+	--color-sidebar: var(--color-bg-sidebar);
+	--color-sidebar-foreground: var(--color-text-muted);
+	--color-sidebar-primary: var(--bridge-accent);
+	--color-sidebar-primary-foreground: var(--bridge-accent-fg);
+	--color-sidebar-accent: var(--color-bg-tertiary);
+	--color-sidebar-accent-foreground: var(--color-text-primary);
+	--color-sidebar-border: var(--bridge-border);
+	--color-sidebar-ring: var(--bridge-accent);
+	--color-terminal: var(--color-bg-terminal);
+	--color-terminal-foreground: var(--color-text-terminal);
+	--color-terminal-dim: var(--color-text-terminal-dim);
+	--color-scrim: var(--bridge-scrim);
 
-	/* Text */
-	--color-muted: var(--bg-2);
-	--color-muted-foreground: var(--fg-muted);
-	--color-passive: var(--fg-passive);
-	--color-secondary: var(--bg-2);
-	--color-secondary-foreground: var(--fg-muted);
+	/* Browser static preview (light mock inside dark app) */
+	--color-preview: var(--color-preview-bg);
+	--color-preview-foreground: var(--color-preview-fg);
+	--color-preview-muted: var(--bridge-preview-muted);
+	--color-preview-link: var(--bridge-preview-link);
+	--color-preview-heading: var(--bridge-preview-heading);
+	--color-preview-body: var(--bridge-preview-body);
+	--color-preview-card: var(--bridge-preview-card);
+	--color-preview-success: var(--bridge-preview-success);
+	--color-preview-tile: var(--bridge-preview-tile);
+	--color-preview-tile-border: var(--bridge-preview-tile-border);
+	--color-preview-terminal: var(--bridge-preview-terminal);
+	--color-preview-terminal-border: var(--bridge-preview-terminal-border);
+	--color-preview-terminal-foreground: var(--bridge-preview-terminal-fg);
 
-	/* Accent (refined blue) — primary buttons, active session, focus */
-	--color-primary: var(--accent);
-	--color-primary-foreground: var(--accent-fg);
-	--color-accent: var(--accent);
-	--color-accent-foreground: var(--accent-fg);
-	--color-accent-weak: var(--accent-weak);
-	--color-accent-dim: var(--accent-dim);
-	--color-ring: var(--accent);
+	/* Icon chrome — size-icon-* utilities */
+	--size-icon-2xs: var(--size-icon-2xs);
+	--size-icon-xs: var(--size-icon-xs);
+	--size-icon-sm: var(--size-icon-sm);
+	--size-icon-md: var(--size-icon-md);
+	--size-icon-base: var(--size-icon-base);
+	--size-icon-lg: var(--size-icon-lg);
+	--size-icon-xl: var(--size-icon-xl);
 
-	/* Borders */
-	--color-border: var(--border);
-	--color-border-strong: var(--border-1);
+	/* Typography — tracking & leading */
+	--tracking-tight-xl: var(--tracking-tight-xl);
+	--tracking-tight-lg: var(--tracking-tight-lg);
+	--tracking-tight: var(--tracking-tight);
+	--tracking-wide-xs: var(--tracking-wide-xs);
+	--tracking-wide-sm: var(--tracking-wide-sm);
+	--tracking-wide: var(--tracking-wide);
+	--tracking-wide-md: var(--tracking-wide-md);
+	--tracking-wide-lg: var(--tracking-wide-lg);
+	--tracking-wide-xl: var(--tracking-wide-xl);
 
-	/* Status — map 1:1 to the daemon's derived statuses (agent-orchestrator
-   * palette): working=orange, needs-you=amber, mergeable=green, fail=red. */
-	--color-working: var(--orange);
-	--color-success: var(--green);
-	--color-success-strong: var(--green-strong);
-	--color-warning: var(--amber);
-	--color-error: var(--red);
+	--leading-snug: var(--line-height-snug);
+	--leading-body: var(--line-height-normal);
+	--leading-row: var(--line-height-row);
+	--leading-body-md: var(--line-height-body-md);
+	--leading-relaxed: var(--line-height-relaxed);
+	--leading-loose: var(--line-height-loose);
 
-	/* shadcn "destructive" → our error red (Button destructive, Alert, etc.) */
-	--color-destructive: var(--red);
-	--color-destructive-foreground: #ffffff;
+	--font-weight-medium: var(--font-weight-medium);
+	--font-weight-semibold: var(--font-weight-semibold);
 
-	/* Theme-adaptive interactive surfaces (sidebar hovers, tabs, kanban chrome) */
-	--color-interactive-hover: var(--interactive-hover);
-	--color-interactive-active: var(--interactive-active);
+	--duration-fast: var(--duration-fast);
+	--duration-normal: var(--duration-normal);
 
-	--radius-sm: 4px;
-	--radius-md: 6px;
-	--radius-lg: 8px;
-	--radius-xl: 12px;
+	/* Layout — toolbar offset for fixed sidebar below topbar */
+	--spacing-toolbar: var(--size-toolbar);
+	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
+	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	--spacing-control-xs: var(--size-control-xs);
+	--spacing-control-sm: var(--size-control-sm);
+	--spacing-control-form: var(--size-control-form);
+	--spacing-control-md: var(--size-control-md);
+	--spacing-control-lg: var(--size-control-lg);
+	--spacing-control-xl: var(--size-control-xl);
+	--spacing-control-board-sm: var(--size-control-board-sm);
+	--spacing-control-board: var(--size-control-board);
+	--spacing-table-head: var(--size-table-head);
+	--spacing-inspector-tabs: var(--size-inspector-tabs);
+	--spacing-browser-url: var(--size-browser-url);
+	--spacing-browser-min: var(--size-browser-min);
+	--spacing-dot-sm: var(--size-dot-sm);
+	--spacing-content-max: var(--size-content-max);
+	--spacing-board-empty: var(--size-board-empty);
+	--spacing-preview-content: var(--size-preview-content);
+	--spacing-preview-max: var(--size-preview-max);
+	--spacing-notification-width: var(--size-notification-width);
+	--spacing-notification-max-height: var(--size-notification-max-height);
+	--spacing-select-menu-max: var(--size-select-menu-max);
+	--spacing-notification-icon: var(--size-notification-icon);
+	--spacing-font-size-label: var(--size-font-size-label);
+	--spacing-pr-table-actions: var(--size-pr-table-actions);
+	--spacing-pr-col-number: var(--size-pr-col-number);
+	--spacing-pr-col-state: var(--size-pr-col-state);
+	--spacing-inspector-min: var(--size-inspector-min);
+	--spacing-textarea-min: var(--size-textarea-min);
+	--spacing-sidebar-project-actions: var(--size-sidebar-project-actions);
+	--spacing-row-md: var(--size-row-md);
+	--spacing-empty-offset-y: var(--size-empty-offset-y);
+	--spacing-kv-label: var(--size-kv-label);
+	--spacing-branch-chip: var(--size-branch-chip);
+
+	--color-muted: var(--color-bg-tertiary);
+	--color-muted-foreground: var(--color-text-muted);
+	--color-passive: var(--color-text-passive);
+	--color-secondary: var(--color-bg-tertiary);
+	--color-secondary-foreground: var(--color-text-muted);
+
+	--color-primary: var(--bridge-accent);
+	--color-primary-foreground: var(--bridge-accent-fg);
+	--color-accent: var(--bridge-accent);
+	--color-accent-foreground: var(--bridge-accent-fg);
+	--color-accent-weak: var(--bridge-accent-weak);
+	--color-accent-dim: var(--bridge-accent-dim);
+	--color-ring: var(--bridge-accent);
+
+	--color-border: var(--bridge-border);
+	--color-border-strong: var(--bridge-border-strong);
+
+	--color-working: var(--bridge-working);
+	--color-success: var(--bridge-success);
+	--color-success-bright: var(--color-success-bright);
+	--color-warning: var(--bridge-warning);
+	--color-error: var(--bridge-danger);
+	--color-destructive: var(--bridge-danger);
+	--color-destructive-foreground: var(--color-accent-foreground);
+
+	--color-interactive-hover: var(--bridge-interactive-hover);
+	--color-interactive-active: var(--bridge-interactive-active);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 150ms ease-out;
 	--animate-modal-in: modal-in 150ms ease-out;
 }
 
-:root {
-	/* Dark — cloned from the agent-orchestrator web app (packages/web). #0a0b0d
-   * base, #15171b is the only bordered surface, hairline white-alpha lines,
-   * blue accent, orange=working / amber=needs-you / green=mergeable / red=fail. */
-	--bg: #0a0b0d;
-	--bg-1: #15171b;
-	--bg-2: #1b1d22;
-	--bg-3: #212329;
-	--fg: #f4f5f7;
-	--fg-muted: #9ba1aa;
-	--fg-passive: #646a73;
-	--border: rgb(255 255 255 / 0.06);
-	--border-1: rgb(255 255 255 / 0.1);
-	--accent: #4d8dff;
-	--accent-fg: #ffffff;
-	--accent-weak: rgb(77 141 255 / 0.16);
-	--accent-dim: #24406e;
-	--orange: #f59f4c;
-	--green: #74b98a;
-	--green-strong: #74b98a;
-	--amber: #e8c14a;
-	--red: #ef6b6b;
-	--purple: #a78bfa;
-	/* Terminal — dark palette (light override below). */
-	--term-bg: #15171b;
-	--term-fg: #d7d7d2;
-	--term-green: #74b98a;
-	--term-dim: #7c7c7c;
-	--term-blue: #4d8dff;
-	--term-amber: #e8c14a;
-	--shadow: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.5);
-	/* Sidebar surface sits a step below --bg (cloned #08090b). */
-	--sidebar-bg: #08090b;
-	--interactive-hover: rgb(255 255 255 / 0.04);
-	--interactive-active: rgb(255 255 255 / 0.07);
-	--kanban-column-bg: rgb(255 255 255 / 0.018);
-	--kanban-pending-glow: rgb(255 255 255 / 0.02);
+@utility w-dialog-md {
+	width: min(var(--size-dialog-md), calc(100vw - var(--space-8)));
 }
 
-:root[data-theme="light"] {
-	/* Light — supported, not primary. */
-	--bg: #fcfcfc;
-	--bg-1: #ffffff;
-	--bg-2: #ededee;
-	--bg-3: #e4e4e6;
-	--fg: #1a1a1a;
-	--fg-muted: #666666;
-	--fg-passive: #9a9a9a;
-	--border: #e3e3e5;
-	--border-1: #d4d4d6;
-	--accent: #2563eb;
-	--accent-fg: #ffffff;
-	--accent-weak: rgb(37 99 235 / 0.12);
-	--accent-dim: #bcd2f7;
-	--sidebar-bg: var(--bg);
-	--orange: #c2410c;
-	--green: #1a7f37;
-	--green-strong: #1a7f37;
-	--amber: #9a6b00;
-	--red: #c0392b;
-	--purple: #7c3aed;
-	--interactive-hover: rgb(0 0 0 / 0.04);
-	--interactive-active: rgb(0 0 0 / 0.07);
-	--kanban-column-bg: rgb(0 0 0 / 0.02);
-	--kanban-pending-glow: rgb(0 0 0 / 0.03);
-	--term-bg: #fafafa;
-	--term-fg: #24292f;
-	--term-green: #1a7f37;
-	--term-dim: #6b7280;
-	--term-blue: #2563eb;
-	--term-amber: #9a6b00;
-	--shadow: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
+@utility w-dialog-lg {
+	width: min(var(--size-dialog-lg), calc(100vw - var(--space-8)));
+}
+
+@utility w-dialog-xl {
+	width: min(var(--size-dialog-xl), calc(100vw - var(--space-8)));
+}
+
+@utility w-dialog-orchestrator {
+	width: min(var(--size-dialog-orchestrator), calc(100vw - var(--space-8)));
+}
+
+@utility grid-cols-notification {
+	grid-template-columns: var(--size-notification-icon) minmax(0, 1fr) auto;
+}
+
+@utility max-w-inspector-status-chip {
+	max-width: var(--size-inspector-status-chip-max);
+}
+
+@utility w-font-size-label {
+	width: var(--size-font-size-label);
+}
+
+@utility bg-purple-subtle {
+	background-color: color-mix(in srgb, var(--color-purple) 12%, transparent);
+}
+
+@utility text-purple-accent {
+	color: var(--color-purple);
+}
+
+@utility shadow-timeline-dot {
+	box-shadow: 0 0 0 3px var(--color-bg-primary);
+}
+
+@utility shadow-timeline-dot-now {
+	box-shadow:
+		0 0 0 3px var(--color-bg-primary),
+		0 0 8px var(--color-working);
+}
+
+@utility bg-surface-faint {
+	background-color: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
 }
 
 * {
@@ -176,11 +286,11 @@ body,
 body {
 	margin: 0;
 	overflow: hidden;
-	background: var(--bg);
-	color: var(--fg);
+	background: var(--color-bg-primary);
+	color: var(--color-text-primary);
 	font-family: var(--font-sans);
-	font-size: 14px;
-	line-height: 1.5;
+	font-size: var(--font-size-md);
+	line-height: var(--line-height-normal);
 	-webkit-font-smoothing: antialiased;
 }
 
@@ -233,114 +343,21 @@ select {
 	height: 100%;
 }
 
+/* Normal-buffer panes (codex, a plain shell) now keep scrollback (scrollback:5000
+   in XtermTerminal), so the viewport becomes scrollable. Hide the scrollbar so it
+   doesn't reserve width and shift the cell grid; the wheel still scrolls via the
+   terminal's wheel handler. */
+.xterm .xterm-viewport {
+	scrollbar-width: none;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
 .terminal-pane-frame:fullscreen {
-	background: var(--bg);
-}
-
-.terminal-toolbar {
-	display: flex;
-	height: 56px;
-	flex: 0 0 56px;
-	align-items: center;
-	border-bottom: 1px solid var(--border);
-	background: var(--bg);
-	padding: 0 18px;
-}
-
-.terminal-toolbar__label {
-	display: flex;
-	min-width: 0;
-	align-items: center;
-	gap: 12px;
-}
-
-.terminal-toolbar__eyebrow {
-	flex: 0 0 auto;
-	font-family: var(--font-mono);
-	font-size: 11px;
-	font-weight: 700;
-	letter-spacing: 0.09em;
-	color: var(--fg-muted);
-}
-
-.terminal-toolbar__session {
-	min-width: 0;
-	overflow: hidden;
-	font-family: var(--font-mono);
-	font-size: 13px;
-	font-weight: 600;
-	color: var(--fg-passive);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.terminal-toolbar__controls {
-	display: flex;
-	margin-left: auto;
-	align-items: center;
-	gap: 12px;
-	font-family: var(--font-mono);
-	color: var(--fg-passive);
-}
-
-.terminal-toolbar__control {
-	display: inline-flex;
-	width: 24px;
-	height: 24px;
-	align-items: center;
-	justify-content: center;
-	border: 0;
-	border-radius: 5px;
-	background: transparent;
-	color: var(--fg-passive);
-	cursor: pointer;
-	font-family: var(--font-mono);
-	font-size: 13px;
-	line-height: 1;
-	transition:
-		background 120ms ease,
-		color 120ms ease,
-		opacity 120ms ease;
-}
-
-.terminal-toolbar__control:hover {
-	background: var(--interactive-hover);
-	color: var(--fg);
-}
-
-.terminal-toolbar__control:focus-visible {
-	outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
-	outline-offset: 1px;
-}
-
-.terminal-toolbar__control:disabled {
-	cursor: default;
-	opacity: 0.35;
-}
-
-.terminal-toolbar__control:disabled:hover {
-	background: transparent;
-	color: var(--fg-passive);
-}
-
-.terminal-toolbar__control--icon {
-	margin-left: 6px;
-}
-
-.terminal-toolbar__font-size {
-	width: 42px;
-	text-align: center;
-	font-size: 12px;
-	font-weight: 600;
-	color: var(--fg-muted);
-}
-
-:root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.12);
-}
-
-:root[data-theme="light"] .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb {
-	background: rgb(0 0 0 / 0.2);
+	background: var(--color-bg-primary);
 }
 
 @keyframes status-pulse {
@@ -365,61 +382,47 @@ select {
 @keyframes modal-in {
 	from {
 		opacity: 0;
-		transform: translate(-50%, -50%) scale(0.95);
+		scale: 0.95;
 	}
 	to {
 		opacity: 1;
-		transform: translate(-50%, -50%) scale(1);
+		scale: 1;
 	}
 }
 
-/* ── Resizable panel handles (sidebar + inspector) ──────────────────────── */
-.resize-handle {
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	width: 7px;
-	z-index: 5;
-	cursor: col-resize;
-	background: transparent;
-	touch-action: none;
-}
-
-.resize-handle--right {
-	right: -3px;
-}
-
-.resize-handle--left {
-	left: -3px;
-}
-
-.resize-handle::after {
-	content: "";
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	left: 50%;
-	width: 1px;
-	transform: translateX(-50%);
-	background: transparent;
-	transition: background 0.12s ease;
-}
-
-.resize-handle:hover::after,
-body.is-resizing-x .resize-handle::after {
-	background: var(--border);
-}
-
+/* ── Global resize state (sidebar drag) ─────────────────────────────────── */
 body.is-resizing-x {
 	cursor: col-resize;
 	user-select: none;
 }
 
-/* No width transition while actively dragging the sidebar resize handle
- * (shadcn's sidebar animates width for collapse/expand). */
+body.is-resizing-x [data-slot="resize-handle"]::after {
+	background: var(--color-border);
+}
+
 body.is-resizing-x [data-slot="sidebar-gap"],
 body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
+}
+
+/* Expanded-only sidebar chrome waits for the rail width transition to finish
+ * before painting, so tap-to-expand does not flash labels inside the narrow
+ * collapsed rail. */
+.sidebar-expanded-chrome {
+	transition: opacity 150ms ease-out;
+}
+[data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
+	opacity: 0;
+	pointer-events: none;
+}
+[data-slot="sidebar-container"][data-expanded-chrome="visible"] .sidebar-expanded-chrome {
+	opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sidebar-expanded-chrome {
+		transition: none;
+	}
 }
 
 /* ── Shell topbar (agent-orchestrator .dashboard-app-header) ──────────────
@@ -642,6 +645,68 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .titlebar-nav__btn {
 	width: 28px;
 	height: 28px;
+}
+
+/* Windows custom title bar (WindowTitlebar): the app paints the logo + menu on
+ * one row while Electron overlays the native min/max/close buttons on the right.
+ * Height must match TITLEBAR_HEIGHT + the Window Controls Overlay height in
+ * main.ts so the native buttons line up. The whole strip is the window-drag
+ * region; interactive children opt out with -webkit-app-region: no-drag. */
+.window-titlebar {
+	display: flex;
+	height: 36px;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 8px;
+	padding: 0 10px;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg);
+	-webkit-app-region: drag;
+	user-select: none;
+}
+
+.window-titlebar__logo {
+	width: 20px;
+	height: 20px;
+	object-fit: contain;
+}
+
+.window-titlebar__title {
+	margin-right: 6px;
+	font-size: 12.5px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	color: var(--fg);
+	white-space: nowrap;
+}
+
+.window-titlebar__menus {
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	-webkit-app-region: no-drag;
+}
+
+.window-titlebar__menu-btn {
+	height: 24px;
+	padding: 0 8px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	line-height: 1;
+	color: var(--fg-muted);
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease;
+}
+
+.window-titlebar__menu-btn:hover,
+.window-titlebar__menu-btn[data-active] {
+	background: color-mix(in srgb, var(--fg) 8%, transparent);
+	color: var(--fg);
+}
+
+.window-titlebar__menu {
+	min-width: 200px;
 }
 
 /* macOS: the full-width header starts its content past the lights + fixed
@@ -1183,6 +1248,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: #8bdc75;
 }
 
+.reviewer-card__action--danger {
+	border-color: color-mix(in srgb, var(--red) 42%, transparent);
+	background: color-mix(in srgb, var(--red) 10%, transparent);
+	color: var(--red);
+}
+
 .reviewer-card__action--wide {
 	width: 100%;
 }
@@ -1319,35 +1390,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--green);
 }
 
+:root[data-theme="light"] .reviewer-card__action--danger {
+	color: var(--red);
+}
+
 .inspector-empty--center {
 	padding: 24px 8px;
 	text-align: center;
-}
-
-.inspector-empty--browser {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 9px;
-	padding: 48px 18px;
-	text-align: center;
-}
-
-.inspector-empty--browser svg {
-	width: 30px;
-	height: 30px;
-	color: var(--fg-passive);
-}
-
-.inspector-empty--browser p {
-	font-size: 12.5px;
-	color: var(--fg-muted);
-}
-
-.inspector-empty--browser span {
-	font-size: 11.5px;
-	color: var(--fg-passive);
-	line-height: 1.5;
 }
 
 .inspector-kv {
@@ -1522,6 +1571,21 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: var(--bg);
 }
 
+/* Maximized browser overlay: a fixed layer over the whole app window (portaled
+   to <body>, so it covers the sidebar + topbar too, not just the session area).
+   The panel goes edge-to-edge, so drop its border/radius. */
+.browser-popout-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	background: var(--bg);
+}
+
+.browser-popout-overlay .browser-panel {
+	border: 0;
+	border-radius: 0;
+}
+
 .browser-panel__toolbar {
 	display: flex;
 	align-items: center;
@@ -1537,6 +1601,27 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	position: relative;
 	min-width: 0;
 	flex: 1;
+}
+
+.browser-panel__annotate-btn[aria-pressed="true"] {
+	background: var(--accent-weak);
+	color: var(--fg);
+}
+
+.browser-panel__annotation-status {
+	max-width: 96px;
+	overflow: hidden;
+	color: var(--fg-muted);
+	font-size: 11px;
+	font-weight: 650;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.browser-panel__annotation-status--error {
+	max-width: 160px;
+	color: var(--red);
 }
 
 .browser-panel__url-icon {

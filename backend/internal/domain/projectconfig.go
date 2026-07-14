@@ -13,9 +13,10 @@ import (
 // validated; there is no free-form map.
 //
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
-// PostCreate, AgentConfig, and the role overrides are consumed at spawn;
-// SessionPrefix feeds the display prefix. TrackerIntake feeds the background
-// issue-intake loop.
+// PostCreate, AgentConfig, prompt rules, and the role overrides are consumed at
+// spawn; SessionPrefix feeds the display prefix. Settings whose consumers do not
+// yet exist (tracker/SCM per-project config) are intentionally absent and land in
+// focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -29,6 +30,15 @@ type ProjectConfig struct {
 	Symlinks []string `json:"symlinks,omitempty"`
 	// PostCreate are shell commands run in the workspace after it is created.
 	PostCreate []string `json:"postCreate,omitempty"`
+
+	// AgentRules are project-specific standing instructions for worker sessions.
+	AgentRules string `json:"agentRules,omitempty"`
+	// AgentRulesFile is a repo-relative Markdown/text file whose contents are
+	// appended to AgentRules for worker sessions.
+	AgentRulesFile string `json:"agentRulesFile,omitempty"`
+	// OrchestratorRules are project-specific standing instructions for
+	// orchestrator sessions.
+	OrchestratorRules string `json:"orchestratorRules,omitempty"`
 
 	// AgentConfig is the default agent config for the project.
 	AgentConfig AgentConfig `json:"agentConfig,omitempty"`
@@ -59,10 +69,15 @@ type ReviewerConfig struct {
 const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins; otherwise claude-code is used.
-func (c ProjectConfig) ResolveReviewerHarness(_ AgentHarness) ReviewerHarness {
+// reviewer wins. Otherwise the worker's own harness is reused when it is itself
+// a supported reviewer (e.g. a codex worker is reviewed by codex); a worker
+// whose harness is not a reviewer (e.g. crush) falls back to claude-code.
+func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
+	}
+	if rh := ReviewerHarness(worker); rh.IsKnown() {
+		return rh
 	}
 	return FallbackReviewerHarness
 }
@@ -124,6 +139,9 @@ func (c ProjectConfig) Validate() error {
 			return fmt.Errorf("symlink %q: %w", s, err)
 		}
 	}
+	if err := validateRepoRelative(c.AgentRulesFile); err != nil {
+		return fmt.Errorf("agentRulesFile %q: %w", c.AgentRulesFile, err)
+	}
 	for i, rv := range c.Reviewers {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
@@ -169,7 +187,7 @@ func validateRepoRelative(p string) error {
 		return fmt.Errorf("path must be repo-relative and must not escape the project root")
 	}
 	clean := filepath.Clean(trimmed)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("path must be repo-relative and must not escape the project root")
 	}
 	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {

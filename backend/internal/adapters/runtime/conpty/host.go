@@ -44,20 +44,74 @@ type ServeConfig struct {
 func Serve(ctx context.Context, cfg ServeConfig) error {
 	h := &host{
 		cfg:       cfg,
-		clients:   make(map[net.Conn]struct{}),
+		clients:   make(map[net.Conn]*clientState),
 		shutdownC: make(chan struct{}),
 	}
 	return h.run(ctx)
+}
+
+// clientState is the host's per-connection bookkeeping. cols/rows record the
+// grid this client last asked for (sized reports whether it ever asked), so the
+// host can size the shared PTY to the largest attached client (see
+// applyLargestLocked). A connection that never sends a resize stays sized=false
+// and never influences the shared grid.
+type clientState struct {
+	cols, rows int
+	sized      bool
 }
 
 // host holds the mutable state for a single pty-host session.
 type host struct {
 	cfg     ServeConfig
 	mu      sync.Mutex
-	clients map[net.Conn]struct{}
+	clients map[net.Conn]*clientState
+
+	// curCols/curRows are the grid the host last applied to the shared PTY (0,0
+	// = none applied yet). Guarded by mu; used to skip redundant resizes.
+	curCols, curRows int
 
 	shutdownOnce sync.Once
 	shutdownC    chan struct{} // closed when Shutdown is called
+}
+
+// applyLargestLocked sizes the shared PTY to a SINGLE client's grid — the
+// largest by area — and resizes only when that choice changes. There is one PTY
+// with one grid, so when several clients view it at once (e.g. the desktop app
+// and the phone) the largest wins: a small viewer can never shrink the grid a
+// larger one needs, which is what produced the "stripped-down" desktop view when
+// a phone attached.
+//
+// Crucially this matches ONE client's cols AND rows as a pair, rather than taking
+// an independent max of each axis. A per-axis max would synthesize a grid no
+// client actually has — a wide-but-short desktop (120x30) plus a narrow-but-tall
+// phone (55x48) would yield 120x48 — and that phantom grid mis-renders for every
+// client (the desktop draws its footer at a row it can't show; the phone gets
+// columns it can't fit). Matching one client exactly keeps that client (the
+// largest — normally the desktop) pixel-correct; only smaller clients scale.
+//
+// Called on every client resize and on every disconnect, so the grid follows a
+// newly-attached larger client and falls back to the remaining largest one when
+// it leaves. Callers must hold h.mu.
+func (h *host) applyLargestLocked() {
+	bestCols, bestRows, bestArea := 0, 0, 0
+	for _, cs := range h.clients {
+		if !cs.sized {
+			continue
+		}
+		if area := cs.cols * cs.rows; area > bestArea {
+			bestArea, bestCols, bestRows = area, cs.cols, cs.rows
+		}
+	}
+	// No client has reported a size yet: leave the PTY at its current grid (the
+	// initial size set when the ConPTY was created).
+	if bestCols == 0 || bestRows == 0 {
+		return
+	}
+	if bestCols == h.curCols && bestRows == h.curRows {
+		return
+	}
+	h.curCols, h.curRows = bestCols, bestRows
+	_ = h.cfg.PTY.Resize(bestCols, bestRows)
 }
 
 // run is the main event loop.
@@ -112,7 +166,7 @@ func (h *host) shutdown() {
 		for c := range h.clients {
 			_ = c.Close()
 		}
-		h.clients = make(map[net.Conn]struct{})
+		h.clients = make(map[net.Conn]*clientState)
 		h.mu.Unlock()
 
 		// 4. Close the listener to unblock Accept.
@@ -157,11 +211,18 @@ func (h *host) pumpPTY() {
 func (h *host) broadcast(msg []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	removed := false
 	for c := range h.clients {
 		if _, err := c.Write(msg); err != nil {
 			_ = c.Close()
 			delete(h.clients, c)
+			removed = true
 		}
+	}
+	// A dropped client may have been the largest viewer; recompute the shared
+	// grid so it follows the remaining clients.
+	if removed {
+		h.applyLargestLocked()
 	}
 }
 
@@ -171,6 +232,7 @@ func (h *host) sendTo(conn net.Conn, msg []byte) {
 		h.mu.Lock()
 		_ = conn.Close()
 		delete(h.clients, conn)
+		h.applyLargestLocked()
 		h.mu.Unlock()
 	}
 }
@@ -200,12 +262,15 @@ func (h *host) handleConn(conn net.Conn) {
 			return
 		}
 	}
-	h.clients[conn] = struct{}{}
+	h.clients[conn] = &clientState{}
 	h.mu.Unlock()
 
 	defer func() {
 		h.mu.Lock()
 		delete(h.clients, conn)
+		// This client is gone; if it was the largest, let the grid shrink back to
+		// the remaining largest client.
+		h.applyLargestLocked()
 		h.mu.Unlock()
 		_ = conn.Close()
 	}()
@@ -238,8 +303,16 @@ func (h *host) handleClientMsg(conn net.Conn, msgType byte, payload []byte) {
 	case MsgResize:
 		if _, alive := h.cfg.PTY.ExitCode(); !alive {
 			var rp ResizePayload
-			if err := json.Unmarshal(payload, &rp); err == nil {
-				_ = h.cfg.PTY.Resize(rp.Cols, rp.Rows)
+			if err := json.Unmarshal(payload, &rp); err == nil && rp.Cols > 0 && rp.Rows > 0 {
+				// Record this client's requested grid, then size the shared PTY to
+				// the largest client (see applyLargestLocked) rather than blindly
+				// applying this one — otherwise a small viewer shrinks every viewer.
+				h.mu.Lock()
+				if cs := h.clients[conn]; cs != nil {
+					cs.cols, cs.rows, cs.sized = rp.Cols, rp.Rows, true
+				}
+				h.applyLargestLocked()
+				h.mu.Unlock()
 			}
 			// Malformed resize: ignore (matches TS behavior).
 		}

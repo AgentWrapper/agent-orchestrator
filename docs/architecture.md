@@ -35,7 +35,7 @@ flowchart LR
 
 The only persistent session state is:
 
-- `activity_state` — What the agent last reported (`active`, `idle`, `waiting_input`, `exited`)
+- `activity_state` — What the agent last reported (`active`, `idle`, `waiting_input`, `blocked`, `exited`). `waiting_input` is an agent at an empty prompt awaiting its next instruction; `blocked` is an agent stopped on a pending permission/approval decision — automation must never inject input into a blocked session.
 - `is_terminated` — Whether the session should be treated as over
 - PR facts — `pr`, `pr_checks`, `pr_comment` tables
 
@@ -427,7 +427,7 @@ The `service.Session` computes display status from durable facts using this prec
 flowchart TD
     CheckTerm{is_terminated?}
     CheckTerm -->|Yes| PRMerged{PR merged?}
-    CheckTerm -->|No| CheckWait{activity_state<br/>== waiting_input?}
+    CheckTerm -->|No| CheckWait{activity_state in<br/>waiting_input, blocked?}
 
     PRMerged -->|Yes| Merged[merged]
     PRMerged -->|No| Terminated[terminated]
@@ -526,7 +526,7 @@ stateDiagram-v2
     Spawning --> Active: MarkSpawned
     Active --> Idle: activity_state = idle
     Active --> Working: activity_state = active
-    Active --> Waiting: activity_state = waiting_input
+    Active --> Waiting: activity_state = waiting_input / blocked
     Active --> Exited: activity_state = exited
     Working --> Active: work completes
     Waiting --> Active: user responds
@@ -721,6 +721,15 @@ flowchart TD
     Terminal --> TerminalMux[Terminal Manager]
 
 ```
+
+### Multi-Listener Architecture (Loopback + LAN)
+
+The daemon runs two independent HTTP listeners sharing the same chi router:
+
+1. **Primary (Loopback) Listener** — binds `127.0.0.1:3001` with no authentication. All existing daemon operations (CLI, desktop app) use this listener.
+2. **LAN Listener** (Connect Mobile) — an opt-in second listener that binds `0.0.0.0:3011` (or ephemeral fallback) **only when explicitly enabled** by the user through the desktop app's Settings. It wraps the shared router in bearer-password authentication middleware, serves app API routes to mobile clients, but never exposes loopback-gated control routes (`/shutdown`, telemetry, mobile control commands). All traffic is plaintext HTTP on a home network only, by deliberate security decision — see `docs/adr/0001-lan-listener-for-mobile.md` for rationale and threat model. Auth state (hashed password, per-source lockout) is persisted to `~/.ao/mobile/config.json` and restored on daemon boot.
+
+For implementation details and security model, consult `docs/adr/0001-lan-listener-for-mobile.md` and the glossary in `CONTEXT.md`.
 
 ### Request Flow
 

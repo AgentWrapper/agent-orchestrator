@@ -7,8 +7,10 @@
 // suggest/explain extension.
 //
 // Launch runs the CLI in interactive mode so AO can keep a durable terminal
-// pane attached to the session. Permission modes map onto the CLI's allow flags
-// (`--allow-tool`, `--allow-all-tools`, `--allow-all`).
+// pane attached to the session. When AO has an initial task, it uses Copilot's
+// `--interactive <prompt>` mode so the task executes immediately instead of
+// waiting in the terminal input buffer. Permission modes map onto the CLI's allow
+// flags (`--allow-tool`, `--allow-all-tools`, `--allow-all`).
 // Restore continues an existing session via `--resume <agentSessionId>`; the
 // native session id (a UUID under ~/.copilot/session-state/) is captured by the
 // SessionStart hook AO installs (see hooks.go).
@@ -66,37 +68,43 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new interactive Copilot session:
 //
-//	copilot [permission flags]
+//	copilot [permission flags] [--agent ao-<session>] [--interactive <prompt>]
 //
-// The prompt is delivered after the process starts; using `-p` runs Copilot in
-// programmatic mode and exits when done, which leaves AO's terminal pane blank
-// or dead. Copilot CLI does not have a documented system-prompt-injection flag,
-// so SystemPrompt/SystemPromptFile are ignored.
+// `--interactive <prompt>` keeps the durable Copilot terminal session open while
+// automatically submitting the initial task. `-p` is deliberately avoided
+// because it runs Copilot in programmatic mode and exits when done. Copilot CLI
+// does not expose a system-prompt flag, so AO installs a per-session custom
+// agent profile in GetAgentHooks and selects it here.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.copilotBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary}
+	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	if agentName := copilotAgentName(cfg.SessionID, cfg.SystemPrompt, cfg.SystemPromptFile); agentName != "" {
+		cmd = append(cmd, "--agent="+agentName)
+	}
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--interactive", cfg.Prompt)
+	}
 
 	return cmd, nil
 }
 
-// GetPromptDeliveryStrategy reports that Copilot receives its prompt after the
-// interactive process starts. This overrides the agentbase.Base default
-// (in-command) because Copilot's `-p` programmatic mode exits when done, which
-// would leave AO's terminal pane dead.
+// GetPromptDeliveryStrategy reports that Copilot receives its prompt in the
+// launch command. This uses `--interactive <prompt>`, not `-p`, so Copilot starts
+// executing immediately while keeping the interactive terminal session alive.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	return ports.PromptDeliveryAfterStart, nil
+	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Copilot
-// session: `copilot [permission flags] --resume <agentSessionId> [-p <prompt>]`.
+// session: `copilot [permission flags] --resume <agentSessionId>`.
 // ok is false when the hook-derived native session id has not landed yet, so
 // callers can fall back to fresh launch behavior.
 //
@@ -117,9 +125,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 8)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	if agentName := copilotAgentName(cfg.Session.ID, cfg.SystemPrompt, cfg.SystemPromptFile); agentName != "" {
+		cmd = append(cmd, "--agent="+agentName)
+	}
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
@@ -246,6 +256,39 @@ func (p *Plugin) copilotBinary(ctx context.Context) (string, error) {
 	p.resolvedBinary = binary
 	return binary, nil
 }
+
+func copilotSystemPromptText(inline, file string) (string, error) {
+	if strings.TrimSpace(inline) != "" {
+		return strings.TrimRight(inline, "\n"), nil
+	}
+	if strings.TrimSpace(file) == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return "", fmt.Errorf("copilot: read system prompt file: %w", err)
+	}
+	return strings.TrimRight(string(data), "\n"), nil
+}
+
+func copilotAgentName(sessionID, inlinePrompt, promptFile string) string {
+	if strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	if strings.TrimSpace(inlinePrompt) == "" && strings.TrimSpace(promptFile) == "" {
+		return ""
+	}
+	return "ao-" + copilotAgentNameReplacer.Replace(strings.TrimSpace(sessionID))
+}
+
+var copilotAgentNameReplacer = strings.NewReplacer(
+	"/", "-",
+	"\\", "-",
+	" ", "-",
+	"_", "-",
+	".", "-",
+	":", "-",
+)
 
 // appendApprovalFlags maps AO's 4 permission modes onto Copilot CLI approval
 // flags (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference):

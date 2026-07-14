@@ -84,21 +84,6 @@ func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status dom
 	return n > 0, nil
 }
 
-// SupersedeReviewRun marks an unverdicted non-failed pass failed so a new pass
-// for the same commit can be recorded.
-func (s *Store) SupersedeReviewRun(ctx context.Context, id, body string) (bool, error) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	n, err := s.qw.SupersedeReviewRun(ctx, gen.SupersedeReviewRunParams{
-		Body: body,
-		ID:   id,
-	})
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
 // SupersedeStaleRunningReviewRuns marks older running unverdicted passes for a
 // worker failed before starting a review for a newer commit.
 func (s *Store) SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error) {
@@ -109,6 +94,17 @@ func (s *Store) SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID d
 		SessionID: sessionID,
 		PRURL:     prURL,
 		TargetSha: targetSHA,
+	})
+}
+
+// CancelRunningReviewRunsBySession marks all currently running review passes
+// for a worker cancelled.
+func (s *Store) CancelRunningReviewRunsBySession(ctx context.Context, sessionID domain.SessionID, body string) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.CancelRunningReviewRunsBySession(ctx, gen.CancelRunningReviewRunsBySessionParams{
+		Body:      body,
+		SessionID: sessionID,
 	})
 }
 
@@ -159,6 +155,20 @@ func (s *Store) ListReviewRunsBySession(ctx context.Context, id domain.SessionID
 	rows, err := s.qr.ListReviewRunsBySession(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("list review runs for session %s: %w", id, err)
+	}
+	out := make([]domain.ReviewRun, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, reviewRunFromRow(row))
+	}
+	return out, nil
+}
+
+// ListRunningReviewRunsBySession returns only currently running unverdicted
+// review passes for a worker session, newest first.
+func (s *Store) ListRunningReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
+	rows, err := s.qr.ListRunningReviewRunsBySession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list running review runs for session %s: %w", id, err)
 	}
 	out := make([]domain.ReviewRun, 0, len(rows))
 	for _, row := range rows {

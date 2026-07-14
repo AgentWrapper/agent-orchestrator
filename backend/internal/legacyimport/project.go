@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	yaml "gopkg.in/yaml.v3"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
@@ -106,6 +108,22 @@ func buildProjectConfig(pc legacyProjectConfig, notes *[]string) domain.ProjectC
 	cfg.AgentConfig = buildAgentConfig(pc.AgentConfig, notes, "agentConfig")
 	cfg.Worker = buildRoleOverride(pc.Worker, notes, "worker")
 	cfg.Orchestrator = buildRoleOverride(pc.Orchestrator, notes, "orchestrator")
+	var droppedRules bool
+	if v, ok := legacyStringValue(pc.AgentRules); ok {
+		cfg.AgentRules = v
+	} else if pc.AgentRules != nil {
+		droppedRules = true
+	}
+	if v, ok := legacyStringValue(pc.AgentRulesFile); ok {
+		cfg.AgentRulesFile = strings.TrimSpace(v)
+	} else if pc.AgentRulesFile != nil {
+		droppedRules = true
+	}
+	if v, ok := legacyStringValue(pc.OrchestratorRule); ok {
+		cfg.OrchestratorRules = v
+	} else if pc.OrchestratorRule != nil {
+		droppedRules = true
+	}
 
 	// Surface project-level fields the rewrite has no home for (#247 §4).
 	var dropped []string
@@ -115,7 +133,7 @@ func buildProjectConfig(pc legacyProjectConfig, notes *[]string) domain.ProjectC
 	if pc.SCM != nil {
 		dropped = append(dropped, "scm")
 	}
-	if pc.AgentRules != nil || pc.AgentRulesFile != nil || pc.OrchestratorRule != nil {
+	if droppedRules {
 		dropped = append(dropped, "rules")
 	}
 	if pc.Runtime != nil {
@@ -131,6 +149,16 @@ func buildProjectConfig(pc legacyProjectConfig, notes *[]string) domain.ProjectC
 		*notes = append(*notes, "dropped project fields with no rewrite home: "+strings.Join(dropped, ", "))
 	}
 	return cfg
+}
+
+func legacyStringValue(node *yaml.Node) (string, bool) {
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return "", false
+	}
+	if node.Tag != "" && node.Tag != "!!str" {
+		return "", false
+	}
+	return node.Value, true
 }
 
 // projectRowDeps are the host effects the project mapper needs: git origin

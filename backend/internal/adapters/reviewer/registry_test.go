@@ -1,9 +1,11 @@
 package reviewer
 
 import (
+	"context"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // TestRegistryMatchesDomainVocabulary enforces that the shipped reviewer
@@ -18,6 +20,16 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 		}
 		if registered[h] {
 			t.Errorf("reviewer harness %q registered twice", h)
+		}
+		canceller, ok := a.(ports.ReviewerCanceller)
+		if !ok {
+			t.Errorf("reviewer harness %q does not implement cancellation", h)
+		} else if spec, err := canceller.ReviewCancel(context.Background()); err != nil {
+			t.Errorf("reviewer harness %q cancel spec: %v", h, err)
+		} else if spec.Mode != ports.ReviewCancelInterrupt {
+			t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
+		} else if spec.Interrupts != 2 {
+			t.Errorf("reviewer harness %q cancel interrupts = %d, want 2", h, spec.Interrupts)
 		}
 		registered[h] = true
 	}

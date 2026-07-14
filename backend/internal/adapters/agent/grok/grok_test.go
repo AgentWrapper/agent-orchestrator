@@ -2,6 +2,8 @@ package grok
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -52,16 +54,21 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 func TestGetLaunchCommand(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "grok"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Prompt:      "do the thing",
-		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:       "do the thing",
+		SystemPrompt: "ao standing instructions",
+		Permissions:  ports.PermissionModeBypassPermissions,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	wantPrefix := []string{"grok", "--no-auto-update", "--permission-mode", "bypassPermissions", "-p", "do the thing"}
+	wantPrefix := []string{"grok", "--no-auto-update", "--permission-mode", "bypassPermissions", "--rules", "ao standing instructions", "--", "do the thing"}
 	if !reflect.DeepEqual(cmd, wantPrefix) {
 		t.Fatalf("cmd = %#v, want prefix %#v", cmd, wantPrefix)
 	}
+	if strings.Contains(strings.Join(cmd, " "), "system-prompt-override") {
+		t.Fatalf("cmd = %#v must append rules, not override Grok's system prompt", cmd)
+	}
+	assertNoPromptFlag(t, cmd)
 }
 
 func TestGetLaunchCommandDefaultPerms(t *testing.T) {
@@ -72,12 +79,14 @@ func TestGetLaunchCommandDefaultPerms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(cmd) < 4 || cmd[0] != "grok" || cmd[1] != "--no-auto-update" || cmd[2] != "-p" {
-		t.Fatalf("cmd = %#v, want grok --no-auto-update -p ...", cmd)
+	want := []string{"grok", "--no-auto-update", "--", "fix it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 	if strings.Contains(strings.Join(cmd, " "), "permission-mode") {
 		t.Fatal("should not have --permission-mode for default perms")
 	}
+	assertNoPromptFlag(t, cmd)
 }
 
 func TestGetLaunchCommandAcceptEdits(t *testing.T) {
@@ -89,9 +98,69 @@ func TestGetLaunchCommandAcceptEdits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"grok", "--no-auto-update", "--permission-mode", "acceptEdits", "-p", "refactor auth"}
+	want := []string{"grok", "--no-auto-update", "--permission-mode", "acceptEdits", "--", "refactor auth"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	assertNoPromptFlag(t, cmd)
+}
+
+func TestGetLaunchCommandTerminatesFlagsBeforeLeadingDashPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "grok"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt: "-add a health check",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"grok", "--no-auto-update", "--", "-add a health check"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	assertNoPromptFlag(t, cmd)
+}
+
+func assertNoPromptFlag(t *testing.T, cmd []string) {
+	t.Helper()
+	for _, arg := range cmd {
+		if arg == "-p" || arg == "--single" {
+			t.Fatalf("cmd = %#v unexpectedly contains single-turn prompt flag %q", cmd, arg)
+		}
+	}
+}
+
+func TestGetLaunchCommandSystemPromptFromFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "grok"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("file standing instructions\n\n"), 0o600); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:           "fix it",
+		SystemPromptFile: promptFile,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"grok", "--no-auto-update", "--rules", "file standing instructions", "--", "fix it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	assertNoPromptFlag(t, cmd)
+}
+
+func TestGetLaunchCommandMissingSystemPromptFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "grok"}
+	_, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:           "fix it",
+		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing system prompt file")
+	}
+	if !strings.Contains(err.Error(), "grok: read system prompt file") {
+		t.Fatalf("err = %v, want system prompt file read error", err)
 	}
 }
 
@@ -103,7 +172,8 @@ func TestGetRestoreCommand(t *testing.T) {
 				ports.MetadataKeyAgentSessionID: "sess-abc123",
 			},
 		},
-		Permissions: ports.PermissionModeBypassPermissions,
+		SystemPrompt: "ao restore instructions",
+		Permissions:  ports.PermissionModeBypassPermissions,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -111,9 +181,12 @@ func TestGetRestoreCommand(t *testing.T) {
 	if !ok {
 		t.Fatal("ok=false, want true")
 	}
-	want := []string{"grok", "--no-auto-update", "--permission-mode", "bypassPermissions", "-r", "sess-abc123"}
+	want := []string{"grok", "--no-auto-update", "--permission-mode", "bypassPermissions", "--rules", "ao restore instructions", "-r", "sess-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	if strings.Contains(strings.Join(cmd, " "), "system-prompt-override") {
+		t.Fatalf("cmd = %#v must append rules, not override Grok's system prompt", cmd)
 	}
 }
 

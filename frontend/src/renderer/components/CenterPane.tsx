@@ -1,5 +1,6 @@
 import { ChevronLeft, Maximize2, Minimize2, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
+import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
@@ -14,21 +15,18 @@ type CenterPaneProps = {
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
-const DEFAULT_TERMINAL_FONT_SIZE = 12;
-const MIN_TERMINAL_FONT_SIZE = 10;
-const MAX_TERMINAL_FONT_SIZE = 20;
 const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
 
 function clampTerminalFontSize(size: number): number {
-	return Math.min(MAX_TERMINAL_FONT_SIZE, Math.max(MIN_TERMINAL_FONT_SIZE, size));
+	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
 }
 
 function initialTerminalFontSize(): number {
-	if (typeof window === "undefined") return DEFAULT_TERMINAL_FONT_SIZE;
+	if (typeof window === "undefined") return TERMINAL_FONT_SIZE_DEFAULT;
 	const raw = window.localStorage?.getItem(terminalFontSizeStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return DEFAULT_TERMINAL_FONT_SIZE;
+	if (!Number.isFinite(parsed)) return TERMINAL_FONT_SIZE_DEFAULT;
 	return clampTerminalFontSize(parsed);
 }
 
@@ -96,29 +94,33 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 			className="terminal-pane-frame flex h-full min-h-0 min-w-0 flex-col bg-background"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="terminal-toolbar">
-				<div className="terminal-toolbar__label">
-					<span className="terminal-toolbar__eyebrow">TERMINAL</span>
-					<span className="terminal-toolbar__session">
+			<div className="flex h-toolbar shrink-0 items-center border-b border-border bg-background px-5">
+				<div className="flex min-w-0 items-center gap-3">
+					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
+						TERMINAL
+					</span>
+					<span className="min-w-0 truncate font-mono text-control font-semibold text-passive">
 						{!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
 					</span>
 				</div>
-				<div className="terminal-toolbar__controls">
+				<div className="ml-auto flex items-center gap-3 font-mono text-passive">
 					<button
 						aria-label="Decrease terminal font size"
-						className="terminal-toolbar__control"
-						disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
+						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+						disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
 						onClick={() => updateFontSize(-1)}
 						title="Decrease terminal font size"
 						type="button"
 					>
 						-
 					</button>
-					<span className="terminal-toolbar__font-size">{fontSize}px</span>
+					<span className="w-font-size-label text-center text-xs font-semibold text-muted-foreground">
+						{fontSize}px
+					</span>
 					<button
 						aria-label="Increase terminal font size"
-						className="terminal-toolbar__control"
-						disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
+						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+						disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
 						onClick={() => updateFontSize(1)}
 						title="Increase terminal font size"
 						type="button"
@@ -128,35 +130,35 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 					<button
 						aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}
 						aria-pressed={isFullscreen}
-						className="terminal-toolbar__control terminal-toolbar__control--icon"
+						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 						onClick={() => void toggleFullscreen()}
 						title={isFullscreen ? "Exit fullscreen" : "Fullscreen terminal"}
 						type="button"
 					>
 						{isFullscreen ? (
-							<Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
+							<Minimize2 className="size-icon-md" aria-hidden="true" />
 						) : (
-							<Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
+							<Maximize2 className="size-icon-md" aria-hidden="true" />
 						)}
 					</button>
 				</div>
 			</div>
 			{target.kind === "reviewer" ? (
-				<div className="reviewer-terminal-header">
+				<div className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border bg-background px-4">
 					<button
 						aria-label="Back to agent terminal"
-						className="reviewer-terminal-header__back"
+						className="inline-flex h-control-board-sm items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-semibold leading-none text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 						onClick={onSelectWorkerTerminal}
 						type="button"
 					>
-						<ChevronLeft aria-hidden="true" />
+						<ChevronLeft aria-hidden="true" className="size-icon-lg" />
 						<span>agent</span>
 					</button>
-					<span className="reviewer-terminal-header__role">
-						<Shield aria-hidden="true" />
+					<span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-success-bright">
+						<Shield aria-hidden="true" className="size-icon-lg" />
 						Reviewer
 					</span>
-					<span className="reviewer-terminal-header__harness">{target.harness}</span>
+					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
 				</div>
 			) : null}
 			<div className="min-h-0 flex-1">

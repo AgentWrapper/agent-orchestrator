@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
+
+const cancelInterruptDelay = 150 * time.Millisecond
 
 // Launcher spawns, re-notifies, and probes a reviewer over a worker's worktree.
 // It is the side of the engine that talks to the reviewer registry and runtime;
@@ -21,6 +24,8 @@ type Launcher interface {
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
 	Alive(ctx context.Context, handleID string) (bool, error)
+	// Cancel interrupts a running reviewer pane while keeping the terminal alive.
+	Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error
 }
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
@@ -40,6 +45,7 @@ type LaunchSpec struct {
 // satisfies it.
 type reviewerRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
+	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
@@ -149,4 +155,46 @@ func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error
 		return false, nil
 	}
 	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
+}
+
+func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error {
+	if handleID == "" {
+		return nil
+	}
+	reviewer, ok := l.reviewers.Reviewer(harness)
+	if !ok {
+		return fmt.Errorf("no reviewer adapter for harness %q", harness)
+	}
+	canceller, ok := reviewer.(ports.ReviewerCanceller)
+	if !ok {
+		return fmt.Errorf("reviewer adapter %q does not support cancellation", harness)
+	}
+	spec, err := canceller.ReviewCancel(ctx)
+	if err != nil {
+		return fmt.Errorf("reviewer cancel: %w", err)
+	}
+	switch spec.Mode {
+	case ports.ReviewCancelInterrupt:
+		interrupts := spec.Interrupts
+		if interrupts <= 0 {
+			interrupts = 1
+		}
+		for i := 0; i < interrupts; i++ {
+			if err := l.runtime.Interrupt(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+				return err
+			}
+			if i < interrupts-1 {
+				timer := time.NewTimer(cancelInterruptDelay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("reviewer adapter %q returned unsupported cancel mode %q", harness, spec.Mode)
+	}
 }

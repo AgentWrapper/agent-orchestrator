@@ -46,4 +46,21 @@ describe("MakerNSIS", () => {
 		expect(options.config.nsis.oneClick).toBe(false);
 		expect(options.config.nsis.allowToChangeInstallationDirectory).toBe(true);
 	});
+
+	it("forwards executableName so the Start menu shortcut targets the real binary (#2414)", async () => {
+		const maker = new MakerNSIS(
+			{ appId: "dev.agent-orchestrator.desktop", executableName: "agent-orchestrator", icon: "assets/icon.ico" },
+			["win32"],
+		);
+		await maker.prepareConfig(makeOptions.targetArch);
+		await maker.make(makeOptions);
+
+		const [, options] = buildForge.mock.calls.at(-1)!;
+		// electron-builder derives the exe name — and thus the shortcut's TargetPath
+		// and icon — from win.executableName, falling back to productName otherwise.
+		// It must match Forge's packaged "agent-orchestrator.exe", not the
+		// "Agent Orchestrator.exe" it would infer from productName.
+		expect(options.config.win.executableName).toBe("agent-orchestrator");
+		expect(options.config.win.icon).toBe("assets/icon.ico");
+	});
 });
