@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/pressly/goose/v3"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 // TestMigrateAllowsEveryShippedHarness guards against the collapsed-migration
