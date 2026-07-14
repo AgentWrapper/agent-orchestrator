@@ -1934,6 +1934,8 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"Never edit source files, resolve merge conflicts, run implementation-focused changes",
 		"spawn or redirect a worker session instead of doing the work yourself",
 		"Use `ao send` for session communication",
+		"`ao session ls --project mer`",
+		"`ao session get <worker-session-id>`",
 		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
 		"skills/using-ao/SKILL.md",
 	} {
