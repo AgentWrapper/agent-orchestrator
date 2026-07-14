@@ -413,6 +413,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 				>
 					{session.title}
 				</div>
+				<div className="px-3.25 pb-2 font-mono text-micro text-passive">{session.id}</div>
 				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
 			<div
