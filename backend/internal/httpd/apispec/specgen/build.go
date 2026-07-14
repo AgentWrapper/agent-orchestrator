@@ -682,11 +682,12 @@ func projectOperations() []operation {
 		{
 			method: http.MethodPut, path: "/api/v1/projects/{id}/config", id: "setProjectConfig", tag: "projects",
 			summary:    "Replace a project's per-project config",
-			pathParams: []any{controllers.ProjectIDParam{}},
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.ProjectConfigIfMatchParam{}},
 			reqBody:    projectsvc.SetConfigInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusRequestEntityTooLarge, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

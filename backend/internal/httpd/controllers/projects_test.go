@@ -453,34 +453,75 @@ func TestProjectsAPI_TrackerIntakeDisableMustBeExplicit(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
+	spawnable := `"defaultBranch":"main","agentConfig":{"permissions":"bypass-permissions"},"worker":{"agent":"codex"},"orchestrator":{"agent":"claude-code"}`
 	for _, unsafe := range []string{
-		`{"config":{"trackerIntake":{"enabled":true,"provider":"github","maxConcurrent":8}}}`,
-		`{"config":{"trackerIntake":{"enabled":true,"provider":"github","assignee":"none","maxConcurrent":8}}}`,
-		`{"config":{"trackerIntake":{"enabled":true,"provider":"github","assignee":"*","maxConcurrent":0}}}`,
+		`{"config":{` + spawnable + `,"trackerIntake":{"enabled":true,"provider":"github","maxConcurrent":8}}}`,
+		`{"config":{` + spawnable + `,"trackerIntake":{"enabled":true,"provider":"github","assignee":"none","maxConcurrent":8}}}`,
+		`{"config":{` + spawnable + `,"trackerIntake":{"enabled":true,"provider":"github","assignee":"*","maxConcurrent":0}}}`,
 	} {
 		body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", unsafe)
 		assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_PROJECT_CONFIG")
 	}
 
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":true,"provider":"github","assignee":"*","maxConcurrent":8}}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{`+spawnable+`,"trackerIntake":{"enabled":true,"provider":"github","assignee":"*","maxConcurrent":8}}}`)
 	if status != http.StatusOK {
 		t.Fatalf("enable intake = %d, want 200; body=%s", status, body)
 	}
 
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"defaultBranch":"main"}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{`+spawnable+`}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_PROJECT_CONFIG")
 
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":null}}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{`+spawnable+`,"trackerIntake":{"enabled":null}}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_PROJECT_CONFIG")
 
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":false}}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{`+spawnable+`,"trackerIntake":{"enabled":false}}}`)
 	if status != http.StatusOK {
 		t.Fatalf("explicit disable = %d, want 200; body=%s", status, body)
 	}
 
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"Enabled":false}}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{`+spawnable+`,"trackerIntake":{"Enabled":false}}}`)
 	if status != http.StatusOK {
 		t.Fatalf("case-insensitive explicit disable = %d, want 200; body=%s", status, body)
+	}
+}
+
+func TestProjectsAPI_SetConfigUsesIfMatchToken(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "if-match")
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"etag"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/etag", "")
+	if status != http.StatusOK {
+		t.Fatalf("get project = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		Project projectsvc.Project `json:"project"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode project: %v", err)
+	}
+	stale := got.Project.ConfigETag
+	if stale == "" {
+		t.Fatal("GET did not return configETag")
+	}
+
+	spawnable := `"defaultBranch":"main","agentConfig":{"permissions":"bypass-permissions"},"worker":{"agent":"codex"},"orchestrator":{"agent":"claude-code"}`
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/etag/config", `{"config":{`+spawnable+`,"projectPrefix":"one"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("first update = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequestHeaders(t, srv, "PUT", "/api/v1/projects/etag/config", `{"config":{`+spawnable+`,"projectPrefix":"two"}}`, map[string]string{"If-Match": quote(stale)})
+	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_CONFIG_STALE")
+
+	body, status, headers := doRequestHeaders(t, srv, "PUT", "/api/v1/projects/etag/config", `{"config":{`+spawnable+`,"projectPrefix":"two"}}`, map[string]string{"If-Match": "*"})
+	if status != http.StatusOK {
+		t.Fatalf("wildcard update = %d, want 200; body=%s", status, body)
+	}
+	if etag := headers.Get("ETag"); etag == "" || !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) {
+		t.Fatalf("ETag header = %q, want quoted token", etag)
 	}
 }
 
@@ -596,6 +637,10 @@ type errorBody struct {
 }
 
 func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) ([]byte, int, http.Header) {
+	return doRequestHeaders(t, srv, method, path, body, nil)
+}
+
+func doRequestHeaders(t *testing.T, srv *httptest.Server, method, path, body string, headers map[string]string) ([]byte, int, http.Header) {
 
 	t.Helper()
 
@@ -623,6 +668,9 @@ func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) ([
 
 		req.Header.Set("Content-Type", "application/json")
 
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := srv.Client().Do(req)

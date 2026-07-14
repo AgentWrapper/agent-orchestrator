@@ -74,10 +74,12 @@ func (c *commandContext) patchJSON(ctx context.Context, path string, body, out a
 	return c.doJSON(ctx, http.MethodPatch, path, body, out)
 }
 
-// putJSON sends body as JSON to PUT /api/v1/<path> on the running daemon and
-// decodes a 2xx response into out.
-func (c *commandContext) putJSON(ctx context.Context, path string, body, out any) error {
-	return c.doJSON(ctx, http.MethodPut, path, body, out)
+// putJSONIfMatch sends PUT with an If-Match precondition. The config write
+// path is a whole-object replace, so a writer that read, patched, and wrote back
+// silently drops anything that changed in between; the token proves the base it
+// patched is still current.
+func (c *commandContext) putJSONIfMatch(ctx context.Context, path, ifMatch string, body, out any) error {
+	return c.doJSONPathHeaders(ctx, http.MethodPut, "/api/v1/"+path, map[string]string{"If-Match": ifMatch}, body, out)
 }
 
 // deleteJSON sends DELETE /api/v1/<path> to the running daemon and decodes a
@@ -100,6 +102,10 @@ func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body
 }
 
 func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
+	return c.doJSONPathHeaders(ctx, method, path, nil, body, out)
+}
+
+func (c *commandContext) doJSONPathHeaders(ctx context.Context, method, path string, headers map[string]string, body, out any) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -130,6 +136,11 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
 	}
 
 	// Reuse the injected client's transport (keeps it stubbable in tests) but

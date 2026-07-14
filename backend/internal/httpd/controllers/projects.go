@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -151,12 +152,30 @@ func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
+	// If-Match carries the ConfigETag from the read this edit was built on. It is
+	// how a client proves its base is current; a stale one is refused rather than
+	// allowed to replace the whole config and drop every field it never saw.
+	in.IfMatch = configIfMatchToken(r.Header.Get("If-Match"))
 	p, err := c.Mgr.SetConfig(r.Context(), projectID(r), in)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
+	if p.ConfigETag != "" {
+		w.Header().Set("ETag", strconv.Quote(p.ConfigETag))
+	}
 	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
+}
+
+func configIfMatchToken(header string) string {
+	header = strings.TrimSpace(header)
+	if header == "" || header == "*" {
+		return header
+	}
+	if token, err := strconv.Unquote(header); err == nil {
+		return token
+	}
+	return header
 }
 
 func (c *ProjectsController) pause(w http.ResponseWriter, r *http.Request) {

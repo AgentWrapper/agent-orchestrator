@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -89,20 +89,29 @@ type Service struct {
 	// covered by the store's own writeMu, so path/id conflict checks plus the
 	// subsequent mutation must be atomic from the perspective of concurrent callers.
 	addMu sync.Mutex
+	// configMu serialises SetConfig's load-compare-write. The staleness check is
+	// worthless if two savers can interleave between reading the current config and
+	// replacing it.
+	configMu sync.Mutex
 }
 
 var _ Manager = (*Service)(nil)
 
 // Deps captures optional collaborators for project use-cases.
 type Deps struct {
-	// DefaultHarness is the daemon's configured default agent (AO_AGENT).
-	// When empty, the service falls back to config.DefaultAgent.
+	// DefaultHarness is the daemon's configured default agent (AO_AGENT), but it
+	// only affects new project defaults when DefaultHarnessExplicit is true. The
+	// daemon's compatibility fallback is intentionally not a project worker
+	// default; new projects otherwise use the domain's codex baseline.
 	DefaultHarness domain.AgentHarness
-	Store          Store
-	Sessions       SessionOps
-	ModelValidator ModelValidator
-	Clock          func() time.Time
-	Telemetry      ports.EventSink
+	// DefaultHarnessExplicit is true only when the operator explicitly configured
+	// a daemon default harness.
+	DefaultHarnessExplicit bool
+	Store                  Store
+	Sessions               SessionOps
+	ModelValidator         ModelValidator
+	Clock                  func() time.Time
+	Telemetry              ports.EventSink
 	// Logger receives fail-open warnings from config validation. Defaults to
 	// slog.Default() when nil.
 	Logger *slog.Logger
@@ -116,8 +125,8 @@ func New(store Store) *Service {
 // NewWithDeps returns a project service with optional teardown dependencies.
 func NewWithDeps(d Deps) *Service {
 	defaultHarness := d.DefaultHarness
-	if defaultHarness == "" {
-		defaultHarness = domain.AgentHarness(config.DefaultAgent)
+	if !d.DefaultHarnessExplicit || defaultHarness == "" {
+		defaultHarness = domain.HarnessCodex
 	}
 	s := &Service{
 		store:          d.Store,
@@ -214,11 +223,12 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 
 	var projectConfig domain.ProjectConfig
 	if in.Config != nil {
-		if err := m.validateProjectConfig(ctx, *in.Config); err != nil {
+		projectConfig = *in.Config
+		if err := projectConfig.Validate(); err != nil {
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
-		projectConfig = in.Config.Normalized()
 	}
+	callerSetDefaultBranch := strings.TrimSpace(projectConfig.DefaultBranch) != ""
 
 	m.addMu.Lock()
 	defer m.addMu.Unlock()
@@ -260,15 +270,35 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		DisplayName:  name,
 		RegisteredAt: registeredAt,
 		Kind:         domain.ProjectKindSingleRepo,
-		Config:       projectConfig,
 	}
 	if in.AsWorkspace {
+		row.Kind = domain.ProjectKindWorkspace
+		parentWasGitRepo := isGitRepo(path)
+		if parentWasGitRepo {
+			row.RepoOriginURL = resolveGitOriginURL(path)
+			projectConfig = withRepoDefaults(projectConfig, path, row.RepoOriginURL, callerSetDefaultBranch)
+		}
+		row.Config = projectConfig.WithStandardDefaultsFor(m.defaultHarness)
+		if err := m.validateProjectConfig(ctx, row.Config); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+		if err := row.Config.ValidateSpawnable(); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
 		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
 		if err != nil {
 			return Project{}, err
 		}
-		row.Kind = domain.ProjectKindWorkspace
-		row.RepoOriginURL = resolveGitOriginURL(path)
+		if !parentWasGitRepo {
+			row.RepoOriginURL = resolveGitOriginURL(path)
+			row.Config = withRepoDefaults(projectConfig, path, row.RepoOriginURL, callerSetDefaultBranch).WithStandardDefaultsFor(m.defaultHarness)
+			if err := m.validateProjectConfig(ctx, row.Config); err != nil {
+				return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+			}
+			if err := row.Config.ValidateSpawnable(); err != nil {
+				return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+			}
+		}
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
@@ -288,20 +318,57 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 	// Record the repo's actual checked-out branch as the project default so
 	// session worktrees base off a branch that exists. Without this a repo on
-	// `master` (or any non-`main` default) falls back to DefaultBranchName and
-	// every spawn fails BRANCH_NOT_FETCHED. Only persist when it diverges from
-	// the default, so the common `main` repo keeps an empty (NULL) config.
-	if row.Config.DefaultBranch == "" {
-		if branch := resolveDefaultBranch(path); branch != "" && branch != domain.DefaultBranchName {
-			row.Config.DefaultBranch = branch
-		}
-	}
+	// `master` (or any non-`main` default) takes DefaultBranchName and every spawn
+	// fails BRANCH_NOT_FETCHED. The caller's explicit choice always wins; the
+	// standard default ("main") is only a placeholder for a repo we cannot read.
 	row.RepoOriginURL = resolveGitOriginURL(path)
+	projectConfig = withRepoDefaults(projectConfig, path, row.RepoOriginURL, callerSetDefaultBranch)
+	// Every creation path — UI, `ao project add`, raw API — goes through here, so
+	// this is the one place the standard defaults have to be applied for a project
+	// to be born runnable regardless of who created it. Repo-derived defaults are
+	// filled first so "main" is not stamped over a repository whose default branch
+	// is actually "master", "trunk", or an origin/HEAD value.
+	row.Config = projectConfig.WithStandardDefaultsFor(m.defaultHarness)
+	if err := m.validateProjectConfig(ctx, row.Config); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	if err := row.Config.ValidateSpawnable(); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
 	m.emitProjectAdded(row, projectCountBefore == 0)
 	return m.projectFromRow(row), nil
+}
+
+func withRepoDefaults(c domain.ProjectConfig, path, originURL string, callerSetDefaultBranch bool) domain.ProjectConfig {
+	// Record the repo's actual default branch so session worktrees base off a
+	// branch that exists. The caller's explicit choice always wins; the standard
+	// default ("main") is only a placeholder for a repo we cannot read.
+	if !callerSetDefaultBranch {
+		if branch := resolveDefaultBranch(path); branch != "" {
+			c.DefaultBranch = branch
+		}
+	}
+	// POLYPOWERS_REPO tells the session's SDLC skills which GitHub repo to file
+	// and PR against. Deriving it from a GitHub origin at registration is the only
+	// way a project created by any path is born with it.
+	if c.Env == nil || c.Env[envPolypowersRepo] == "" {
+		if slug := repoSlugFromOriginURL(originURL); slug != "" {
+			if c.Env == nil {
+				c.Env = map[string]string{}
+			} else {
+				env := make(map[string]string, len(c.Env)+1)
+				for k, v := range c.Env {
+					env[k] = v
+				}
+				c.Env = env
+			}
+			c.Env[envPolypowersRepo] = slug
+		}
+	}
+	return c
 }
 
 type repositorySetupTarget int
@@ -566,6 +633,14 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
+	// The whole load-compare-write below must be atomic, or two concurrent saves
+	// both read the same base, both pass the staleness check, and the later one
+	// still clobbers the earlier — the exact lost update the check exists to stop.
+	// The daemon is a single process and the store serialises its own writes, so a
+	// service-level lock is sufficient here; this mirrors addMu's reasoning.
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
@@ -573,16 +648,54 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
+	// Refuse a write built on a config that has since changed. Without this the PUT
+	// is a whole-object replace over a snapshot the client may have taken minutes
+	// ago: an operator editing one field in Settings silently reverts every field
+	// another writer (the orchestrator, `ao project set-config`, the config-as-code
+	// restore, a second tab) changed in the meantime.
+	//
+	// An absent token is permitted so existing clients keep working; they are
+	// exactly as safe as they were before. A PRESENT but stale token is refused —
+	// that is a client that tried to prove freshness and could not.
+	if in.IfMatch != "" && !row.Config.ETagMatches(in.IfMatch) {
+		return Project{}, apierr.Conflict("PROJECT_CONFIG_STALE", "The project config changed since it was read; reload and reapply the edit.", map[string]any{
+			"currentConfigETag": row.Config.ETag(),
+		})
+	}
 	if row.Config.TrackerIntake.Enabled && !in.Config.TrackerIntake.Enabled && !in.ConfigIncludesTrackerIntakeEnabled {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", "trackerIntake.enabled must be explicitly set to false to disable previously-enabled tracker intake", nil)
 	}
-	if err := m.validateProjectConfig(ctx, in.Config); err != nil {
+	cfg := in.Config
+	// Clearing a project's config resets it to the standard defaults rather than to
+	// nothing. An empty config cannot spawn a session, so persisting one is exactly
+	// the deadlock the completeness gate exists to prevent — "cleared" has to mean
+	// "back to a runnable baseline", not "back to broken".
+	if cfg.IsZero() {
+		cfg = withRepoDefaults(cfg, row.Path, row.RepoOriginURL, false).WithStandardDefaultsFor(m.defaultHarness)
+	}
+	if err := m.validateProjectConfig(ctx, cfg); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	// The completeness gate. Validate() above only checks that the values that ARE
+	// set are known values, so without this a config that provably cannot launch a
+	// session persists with a 200 and fails later, at spawn, far from the Settings
+	// page that saved it.
+	//
+	// A non-empty config is NOT topped up with the standard defaults: a save must
+	// persist exactly what the operator sent, or `ops/project-config.mjs apply`
+	// could never converge live config to the committed spec and the drift check
+	// would go permanently red. A partial config that would leave the project
+	// unable to spawn is refused, not silently repaired — the PUT replaces the
+	// config wholesale, so "partial" really does mean "drop the rest".
+	if err := cfg.ValidateSpawnable(); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
 
-	row.Config = in.Config.Normalized()
-	if err := m.store.UpsertProject(ctx, row); err != nil {
+	row.Config = cfg.Normalized()
+	if ok, err := m.store.SetProjectConfig(ctx, row.ID, row.Config); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
+	} else if !ok {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	return m.projectFromRow(row), nil
 }
@@ -628,6 +741,45 @@ func (m *Service) logger() *slog.Logger {
 		return m.log
 	}
 	return slog.Default()
+}
+
+// envPolypowersRepo names the GitHub repo a session's SDLC skills file and PR
+// against.
+const envPolypowersRepo = "POLYPOWERS_REPO"
+
+// repoSlugFromOriginURL reduces a git remote URL to its "owner/repo" slug. It
+// handles GitHub's two common remote forms — scp-style SSH
+// (git@github.com:owner/repo.git) and URL-style
+// (https://github.com/owner/repo.git). Non-GitHub hosts return "" because
+// POLYPOWERS_REPO is consumed by GitHub-backed skills and gh defaults to
+// github.com; deriving owner/repo from GitLab/Gitea would target the wrong host.
+func repoSlugFromOriginURL(origin string) string {
+	s := strings.TrimSpace(origin)
+	if s == "" {
+		return ""
+	}
+	var host, path string
+	if u, err := url.Parse(s); err == nil && u.Scheme != "" {
+		host = u.Hostname()
+		path = strings.TrimPrefix(u.Path, "/")
+	} else if colon := strings.Index(s, ":"); colon >= 0 {
+		host = s[:colon]
+		if at := strings.LastIndex(host, "@"); at >= 0 {
+			host = host[at+1:]
+		}
+		path = s[colon+1:]
+	} else {
+		return ""
+	}
+	if host != "github.com" && host != "ssh.github.com" {
+		return ""
+	}
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return parts[0] + "/" + parts[1]
 }
 
 // resolveGitOriginURL returns the project's `origin` remote URL via
@@ -714,13 +866,20 @@ func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
-		Agent:         string(m.defaultHarness),
-		Paused:        row.Paused,
+		// Agent is the project's own configured worker harness — empty when it has
+		// none. It used to be the daemon's config.DefaultAgent constant, which never
+		// consulted the config at all: `ao project get` reported `agent: claude-code`
+		// for every project, including the codex-worker ones, and including projects
+		// whose config the spawn path would refuse outright. A read model that shows
+		// a value the spawn path will not use is worse than showing nothing.
+		Agent:  string(row.Config.Worker.Harness),
+		Paused: row.Paused,
 		// Default to running; callers that have session context (Get, pause /
 		// resume) overwrite this with the drain-aware state via withPauseState.
 		PauseState: PauseStateRunning,
 	}
 	p.Config = projectConfigPtr(row.Config)
+	p.ConfigETag = row.Config.ETag()
 	return p
 }
 

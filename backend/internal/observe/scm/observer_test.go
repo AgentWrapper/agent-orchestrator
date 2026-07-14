@@ -78,14 +78,18 @@ func (s *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 	return p, ok, nil
 }
 
-func (s *fakeStore) UpsertProject(_ context.Context, row domain.ProjectRecord) error {
+func (s *fakeStore) SetProjectOriginURL(_ context.Context, id string, originURL string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.projects == nil {
-		s.projects = map[string]domain.ProjectRecord{}
+	row, ok := s.projects[id]
+	if !ok {
+		return false, nil
 	}
-	s.projects[row.ID] = row
-	return nil
+	// Only the origin URL. A whole-row write here is what let the backfill revert a
+	// concurrent config save.
+	row.RepoOriginURL = originURL
+	s.projects[id] = row
+	return true, nil
 }
 
 func (s *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {

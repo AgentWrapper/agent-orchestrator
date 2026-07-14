@@ -23,6 +23,25 @@ func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error
 	return upsertProject(ctx, s.qw, r, config)
 }
 
+// SetProjectConfig updates only the config column for a registered project.
+func (s *Store) SetProjectConfig(ctx context.Context, id string, cfg domain.ProjectConfig) (bool, error) {
+	config, err := marshalProjectConfig(cfg)
+	if err != nil {
+		return false, err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	res, err := s.writeDB.ExecContext(ctx, `UPDATE projects SET config = ? WHERE id = ?`, config, domain.ProjectID(id))
+	if err != nil {
+		return false, fmt.Errorf("set project %s config: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("set project %s config rows affected: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // UpsertWorkspaceProject inserts or replaces a workspace project and its child
 // repository registry in one transaction. The child set is authoritative.
 func (s *Store) UpsertWorkspaceProject(ctx context.Context, r domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error {
@@ -134,6 +153,26 @@ func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) (bo
 	})
 	if err != nil {
 		return false, err
+	}
+	return n > 0, nil
+}
+
+// SetProjectOriginURL updates only the project's origin URL.
+//
+// It exists so the SCM observer's origin backfill cannot clobber config. That
+// backfill used to read the whole project row, set RepoOriginURL, and UpsertProject
+// it back — which rewrites every column, config included. A config save landing in
+// that window was silently reverted. Same reasoning as SetProjectPaused: a mutation
+// that owns one column must write one column.
+func (s *Store) SetProjectOriginURL(ctx context.Context, id, originURL string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.SetProjectOriginURL(ctx, gen.SetProjectOriginURLParams{
+		RepoOriginURL: originURL,
+		ID:            domain.ProjectID(id),
+	})
+	if err != nil {
+		return false, fmt.Errorf("set project %s origin url: %w", id, err)
 	}
 	return n > 0, nil
 }

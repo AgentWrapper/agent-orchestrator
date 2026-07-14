@@ -13,6 +13,7 @@ type Store interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	FindProjectByPath(ctx context.Context, path string) (domain.ProjectRecord, bool, error)
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
+	SetProjectConfig(ctx context.Context, id string, cfg domain.ProjectConfig) (bool, error)
 	UpsertWorkspaceProject(ctx context.Context, row domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	ArchiveProject(ctx context.Context, id string, at time.Time) (bool, error)

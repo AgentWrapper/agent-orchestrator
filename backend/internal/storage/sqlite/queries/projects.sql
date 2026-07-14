@@ -28,3 +28,10 @@ UPDATE projects SET archived_at = ? WHERE id = ? AND archived_at IS NULL;
 
 -- name: SetProjectPaused :execrows
 UPDATE projects SET paused = ? WHERE id = ?;
+
+-- name: SetProjectOriginURL :execrows
+-- Narrow setter, for the same reason `paused` is omitted from UpsertProject: the
+-- origin-URL backfill has no business rewriting `config`. Doing it through a
+-- whole-row upsert meant a config save landing between the observer's read and
+-- its write was silently reverted.
+UPDATE projects SET repo_origin_url = ? WHERE id = ?;

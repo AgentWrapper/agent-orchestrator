@@ -193,14 +193,16 @@ describe("ProjectSettingsForm", () => {
 				config: {
 					defaultBranch: "release",
 					projectPrefix: "rel",
+					sessionPrefix: undefined,
+					workspace: undefined,
 					env: { FOO: "bar" },
 					symlinks: [".env"],
 					postCreate: ["npm install"],
 					worker: {
 						agent: "opencode",
-						agentConfig: { model: "worker-model" },
+						agentConfig: undefined,
 					},
-					orchestrator: { agent: "goose" },
+					orchestrator: { agent: "goose", agentConfig: undefined },
 					agentConfig: {
 						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
@@ -210,6 +212,7 @@ describe("ProjectSettingsForm", () => {
 					trackerIntake: undefined,
 				},
 			},
+			headers: undefined,
 		});
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", {
@@ -232,11 +235,11 @@ describe("ProjectSettingsForm", () => {
 				env: { FOO: "bar", REMOVE_ME: "yes" },
 				worker: {
 					agent: "codex",
-					agentConfig: { model: "worker-model" },
+					agentConfig: { modelByHarness: { codex: { model: "worker-model" } } },
 				},
 				orchestrator: {
 					agent: "claude-code",
-					agentConfig: { model: "orchestrator-model" },
+					agentConfig: { modelByHarness: { "claude-code": { model: "orchestrator-model" } } },
 				},
 				agentConfig: {
 					model: "project-model",
@@ -285,11 +288,11 @@ describe("ProjectSettingsForm", () => {
 		expect(body.config.env).toEqual({ FOO: "baz", NEW_VAR: "from-ui" });
 		expect(body.config.worker).toEqual({
 			agent: "codex",
-			agentConfig: { model: "gpt-5-codex" },
+			agentConfig: { modelByHarness: { codex: { model: "gpt-5-codex" } } },
 		});
 		expect(body.config.orchestrator).toEqual({
 			agent: "claude-code",
-			agentConfig: { model: "claude-opus-4-5" },
+			agentConfig: { modelByHarness: { "claude-code": { model: "claude-opus-4-5" } } },
 		});
 		expect(body.config.trackerIntake).toEqual({
 			enabled: true,
@@ -297,6 +300,74 @@ describe("ProjectSettingsForm", () => {
 			assignee: "*",
 			maxConcurrent: 5,
 		});
+	}, 20_000);
+
+	it("does not restart the orchestrator when its modelByHarness value is unchanged", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				worker: {
+					agent: "codex",
+					agentConfig: { modelByHarness: { codex: { model: "worker-model" } } },
+				},
+				orchestrator: {
+					agent: "claude-code",
+					agentConfig: { modelByHarness: { "claude-code": { model: "orchestrator-model" } } },
+				},
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByLabelText("Orchestrator model override")).toHaveValue("orchestrator-model");
+		await userEvent.clear(screen.getByLabelText("Worker model override"));
+		await userEvent.type(screen.getByLabelText("Worker model override"), "gpt-5-codex");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(postMock).not.toHaveBeenCalled();
+	}, 20_000);
+
+	it("does not copy a stale per-harness model when the worker harness changes", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				worker: {
+					agent: "codex",
+					agentConfig: { modelByHarness: { codex: { model: "gpt-5.5" } } },
+				},
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { permissions: "bypass-permissions" },
+			},
+		});
+
+		renderSettings();
+
+		const workerAgent = await screen.findByRole("combobox", { name: "Default worker agent" });
+		expect(screen.getByLabelText("Worker model override")).toHaveValue("gpt-5.5");
+		await chooseOption(workerAgent, "Claude Code");
+		expect(screen.getByLabelText("Worker model override")).toHaveValue("");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.worker).toEqual({
+			agent: "claude-code",
+			agentConfig: { modelByHarness: { codex: { model: "gpt-5.5" } } },
+		});
+		expect(body.config.worker.agentConfig.modelByHarness["claude-code"]).toBeUndefined();
 	}, 20_000);
 
 	it("blocks invalid or duplicate project environment keys", async () => {
@@ -333,6 +404,29 @@ describe("ProjectSettingsForm", () => {
 				"Environment variable names must start with a letter or underscore and contain only letters, numbers, and underscores.",
 			),
 		).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	}, 20_000);
+
+	it("requires a permission mode before saving claude-code sessions", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await chooseOption(await screen.findByRole("combobox", { name: "Permission mode" }), "Project default");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Permission mode is required for claude-code sessions.")).toBeInTheDocument();
 		expect(putMock).not.toHaveBeenCalled();
 	}, 20_000);
 
@@ -840,7 +934,12 @@ describe("ProjectSettingsForm", () => {
 		});
 	});
 
-	it("restarts when the saved orchestrator agent already differs from the running orchestrator", async () => {
+	it("does NOT restart the orchestrator when the operator edited something else", async () => {
+		// The live orchestrator's provider (claude-code) differs from the configured one
+		// (goose). That drift used to be enough, on its own, to tear down and respawn the
+		// running orchestrator on ANY save — so editing one unrelated field killed an
+		// orchestrator mid-work, with no confirmation and nothing in the UI warning of it.
+		// Replacement now follows what the operator actually changed.
 		getMock.mockResolvedValue({
 			data: {
 				status: "ok",
@@ -890,10 +989,142 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj-1", clean: true },
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("sends If-Match so the daemon can refuse a save built on a stale read", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					configETag: "token-abc",
+					config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+				},
+			},
+			error: undefined,
 		});
+
+		renderSettings();
+		await screen.findByRole("button", { name: "Save changes" });
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0][1]).toMatchObject({ headers: { "If-Match": "token-abc" } });
+	});
+
+	it("seeds the project cache from a successful config PUT response", async () => {
+		const project = {
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			configETag: "token-abc",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+		};
+		const updated = { ...project, configETag: "token-def" };
+		getMock.mockResolvedValue({
+			data: { status: "ok", project },
+			error: undefined,
+		});
+		putMock.mockResolvedValue({
+			data: { project: updated },
+			error: undefined,
+			response: { status: 200 },
+		});
+
+		const queryClient = renderSettings();
+		const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
+		await screen.findByRole("button", { name: "Save changes" });
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() =>
+			expect(setQueryDataSpy).toHaveBeenCalledWith(
+				["project", "proj-1"],
+				expect.objectContaining({ configETag: "token-def" }),
+			),
+		);
+	});
+
+	it("does not discard in-progress edits when a background config refetch sees a newer token", async () => {
+		const project = {
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			configETag: "token-abc",
+			config: {
+				defaultBranch: "main",
+				agentConfig: { permissions: "bypass-permissions" },
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		};
+		getMock.mockResolvedValue({
+			data: { status: "ok", project },
+			error: undefined,
+		});
+
+		const queryClient = renderSettings();
+		const defaultBranch = await screen.findByLabelText("Default branch");
+		await userEvent.clear(defaultBranch);
+		await userEvent.type(defaultBranch, "release");
+
+		act(() => {
+			queryClient.setQueryData(["project", "proj-1"], {
+				...project,
+				configETag: "token-def",
+				config: { ...project.config, defaultBranch: "develop" },
+			});
+		});
+
+		expect(screen.getByLabelText("Default branch")).toHaveValue("release");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0][1]).toMatchObject({ headers: { "If-Match": "token-abc" } });
+	});
+
+	it("tells the operator their save was refused when the config moved underneath them", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					configETag: "token-abc",
+					config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+				},
+			},
+			error: undefined,
+		});
+		// Someone else wrote in the meantime; the daemon refuses rather than letting
+		// this page's snapshot replace the whole config and drop their fields.
+		putMock.mockResolvedValue({
+			data: undefined,
+			error: { message: "The project config changed since it was read." },
+			response: { status: 409 },
+		});
+
+		renderSettings();
+		await screen.findByRole("button", { name: "Save changes" });
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(await screen.findByRole("alert")).toHaveTextContent(/config changed while you had Settings open/i);
 	});
 
 	it("keeps the config save successful when orchestrator replacement fails", async () => {

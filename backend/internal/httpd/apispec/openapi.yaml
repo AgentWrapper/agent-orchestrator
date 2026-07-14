@@ -858,6 +858,14 @@ paths:
         schema:
           description: Project identifier (registry key).
           type: string
+      - description: Project config ETag from the read this replacement is based on;
+          stale values are rejected with 409.
+        in: header
+        name: If-Match
+        schema:
+          description: Project config ETag from the read this replacement is based
+            on; stale values are rejected with 409.
+          type: string
       requestBody:
         content:
           application/json:
@@ -883,6 +891,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
         "413":
           content:
             application/json:
@@ -3207,6 +3221,8 @@ components:
           type: string
         config:
           $ref: '#/components/schemas/ProjectConfig'
+        configETag:
+          type: string
         defaultBranch:
           type: string
         drainingWorkers:

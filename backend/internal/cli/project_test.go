@@ -18,6 +18,11 @@ func TestProjectConfigMirrorJSONFieldsMatchDomain(t *testing.T) {
 	assertJSONFieldsMatch(t, reflect.TypeOf(roleOverride{}), reflect.TypeOf(domain.RoleOverride{}))
 	assertJSONFieldsMatch(t, reflect.TypeOf(agentConfig{}), reflect.TypeOf(domain.AgentConfig{}))
 	assertJSONFieldsMatch(t, reflect.TypeOf(harnessModel{}), reflect.TypeOf(domain.HarnessModel{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(workerMixEntry{}), reflect.TypeOf(domain.WorkerMixEntry{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(reviewerConfig{}), reflect.TypeOf(domain.ReviewerConfig{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(trackerIntakeConfig{}), reflect.TypeOf(domain.TrackerIntakeConfig{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(trackerRespawnPolicy{}), reflect.TypeOf(domain.TrackerRespawnPolicy{}))
+	assertJSONFieldsMatch(t, reflect.TypeOf(wakeBackoffConfig{}), reflect.TypeOf(domain.WakeBackoffConfig{}))
 }
 
 func assertJSONFieldsMatch(t *testing.T, mirror, canonical reflect.Type) {
@@ -66,6 +71,7 @@ type projectCapture struct {
 	method string
 	path   string
 	body   []byte
+	header http.Header
 }
 
 func projectServer(t *testing.T, status int, respBody string) (*httptest.Server, *projectCapture) {
@@ -74,6 +80,7 @@ func projectServer(t *testing.T, status int, respBody string) (*httptest.Server,
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.method = r.Method
 		capture.path = r.URL.Path
+		capture.header = r.Header.Clone()
 		capture.body, _ = io.ReadAll(r.Body)
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
 			http.NotFound(w, r)
@@ -87,18 +94,28 @@ func projectServer(t *testing.T, status int, respBody string) (*httptest.Server,
 	return srv, capture
 }
 
+func TestProjectAddConfigJSONRejectsUnknownFields(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "project", "add", "--path", "/repo/demo", "--config-json", `{"bogus":true}`)
+	if err == nil {
+		t.Fatal("project add accepted config-json with an unknown field")
+	}
+	if !strings.Contains(err.Error(), `unknown field "bogus"`) {
+		t.Fatalf("error = %q, want unknown field error", err)
+	}
+}
+
 func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var requests []projectCapture
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
-			requests = append(requests, projectCapture{method: r.Method, path: r.URL.Path, body: body})
+			requests = append(requests, projectCapture{method: r.Method, path: r.URL.Path, body: body, header: r.Header.Clone()})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
-			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md","wakeBackoff":{"enabled":true,"base":"15m","max":"1h"}},"prime":{"agent":"claude-code","instructionsFile":".claude/prime-orchestrator-policy.md","wakeInterval":"20m","wakeBackoff":{"enabled":true,"base":"20m","max":"1h"}},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","path":"/repo/demo","configETag":"etag-1","config":{"projectPrefix":"fleet","env":{"FOO":"bar"},"agentConfig":{"permissions":"auto"},"worker":{"agent":"codex"},"orchestrator":{"instructionsFile":".claude/orchestrator.md","wakeBackoff":{"enabled":true,"base":"15m","max":"1h"}},"prime":{"agent":"claude-code","instructionsFile":".claude/prime-orchestrator-policy.md","wakeInterval":"20m","wakeBackoff":{"enabled":true,"base":"20m","max":"1h"}},"workerMix":[{"agent":"codex","model":"gpt-5","weight":70},{"agent":"claude-code","model":"opus","weight":30}],"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice","labels":["agent-ok"],"excludeLabels":["no-ao"],"maxConcurrent":3}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
 			_, _ = io.WriteString(w, `{"project":{"id":"demo","path":"/repo/demo"}}`)
 		default:
@@ -122,6 +139,9 @@ func TestProjectSetConfig_WorkspaceFlagMergesExistingConfig(t *testing.T) {
 	}
 	if requests[1].method != http.MethodPut || requests[1].path != "/api/v1/projects/demo/config" {
 		t.Fatalf("second request = %s %s, want PUT /api/v1/projects/demo/config", requests[1].method, requests[1].path)
+	}
+	if got := requests[1].header.Get("If-Match"); got != "etag-1" {
+		t.Fatalf("If-Match = %q, want etag-1", got)
 	}
 	var got setConfigRequest
 	if err := json.Unmarshal(requests[1].body, &got); err != nil {
@@ -274,6 +294,53 @@ func TestProjectSetConfig_AutonomousMergeFalseCanStandAlone(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_FlagMergeBackfillsSpawnableBaseline(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []projectCapture
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
+			requests = append(requests, projectCapture{method: r.Method, path: r.URL.Path, body: body, header: r.Header.Clone()})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/legacy":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"legacy","path":"/repo/legacy","configETag":"etag-legacy"}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/legacy/config":
+			_, _ = io.WriteString(w, `{"project":{"id":"legacy","path":"/repo/legacy"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "legacy", "--tracker-intake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %#v, want GET then PUT", requests)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(requests[1].body, &got); err != nil {
+		t.Fatalf("decode request: %v\nbody=%s", err, requests[1].body)
+	}
+	if got.Config.DefaultBranch != "" ||
+		got.Config.Workspace != "" ||
+		got.Config.AgentConfig.Permissions != "bypass-permissions" ||
+		got.Config.Worker.Agent != "codex" ||
+		got.Config.Orchestrator.Agent != "claude-code" ||
+		!got.Config.TrackerIntake.Enabled {
+		t.Fatalf("config request = %#v, want spawnability baseline plus tracker intake", got.Config)
+	}
+	if got := requests[1].header.Get("If-Match"); got != "etag-legacy" {
+		t.Fatalf("If-Match = %q, want etag-legacy", got)
+	}
+}
+
 func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
@@ -323,6 +390,9 @@ func TestProjectSetConfig_TrackerIntakeJSON(t *testing.T) {
 	if !got.Config.TrackerIntake.Enabled || got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Assignee != "alice" {
 		t.Fatalf("tracker intake request = %#v", got.Config.TrackerIntake)
 	}
+	if got := capture.header.Get("If-Match"); got != "*" {
+		t.Fatalf("If-Match = %q, want wildcard for whole-object config-json write", got)
+	}
 }
 
 func TestProjectSetConfig_TrackerIntakeExplicitDisableJSON(t *testing.T) {
@@ -354,6 +424,9 @@ func TestProjectSetConfig_ClearSendsExplicitTrackerIntakeDisable(t *testing.T) {
 	}
 	if !strings.Contains(string(capture.body), `"trackerIntake":{"enabled":false}`) {
 		t.Fatalf("request body = %s, want explicit tracker intake disable sentinel", capture.body)
+	}
+	if got := capture.header.Get("If-Match"); got != "*" {
+		t.Fatalf("If-Match = %q, want wildcard for clear write", got)
 	}
 }
 

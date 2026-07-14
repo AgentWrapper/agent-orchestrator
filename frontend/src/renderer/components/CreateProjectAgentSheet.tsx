@@ -29,23 +29,18 @@ export type CreateProjectAgentSelection = {
 	trackerIntake?: TrackerIntakeConfig;
 };
 
-// NEW_PROJECT_DEFAULTS is this deployment's standard baseline for a project born
-// through the web UI, mirroring what /nickify applies when it onboards a repo:
-// bypass-permissions so the orchestrator runs unattended instead of stalling on
-// a permission prompt, and opus pinned so no claude-code role inherits the
-// account default (fable — see #61). The model is a scalar fallback resolved at
-// spawn (manager.go effectiveAgentConfig): the provider gate applies it to a
-// claude-provider role (claude-code) and drops it for a role on a
-// known-incompatible provider (codex → openai, codex-fugu → fugu). A harness
-// with an unclassified provider is treated as compatible, so the pin can still
-// pass through there — harmless, and the model field below is editable for a
-// non-claude worker mix. Surfaced in the create form, pre-filled and editable,
-// so what a project comes up with is visible at creation rather than a hidden
-// bare default.
-export const NEW_PROJECT_DEFAULTS = {
-	permissions: "bypass-permissions",
-	model: "opus",
-} as const;
+// The standard new-project baseline — bypass-permissions, and a per-harness model
+// pin so no role inherits an unwanted account default — now lives in the DAEMON
+// (domain.WithStandardDefaults), applied at registration on every creation path.
+// It used to live here, which is why a project created through this sheet ran and
+// one created by `ao project add` or the raw API was born with an empty config and
+// deadlocked.
+//
+// So this form no longer pre-fills anything: a blank field means "let the daemon
+// apply its default", and only an explicit operator choice is sent. That also
+// retires the scalar `model: "opus"` this sheet used to send unconditionally —
+// on a codex worker that model is cross-provider, and it saved clean, read back
+// as set, and was silently dropped at spawn.
 
 type AgentConfig = components["schemas"]["AgentConfig"];
 
@@ -173,8 +168,8 @@ export function CreateProjectAgentSheet({
 			: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
-	const [permissions, setPermissions] = useState<string>(NEW_PROJECT_DEFAULTS.permissions);
-	const [model, setModel] = useState<string>(NEW_PROJECT_DEFAULTS.model);
+	const [permissions, setPermissions] = useState<string>("");
+	const [model, setModel] = useState<string>("");
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const isBusy = isCreating || isInitializing;
 	const canSubmit =
@@ -185,8 +180,8 @@ export function CreateProjectAgentSheet({
 		if (!open) {
 			setWorkerAgent("");
 			setOrchestratorAgent("");
-			setPermissions(NEW_PROJECT_DEFAULTS.permissions);
-			setModel(NEW_PROJECT_DEFAULTS.model);
+			setPermissions("");
+			setModel("");
 			setIntake(EMPTY_INTAKE);
 		}
 	}, [open, path]);

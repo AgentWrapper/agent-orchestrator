@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -291,7 +292,8 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	}
 
 	// Get on a project that set no config still reports the default branch and a
-	// derived session prefix, and omits the (empty) config object.
+	// derived session prefix, but now includes the daemon-persisted standard
+	// defaults so every creation path is born runnable.
 	got, err := m.Get(ctx, "ao")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -302,11 +304,23 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	if got.Project.DefaultBranch != domain.DefaultBranchName {
 		t.Fatalf("default branch = %q, want %q", got.Project.DefaultBranch, domain.DefaultBranchName)
 	}
-	if got.Project.Agent != "claude-code" {
-		t.Fatalf("default agent = %q, want claude-code", got.Project.Agent)
+	if got.Project.Agent != "codex" {
+		t.Fatalf("default agent = %q, want codex", got.Project.Agent)
 	}
-	if got.Project.Config != nil {
-		t.Fatalf("unconfigured project should omit config, got %#v", got.Project.Config)
+	if got.Project.Config == nil {
+		t.Fatalf("unconfigured project should expose persisted standard defaults")
+	}
+	if err := got.Project.Config.ValidateSpawnable(); err != nil {
+		t.Fatalf("persisted defaults are not spawnable: %v", err)
+	}
+	if got.Project.Config.AgentConfig.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("permissions = %q, want bypass-permissions", got.Project.Config.AgentConfig.Permissions)
+	}
+	if got.Project.Config.Worker.Harness != domain.HarnessCodex {
+		t.Fatalf("worker agent = %q, want codex", got.Project.Config.Worker.Harness)
+	}
+	if got.Project.Config.Orchestrator.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("orchestrator agent = %q, want claude-code", got.Project.Config.Orchestrator.Harness)
 	}
 
 	list, err := m.List(ctx)
@@ -328,7 +342,11 @@ func TestManager_GetUsesConfiguredDefaultHarness(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	m := project.NewWithDeps(project.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
+	m := project.NewWithDeps(project.Deps{
+		Store:                  store,
+		DefaultHarness:         domain.HarnessClaudeCode,
+		DefaultHarnessExplicit: true,
+	})
 	repo := gitRepo(t)
 
 	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
@@ -342,9 +360,22 @@ func TestManager_GetUsesConfiguredDefaultHarness(t *testing.T) {
 	if got.Project == nil {
 		t.Fatalf("Get returned no project: %#v", got)
 	}
-	if got.Project.Agent != "codex" {
-		t.Fatalf("default agent = %q, want codex", got.Project.Agent)
+	if got.Project.Agent != "claude-code" {
+		t.Fatalf("default agent = %q, want claude-code", got.Project.Agent)
 	}
+	if got.Project.Config == nil || got.Project.Config.Worker.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("worker harness = %#v, want claude-code", got.Project.Config)
+	}
+}
+
+func TestManager_AddRejectsInvalidConfigBeforeDefaults(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+	cfg := domain.ProjectConfig{Workspace: "worktre"}
+
+	_, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao"), Config: &cfg})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
 }
 
 func TestManager_AddDetectsNonMainDefaultBranch(t *testing.T) {
@@ -422,6 +453,26 @@ func TestManager_AddPrefersOriginHeadNonMain(t *testing.T) {
 	}
 }
 
+// spawnable fills the two fields the completeness gate requires — a worker and
+// orchestrator harness, and a permission mode — so a test exercising an
+// unrelated config field is not rejected for being unlaunchable. It mirrors what
+// real clients send: the UI spreads the loaded config into its PUT and the CLI
+// does a GET-then-patch, so neither ever sends a bare partial config. A PUT
+// replaces the config wholesale, so a partial one really would leave the project
+// unable to spawn — which is exactly what the gate exists to refuse.
+func spawnable(cfg domain.ProjectConfig) domain.ProjectConfig {
+	if cfg.Worker.Harness == "" && len(cfg.WorkerMix) == 0 {
+		cfg.Worker.Harness = domain.HarnessCodex
+	}
+	if cfg.Orchestrator.Harness == "" {
+		cfg.Orchestrator.Harness = domain.HarnessClaudeCode
+	}
+	if cfg.AgentConfig.Permissions == "" {
+		cfg.AgentConfig.Permissions = domain.PermissionModeBypassPermissions
+	}
+	return cfg
+}
+
 func TestManager_SetConfig(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -431,11 +482,11 @@ func TestManager_SetConfig(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	cfg := domain.ProjectConfig{
+	cfg := spawnable(domain.ProjectConfig{
 		DefaultBranch: "develop",
 		Env:           map[string]string{"FOO": "bar"},
 		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5"},
-	}
+	})
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg})
 	if err != nil {
 		t.Fatalf("SetConfig: %v", err)
@@ -469,6 +520,35 @@ func TestManager_SetConfig(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
+func TestManager_SetConfigReturnsSameETagAsNextGet(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	updated, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config: spawnable(domain.ProjectConfig{ProjectPrefix: "new"}),
+	})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil {
+		t.Fatal("Get returned no project")
+	}
+	if updated.ConfigETag == "" {
+		t.Fatal("SetConfig returned an empty config ETag")
+	}
+	if updated.ConfigETag != got.Project.ConfigETag {
+		t.Fatalf("SetConfig ETag = %q, next Get ETag = %q", updated.ConfigETag, got.Project.ConfigETag)
+	}
+}
+
 func TestManager_SetConfigRejectsImplicitTrackerIntakeDisable(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -476,7 +556,7 @@ func TestManager_SetConfigRejectsImplicitTrackerIntakeDisable(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	enabled := domain.ProjectConfig{
+	enabled := spawnable(domain.ProjectConfig{
 		DefaultBranch: "main",
 		TrackerIntake: domain.TrackerIntakeConfig{
 			Enabled:       true,
@@ -485,13 +565,13 @@ func TestManager_SetConfigRejectsImplicitTrackerIntakeDisable(t *testing.T) {
 			Assignee:      "*",
 			MaxConcurrent: 8,
 		},
-	}
+	})
 	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: enabled, ConfigIncludesTrackerIntakeEnabled: true}); err != nil {
 		t.Fatalf("enable tracker intake: %v", err)
 	}
 
 	_, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{DefaultBranch: "main"},
+		Config: spawnable(domain.ProjectConfig{DefaultBranch: "main"}),
 	})
 	wantCode(t, err, "INVALID_PROJECT_CONFIG")
 	if !strings.Contains(err.Error(), "trackerIntake") || !strings.Contains(err.Error(), "enabled") {
@@ -513,27 +593,27 @@ func TestManager_SetConfigAcceptsExplicitTrackerIntakeDisable(t *testing.T) {
 	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	enabled := domain.ProjectConfig{
+	enabled := spawnable(domain.ProjectConfig{
 		TrackerIntake: domain.TrackerIntakeConfig{
 			Enabled:       true,
 			Provider:      domain.TrackerProviderGitHub,
 			Assignee:      "*",
 			MaxConcurrent: 8,
 		},
-	}
+	})
 	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: enabled, ConfigIncludesTrackerIntakeEnabled: true}); err != nil {
 		t.Fatalf("enable tracker intake: %v", err)
 	}
 
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config:                             domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: false}},
+		Config:                             spawnable(domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: false}}),
 		ConfigIncludesTrackerIntakeEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("explicit disable tracker intake: %v", err)
 	}
-	if proj.Config != nil {
-		t.Fatalf("explicit disable should clear the now-zero config, got %#v", proj.Config)
+	if proj.Config == nil || proj.Config.TrackerIntake.Enabled {
+		t.Fatalf("explicit disable should persist a spawnable config with tracker intake off, got %#v", proj.Config)
 	}
 }
 
@@ -552,11 +632,11 @@ func TestManager_SetConfigRejectsUnreachableWorkerMixModel(t *testing.T) {
 	}
 
 	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{
+		Config: spawnable(domain.ProjectConfig{
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100},
 			},
-		},
+		}),
 	})
 	wantCode(t, err, "INVALID_PROJECT_CONFIG")
 	if len(validator.calls) != 1 {
@@ -570,8 +650,11 @@ func TestManager_SetConfigRejectsUnreachableWorkerMixModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Project == nil || got.Project.Config != nil {
-		t.Fatalf("bad worker mix config persisted: %#v", got.Project)
+	if got.Project == nil || got.Project.Config == nil {
+		t.Fatalf("project defaults disappeared after rejected config: %#v", got.Project)
+	}
+	if len(got.Project.Config.WorkerMix) != 0 {
+		t.Fatalf("bad worker mix config persisted: %#v", got.Project.Config.WorkerMix)
 	}
 }
 
@@ -601,7 +684,7 @@ func TestManager_SetConfigFailsOpenWhenModelProbeUnavailable(t *testing.T) {
 		{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 45},
 	}
 	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{WorkerMix: mix},
+		Config: spawnable(domain.ProjectConfig{WorkerMix: mix}),
 	}); err != nil {
 		t.Fatalf("SetConfig must fail open on an unavailable probe, got %v", err)
 	}
@@ -635,11 +718,11 @@ func TestManager_SetConfigStillRejectsUnreachableAfterFailOpen(t *testing.T) {
 	}
 
 	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{
+		Config: spawnable(domain.ProjectConfig{
 			WorkerMix: domain.WorkerMix{
 				{Harness: domain.HarnessCodex, Model: "gpt-5.5-codex", Weight: 100},
 			},
-		},
+		}),
 	})
 	wantCode(t, err, "INVALID_PROJECT_CONFIG")
 }
@@ -658,7 +741,7 @@ func TestManager_SetConfigAllowsProjectPrefixChange(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{ProjectPrefix: "lb"},
+		Config: spawnable(domain.ProjectConfig{ProjectPrefix: "lb"}),
 	})
 	if err != nil {
 		t.Fatalf("SetConfig: %v", err)
@@ -689,7 +772,7 @@ func TestManager_SetConfigAcceptsLegacySessionPrefixAlias(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{SessionPrefix: "old"},
+		Config: spawnable(domain.ProjectConfig{SessionPrefix: "old"}),
 	})
 	if err != nil {
 		t.Fatalf("SetConfig: %v", err)
@@ -713,7 +796,7 @@ func TestManager_SetConfigAllowsNonPrefixEdit(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
-		Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"}},
+		Config: spawnable(domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"}}),
 	})
 	if err != nil {
 		t.Fatalf("SetConfig unrelated edit: %v", err)
@@ -723,16 +806,39 @@ func TestManager_SetConfigAllowsNonPrefixEdit(t *testing.T) {
 	}
 }
 
+func TestManager_SetConfigRejectsNonEmptyLegacyUnspawnableReplacement(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
+	now := time.Now()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "legacy",
+		Path:         gitRepo(t),
+		DisplayName:  "legacy",
+		RegisteredAt: now,
+		Config:       domain.ProjectConfig{ProjectPrefix: "old"},
+	}); err != nil {
+		t.Fatalf("seed legacy project: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "legacy", project.SetConfigInput{Config: domain.ProjectConfig{ProjectPrefix: "new"}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+}
+
 func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
 	repo := gitRepo(t)
 
-	cfg := domain.ProjectConfig{
+	cfg := spawnable(domain.ProjectConfig{
 		DefaultBranch: "develop",
 		Env:           map[string]string{"GITHUB_TOKEN": "secret"},
 		Orchestrator:  domain.RoleOverride{Harness: domain.HarnessCodex},
-	}
+	})
 	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao"), Config: &cfg}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -1020,6 +1126,37 @@ func TestManager_AddPopulatesRepoOriginURL(t *testing.T) {
 	}
 }
 
+func TestManager_AddDerivesPolypowersRepoOnlyForGitHubOrigins(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name       string
+		origin     string
+		wantEnvSet bool
+		wantRepo   string
+	}{
+		{name: "github https", origin: "https://github.com/owner/repo.git", wantEnvSet: true, wantRepo: "owner/repo"},
+		{name: "github ssh", origin: "git@github.com:owner/repo.git", wantEnvSet: true, wantRepo: "owner/repo"},
+		{name: "non github", origin: "git@gitlab.com:owner/repo.git", wantEnvSet: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newManager(t)
+			path := gitRepoWithOrigin(t, tc.origin)
+			proj, err := m.Add(ctx, project.AddInput{Path: path, ProjectID: ptr("p")})
+			if err != nil {
+				t.Fatalf("Add: %v", err)
+			}
+			got, ok := proj.Config.Env["POLYPOWERS_REPO"]
+			if ok != tc.wantEnvSet {
+				t.Fatalf("POLYPOWERS_REPO present = %v, want %v (config %#v)", ok, tc.wantEnvSet, proj.Config)
+			}
+			if got != tc.wantRepo {
+				t.Fatalf("POLYPOWERS_REPO = %q, want %q", got, tc.wantRepo)
+			}
+		})
+	}
+}
+
 func TestManager_GetUpdateRemoveErrors(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -1129,6 +1266,32 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	}
 }
 
+func TestManager_AddWorkspacePlainParentNestedInRepoDoesNotInheritOuterOrigin(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	outer := gitRepoWithCommitWithOrigin(t, t.TempDir(), "https://github.com/outer/outer.git")
+	parent := filepath.Join(outer, "workspace")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	if proj.Repo != "" {
+		t.Fatalf("Repo = %q, want empty for newly initialized plain workspace parent", proj.Repo)
+	}
+	if proj.Config == nil {
+		t.Fatal("Config is nil")
+	}
+	if got := proj.Config.Env["POLYPOWERS_REPO"]; got != "" {
+		t.Fatalf("POLYPOWERS_REPO = %q, want no inherited outer repo slug", got)
+	}
+}
+
 func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
@@ -1141,6 +1304,26 @@ func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
 
 	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
 	wantCode(t, err, "WORKSPACE_CHILD_UNBORN")
+}
+
+func TestManager_AddWorkspaceValidatesConfigBeforeFilesystemMutation(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	cfg := domain.ProjectConfig{
+		AgentConfig:  domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+		Prime:        domain.RoleOverride{WakeBackoff: &domain.WakeBackoffConfig{Base: "15m", Max: "1h"}},
+		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex},
+		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}
+
+	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true, Config: &cfg})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+	if _, statErr := os.Lstat(filepath.Join(parent, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("workspace add created .git before rejecting invalid config: %v", statErr)
+	}
 }
 
 func TestManager_AddWorkspaceRejectsChildWithoutOrigin(t *testing.T) {

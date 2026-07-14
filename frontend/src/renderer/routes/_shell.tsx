@@ -110,12 +110,11 @@ function ShellLayout() {
 			if (status.state !== "ready") {
 				throw new Error(status.message || "AO daemon is not ready.");
 			}
-			// Apply this deployment's standard new-project baseline (permission mode +
-			// model, pre-filled from NEW_PROJECT_DEFAULTS in the create sheet) so a
-			// UI-created project is immediately runnable unattended — bypass-permissions
-			// + an opus pin on claude-code roles — the same standard a nickify-onboarded
-			// project gets. buildProjectAgentConfig (imported from the create sheet)
-			// assembles the agentConfig and omits blank fields.
+			// Only what the operator explicitly chose is sent. The standard baseline
+			// (bypass-permissions, per-harness model pins) is applied by the DAEMON at
+			// registration, so every creation path — this sheet, `ao project add`, the
+			// raw API — produces the same runnable project. buildProjectAgentConfig
+			// omits blank fields, so an untouched form sends no agentConfig at all.
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,

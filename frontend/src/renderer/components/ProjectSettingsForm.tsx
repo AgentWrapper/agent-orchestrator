@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import {
@@ -8,12 +8,11 @@ import {
 	type AgentModelAvailabilityResponse,
 	useModelAvailabilityQuery,
 } from "../hooks/useModelAvailabilityQuery";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBuildFreshness } from "../lib/build-freshness";
 import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeIsValid } from "./IntakeFields";
@@ -25,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+type AgentConfig = components["schemas"]["AgentConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_OPTIONS = [
@@ -94,10 +94,38 @@ function mixIsValid(rows: MixRow[]): boolean {
 	return mixTotal(rows) === 100;
 }
 
+function permissionsRequiredForConfiguredHarnesses(
+	form: {
+		orchestratorAgent: string;
+		workerAgent: string;
+		workerMix: MixRow[];
+	},
+	config: ProjectConfig,
+): boolean {
+	if (form.orchestratorAgent === "claude-code" && !config.orchestrator?.agentConfig?.permissions) return true;
+	const workerRoleHasPermissions = Boolean(config.worker?.agentConfig?.permissions);
+	if (form.workerMix.length > 0)
+		return form.workerMix.some((r) => r.agent === "claude-code") && !workerRoleHasPermissions;
+	return form.workerAgent === "claude-code" && !workerRoleHasPermissions;
+}
+
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	const queryClient = useQueryClient();
+	// Lives in the parent on purpose: SettingsBody is keyed by the config token, so
+	// pulling in the newer config remounts it and would drop a notice it set itself.
+	const [staleNotice, setStaleNotice] = useState(false);
+	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [replacementError, setReplacementError] = useState<string | null>(null);
+	const [formGeneration, setFormGeneration] = useState(0);
+
+	useEffect(() => {
+		setStaleNotice(false);
+		setSavedAt(null);
+		setReplacementError(null);
+		setFormGeneration(0);
+	}, [projectId]);
 
 	const query = useQuery({
 		queryKey: projectQueryKey(projectId),
@@ -124,10 +152,34 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<DashboardSubhead title="Settings" subtitle={query.data.path} />
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
+				{staleNotice ? (
+					<div
+						role="alert"
+						className="mx-auto mb-4 max-w-2xl rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200"
+					>
+						This project's config changed while you had Settings open, so your save was not applied. The latest config
+						has been reloaded — reapply your change and save again.
+					</div>
+				) : null}
 				<SettingsBody
-					key={projectId}
+					// The form seeds its editable state once. Advance the key only after a
+					// save outcome, not on every background refetch, so another writer's
+					// config update cannot silently discard in-progress operator edits.
+					key={`${projectId}:${formGeneration}`}
 					project={query.data}
-					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
+					savedAt={savedAt}
+					setSavedAt={setSavedAt}
+					replacementError={replacementError}
+					setReplacementError={setReplacementError}
+					onSaved={() => {
+						setStaleNotice(false);
+						setFormGeneration((generation) => generation + 1);
+						return queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+					}}
+					onStaleConfig={() => {
+						setStaleNotice(true);
+						setFormGeneration((generation) => generation + 1);
+					}}
 					projectId={projectId}
 				/>
 			</div>
@@ -135,12 +187,38 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	);
 }
 
-function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
+// StaleConfigError marks the one failure the operator can actually act on: the
+// config moved under an open Settings page, so the save was refused rather than
+// allowed to clobber it.
+class StaleConfigError extends Error {
+	constructor() {
+		super("The project config changed since this page loaded.");
+		this.name = "StaleConfigError";
+	}
+}
+
+function SettingsBody({
+	project,
+	projectId,
+	savedAt,
+	setSavedAt,
+	replacementError,
+	setReplacementError,
+	onSaved,
+	onStaleConfig,
+}: {
+	project: Project;
+	projectId: string;
+	savedAt: number | null;
+	setSavedAt: (value: number | null) => void;
+	replacementError: string | null;
+	setReplacementError: (value: string | null) => void;
+	onSaved: () => void;
+	onStaleConfig: () => void;
+}) {
 	const queryClient = useQueryClient();
-	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
-	const workspace = workspaceQuery.data?.workspaces.find((item) => item.id === projectId);
-	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
+	const [configETag] = useState(project.configETag);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const projectPrefix = config.projectPrefix ?? config.sessionPrefix ?? "";
 	const [form, setForm] = useState({
@@ -149,11 +227,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		workspaceMode: config.workspace ?? "",
 		envRows: envRowsFromConfig(config.env),
 		workerAgent: config.worker?.agent ?? "",
-		workerModel: config.worker?.agentConfig?.model ?? "",
+		workerModel: modelForHarness(config.worker?.agentConfig, config.worker?.agent ?? ""),
 		orchestratorAgent: config.orchestrator?.agent ?? "",
-		orchestratorModel: config.orchestrator?.agentConfig?.model ?? "",
+		orchestratorModel: modelForHarness(config.orchestrator?.agentConfig, config.orchestrator?.agent ?? ""),
 		model: config.agentConfig?.model ?? "",
-		permissions: config.agentConfig?.permissions ?? "",
+		permissions: initialPermissionMode(config),
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		workerMix: (config.workerMix ?? []).map((r) => ({ agent: r.agent, model: r.model ?? "", weight: r.weight })),
 		autonomousMerge: config.autonomousMerge ?? false,
@@ -162,11 +240,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		intakeAssignee: intake.assignee ?? "",
 		intakeMaxConcurrent: intake.maxConcurrent ? String(intake.maxConcurrent) : "",
 	});
-	const [savedAt, setSavedAt] = useState<number | null>(null);
-	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
-	const initialOrchestratorModel = config.orchestrator?.agentConfig?.model ?? "";
+	const initialOrchestratorModel = modelForHarness(config.orchestrator?.agentConfig, initialOrchestratorAgent);
 	const [intakeDisableRequested, setIntakeDisableRequested] = useState(false);
 	// A non-empty worker mix resolves the worker harness on its own, so the single
 	// default worker agent is only required when no mix is configured. The
@@ -230,18 +306,16 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				worker: {
 					...config.worker,
 					agent: form.workerAgent,
-					agentConfig: blankToUndefined({
-						...config.worker?.agentConfig,
-						model: form.workerModel || undefined,
-					}),
+					agentConfig: withHarnessModel(config.worker?.agentConfig, form.workerAgent, form.workerModel),
 				},
 				orchestrator: {
 					...config.orchestrator,
 					agent: form.orchestratorAgent,
-					agentConfig: blankToUndefined({
-						...config.orchestrator?.agentConfig,
-						model: form.orchestratorModel || undefined,
-					}),
+					agentConfig: withHarnessModel(
+						config.orchestrator?.agentConfig,
+						form.orchestratorAgent,
+						form.orchestratorModel,
+					),
 				},
 				agentConfig: blankToUndefined({
 					...config.agentConfig,
@@ -264,16 +338,34 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			} else {
 				delete next.autonomousMerge;
 			}
-			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
+			// The PUT replaces the whole config, and this form's base is a snapshot
+			// taken when it mounted. If-Match carries the token from that read, so a
+			// save built on a config another writer has since changed is refused
+			// instead of silently reverting every field this form never showed.
+			const { data, error, response } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
 				body: { config: next },
+				headers: configETag ? { "If-Match": configETag } : undefined,
 			});
-			if (error) throw new Error(apiErrorMessage(error));
-			if (
-				form.orchestratorAgent !== initialOrchestratorAgent ||
-				form.orchestratorModel !== initialOrchestratorModel ||
-				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
-			) {
+			if (error) {
+				if (response?.status === 409) {
+					// Pull the newer config in so the operator can see what changed and
+					// reapply on top of it, rather than being told to guess.
+					await queryClient.invalidateQueries({ queryKey: projectQueryKey(projectId) });
+					throw new StaleConfigError();
+				}
+				throw new Error(apiErrorMessage(error));
+			}
+			if (data?.project?.configETag) {
+				queryClient.setQueryData(projectQueryKey(projectId), data.project as Project);
+			}
+			// Replace the running orchestrator only when the operator actually changed
+			// its harness or model. The old third clause — "the live orchestrator's
+			// provider differs from the configured one" — was independent of what was
+			// edited, so a project whose orchestrator had drifted from config for any
+			// reason got its orchestrator killed mid-work by an unrelated env-var edit,
+			// with no confirmation and nothing in the UI saying so.
+			if (form.orchestratorAgent !== initialOrchestratorAgent || form.orchestratorModel !== initialOrchestratorModel) {
 				try {
 					await spawnOrchestrator(projectId, "settings", true);
 				} catch (error) {
@@ -292,8 +384,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
 		},
-		onError: () => {
+		onError: (error) => {
 			void captureRendererEvent("ao.renderer.settings_save_failed", { project_id: projectId });
+			if (error instanceof StaleConfigError) {
+				onStaleConfig();
+			}
 		},
 	});
 
@@ -319,6 +414,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				}
 				if (!intakeIsValid(intakeForm)) {
 					setValidationError("Enabled tracker intake requires an assignee and a positive concurrency cap.");
+					return;
+				}
+				if (form.permissions === "" && permissionsRequiredForConfiguredHarnesses(form, config)) {
+					setValidationError("Permission mode is required for claude-code sessions.");
 					return;
 				}
 				if (staleBuild) {
@@ -424,7 +523,14 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						supported={agentCatalog?.supported}
 						disabled={agentsQuery.isFetching && agentCatalog === undefined}
 						invalid={validationError !== null && missingWorkerAgent}
-						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
+						onChange={(v) =>
+							setForm((f) => ({
+								...f,
+								workerAgent: v,
+								workerModel:
+									v === f.workerAgent ? f.workerModel : modelForHarnessSelection(config.worker?.agentConfig, v),
+							}))
+						}
 					/>
 					<RequiredAgentField
 						id="orchestratorAgent"
@@ -436,7 +542,16 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						supported={agentCatalog?.supported}
 						disabled={agentsQuery.isFetching && agentCatalog === undefined}
 						invalid={validationError !== null && form.orchestratorAgent === ""}
-						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
+						onChange={(v) =>
+							setForm((f) => ({
+								...f,
+								orchestratorAgent: v,
+								orchestratorModel:
+									v === f.orchestratorAgent
+										? f.orchestratorModel
+										: modelForHarnessSelection(config.orchestrator?.agentConfig, v),
+							}))
+						}
 					/>
 					<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
 						<span>Agent availability is cached.</span>
@@ -914,6 +1029,57 @@ function validateEnvRows(rows: EnvRow[]): string | null {
 
 function workspaceModeToConfig(value: string): ProjectConfig["workspace"] | undefined {
 	return value === "worktree" || value === "in-place" ? value : undefined;
+}
+
+function modelForHarness(config: AgentConfig | undefined, harness: string): string {
+	return config?.modelByHarness?.[harness]?.model ?? config?.model ?? "";
+}
+
+function modelForHarnessSelection(config: AgentConfig | undefined, harness: string): string {
+	return config?.modelByHarness?.[harness]?.model ?? "";
+}
+
+function initialPermissionMode(config: ProjectConfig): string {
+	if (config.agentConfig?.permissions) return config.agentConfig.permissions;
+	if (
+		permissionsRequiredForConfiguredHarnesses(
+			{
+				orchestratorAgent: config.orchestrator?.agent ?? "",
+				workerAgent: config.worker?.agent ?? "",
+				workerMix: (config.workerMix ?? []).map((row) => ({
+					agent: row.agent ?? "",
+					model: row.model ?? "",
+					weight: row.weight ?? 0,
+				})),
+			},
+			config,
+		)
+	) {
+		return "bypass-permissions";
+	}
+	return "";
+}
+
+function withHarnessModel(config: AgentConfig | undefined, harness: string, model: string): AgentConfig | undefined {
+	const trimmed = model.trim();
+	if (!config?.modelByHarness || Object.keys(config.modelByHarness).length === 0) {
+		return blankToUndefined({ ...(config ?? {}), model: trimmed || undefined });
+	}
+	const next: AgentConfig = { ...(config ?? {}) };
+	const modelByHarness = { ...(next.modelByHarness ?? {}) };
+	if (harness !== "") {
+		const current = modelByHarness[harness] ?? {};
+		const updated = { ...current, model: trimmed || undefined };
+		if (blankToUndefined(updated)) {
+			modelByHarness[harness] = updated;
+		} else {
+			delete modelByHarness[harness];
+		}
+	} else if (trimmed !== "") {
+		next.model = trimmed;
+	}
+	next.modelByHarness = Object.keys(modelByHarness).length > 0 ? modelByHarness : undefined;
+	return blankToUndefined(next);
 }
 
 // Drop an object whose every value is undefined so we send `undefined` (omit)

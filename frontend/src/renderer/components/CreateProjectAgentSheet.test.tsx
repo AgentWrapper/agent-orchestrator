@@ -114,25 +114,41 @@ describe("CreateProjectAgentSheet", () => {
 		expect(onSubmit).toHaveBeenCalledWith({
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
-			permissions: "bypass-permissions",
-			model: "opus",
+			permissions: "",
+			model: "",
 			trackerIntake: undefined,
 		});
 	});
 
-	it("pre-fills the standard baseline (bypass-permissions + opus) and lets it be adjusted before creating", async () => {
+	it("pre-fills nothing: the daemon owns the baseline, so only explicit choices are sent", async () => {
 		const onSubmit = renderSheet();
-		// Defaults are visible in the form, not a hidden bare default.
-		expect(screen.getByLabelText("Permission mode")).toHaveTextContent("Bypass permissions");
-		expect(screen.getByLabelText("Model")).toHaveValue("opus");
-		expect(screen.getByText(/unreachable: 400 model not available/)).toBeInTheDocument();
+		// The standard baseline (bypass-permissions + a per-harness model pin) is applied
+		// by the daemon at registration, on every creation path. Pre-filling it here is
+		// what made a UI-created project runnable and an `ao project add` one deadlock.
+		expect(screen.getByLabelText("Permission mode")).not.toHaveTextContent("Bypass permissions");
+		expect(screen.getByLabelText("Model")).toHaveValue("");
 
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "claude-code");
-		// Override the pre-filled defaults to prove they are editable.
+
+		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+		expect(onSubmit).toHaveBeenCalledWith({
+			workerAgent: "claude-code",
+			orchestratorAgent: "claude-code",
+			permissions: "",
+			model: "",
+			trackerIntake: undefined,
+		});
+	});
+
+	it("sends an explicit operator choice, overriding the daemon default", async () => {
+		const onSubmit = renderSheet();
+		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
+		await chooseOption(screen.getByLabelText("Orchestrator agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Permission mode"), "Accept edits");
 		const modelInput = screen.getByLabelText("Model");
-		await userEvent.clear(modelInput);
 		await userEvent.type(modelInput, "  claude-opus-4-5  ");
 
 		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
@@ -161,8 +177,8 @@ describe("CreateProjectAgentSheet", () => {
 		expect(onSubmit).toHaveBeenCalledWith({
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
-			permissions: "bypass-permissions",
-			model: "opus",
+			permissions: "",
+			model: "",
 			trackerIntake: { enabled: true, provider: "github", assignee: "*", maxConcurrent: 2 },
 		});
 	});

@@ -1266,6 +1266,7 @@ export interface components {
         Project: {
             agent?: string;
             config?: components["schemas"]["ProjectConfig"];
+            configETag?: string;
             defaultBranch: string;
             drainingWorkers?: number;
             id: string;
@@ -2854,7 +2855,10 @@ export interface operations {
     setProjectConfig: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Project config ETag from the read this replacement is based on; stale values are rejected with 409. */
+                "If-Match"?: string;
+            };
             path: {
                 /** @description Project identifier (registry key). */
                 id: string;
@@ -2887,6 +2891,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

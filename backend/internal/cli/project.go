@@ -12,6 +12,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type projectAddOptions struct {
@@ -20,6 +22,11 @@ type projectAddOptions struct {
 	name              string
 	workerAgent       string
 	orchestratorAgent string
+	permission        string
+	workspace         string
+	projectPrefix     string
+	env               []string
+	configJSON        string
 	asWorkspace       bool
 }
 
@@ -65,6 +72,7 @@ type projectDetails struct {
 	Path            string                 `json:"path"`
 	Repo            string                 `json:"repo"`
 	DefaultBranch   string                 `json:"defaultBranch"`
+	ConfigETag      string                 `json:"configETag,omitempty"`
 	Agent           string                 `json:"agent,omitempty"`
 	Config          *projectConfig         `json:"config,omitempty"`
 	WorkspaceRepos  []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
@@ -330,10 +338,31 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 			if opts.name != "" {
 				req.Name = &opts.name
 			}
-			if opts.workerAgent != "" || opts.orchestratorAgent != "" {
+			// A project registered with no config used to be born empty and deadlock at
+			// spawn, because the standard baseline only existed in the web UI. The daemon
+			// now applies it on every creation path, so these flags are overrides, not
+			// requirements: whatever is left unset here the daemon fills in.
+			if opts.configJSON != "" {
+				var cfg projectConfig
+				dec := json.NewDecoder(strings.NewReader(opts.configJSON))
+				dec.DisallowUnknownFields()
+				if err := dec.Decode(&cfg); err != nil {
+					return usageError{fmt.Errorf("--config-json: %w", err)}
+				}
+				req.Config = &cfg
+			} else if opts.workerAgent != "" || opts.orchestratorAgent != "" || opts.permission != "" ||
+				opts.workspace != "" || opts.projectPrefix != "" || len(opts.env) > 0 {
+				env, err := parseEnvPairs(opts.env)
+				if err != nil {
+					return err
+				}
 				req.Config = &projectConfig{
-					Worker:       roleOverride{Agent: opts.workerAgent},
-					Orchestrator: roleOverride{Agent: opts.orchestratorAgent},
+					Worker:        roleOverride{Agent: opts.workerAgent},
+					Orchestrator:  roleOverride{Agent: opts.orchestratorAgent},
+					ProjectPrefix: opts.projectPrefix,
+					Workspace:     opts.workspace,
+					Env:           env,
+					AgentConfig:   agentConfig{Permissions: opts.permission},
 				}
 			}
 			var res projectResult
@@ -349,6 +378,11 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.id, "id", "", "Project id (default: derived by the daemon from the path)")
 	f.StringVar(&opts.name, "name", "", "Display name")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Default worker session agent")
+	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
+	f.StringVar(&opts.workspace, "workspace", "", "Session workspace mode: worktree or in-place")
+	f.StringVar(&opts.projectPrefix, "project-prefix", "", "Short project-wide prefix for names, branches, and worktrees")
+	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
+	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides the field flags)")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Default orchestrator session agent")
 	f.BoolVar(&opts.asWorkspace, "as-workspace", false, "Register a parent folder as a workspace project (root-as-repo plus direct child repos)")
 	return cmd
@@ -363,7 +397,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 			"symlinks, post-create, agent model/permissions, role overrides, tracker intake). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags to merge them into the stored config, pass the whole object with " +
-			"--config-json to replace it, or --clear to remove all config. Repeatable collection " +
+			"--config-json to replace it, or --clear to reset config to the standard defaults. Repeatable collection " +
 			"flags replace that field's stored collection with the values passed in this command.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
@@ -391,8 +425,13 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Flag writes are read-modify-writes and carry the token they merged
+			// against. --config-json and --clear are deliberate whole-object writes
+			// (the config-as-code restore path is built on that), so they send the
+			// wildcard precondition instead of claiming a base they never read.
+			ifMatch := "*"
 			if !opts.clear && opts.configJSON == "" {
-				config, err = ctx.mergedProjectConfigFromFlags(cmd, id, config)
+				config, ifMatch, err = ctx.mergedProjectConfigFromFlags(cmd, id, config)
 				if err != nil {
 					return err
 				}
@@ -410,7 +449,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 				req.rawConfig = rawConfig
 			}
 			var res projectResult
-			if err := ctx.putJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/config", req, &res); err != nil {
+			if err := ctx.putJSONIfMatch(cmd.Context(), "projects/"+url.PathEscape(id)+"/config", ifMatch, req, &res); err != nil {
 				return err
 			}
 			if opts.json {
@@ -443,23 +482,41 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Required authorization selector when intake is enabled (* = any assigned issue; none is invalid)")
 	f.IntVar(&opts.trackerMaxConcurrent, "tracker-max-concurrent", 0, "Required positive live-worker cap when intake is enabled")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
-	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
+	f.BoolVar(&opts.clear, "clear", false, "Reset config to standard defaults")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
 	cmd.MarkFlagsMutuallyExclusive("clear", "config-json")
 	return cmd
 }
 
-func (c *commandContext) mergedProjectConfigFromFlags(cmd *cobra.Command, id string, patch projectConfig) (projectConfig, error) {
+// mergedProjectConfigFromFlags GETs the current config, applies only the flags the
+// caller actually set, and returns the merged config together with the token of the
+// config it merged against. The token matters: this is a read-modify-write against a
+// whole-object replace endpoint, so without it a config that changed between the GET
+// and the PUT is silently overwritten by a base that no longer exists.
+func (c *commandContext) mergedProjectConfigFromFlags(cmd *cobra.Command, id string, patch projectConfig) (projectConfig, string, error) {
 	var current projectGetResult
 	if err := c.getJSON(cmd.Context(), "projects/"+url.PathEscape(id), &current); err != nil {
-		return projectConfig{}, err
+		return projectConfig{}, "", err
 	}
 	base := projectConfig{}
 	if current.Project.Config != nil {
 		base = *current.Project.Config
 	}
+	applyProjectConfigStandardBaseline(&base)
 	applyProjectConfigFlagPatch(&base, patch, cmd)
-	return base, nil
+	return base, current.Project.ConfigETag, nil
+}
+
+func applyProjectConfigStandardBaseline(cfg *projectConfig) {
+	if cfg.AgentConfig.Permissions == "" {
+		cfg.AgentConfig.Permissions = string(domain.PermissionModeBypassPermissions)
+	}
+	if cfg.Worker.Agent == "" && len(cfg.WorkerMix) == 0 {
+		cfg.Worker.Agent = string(domain.HarnessCodex)
+	}
+	if cfg.Orchestrator.Agent == "" {
+		cfg.Orchestrator.Agent = string(domain.HarnessClaudeCode)
+	}
 }
 
 func normalizeProjectPrefixFlags(cmd *cobra.Command, opts *projectSetConfigOptions) error {
@@ -547,9 +604,10 @@ func applyProjectConfigFlagPatch(base *projectConfig, patch projectConfig, cmd *
 }
 
 // buildProjectConfig turns the set-config flags into the typed config sent to
-// the daemon. --clear empties the config; --config-json supplies the whole
-// object; otherwise the field flags form a patch that is merged with the stored
-// config before sending the request. The daemon validates the values.
+// the daemon. --clear sends an empty config, which the daemon resets to the
+// standard defaults; --config-json supplies the whole object; otherwise the field
+// flags form a patch that is merged with the stored config before sending the
+// request. The daemon validates the values.
 func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	if opts.clear {
 		return projectConfig{}, nil

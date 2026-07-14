@@ -440,8 +440,8 @@ describe("Sidebar", () => {
 				asWorkspace: true,
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
-				permissions: "bypass-permissions",
-				model: "opus",
+				permissions: "",
+				model: "",
 				trackerIntake: undefined,
 			}),
 		);
@@ -475,8 +475,8 @@ describe("Sidebar", () => {
 				asWorkspace: false,
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
-				permissions: "bypass-permissions",
-				model: "opus",
+				permissions: "",
+				model: "",
 				trackerIntake: undefined,
 			}),
 		);
@@ -689,8 +689,8 @@ describe("Sidebar", () => {
 				asWorkspace: false,
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
-				permissions: "bypass-permissions",
-				model: "opus",
+				permissions: "",
+				model: "",
 				trackerIntake: undefined,
 			}),
 		);

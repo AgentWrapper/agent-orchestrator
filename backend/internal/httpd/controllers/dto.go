@@ -28,6 +28,13 @@ type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
 }
 
+// ProjectConfigIfMatchParam is the optional freshness token for config
+// read-modify-write clients. It carries the Project.configETag value from the
+// read the edit was built on.
+type ProjectConfigIfMatchParam struct {
+	IfMatch string `header:"If-Match,omitempty" description:"Project config ETag from the read this replacement is based on; stale values are rejected with 409."`
+}
+
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.
 type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`

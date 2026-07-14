@@ -26,10 +26,15 @@ ao project add [flags]
 | Flag | Meaning | Default / Required |
 |---|---|---|
 | `--as-workspace` | Register a parent folder as a workspace project (root-as-repo plus direct child repos) | - |
+| `--config-json string` | Full config as a JSON object (overrides field flags) | - |
+| `--env stringArray` | Env var `KEY=VALUE` forwarded into sessions (repeatable) | - |
 | `--id string` | Project id | Derived by the daemon from the path |
 | `--name string` | Display name | - |
 | `--orchestrator-agent string` | Default orchestrator session agent | - |
 | `--path string` | Absolute path to the local git repo | Required |
+| `--permission string` | Project permission mode (`default`, `accept-edits`, `auto`, `bypass-permissions`) | - |
+| `--project-prefix string` | Prefix for display names, branches, and worktrees | - |
+| `--workspace string` | Project workspace mode (`worktree` or `in-place`) | - |
 | `--worker-agent string` | Default worker session agent | - |
 
 **Examples:**
@@ -126,7 +131,7 @@ ao project rm agent-orchestrator -y
 
 ### ao project set-config
 
-Update a project's per-project config (branch, project prefix, env, symlinks, post-create, agent model/permissions, role overrides). The config is resolved when a session spawns. Set fields via flags to merge them into the stored config, pass the whole object with `--config-json` to replace it, or `--clear` to remove all config. Repeatable collection flags replace that field's stored collection with the values passed in this command.
+Update a project's per-project config (branch, project prefix, env, symlinks, post-create, agent model/permissions, role overrides). The config is resolved when a session spawns. Set fields via flags to merge them into the stored config, pass the whole object with `--config-json` to replace it, or `--clear` to reset it to standard defaults. Repeatable collection flags replace that field's stored collection with the values passed in this command.
 
 **Syntax:**
 ```
@@ -137,7 +142,7 @@ ao project set-config <id> [flags]
 
 | Flag | Meaning | Default / Required |
 |---|---|---|
-| `--clear` | Clear all config | - |
+| `--clear` | Reset config to standard defaults | - |
 | `--config-json string` | Full config as a JSON object (overrides field flags) | - |
 | `--default-branch string` | Base branch new session worktrees are created from | - |
 | `--env stringArray` | Env var `KEY=VALUE` forwarded into sessions (repeatable) | - |

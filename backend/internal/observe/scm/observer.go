@@ -53,7 +53,7 @@ type Provider interface {
 type Store interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
-	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
+	SetProjectOriginURL(ctx context.Context, id string, originURL string) (bool, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListOpenPRs(ctx context.Context) ([]domain.PullRequest, error)
@@ -641,7 +641,11 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 			if p.RepoOriginURL == "" && p.Path != "" {
 				if url := resolveGitOriginURL(p.Path); url != "" {
 					p.RepoOriginURL = url
-					if err := o.store.UpsertProject(ctx, p); err != nil {
+					// Write ONLY the origin URL. This used to UpsertProject the whole row
+					// as read, which rewrites every column including config — so a config
+					// save landing between the read above and this write was silently
+					// reverted.
+					if _, err := o.store.SetProjectOriginURL(ctx, p.ID, url); err != nil {
 						o.logger.Warn("scm observer: backfill origin URL persist failed", "project", p.ID, "err", err)
 					}
 				}

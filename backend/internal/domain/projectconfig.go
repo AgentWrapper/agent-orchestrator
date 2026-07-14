@@ -3,9 +3,9 @@ package domain
 import (
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // WorkspaceMode selects how the daemon provisions a session's working
@@ -237,7 +237,32 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 // IsZero reports whether the config carries no settings, so storage can persist
 // SQL NULL and resolution can skip an empty config.
 func (c ProjectConfig) IsZero() bool {
-	return reflect.DeepEqual(c, ProjectConfig{})
+	return c.DefaultBranch == "" &&
+		c.ProjectPrefix == "" &&
+		c.SessionPrefix == "" &&
+		c.Workspace == "" &&
+		len(c.Env) == 0 &&
+		len(c.Symlinks) == 0 &&
+		len(c.PostCreate) == 0 &&
+		c.AgentConfig.IsZero() &&
+		c.Worker.IsZero() &&
+		c.Orchestrator.IsZero() &&
+		c.Prime.IsZero() &&
+		len(c.WorkerMix) == 0 &&
+		len(c.Reviewers) == 0 &&
+		trackerIntakeIsZero(c.TrackerIntake) &&
+		!c.AutonomousMerge
+}
+
+func trackerIntakeIsZero(c TrackerIntakeConfig) bool {
+	return !c.Enabled &&
+		c.Provider == "" &&
+		c.Repo == "" &&
+		c.Assignee == "" &&
+		len(c.Labels) == 0 &&
+		len(c.ExcludeLabels) == 0 &&
+		c.MaxConcurrent == 0 &&
+		c.Respawn == nil
 }
 
 // EffectiveProjectPrefix returns the canonical project prefix, accepting the
@@ -261,6 +286,14 @@ func (c ProjectConfig) Normalized() ProjectConfig {
 	return c
 }
 
+// MaxProjectPrefixRunes caps the project prefix so it cannot corrupt session
+// names. A session display name is "<prefix> #<issue> <slug>" and is capped at
+// 20 runes on every path, so an unbounded prefix eats the whole budget and
+// truncates the issue number out of the name — a 17-rune prefix turned
+// "polymath-ventures #281" into "polymath-ventures #2". Reserving " #99999"
+// (7 runes) plus at least one rune of slug leaves 12.
+const MaxProjectPrefixRunes = 12
+
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than surfacing at spawn.
 func (c ProjectConfig) Validate() error {
@@ -270,6 +303,17 @@ func (c ProjectConfig) Validate() error {
 	}
 	if err := validateNameComponent("projectPrefix", c.ProjectPrefix); err != nil {
 		return err
+	}
+	if n := utf8.RuneCountInString(c.ProjectPrefix); n > MaxProjectPrefixRunes {
+		return fmt.Errorf("projectPrefix: %d runes exceeds the %d-rune cap; a longer prefix truncates the issue number out of session names", n, MaxProjectPrefixRunes)
+	}
+	if err := validateGitRefName("defaultBranch", c.DefaultBranch); err != nil {
+		return err
+	}
+	for k := range c.Env {
+		if err := validateEnvKey(k); err != nil {
+			return err
+		}
 	}
 	if c.Workspace != "" && !c.Workspace.IsKnown() {
 		return fmt.Errorf("workspace: unknown mode %q", c.Workspace)
@@ -396,6 +440,69 @@ func validateNoWhitespaceField(name, value string) error {
 	}
 	if strings.TrimSpace(value) != value {
 		return fmt.Errorf("%s: must not have leading or trailing whitespace", name)
+	}
+	return nil
+}
+
+// validateGitRefName rejects a branch name git itself would refuse, so a typo
+// like "mian" is caught at save rather than failing every later spawn at
+// workspace creation with nothing on the Settings page to explain why. The rules
+// are git-check-ref-format's, applied to a single branch name (one that may
+// contain "/" but must not start or end with it).
+func validateGitRefName(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s: must not have leading or trailing whitespace", field)
+	}
+	invalid := func(reason string) error {
+		return fmt.Errorf("%s: %q is not a valid branch name (%s)", field, value, reason)
+	}
+	if strings.ContainsAny(value, " ~^:?*[\\") {
+		return invalid("must not contain space, ~, ^, :, ?, *, [ or backslash")
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return invalid("must not contain control characters")
+		}
+	}
+	if strings.Contains(value, "..") || strings.Contains(value, "@{") {
+		return invalid(`must not contain ".." or "@{"`)
+	}
+	if strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") || strings.Contains(value, "//") {
+		return invalid("must not start or end with / or contain //")
+	}
+	if strings.HasPrefix(value, "-") || value == "@" {
+		return invalid(`must not start with "-" or be "@"`)
+	}
+	if strings.HasSuffix(value, ".") || strings.HasSuffix(value, ".lock") {
+		return invalid(`must not end with "." or ".lock"`)
+	}
+	for _, seg := range strings.Split(value, "/") {
+		if seg == "" || strings.HasPrefix(seg, ".") || strings.HasSuffix(seg, ".lock") {
+			return invalid("no path segment may be empty, start with a dot, or end with .lock")
+		}
+	}
+	return nil
+}
+
+// validateEnvKey rejects a name that is not a legal POSIX environment variable
+// name. An illegal key persists cleanly today and is forwarded into every session
+// runtime, where it is silently dropped — a setting that appears set and does
+// nothing.
+func validateEnvKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("env: key must not be empty")
+	}
+	for i, r := range key {
+		switch {
+		case r == '_':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return fmt.Errorf("env[%q]: not a valid environment variable name (letters, digits and underscore only; must not start with a digit)", key)
+		}
 	}
 	return nil
 }

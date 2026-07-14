@@ -112,6 +112,27 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const setProjectOriginURL = `-- name: SetProjectOriginURL :execrows
+UPDATE projects SET repo_origin_url = ? WHERE id = ?
+`
+
+type SetProjectOriginURLParams struct {
+	RepoOriginURL string
+	ID            domain.ProjectID
+}
+
+// Narrow setter, for the same reason `paused` is omitted from UpsertProject: the
+// origin-URL backfill has no business rewriting `config`. Doing it through a
+// whole-row upsert meant a config save landing between the observer's read and
+// its write was silently reverted.
+func (q *Queries) SetProjectOriginURL(ctx context.Context, arg SetProjectOriginURLParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setProjectOriginURL, arg.RepoOriginURL, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setProjectPaused = `-- name: SetProjectPaused :execrows
 UPDATE projects SET paused = ? WHERE id = ?
 `
