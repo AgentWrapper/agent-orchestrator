@@ -157,34 +157,18 @@ func TestManagerNotifyWorkerDiedUnfinished(t *testing.T) {
 	if got.Title != "worker died with unfinished work: issue #12" {
 		t.Fatalf("title = %q", got.Title)
 	}
-	if got.Body != "demo #12 fix-login terminated before issue #12 landed; ao will dispatch a clean replacement if retry capacity remains." {
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed; restart a worker explicitly to resume it." {
 		t.Fatalf("body = %q", got.Body)
+	}
+	if got.SubjectKind != domain.NotificationSubjectSession || got.SubjectID != "demo-1" {
+		t.Fatalf("subject = %q/%q, want worker session", got.SubjectKind, got.SubjectID)
 	}
 }
 
-func TestManagerNotifyWorkerDiedUnfinishedAdoptsOpenPR(t *testing.T) {
-	st := &fakeStore{}
-	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
-
-	err := mgr.Notify(context.Background(), Intent{
-		Type:               domain.NotificationWorkerDiedUnfinished,
-		SessionID:          "demo-1",
-		ProjectID:          "demo",
-		SessionDisplayName: "demo #12 fix-login",
-		IssueID:            "github:acme/demo#12",
-		PRURL:              "https://github.com/acme/demo/pull/99",
-		AdoptsOpenPR:       true,
-	})
-	if err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
-	got := st.rows[0]
-	if got.Body != "demo #12 fix-login terminated before issue #12 landed with an open PR; ao is dispatching a replacement to adopt https://github.com/acme/demo/pull/99." {
-		t.Fatalf("body = %q", got.Body)
-	}
-}
-
-func TestManagerNotifyWorkerDiedUnfinishedOrphanPRNotYetAdopting(t *testing.T) {
+// The removed respawn subsystem (#313) used to promise a replacement here. The
+// terminal notification now names the orphaned PR as a fact and demands an
+// explicit operator restart — no adoption, no retry language.
+func TestManagerNotifyWorkerDiedUnfinishedNamesOrphanedPR(t *testing.T) {
 	st := &fakeStore{}
 	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
 
@@ -200,55 +184,28 @@ func TestManagerNotifyWorkerDiedUnfinishedOrphanPRNotYetAdopting(t *testing.T) {
 		t.Fatalf("Notify: %v", err)
 	}
 	got := st.rows[0]
-	if got.Body != "demo #12 fix-login terminated before issue #12 landed with an orphaned PR https://github.com/acme/demo/pull/99; ao will dispatch a clean replacement if retry capacity remains." {
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed, leaving the open PR https://github.com/acme/demo/pull/99 orphaned; restart a worker explicitly to resume it." {
 		t.Fatalf("body = %q", got.Body)
 	}
 }
 
-func TestManagerNotifyWorkerRetryExhausted(t *testing.T) {
+func TestManagerNotifyWorkerDiedUnfinishedIncludesFailurePoint(t *testing.T) {
 	st := &fakeStore{}
 	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
 
 	err := mgr.Notify(context.Background(), Intent{
-		Type:               domain.NotificationWorkerRetryExhausted,
-		SessionID:          "demo-3",
-		ProjectID:          "demo",
-		SessionDisplayName: "demo #12 fix-login",
-		IssueID:            "github:acme/demo#12",
-		RetryCount:         3,
-		RetryLimit:         2,
-	})
-	if err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
-	got := st.rows[0]
-	if got.Title != "worker retry cap exhausted: issue #12" {
-		t.Fatalf("title = %q", got.Title)
-	}
-	if got.Body != "demo #12 fix-login terminated after 3 attempts for issue #12; retry cap is 2, so ao is leaving it for a human." {
-		t.Fatalf("body = %q", got.Body)
-	}
-}
-
-func TestManagerNotifyWorkerRetryExhaustedIncludesFailurePoint(t *testing.T) {
-	st := &fakeStore{}
-	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
-
-	err := mgr.Notify(context.Background(), Intent{
-		Type:                  domain.NotificationWorkerRetryExhausted,
-		SessionID:             "demo-3",
+		Type:                  domain.NotificationWorkerDiedUnfinished,
+		SessionID:             "demo-1",
 		ProjectID:             "demo",
 		SessionDisplayName:    "demo #12 fix-login",
 		IssueID:               "github:acme/demo#12",
-		RetryCount:            3,
-		RetryLimit:            2,
 		TerminalFailureReason: "CI / backend test",
 	})
 	if err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 	got := st.rows[0]
-	if got.Body != "demo #12 fix-login terminated after 3 attempts for issue #12; retry cap is 2, so ao is leaving it for a human. Latest failure point: CI / backend test." {
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed; restart a worker explicitly to resume it. Failure point: CI / backend test." {
 		t.Fatalf("body = %q", got.Body)
 	}
 }
@@ -281,58 +238,6 @@ func TestManagerNotifyMainCIRed(t *testing.T) {
 	}
 	if got.SessionID != "" || got.SubjectKind != domain.NotificationSubjectProject || got.SubjectID != "ao" {
 		t.Fatalf("subject/session = %q/%q session:%q, want project ao with no legacy session", got.SubjectKind, got.SubjectID, got.SessionID)
-	}
-}
-
-func TestManagerNotifyWorkerRetryExhaustedNamesOrphanedPR(t *testing.T) {
-	st := &fakeStore{}
-	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
-
-	err := mgr.Notify(context.Background(), Intent{
-		Type:               domain.NotificationWorkerRetryExhausted,
-		SessionID:          "demo-3",
-		ProjectID:          "demo",
-		SessionDisplayName: "demo #12 fix-login",
-		IssueID:            "github:acme/demo#12",
-		PRURL:              "https://github.com/acme/demo/pull/99",
-		RetryCount:         3,
-		RetryLimit:         2,
-	})
-	if err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
-	got := st.rows[0]
-	if got.Body != "demo #12 fix-login terminated after 3 attempts for issue #12; retry cap is 2, so ao is suspending respawns and leaving the orphaned PR https://github.com/acme/demo/pull/99 for a human." {
-		t.Fatalf("body = %q", got.Body)
-	}
-	if got.SubjectKind != domain.NotificationSubjectSession || got.SubjectID != "demo-3" {
-		t.Fatalf("subject = %q/%q, want worker session", got.SubjectKind, got.SubjectID)
-	}
-}
-
-func TestManagerNotifyWorkerRetryBlockedNamesReason(t *testing.T) {
-	st := &fakeStore{}
-	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
-
-	err := mgr.Notify(context.Background(), Intent{
-		Type:               domain.NotificationWorkerRetryExhausted,
-		SessionID:          "demo-3",
-		ProjectID:          "demo",
-		SessionDisplayName: "demo #12 fix-login",
-		IssueID:            "github:acme/demo#12",
-		PRURL:              "https://github.com/acme/demo/pull/99",
-		Reason:             "the orphaned PR has no recorded source branch to adopt",
-	})
-	if err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
-	got := st.rows[0]
-	if got.Title != "worker respawn blocked: issue #12" {
-		t.Fatalf("title = %q", got.Title)
-	}
-	want := "demo #12 fix-login terminated before issue #12 landed with an orphaned PR https://github.com/acme/demo/pull/99; ao is suspending respawns because the orphaned PR has no recorded source branch to adopt."
-	if got.Body != want {
-		t.Fatalf("body = %q, want %q", got.Body, want)
 	}
 }
 

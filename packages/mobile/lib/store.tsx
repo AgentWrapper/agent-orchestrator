@@ -6,11 +6,9 @@ import {
 	getSessions,
 	killSession,
 	launchOrchestrator as apiLaunchOrchestrator,
-	mergePR as apiMergePR,
 	restoreSession,
 	sendMessage,
 	spawnSession,
-	type DashboardPR,
 	type DashboardSession,
 	type DashboardStats,
 	type OrchestratorLink,
@@ -43,7 +41,6 @@ type AppState = {
 	setActiveProject: (id: string) => void;
 	spawn: (prompt?: string, projectId?: string, harness?: string) => Promise<void>;
 	launchConductor: (projectId: string, clean?: boolean) => Promise<OrchestratorLink>;
-	merge: (pr: DashboardPR) => Promise<void>;
 	kill: (id: string) => Promise<void>;
 	restore: (id: string) => Promise<void>;
 	send: (id: string, message: string) => Promise<void>;
@@ -194,14 +191,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		[fetchAll],
 	);
 
-	const merge = useCallback(
-		async (pr: DashboardPR) => {
-			await apiMergePR(cfgRef.current!, pr);
-			await fetchAll();
-		},
-		[fetchAll],
-	);
-
 	const kill = useCallback(
 		async (id: string) => {
 			await killSession(cfgRef.current!, id);
@@ -244,7 +233,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setActiveProject,
 			spawn,
 			launchConductor,
-			merge,
 			kill,
 			restore,
 			send,
@@ -265,7 +253,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setActiveProject,
 			spawn,
 			launchConductor,
-			merge,
 			kill,
 			restore,
 			send,

@@ -43,7 +43,7 @@ func TestListUnreadAddsTargets(t *testing.T) {
 		{ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 		{ID: "n3", SessionID: "model-1", ProjectID: "mer", Type: domain.NotificationModelUnreachable, Title: "model unreachable", Status: domain.NotificationUnread, CreatedAt: time.Now()},
-		{ID: "n4", SessionID: "mer-2", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/2", Type: domain.NotificationWorkerRetryExhausted, Title: "worker retry exhausted", Status: domain.NotificationUnread, CreatedAt: time.Now()},
+		{ID: "n4", SessionID: "mer-2", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/2", Type: domain.NotificationWorkerDiedUnfinished, Title: "worker died with unfinished work", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 	}}
 	mgr := New(Deps{Store: st})
 	got, err := mgr.ListUnread(context.Background(), ListFilter{Limit: 10})

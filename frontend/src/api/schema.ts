@@ -501,40 +501,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/prs/{id}/merge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Squash-merge a pull request */
-        post: operations["mergePR"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/prs/{id}/resolve-comments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resolve review threads on a pull request */
-        post: operations["resolveComments"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/sessions": {
         parameters: {
             query?: never;
@@ -1076,11 +1042,6 @@ export interface components {
              */
             status: "read";
         };
-        MergePRResponse: {
-            method: string;
-            ok: boolean;
-            prNumber: number;
-        };
         MetricsAlert: {
             kind: string;
             message: string;
@@ -1231,7 +1192,7 @@ export interface components {
             deepLink: string;
             id: string;
             /** @enum {string} */
-            kind: "decision" | "blocked" | "pr" | "parked_sensitive_merge" | "worker_retry_exhausted" | "main_ci_red" | "duplicate_pr" | "orchestrator_replacement_capped" | "prime_dead" | "orchestrator_dead";
+            kind: "decision" | "blocked" | "pr" | "parked_sensitive_merge" | "worker_died_unfinished" | "main_ci_red" | "duplicate_pr" | "orchestrator_replacement_capped" | "prime_dead" | "orchestrator_dead";
             prNumber?: number;
             prTitle?: string;
             prUrl?: string;
@@ -1336,10 +1297,6 @@ export interface components {
             issueId?: string;
             ok: boolean;
             sessionId: string;
-        };
-        ResolveCommentsResponse: {
-            ok: boolean;
-            resolved: number;
         };
         RestoreSessionResponse: {
             ok: boolean;
@@ -1618,6 +1575,10 @@ export interface components {
             /** @enum {string} */
             provider?: "github";
             repo?: string;
+            /**
+             * @deprecated
+             * @description Ignored compatibility field; automatic worker respawn was removed. A dead worker requires an explicit operator restart.
+             */
             respawn?: components["schemas"]["DomainTrackerRespawnPolicy"];
         };
         TriggerReviewResponse: {
@@ -3112,115 +3073,6 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    mergePR: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description PR number. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MergePRResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    resolveComments: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description PR number. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResolveCommentsResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -13,7 +13,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	attentionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/attention"
-	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
@@ -27,7 +26,6 @@ type APIDeps struct {
 	ProjectCapacity    controllers.WorkerCapacityService
 	Sessions           controllers.SessionService
 	Activity           controllers.ActivityRecorder
-	PRs                prsvc.ActionManager
 	Reviews            reviewsvc.Manager
 	Notifications      controllers.NotificationService
 	NotificationStream controllers.NotificationStream
@@ -47,7 +45,6 @@ type API struct {
 	projects      *controllers.ProjectsController
 	sessions      *controllers.SessionsController
 	attention     *controllers.AttentionController
-	prs           *controllers.PRsController
 	reviews       *controllers.ReviewsController
 	notifications *controllers.NotificationsController
 	imports       *controllers.ImportController
@@ -80,7 +77,6 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Activity: deps.Activity,
 		},
 		attention:     &controllers.AttentionController{Svc: newOperatorAttentionService(deps)},
-		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		imports:       &controllers.ImportController{Svc: deps.Import},
@@ -120,7 +116,6 @@ func (a *API) Register(root chi.Router) {
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.attention.Register(r)
-			a.prs.Register(r)
 			a.reviews.Register(r)
 			a.notifications.Register(r)
 			a.imports.Register(r)

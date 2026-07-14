@@ -8,11 +8,8 @@ import {
 	buildReviewPassedStatusPayload,
 	buildStatusPayload,
 	evaluateAutonomousMergeStatuses,
-	evaluateBlockingReviews,
 	evaluateFinalReviewStatuses,
-	flattenReviewPages,
 	normalizeRepoSlug,
-	selectHeadPullRequest,
 } from "./final-review-status-core.mjs";
 
 function usage(exitCode = 1) {
@@ -23,9 +20,7 @@ function usage(exitCode = 1) {
 
 The check command exits 0 only for a successful ${FINAL_REVIEW_CONTEXT} status
 whose description says verdict=clean and head=<that exact SHA>. Autonomous mode
-also exits non-zero when a current-head merge-park status requires a human merge,
-or when an independent reviewer has an outstanding CHANGES_REQUESTED review on that
-same head (GitHub does not block the merge queue on one; this gate does).
+also exits non-zero when a current-head merge-park status requires a human merge.
 `);
 	process.exit(exitCode);
 }
@@ -140,49 +135,6 @@ function postGitHubStatus(repo, sha, payload) {
 	);
 }
 
-// The PR whose head is this SHA, plus its reviews.
-//
-// The PR is DERIVED from the SHA rather than taken as a flag on purpose. An
-// optional --pr would mean a caller that omits it silently skips the blocking-review
-// check — a bypass, and this gate exists precisely because a gate you can route
-// around is not a gate. A required --pr would instead break every existing
-// autonomous caller. Deriving it needs no caller change and leaves no hole.
-//
-// Fails CLOSED: if no PR can be resolved for the head, we cannot evaluate reviews
-// at all, so we must not certify the PR mergeable.
-function fetchHeadPullRequestReviews(repo, sha) {
-	const pulls = ghJSON(["api", "--method", "GET", `repos/${repo}/commits/${sha}/pulls`, "-f", "per_page=100"]) ?? [];
-
-	// This endpoint returns EVERY pull associated with the commit — merged and closed
-	// ones included. Taking the first exact-head match could select a stale or closed
-	// PR and thereby miss a CHANGES_REQUESTED on the PR actually entering the merge
-	// queue: a direct bypass. Consider only OPEN PRs whose head is this SHA, and
-	// require exactly one — genuine ambiguity fails closed rather than guessing.
-	const { pr: prNumber, ambiguous, author } = selectHeadPullRequest(pulls, sha);
-	if (!prNumber) return { pr: null, ambiguous, author: "", reviews: null };
-
-	// --slurp: with --paginate, gh emits one JSON document PER PAGE, so a plain parse
-	// throws once a PR passes 100 reviews. --slurp wraps the pages in a single array,
-	// which we flatten. Without it the gate fails closed on a heavily reviewed PR —
-	// safe, but UNCLEARABLE, and an unclearable gate is one workers route around.
-	const pages = ghJSON([
-		"api",
-		"--paginate",
-		"--slurp",
-		"--method",
-		"GET",
-		`repos/${repo}/pulls/${prNumber}/reviews`,
-		"-f",
-		"per_page=100",
-	]);
-
-	// Deliberately NOT `?? []`: a null/absent body means "we could not read the
-	// reviews", not "there are none". Passing it through as null lets
-	// evaluateBlockingReviews fail closed (invalid-reviews-response) instead of
-	// certifying a merge on an unread response.
-	return { pr: prNumber, ambiguous: false, author, reviews: flattenReviewPages(pages) };
-}
-
 function checkStatus(opts) {
 	const repo = normalizeRepoSlug(requireOpt(opts, "repo"));
 	const sha = assertFullSHA(requireOpt(opts, "sha"));
@@ -191,24 +143,6 @@ function checkStatus(opts) {
 	const statuses = ghJSON(["api", "--method", "GET", `repos/${repo}/commits/${sha}/statuses`, "-f", "per_page=100"]);
 	const result =
 		mode === "autonomous" ? evaluateAutonomousMergeStatuses(statuses, sha) : evaluateFinalReviewStatuses(statuses, sha);
-
-	// A clean, SHA-current final review is necessary but not sufficient for an
-	// autonomous merge: an independent reviewer may have requested changes on this
-	// same head. GitHub will not stop the merge queue on that (mainprotect carries
-	// no pull_request rule), so this gate must. See evaluateBlockingReviews (#304).
-	if (mode === "autonomous" && result.ok) {
-		const { pr, ambiguous, author, reviews } = fetchHeadPullRequestReviews(repo, sha);
-		if (!pr) {
-			const reason = ambiguous ? "ambiguous-pull-request-for-head" : "no-pull-request-for-head";
-			process.stdout.write(`${JSON.stringify({ ok: false, reason, head: sha.toLowerCase() })}\n`);
-			process.exit(1);
-		}
-		const blocking = evaluateBlockingReviews(reviews, { head: sha, prAuthor: author });
-		if (!blocking.ok) {
-			process.stdout.write(`${JSON.stringify({ ...blocking, pr })}\n`);
-			process.exit(1);
-		}
-	}
 
 	process.stdout.write(`${JSON.stringify(result)}\n`);
 	if (!result.ok) process.exit(1);

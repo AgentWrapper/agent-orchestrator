@@ -101,7 +101,6 @@ func TestNotificationStore_WorkerTerminalDedupeSurvivesRead(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	cases := []domain.NotificationType{
 		domain.NotificationWorkerDiedUnfinished,
-		domain.NotificationWorkerRetryExhausted,
 	}
 	for i, notificationType := range cases {
 		sess, err := s.CreateSession(ctx, sampleRecord("mer"))

@@ -10,11 +10,8 @@ import {
 	buildReviewPassedStatusPayload,
 	buildStatusPayload,
 	evaluateAutonomousMergeStatuses,
-	evaluateBlockingReviews,
 	evaluateFinalReviewStatuses,
-	flattenReviewPages,
 	normalizeRepoSlug,
-	selectHeadPullRequest,
 	parseStatusDescription,
 } from "./final-review-status-core.mjs";
 
@@ -468,206 +465,58 @@ process.stdout.write("{}\\n");
 		assert.equal(result.status, 1);
 		assert.match(result.stderr, /--mode must be human or autonomous/);
 	});
+
+	// #313 review-authority collapse: autonomous mode is exactly a clean, SHA-current
+	// final-review status plus no current-head merge-park. It must NOT consult GitHub
+	// review states — the only gh call is the single commit-statuses read.
+	it("passes autonomous check on a clean final-review without reading GitHub reviews", () => {
+		const dir = mkdtempSync(join(tmpdir(), "final-review-gh-"));
+		const log = join(dir, "gh.log");
+		const gh = join(dir, "gh");
+		writeFileSync(
+			gh,
+			`#!/usr/bin/env node
+const fs = require("node:fs");
+const argv = process.argv.slice(2);
+fs.appendFileSync(process.env.GH_LOG, JSON.stringify(argv) + "\\n");
+const path = argv.find((a) => a.includes("/commits/")) || "";
+if (path.endsWith("/statuses")) {
+	process.stdout.write(
+		JSON.stringify([
+			{
+				context: "final-review",
+				state: "success",
+				description: "verdict=clean reviewer_family=codex head=${HEAD}",
+				updated_at: "2026-07-13T00:00:00Z",
+			},
+		]) + "\\n",
+	);
+} else {
+	process.stdout.write("null\\n");
+}
+`,
+		);
+		chmodSync(gh, 0o755);
+
+		const result = spawnSync(
+			process.execPath,
+			[CLI.pathname, "check", "--repo", "owner/repo", "--sha", HEAD, "--mode", "autonomous"],
+			{ encoding: "utf8", env: { ...process.env, GH_LOG: log, PATH: `${dir}:${process.env.PATH}` } },
+		);
+
+		assert.equal(result.status, 0, result.stderr);
+		const calls = readFileSync(log, "utf8").trim().split("\n").map(JSON.parse);
+		// Exactly one gh call — the commit-statuses read — and nothing touching reviews or pulls.
+		assert.equal(calls.length, 1, `expected a single gh call, got ${JSON.stringify(calls)}`);
+		const flat = calls.flat().join(" ");
+		assert.match(flat, /commits\/.*\/statuses/);
+		assert.doesNotMatch(flat, /\/reviews|\/pulls/);
+	});
 });
 
 describe("repo slug validation", () => {
 	it("accepts owner/name and rejects path traversal", () => {
 		assert.equal(normalizeRepoSlug("polymath-ventures/agent-orchestrator"), "polymath-ventures/agent-orchestrator");
 		assert.throws(() => normalizeRepoSlug("polymath-ventures/../agent-orchestrator"), /owner\/name/);
-	});
-});
-
-// GH #304. A blocking review has to actually block. GitHub only enforces
-// CHANGES_REQUESTED as a merge blocker when a branch-protection `pull_request`
-// rule exists, and `mainprotect` has none — so a requested-change is visible and
-// the merge queue merges straight over it. Our PRs land through the autonomous
-// merge gate rather than the GitHub UI, so the teeth belong here.
-describe("evaluateBlockingReviews (a requested change must block autonomous merge)", () => {
-	const AUTHOR = "nhod-codex";
-	const REVIEWER = "polymath-orchestrator";
-	const OLD = "1111111111111111111111111111111111111111";
-
-	const review = (over = {}) => ({
-		user: { login: REVIEWER },
-		state: "CHANGES_REQUESTED",
-		commit_id: HEAD,
-		submitted_at: "2026-07-12T00:00:00Z",
-		...over,
-	});
-
-	it("BLOCKS on a current-head CHANGES_REQUESTED from a non-author", () => {
-		const got = evaluateBlockingReviews([review()], { head: HEAD, prAuthor: AUTHOR });
-		assert.equal(got.ok, false);
-		assert.equal(got.reason, "changes-requested");
-		assert.deepEqual(got.reviewers, [REVIEWER]);
-	});
-
-	// The whole ballgame. A CHANGES_REQUESTED against an OLDER commit must not
-	// block a PR that has since been fixed and re-reviewed — otherwise the gate is
-	// unclearable, and an unclearable gate is one workers learn to route around.
-	it("does NOT block on a stale-SHA CHANGES_REQUESTED", () => {
-		const got = evaluateBlockingReviews([review({ commit_id: OLD })], { head: HEAD, prAuthor: AUTHOR });
-		assert.equal(got.ok, true, `stale review must not block: ${JSON.stringify(got)}`);
-	});
-
-	it("does NOT block on the PR author's own CHANGES_REQUESTED", () => {
-		const got = evaluateBlockingReviews([review({ user: { login: AUTHOR } })], { head: HEAD, prAuthor: AUTHOR });
-		assert.equal(got.ok, true);
-	});
-
-	// Latest review per reviewer wins: a reviewer who requests changes and then
-	// approves the SAME head has cleared it. Without this the gate never clears.
-	it("does NOT block when the same reviewer later APPROVED the same head", () => {
-		const got = evaluateBlockingReviews(
-			[
-				review({ submitted_at: "2026-07-12T00:00:00Z" }),
-				review({ state: "APPROVED", submitted_at: "2026-07-12T01:00:00Z" }),
-			],
-			{ head: HEAD, prAuthor: AUTHOR },
-		);
-		assert.equal(got.ok, true);
-	});
-
-	it("BLOCKS when an APPROVAL is followed by a later CHANGES_REQUESTED on the same head", () => {
-		const got = evaluateBlockingReviews(
-			[
-				review({ state: "APPROVED", submitted_at: "2026-07-12T00:00:00Z" }),
-				review({ submitted_at: "2026-07-12T01:00:00Z" }),
-			],
-			{ head: HEAD, prAuthor: AUTHOR },
-		);
-		assert.equal(got.ok, false);
-		assert.equal(got.reason, "changes-requested");
-	});
-
-	it("ignores DISMISSED and COMMENTED reviews (neither is a blocking verdict)", () => {
-		assert.equal(evaluateBlockingReviews([review({ state: "DISMISSED" })], { head: HEAD, prAuthor: AUTHOR }).ok, true);
-		assert.equal(evaluateBlockingReviews([review({ state: "COMMENTED" })], { head: HEAD, prAuthor: AUTHOR }).ok, true);
-		// A COMMENTED review must not CLEAR an earlier blocking one either.
-		const got = evaluateBlockingReviews(
-			[
-				review({ submitted_at: "2026-07-12T00:00:00Z" }),
-				review({ state: "COMMENTED", submitted_at: "2026-07-12T01:00:00Z" }),
-			],
-			{ head: HEAD, prAuthor: AUTHOR },
-		);
-		assert.equal(got.ok, false);
-	});
-
-	it("reports every blocking reviewer, not just the first", () => {
-		const got = evaluateBlockingReviews([review(), review({ user: { login: "nhod" } })], {
-			head: HEAD,
-			prAuthor: AUTHOR,
-		});
-		assert.equal(got.ok, false);
-		assert.deepEqual(got.reviewers.sort(), ["nhod", REVIEWER].sort());
-	});
-
-	// Fail closed: if we cannot identify the PR author we cannot tell a
-	// self-review from an independent one, so we must not certify the PR mergeable.
-	it("fails CLOSED when the PR author is unknown", () => {
-		const got = evaluateBlockingReviews([review()], { head: HEAD, prAuthor: "" });
-		assert.equal(got.ok, false);
-		assert.equal(got.reason, "unknown-pr-author");
-	});
-
-	it("is clean when there are genuinely no reviews (a real empty array)", () => {
-		assert.equal(evaluateBlockingReviews([], { head: HEAD, prAuthor: AUTHOR }).ok, true);
-	});
-
-	// Every ambiguity fails CLOSED. Each "unknown" this waved through would be a
-	// bypass — the same shape as the bug the gate exists to fix.
-	it("fails CLOSED on a non-array reviews response (null is 'unknown', not 'none')", () => {
-		for (const bad of [null, undefined, {}, "oops"]) {
-			const got = evaluateBlockingReviews(bad, { head: HEAD, prAuthor: AUTHOR });
-			assert.equal(got.ok, false, `${JSON.stringify(bad)} must not certify a merge`);
-			assert.equal(got.reason, "invalid-reviews-response");
-		}
-	});
-
-	it("fails CLOSED on an unknown PR author even with zero reviews", () => {
-		const got = evaluateBlockingReviews([], { head: HEAD, prAuthor: "" });
-		assert.equal(got.ok, false);
-		assert.equal(got.reason, "unknown-pr-author");
-	});
-
-	it("fails CLOSED when a current-head verdict has no readable author", () => {
-		const got = evaluateBlockingReviews([review({ user: null })], { head: HEAD, prAuthor: AUTHOR });
-		assert.equal(got.ok, false);
-		assert.equal(got.reason, "unknown-review-author");
-	});
-
-	// Ordering must not depend on submitted_at: a missing or malformed timestamp
-	// parsed to 0 would let a LATER requested change lose to an EARLIER approval and
-	// silently unblock the merge. Response order + review id decide instead.
-	it("orders by response order/id, so a malformed timestamp cannot unblock a merge", () => {
-		const got = evaluateBlockingReviews(
-			[
-				review({ id: 1, state: "APPROVED", submitted_at: "2026-07-12T05:00:00Z" }),
-				review({ id: 2, state: "CHANGES_REQUESTED", submitted_at: "not-a-date" }),
-			],
-			{ head: HEAD, prAuthor: AUTHOR },
-		);
-		assert.equal(got.ok, false, "the later requested change must still win");
-		assert.equal(got.reason, "changes-requested");
-	});
-});
-
-// These cover the CALLER, which is where the real bug hid: the evaluator's own
-// tests were green while the CLI selected the wrong PR and coerced an unread
-// response into "no reviews". A pure seam is the only way to test it.
-describe("selectHeadPullRequest (the gate must resolve the RIGHT pull request)", () => {
-	const OTHER = "1111111111111111111111111111111111111111";
-	const open = (n, over = {}) => ({
-		number: n,
-		state: "open",
-		head: { sha: HEAD },
-		user: { login: "nhod-codex" },
-		...over,
-	});
-
-	it("selects the single open PR whose head is this SHA", () => {
-		assert.deepEqual(selectHeadPullRequest([open(7)], HEAD), { pr: 7, ambiguous: false, author: "nhod-codex" });
-	});
-
-	// `commits/{sha}/pulls` returns merged and closed pulls too. Picking one of those
-	// would mask a CHANGES_REQUESTED on the PR actually entering the merge queue.
-	it("ignores closed and merged pulls that share the SHA", () => {
-		const got = selectHeadPullRequest([open(5, { state: "closed" }), open(7)], HEAD);
-		assert.deepEqual(got, { pr: 7, ambiguous: false, author: "nhod-codex" });
-	});
-
-	it("ignores pulls whose head is a DIFFERENT SHA", () => {
-		assert.equal(selectHeadPullRequest([open(5, { head: { sha: OTHER } })], HEAD).pr, null);
-	});
-
-	it("fails CLOSED when two open pulls share the head (ambiguous, do not guess)", () => {
-		const got = selectHeadPullRequest([open(7), open(9)], HEAD);
-		assert.equal(got.pr, null);
-		assert.equal(got.ambiguous, true);
-	});
-
-	it("fails CLOSED on no match and on a non-array response", () => {
-		assert.equal(selectHeadPullRequest([], HEAD).pr, null);
-		assert.equal(selectHeadPullRequest(null, HEAD).pr, null);
-		assert.equal(selectHeadPullRequest(null, HEAD).ambiguous, false);
-	});
-});
-
-describe("flattenReviewPages (--paginate --slurp yields an array of pages)", () => {
-	it("flattens paged review arrays, so a >100-review PR is still evaluable", () => {
-		const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i }));
-		const page2 = [{ id: 100 }];
-		assert.equal(flattenReviewPages([page1, page2]).length, 101);
-	});
-
-	// A non-array body means "we could not read the reviews", not "there are none",
-	// and must reach evaluateBlockingReviews intact so IT can fail closed. Coercing
-	// to [] here is exactly the caller-level bypass this suite exists to prevent.
-	it("passes a non-array response through UNCHANGED so the evaluator fails closed", () => {
-		for (const bad of [null, undefined, {}]) {
-			assert.equal(Array.isArray(flattenReviewPages(bad)), false);
-			assert.equal(evaluateBlockingReviews(flattenReviewPages(bad), { head: HEAD, prAuthor: "a" }).ok, false);
-		}
 	});
 });

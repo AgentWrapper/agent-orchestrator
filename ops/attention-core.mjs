@@ -39,7 +39,7 @@ const ICONS = {
 	no_signal: "🛰️",
 	daemon_unhealthy: "❤️‍🩹",
 	main_ci_red: "🚨",
-	worker_retry_exhausted: "🚨",
+	worker_died_unfinished: "🧯",
 	duplicate_pr: "♊",
 	orchestrator_replacement_capped: "🚨",
 };

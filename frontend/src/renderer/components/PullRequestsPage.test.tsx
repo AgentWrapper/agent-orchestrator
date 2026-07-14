@@ -74,9 +74,9 @@ describe("PullRequestsPage", () => {
 		expect(numbers).toEqual(["#41", "#42", "#40"]);
 	});
 
-	// #293 M7: the daemon never wires APIDeps.PRs, so POST /prs/{id}/merge and
-	// /prs/{id}/resolve-comments always answer 501. The board must not render
-	// actions that can only fail, nor claim it can merge or resolve.
+	// #293 M7 / #313: no PR mutation API exists (the merge/resolve endpoints were
+	// removed), so the board must not render actions that can only fail, nor claim
+	// it can merge or resolve.
 	it("renders no merge or resolve controls while the PR action API is unimplemented", () => {
 		setWorkspaces([session("auth", [pr(41, "open"), pr(42, "draft")])]);
 		renderPage();

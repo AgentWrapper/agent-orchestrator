@@ -177,7 +177,7 @@ type ListOperatorAttentionResponse struct {
 // OperatorAttentionItem is one live-derived item that only the operator can clear.
 type OperatorAttentionItem struct {
 	ID           string              `json:"id"`
-	Kind         string              `json:"kind" enum:"decision,blocked,pr,parked_sensitive_merge,worker_retry_exhausted,main_ci_red,duplicate_pr,orchestrator_replacement_capped,prime_dead,orchestrator_dead"`
+	Kind         string              `json:"kind" enum:"decision,blocked,pr,parked_sensitive_merge,worker_died_unfinished,main_ci_red,duplicate_pr,orchestrator_replacement_capped,prime_dead,orchestrator_dead"`
 	ProjectID    domain.ProjectID    `json:"projectId"`
 	SessionID    domain.SessionID    `json:"sessionId,omitempty"`
 	SessionTitle string              `json:"sessionTitle,omitempty"`
@@ -680,29 +680,6 @@ type ImportStatusResponse struct {
 // of the import run (counts + notes), reused verbatim from the import engine.
 type ImportRunResponse struct {
 	Report legacyimport.Report `json:"report"`
-}
-
-// PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
-type PRIDParam struct {
-	ID string `path:"id" description:"PR number."`
-}
-
-// MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).
-type MergePRResponse struct {
-	OK       bool   `json:"ok"`
-	PRNumber int    `json:"prNumber"`
-	Method   string `json:"method"`
-}
-
-// ResolveCommentsRequest is the optional body of POST /api/v1/prs/{id}/resolve-comments.
-type ResolveCommentsRequest struct {
-	CommentIDs []string `json:"commentIds,omitempty"`
-}
-
-// ResolveCommentsResponse is the body of POST /api/v1/prs/{id}/resolve-comments (200).
-type ResolveCommentsResponse struct {
-	OK       bool `json:"ok"`
-	Resolved int  `json:"resolved"`
 }
 
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/

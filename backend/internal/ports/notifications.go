@@ -39,18 +39,10 @@ type NotificationIntent struct {
 	// change) and is surfaced to downstream consumers such as the Slack
 	// notifier so they can dedupe on it too.
 	HeadSHA string
-	// Worker retry enrichment.
-	RetryCount            int
-	RetryLimit            int
+	// TerminalFailureReason is the dead session's recorded terminal failure
+	// provenance (worker_died_unfinished only): where the worker died, so the
+	// operator can diagnose before explicitly restarting the issue.
 	TerminalFailureReason string
-	// AdoptsOpenPR marks a worker-death notification whose replacement will adopt
-	// the dead worker's still-open PR (claim mode) rather than start clean. It is
-	// set only when intake actually dispatches a replacement onto an orphaned open
-	// PR, so the operator message names the PR the new worker takes over. When the
-	// PR is orphaned but the retry cap is exhausted, the escalation carries the PR
-	// URL instead (see NotificationWorkerRetryExhausted) — a live driver never
-	// triggers either path (that issue is left untouched, issue #230).
-	AdoptsOpenPR bool
 
 	// Duplicate-PR enrichment (domain.NotificationDuplicatePR only). IssueRef is
 	// the tracker reference both PRs claim (e.g. "owner/repo#169"); PRURL is the

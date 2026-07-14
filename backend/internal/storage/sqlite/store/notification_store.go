@@ -92,12 +92,7 @@ func (s *Store) getPersistentNotificationByDedupe(ctx context.Context, rec domai
 }
 
 func notificationDedupeSurvivesRead(t domain.NotificationType) bool {
-	switch t {
-	case domain.NotificationWorkerDiedUnfinished, domain.NotificationWorkerRetryExhausted:
-		return true
-	default:
-		return false
-	}
+	return t == domain.NotificationWorkerDiedUnfinished
 }
 
 // ListUnreadNotifications returns unread notifications newest-first (with an id

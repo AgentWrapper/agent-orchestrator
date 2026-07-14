@@ -29,12 +29,10 @@ type PRRow = {
 // flatMap the session's prs list rather than assuming one. Per-PR CI/review
 // facts also live on the session route's inspector.
 //
-// The board is READ-ONLY (#293 M7). It used to render Merge and Resolve buttons
-// against POST /api/v1/prs/{id}/merge and /resolve-comments, but the daemon
-// never supplies APIDeps.PRs — no repository-aware SCM action service exists —
-// so both routes always answer 501 and both buttons could only ever fail. The
-// controls and the claim they made are gone rather than papered over with a
-// no-op stub; bring them back together with a real SCM action service.
+// The board is READ-ONLY (#293 M7). It used to render Merge and Resolve buttons,
+// but no repository-aware SCM action service ever existed, so the mutation
+// endpoints they targeted were removed entirely (#313). Review and merge PRs on
+// your SCM provider; bring the controls back only alongside a real action service.
 export function PullRequestsPage() {
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();

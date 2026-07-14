@@ -274,9 +274,8 @@ type operatorAttentionNotificationMetadata struct {
 // operatorAttentionNotificationMetadata maps durable notification types to the
 // operator copy they demand, and reports whether that type is an
 // operator-attention event at all. Only types a human must act on belong in the
-// projection; informational types (pr_merged, model_recovered, routine
-// worker_died_unfinished, …) are excluded so the
-// projection stays a "what needs me" surface, not a notification mirror.
+// projection; informational types (pr_merged, model_recovered, …) are excluded
+// so the projection stays a "what needs me" surface, not a notification mirror.
 //
 // needs_input is covered by live session/decision derivation. ready_to_merge
 // is handled separately in parkedSensitiveMergeItem: only its SENSITIVE rows
@@ -284,10 +283,10 @@ type operatorAttentionNotificationMetadata struct {
 // sensitivity check is per-record, not per-type.
 func operatorAttentionNotificationMetadataFor(t domain.NotificationType) (operatorAttentionNotificationMetadata, bool) {
 	switch t {
-	case domain.NotificationWorkerRetryExhausted:
+	case domain.NotificationWorkerDiedUnfinished:
 		return operatorAttentionNotificationMetadata{
-			action:        "Diagnose the repeated failure, then resume or reassign the issue before respawning.",
-			defaultReason: "Worker retry cap exhausted for this issue.",
+			action:        "Diagnose the terminal failure, then restart a worker for the issue explicitly; ao never respawns it automatically.",
+			defaultReason: "A worker died before its issue landed.",
 		}, true
 	case domain.NotificationMainCIRed:
 		return operatorAttentionNotificationMetadata{

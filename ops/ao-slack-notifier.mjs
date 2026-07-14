@@ -29,7 +29,7 @@
 //
 //   2. INFORMATIONAL (quiet). The notification stream + catch-up poll forward
 //      non-attention events (pr_merged, pr_closed_unmerged, orchestrator_replaced,
-//      worker_died_unfinished, model_unreachable, model_recovered) as PLAIN posts.
+//      model_unreachable, model_recovered) as PLAIN posts.
 //
 // It also polls GET /api/v1/agents/health and @mentions on a harness going
 // unhealthy (login expired / binary missing), with a recovery post — see
@@ -135,7 +135,7 @@ async function updatePost(ts, text, { channel = NEEDS_RESPONSE_CHANNEL } = {}) {
 // as PLAIN transport (never an @mention). Every operator-attention condition is
 // now driven by the daemon's canonical projection (GET /attention/operator),
 // polled in pollOperatorAttention — the notification stream carries only these
-// informational events. needs_input, ready_to_merge, worker_retry_exhausted,
+// informational events. needs_input, ready_to_merge, worker_died_unfinished,
 // duplicate_pr, orchestrator_replacement_capped and main_ci_red are deliberately
 // absent: they surface through the projection, not this stream, so they are
 // never double-posted.
@@ -143,7 +143,6 @@ const INFORMATIONAL = new Set([
 	"pr_merged",
 	"pr_closed_unmerged",
 	"orchestrator_replaced",
-	"worker_died_unfinished",
 	"model_unreachable",
 	"model_recovered",
 ]);
@@ -159,7 +158,7 @@ const MENTION_KINDS = new Set([
 	"orchestrator_dead",
 	"no_signal",
 	"main_ci_red",
-	"worker_retry_exhausted",
+	"worker_died_unfinished",
 	"duplicate_pr",
 	"orchestrator_replacement_capped",
 	"parked_sensitive_merge",
@@ -168,7 +167,6 @@ const ICONS = {
 	pr_merged: "🚀",
 	pr_closed_unmerged: "🗑️",
 	orchestrator_replaced: "🔁",
-	worker_died_unfinished: "🧯",
 	model_unreachable: "🧠",
 	model_recovered: "🧠",
 };
@@ -260,17 +258,7 @@ export function normalizeNotification(raw) {
 	const prUrl = n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "";
 	const projectId = n.projectId ?? n.project ?? raw.projectId ?? "";
 	const sessionId = n.sessionId ?? n.session ?? raw.sessionId ?? "";
-	const subjectKind =
-		subject.kind ??
-		(type === "main_ci_red"
-			? "project"
-			: type === "worker_died_unfinished" || type === "worker_retry_exhausted"
-				? "session"
-				: prUrl
-					? "pr"
-					: sessionId
-						? "session"
-						: "");
+	const subjectKind = subject.kind ?? (type === "main_ci_red" ? "project" : prUrl ? "pr" : sessionId ? "session" : "");
 	const subjectId =
 		subject.id ??
 		(subjectKind === "project" ? projectId : subjectKind === "pr" ? prUrl : subjectKind === "session" ? sessionId : "");
@@ -385,9 +373,9 @@ function notificationSubjectKey(n) {
 }
 
 // describeSlackMessage renders an INFORMATIONAL notification (pr_merged,
-// pr_closed_unmerged, orchestrator_replaced, worker_died_unfinished, model_*) as
-// a plain Slack post. These are never @mentions — every attention condition is
-// delivered by the projection poll, not this notification path.
+// pr_closed_unmerged, orchestrator_replaced, model_*) as a plain Slack post.
+// These are never @mentions — every attention condition is delivered by the
+// projection poll, not this notification path.
 export function describeSlackMessage(raw) {
 	const n = normalizeNotification(raw);
 	if (!n) return null;
@@ -455,6 +443,9 @@ function migrateLegacyAttentionRecord(rec) {
 	// Durable notification escalations were needs-response tracked too; the
 	// projection keys them by subject identity (notification:<project>:<session>:
 	// <type>), which is reconstructible from the legacy record.
+	// worker_retry_exhausted is MIGRATION-ONLY: the daemon can no longer emit it
+	// (#313 removed the respawn subsystem), so a migrated record simply reconciles
+	// away on the next projection poll instead of lingering forever.
 	if ((kind === "worker_retry_exhausted" || kind === "orchestrator_replacement_capped") && projectId && sessionId) {
 		return { ...rec, id: `notification:${projectId}:${sessionId}:${kind}` };
 	}

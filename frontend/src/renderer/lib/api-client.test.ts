@@ -191,7 +191,6 @@ describe("normalizeApiOperation", () => {
 
 	it("normalizes ids for resources a collection heuristic would miss", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
-		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");
 	});
 });
 

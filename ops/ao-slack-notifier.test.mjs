@@ -72,9 +72,9 @@ function operatorResponse(items = []) {
 
 describe("ao Slack notifier informational message rendering", () => {
 	// describeSlackMessage now renders ONLY the informational notification set
-	// (pr_merged, pr_closed_unmerged, orchestrator_replaced, worker_died_unfinished,
-	// model_unreachable, model_recovered) as PLAIN posts. It takes ONE arg and NEVER
-	// @mentions — every attention condition is delivered by the projection poll.
+	// (pr_merged, pr_closed_unmerged, orchestrator_replaced, model_unreachable,
+	// model_recovered) as PLAIN posts. It takes ONE arg and NEVER @mentions —
+	// every attention condition is delivered by the projection poll.
 	it("renders pr_merged as a plain post", () => {
 		const msg = describeSlackMessage({
 			type: "pr_merged",
@@ -106,16 +106,6 @@ describe("ao Slack notifier informational message rendering", () => {
 		assert.equal(msg, "🔁 *orchestrator_replaced* [mer] mer-orch-2: mer orchestrator was replaced");
 	});
 
-	it("renders worker_died_unfinished as a plain post", () => {
-		const msg = describeSlackMessage({
-			type: "worker_died_unfinished",
-			sessionId: "agent-5",
-			projectId: "ao",
-			title: "worker died with unfinished work: issue #155",
-		});
-		assert.equal(msg, "🧯 *worker_died_unfinished* [ao] agent-5: worker died with unfinished work: issue #155");
-	});
-
 	it("renders model subjects when sessionId is empty", () => {
 		const msg = describeSlackMessage({
 			type: "model_unreachable",
@@ -142,7 +132,7 @@ describe("ao Slack notifier informational message rendering", () => {
 			"ready_to_merge",
 			"main_ci_red",
 			"duplicate_pr",
-			"worker_retry_exhausted",
+			"worker_died_unfinished",
 			"orchestrator_replacement_capped",
 			"blocked",
 			"no_signal",
@@ -2668,10 +2658,10 @@ describe("thread -> session bindings (post -> reply routing)", () => {
 		});
 		await notifier.recordDelivered({
 			id: "n2",
-			type: "worker_died_unfinished",
+			type: "orchestrator_replaced",
 			sessionId: "agent-orchestrator-99",
 			projectId: "agent-orchestrator",
-			title: "worker died mid-task",
+			title: "orchestrator was replaced",
 		});
 
 		const threadMap = loadNotifierThreadMap(stateFile);

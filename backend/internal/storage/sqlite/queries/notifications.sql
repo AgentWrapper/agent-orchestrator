@@ -35,6 +35,6 @@ FROM notifications
 WHERE subject_kind = ?
   AND COALESCE(NULLIF(subject_id, ''), session_id) = ?
   AND type = ?
-  AND type IN ('worker_died_unfinished', 'worker_retry_exhausted')
-  AND (type != 'worker_died_unfinished' OR body = ?)
+  AND type = 'worker_died_unfinished'
+  AND body = ?
 LIMIT 1;

@@ -1082,90 +1082,6 @@ paths:
       summary: Initialize a selected folder as a Git repository with an initial commit
       tags:
       - projects
-  /api/v1/prs/{id}/merge:
-    post:
-      operationId: mergePR
-      parameters:
-      - description: PR number.
-        in: path
-        name: id
-        required: true
-        schema:
-          description: PR number.
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MergePRResponse'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Conflict
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Unprocessable Entity
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Squash-merge a pull request
-      tags:
-      - prs
-  /api/v1/prs/{id}/resolve-comments:
-    post:
-      operationId: resolveComments
-      parameters:
-      - description: PR number.
-        in: path
-        name: id
-        required: true
-        schema:
-          description: PR number.
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ResolveCommentsResponse'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Unprocessable Entity
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Resolve review threads on a pull request
-      tags:
-      - prs
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -2753,19 +2669,6 @@ components:
       required:
       - status
       type: object
-    MergePRResponse:
-      properties:
-        method:
-          type: string
-        ok:
-          type: boolean
-        prNumber:
-          type: integer
-      required:
-      - ok
-      - prNumber
-      - method
-      type: object
     MetricsAlert:
       properties:
         kind:
@@ -3145,7 +3048,7 @@ components:
           - blocked
           - pr
           - parked_sensitive_merge
-          - worker_retry_exhausted
+          - worker_died_unfinished
           - main_ci_red
           - duplicate_pr
           - orchestrator_replacement_capped
@@ -3425,16 +3328,6 @@ components:
       - ok
       - sessionId
       - displayName
-      type: object
-    ResolveCommentsResponse:
-      properties:
-        ok:
-          type: boolean
-        resolved:
-          type: integer
-      required:
-      - ok
-      - resolved
       type: object
     RestoreSessionResponse:
       properties:
@@ -4137,6 +4030,9 @@ components:
           type: string
         respawn:
           $ref: '#/components/schemas/DomainTrackerRespawnPolicy'
+          deprecated: true
+          description: Ignored compatibility field; automatic worker respawn was removed.
+            A dead worker requires an explicit operator restart.
       type: object
     TriggerReviewResponse:
       properties:
@@ -4341,8 +4237,6 @@ tags:
   name: sessions
 - description: Operator-only attention queues derived from live daemon state
   name: attention
-- description: Pull-request actions (SCM lane)
-  name: prs
 - description: Code-review runs and findings
   name: reviews
 - description: Durable dashboard notifications

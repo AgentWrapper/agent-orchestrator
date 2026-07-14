@@ -27,11 +27,9 @@ const (
 	// adopted. See issue #181.
 	NotificationDuplicatePR NotificationType = "duplicate_pr"
 	// NotificationWorkerDiedUnfinished means a worker session terminated while
-	// its assigned issue still needs work.
+	// its assigned issue still needs work. Automatic respawn was removed (#313):
+	// this is a terminal escalation that requires an explicit operator restart.
 	NotificationWorkerDiedUnfinished NotificationType = "worker_died_unfinished"
-	// NotificationWorkerRetryExhausted means tracker intake reached the clean
-	// respawn retry cap for an unfinished issue.
-	NotificationWorkerRetryExhausted NotificationType = "worker_retry_exhausted"
 	// NotificationModelUnreachable means a configured model pin was rejected by
 	// its provider/account during scheduled revalidation.
 	NotificationModelUnreachable NotificationType = "model_unreachable"
@@ -45,7 +43,7 @@ const (
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR, NotificationWorkerDiedUnfinished, NotificationWorkerRetryExhausted, NotificationModelUnreachable, NotificationModelRecovered, NotificationMainCIRed:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestratorReplaced, NotificationOrchestratorReplacementCapped, NotificationDuplicatePR, NotificationWorkerDiedUnfinished, NotificationModelUnreachable, NotificationModelRecovered, NotificationMainCIRed:
 		return true
 	default:
 		return false
@@ -64,7 +62,7 @@ func (t NotificationType) Valid() bool {
 // row-level carve-out (see the sqlite notification store).
 func OperatorAttentionNotificationTypes() []NotificationType {
 	return []NotificationType{
-		NotificationWorkerRetryExhausted,
+		NotificationWorkerDiedUnfinished,
 		NotificationMainCIRed,
 		NotificationDuplicatePR,
 		NotificationOrchestratorReplacementCapped,
@@ -148,7 +146,7 @@ var (
 func (r NotificationRecord) WithInferredSubject() NotificationRecord {
 	if r.SubjectKind == "" {
 		switch {
-		case r.Type == NotificationWorkerDiedUnfinished || r.Type == NotificationWorkerRetryExhausted:
+		case r.Type == NotificationWorkerDiedUnfinished:
 			r.SubjectKind = NotificationSubjectSession
 			r.SubjectID = string(r.SessionID)
 		case r.Type == NotificationModelUnreachable || r.Type == NotificationModelRecovered:

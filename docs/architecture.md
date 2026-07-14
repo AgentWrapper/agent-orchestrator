@@ -167,20 +167,23 @@ permission dialogs, and unsafe unsolicited nudges.
 Worktree creation is the default. In-place mode is explicit and has different
 branch/restore constraints. Cleanup never force-deletes unknown dirty work.
 
-## Issues, workers, PRs, and respawn
+## Issues, workers, and PRs
 
 Tracker intake is an opt-in background observer:
 
 1. read enabled, unpaused projects and their open tracker issues;
-2. exclude labels/configuration that make an issue ineligible;
-3. derive whether the issue has a live worker, landed PR, orphaned open PR, or
-   exhausted retry history;
-4. spawn through the session service, adopting the existing PR branch when a
-   dead worker left an open PR and worktree mode permits it;
-5. emit durable escalation when retry is disabled, blocked, or exhausted.
+2. exclude configuration that makes an issue ineligible (assignment is the
+   admission signal);
+3. derive whether the issue has a live worker, a landed PR, or a dead worker
+   with unfinished work;
+4. spawn through the session service for issues with no session history;
+5. emit one durable terminal escalation when a worker died with unfinished
+   work. Intake never launches replacement workers (#313 removed the automatic
+   respawn subsystem); resuming the issue requires an explicit operator
+   restart.
 
 An open PR is not by itself a live driver. A terminated worker with an open PR
-must be replaced onto that branch or escalated; silently treating the PR as
+must be escalated with the orphaned PR named; silently treating the PR as
 handled strands work. Conversely, an issue with a live worker or merged PR must
 not be dispatched again.
 

@@ -232,7 +232,7 @@ func TestNotificationsAPI_StreamCreatedNotifications(t *testing.T) {
 		t.Fatalf("project filter = %q", stream.gotProject)
 	}
 
-	stream.ch <- domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationWorkerRetryExhausted, Title: "worker retry exhausted", Status: domain.NotificationUnread, CreatedAt: time.Now()}
+	stream.ch <- domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationWorkerDiedUnfinished, Title: "worker died with unfinished work", Status: domain.NotificationUnread, CreatedAt: time.Now()}
 	reader := bufio.NewReader(resp.Body)
 	eventLine, err := reader.ReadString('\n')
 	if err != nil {

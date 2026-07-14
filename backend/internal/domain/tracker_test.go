@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -67,32 +69,22 @@ func TestTrackerIntakeWithDefaultsDisabledLeavesExcludeLabelsNil(t *testing.T) {
 	}
 }
 
-func TestTrackerIntakeWithDefaultsUsesZeroRespawnRetries(t *testing.T) {
-	got := TrackerIntakeConfig{Enabled: true}.WithDefaults()
-	policy := got.EffectiveRespawnPolicy()
-	if policy.EffectiveMaxRetries() != 0 || DefaultWorkerRespawnMaxRetries != 0 {
-		t.Fatalf("default respawn retries = %d (constant %d), want 0", policy.EffectiveMaxRetries(), DefaultWorkerRespawnMaxRetries)
+// The automatic worker respawn subsystem was removed (#313). The respawn field
+// is retained only so stored configs that still carry it keep decoding (project
+// add/set-config decode strictly); it is accepted, round-tripped, and ignored.
+func TestTrackerIntakeToleratesLegacyRespawnField(t *testing.T) {
+	var cfg TrackerIntakeConfig
+	payload := []byte(`{"enabled":true,"assignee":"*","maxConcurrent":2,"respawn":{"disabled":true,"maxRetries":0}}`)
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		t.Fatalf("strict decode rejected legacy respawn config: %v", err)
 	}
-	if got.Respawn != nil {
-		t.Fatalf("WithDefaults should not persist materialized respawn defaults, got %#v", got.Respawn)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate rejected legacy respawn config: %v", err)
 	}
-}
-
-func TestTrackerIntakeRespawnPolicyCanDisableOrSetZeroRetries(t *testing.T) {
-	zero := 0
-	got := TrackerIntakeConfig{
-		Enabled: true,
-		Respawn: &TrackerRespawnPolicy{
-			Disabled:   true,
-			MaxRetries: &zero,
-		},
-	}.WithDefaults()
-	policy := got.EffectiveRespawnPolicy()
-	if policy.IsEnabled() {
-		t.Fatal("explicit disabled respawn policy should stay disabled")
-	}
-	if policy.EffectiveMaxRetries() != 0 {
-		t.Fatalf("explicit zero retries = %d, want 0", policy.EffectiveMaxRetries())
+	if cfg.Respawn == nil || !cfg.Respawn.Disabled {
+		t.Fatalf("legacy respawn field did not round-trip: %#v", cfg.Respawn)
 	}
 }
 
@@ -109,13 +101,5 @@ func TestTrackerIntakeValidateRequiresOneAssignmentGateAndFiniteCap(t *testing.T
 	}
 	if err := (TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 2}).Validate(); err != nil {
 		t.Fatalf("Validate rejected assignment-gated bounded intake: %v", err)
-	}
-}
-
-func TestTrackerIntakeValidateRejectsNegativeRespawnRetries(t *testing.T) {
-	negative := -1
-	cfg := TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 2, Respawn: &TrackerRespawnPolicy{MaxRetries: &negative}}
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate accepted negative respawn max retries")
 	}
 }

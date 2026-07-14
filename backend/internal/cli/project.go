@@ -140,7 +140,9 @@ type reviewerConfig struct {
 	Harness string `json:"harness"`
 }
 
-// trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
+// trackerIntakeConfig mirrors domain.TrackerIntakeConfig. trackerRespawnPolicy
+// is a retained compatibility shape: the automatic worker respawn subsystem was
+// removed (#313), so the daemon accepts and ignores this field.
 type trackerRespawnPolicy struct {
 	Disabled   bool `json:"disabled,omitempty"`
 	MaxRetries *int `json:"maxRetries,omitempty"`

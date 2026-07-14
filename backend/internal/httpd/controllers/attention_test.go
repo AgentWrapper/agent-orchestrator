@@ -83,22 +83,23 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	setSessionPendingDecision(svc, "ask-1", domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "Use strategy A or B?", Options: []string{"A", "B"}})
 	svc.notifications = []notificationsvc.Notification{
 		{NotificationRecord: domain.NotificationRecord{
-			ID:        "n-exhausted",
+			ID:        "n-died",
 			SessionID: "dead-worker",
 			ProjectID: "ao",
 			PRURL:     "https://github.com/aoagents/agent-orchestrator/pull/230",
-			Type:      domain.NotificationWorkerRetryExhausted,
-			Title:     "worker retry cap exhausted: issue #230",
-			Body:      "dead-worker exhausted retries for issue #230; respawns are suspended.",
+			Type:      domain.NotificationWorkerDiedUnfinished,
+			Title:     "worker died with unfinished work: issue #230",
+			Body:      "dead-worker terminated before issue #230 landed; restart a worker explicitly to resume it.",
 			Status:    domain.NotificationUnread,
 			CreatedAt: now.Add(2 * time.Minute),
 		}},
 		{NotificationRecord: domain.NotificationRecord{
-			ID:        "n-routine-death",
-			SessionID: "dead-routine",
+			ID:        "n-routine-merged",
+			SessionID: "done-routine",
 			ProjectID: "ao",
-			Type:      domain.NotificationWorkerDiedUnfinished,
-			Title:     "worker died; replacement queued",
+			PRURL:     "https://github.com/aoagents/agent-orchestrator/pull/231",
+			Type:      domain.NotificationPRMerged,
+			Title:     "PR #231 was merged",
 			Status:    domain.NotificationUnread,
 			CreatedAt: now.Add(3 * time.Minute),
 		}},
@@ -221,8 +222,8 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	pr224 := "pr:https://github.com/aoagents/agent-orchestrator/pull/224:merge"
 	pr226 := "pr:https://github.com/aoagents/agent-orchestrator/pull/226:merge"
 	otherPR224 := "pr:https://github.com/acme/other/pull/224:merge"
-	retryExhausted := "notification:ao:dead-worker:worker_retry_exhausted"
-	for _, want := range []string{"session:perm-1:decision", "session:ask-1:decision", "session:orch-dead:no_signal", "session:prime-dead:no_signal", pr224, pr226, otherPR224, retryExhausted} {
+	workerDied := "notification:ao:dead-worker:worker_died_unfinished"
+	for _, want := range []string{"session:perm-1:decision", "session:ask-1:decision", "session:orch-dead:no_signal", "session:prime-dead:no_signal", pr224, pr226, otherPR224, workerDied} {
 		if got[want] == 0 {
 			t.Fatalf("missing %s in %#v; body=%s", want, got, body)
 		}
@@ -239,23 +240,23 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	if byID["session:prime-dead:no_signal"].Action != "Inspect the prime supervisor and restart or replace it if needed." {
 		t.Fatalf("prime no-signal action = %q", byID["session:prime-dead:no_signal"].Action)
 	}
-	var exhaustedItem struct {
+	var diedItem struct {
 		Kind     string
 		PRURL    string
 		DeepLink string
 	}
 	for _, item := range resp.Items {
-		if item.ID == retryExhausted {
-			exhaustedItem.Kind = item.Kind
-			exhaustedItem.PRURL = item.PRURL
-			exhaustedItem.DeepLink = item.DeepLink
+		if item.ID == workerDied {
+			diedItem.Kind = item.Kind
+			diedItem.PRURL = item.PRURL
+			diedItem.DeepLink = item.DeepLink
 			break
 		}
 	}
-	if exhaustedItem.Kind != "worker_retry_exhausted" || exhaustedItem.PRURL != "https://github.com/aoagents/agent-orchestrator/pull/230" || exhaustedItem.DeepLink != "https://github.com/aoagents/agent-orchestrator/pull/230" {
-		t.Fatalf("retry exhausted attention item = %+v", exhaustedItem)
+	if diedItem.Kind != "worker_died_unfinished" || diedItem.PRURL != "https://github.com/aoagents/agent-orchestrator/pull/230" || diedItem.DeepLink != "https://github.com/aoagents/agent-orchestrator/pull/230" {
+		t.Fatalf("worker died attention item = %+v", diedItem)
 	}
-	for _, excluded := range []string{"session:ci-1", "session:review-1", "session:draft-1", "session:worker-no-signal:no_signal", "pr:https://github.com/aoagents/agent-orchestrator/pull/225:merge", "pr:https://github.com/aoagents/agent-orchestrator/pull/227:merge", "notification:n-routine-death:operator"} {
+	for _, excluded := range []string{"session:ci-1", "session:review-1", "session:draft-1", "session:worker-no-signal:no_signal", "pr:https://github.com/aoagents/agent-orchestrator/pull/225:merge", "pr:https://github.com/aoagents/agent-orchestrator/pull/227:merge", "notification:ao:done-routine:pr_merged"} {
 		if got[excluded] > 0 {
 			t.Fatalf("excluded %s present in %#v; body=%s", excluded, got, body)
 		}

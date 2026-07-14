@@ -29,7 +29,7 @@ const kindTone: Record<string, string> = {
 	blocked: "border-warning/40 bg-warning/10 text-warning",
 	pr: "border-success/40 bg-success/10 text-success",
 	parked_sensitive_merge: "border-destructive/40 bg-destructive/10 text-destructive",
-	worker_retry_exhausted: "border-destructive/40 bg-destructive/10 text-destructive",
+	worker_died_unfinished: "border-destructive/40 bg-destructive/10 text-destructive",
 	main_ci_red: "border-destructive/40 bg-destructive/10 text-destructive",
 	duplicate_pr: "border-warning/40 bg-warning/10 text-warning",
 	orchestrator_replacement_capped: "border-destructive/40 bg-destructive/10 text-destructive",

@@ -64,8 +64,6 @@ func Build() ([]byte, error) {
 			"Agent session lifecycle and messaging"),
 		*(&openapi31.Tag{Name: "attention"}).WithDescription(
 			"Operator-only attention queues derived from live daemon state"),
-		*(&openapi31.Tag{Name: "prs"}).WithDescription(
-			"Pull-request actions (SCM lane)"),
 		*(&openapi31.Tag{Name: "reviews"}).WithDescription(
 			"Code-review runs and findings"),
 		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
@@ -210,9 +208,6 @@ var schemaNames = map[string]string{
 	"ControllersNotificationEnvelope":             "NotificationEnvelope",
 	"ControllersMarkAllNotificationsReadResponse": "MarkAllNotificationsReadResponse",
 	// httpd/controllers — PR wire envelopes
-	"ControllersMergePRResponse":         "MergePRResponse",
-	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
-	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
 	// httpd/controllers — review wire envelopes
 	"ControllersListReviewsResponse":   "ListReviewsResponse",
 	"ControllersReviewRunResponse":     "ReviewRunResponse",
@@ -333,7 +328,6 @@ func operations() []operation {
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, attentionOperations()...)
-	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, importOperations()...)
@@ -1012,38 +1006,6 @@ func sessionOperations() []operation {
 				{http.StatusOK, controllers.SessionResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-	}
-}
-
-// prOperations declares the PR action operations. These live in the SCM lane:
-// the handler delegates to a PRService backed by the SCM provider. A nil
-// PRService (SCM not configured) returns 501 for both routes.
-func prOperations() []operation {
-	return []operation{
-		{
-			method: http.MethodPost, path: "/api/v1/prs/{id}/merge", id: "mergePR", tag: "prs",
-			summary:    "Squash-merge a pull request",
-			pathParams: []any{controllers.PRIDParam{}},
-			resps: []respUnit{
-				{http.StatusOK, controllers.MergePRResponse{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusConflict, envelope.APIError{}},
-				{http.StatusUnprocessableEntity, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPost, path: "/api/v1/prs/{id}/resolve-comments", id: "resolveComments", tag: "prs",
-			summary:    "Resolve review threads on a pull request",
-			pathParams: []any{controllers.PRIDParam{}},
-			reqBody:    nil, // body is optional: omitting it resolves all unresolved threads
-			resps: []respUnit{
-				{http.StatusOK, controllers.ResolveCommentsResponse{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

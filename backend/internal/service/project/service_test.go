@@ -1,11 +1,14 @@
 package project_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -614,6 +617,80 @@ func TestManager_SetConfigAcceptsExplicitTrackerIntakeDisable(t *testing.T) {
 	}
 	if proj.Config == nil || proj.Config.TrackerIntake.Enabled {
 		t.Fatalf("explicit disable should persist a spawnable config with tracker intake off, got %#v", proj.Config)
+	}
+}
+
+// #313 removed the automatic worker respawn subsystem, but persisted configs
+// (including the committed ops/project-config spec) still carry
+// trackerIntake.respawn. The full write path must keep round-tripping it as a
+// tolerated no-op: strict decode (the #302 API write path rejects unknown
+// fields) → SetConfig → sqlite persistence → Get → re-encode with the stanza
+// intact — and with zero behavioral effect on the intake config.
+func TestManager_SetConfigRoundTripsLegacyRespawnStanza(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	payload := []byte(`{"trackerIntake":{"enabled":true,"provider":"github","assignee":"*","maxConcurrent":2,"respawn":{"disabled":true,"maxRetries":0}}}`)
+	var cfg domain.ProjectConfig
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		t.Fatalf("strict decode rejected a config carrying the legacy respawn stanza: %v", err)
+	}
+
+	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config:                             spawnable(cfg),
+		ConfigIncludesTrackerIntakeEnabled: true,
+	}); err != nil {
+		t.Fatalf("SetConfig with legacy respawn stanza: %v", err)
+	}
+
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.Config == nil {
+		t.Fatalf("project config missing after save: %#v", got.Project)
+	}
+	ti := got.Project.Config.TrackerIntake
+	if ti.Respawn == nil || !ti.Respawn.Disabled || ti.Respawn.MaxRetries == nil || *ti.Respawn.MaxRetries != 0 {
+		t.Fatalf("respawn stanza did not survive persistence: %#v", ti.Respawn)
+	}
+
+	// Re-encode: the stored config still emits the exact stanza, so
+	// project-config capture/apply cycles cannot drift on it. Compare the
+	// re-encoded fragment structurally against the original stanza.
+	out, err := json.Marshal(ti)
+	if err != nil {
+		t.Fatalf("marshal tracker intake: %v", err)
+	}
+	var reencoded map[string]any
+	if err := json.Unmarshal(out, &reencoded); err != nil {
+		t.Fatalf("unmarshal re-encoded intake config: %v", err)
+	}
+	var wantRespawn any
+	if err := json.Unmarshal([]byte(`{"disabled":true,"maxRetries":0}`), &wantRespawn); err != nil {
+		t.Fatalf("unmarshal expected respawn stanza: %v", err)
+	}
+	if !reflect.DeepEqual(reencoded["respawn"], wantRespawn) {
+		t.Fatalf("re-encoded respawn stanza = %#v, want %#v (full fragment: %s)", reencoded["respawn"], wantRespawn, out)
+	}
+
+	// Zero behavioral effect: the stanza changes nothing about the effective
+	// intake config — validation and defaulting are identical with and without it.
+	if err := ti.Validate(); err != nil {
+		t.Fatalf("Validate rejected an ignored respawn stanza: %v", err)
+	}
+	withStanza := ti.WithDefaults()
+	withStanza.Respawn = nil
+	withoutStanza := ti
+	withoutStanza.Respawn = nil
+	withoutStanza = withoutStanza.WithDefaults()
+	if !reflect.DeepEqual(withStanza, withoutStanza) {
+		t.Fatalf("respawn stanza changed effective intake config:\nwith:    %#v\nwithout: %#v", withStanza, withoutStanza)
 	}
 }
 

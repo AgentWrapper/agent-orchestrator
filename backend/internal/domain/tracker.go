@@ -119,40 +119,14 @@ type ListFilter struct {
 	Limit    int             `json:"limit,omitempty"`
 }
 
-// DefaultWorkerRespawnMaxRetries keeps automatic replacement disabled unless an
-// operator explicitly configures a positive bounded retry count.
-const DefaultWorkerRespawnMaxRetries = 0
-
-// TrackerRespawnPolicy controls clean worker retry behavior for tracker intake.
-// MaxRetries is a pointer so an explicit JSON zero can mean "notify but do not
-// respawn" instead of being confused with "unset". The unset default is zero.
+// TrackerRespawnPolicy is retained only for persisted-config compatibility.
+// The automatic worker respawn/retry subsystem was removed (#313): intake
+// never launches replacement workers, so this shape is decoded and ignored.
+// It exists so strict config decoding (project add/set-config) keeps accepting
+// stored configs that still carry a respawn stanza.
 type TrackerRespawnPolicy struct {
 	Disabled   bool `json:"disabled,omitempty"`
 	MaxRetries *int `json:"maxRetries,omitempty"`
-}
-
-// WithDefaults materializes the default retry cap.
-func (p TrackerRespawnPolicy) WithDefaults() TrackerRespawnPolicy {
-	if p.MaxRetries == nil {
-		defaultMaxRetries := DefaultWorkerRespawnMaxRetries
-		p.MaxRetries = &defaultMaxRetries
-	}
-	return p
-}
-
-// IsEnabled reports whether tracker intake should launch clean replacement
-// workers after an unfinished worker dies.
-func (p TrackerRespawnPolicy) IsEnabled() bool {
-	return !p.Disabled
-}
-
-// EffectiveMaxRetries returns the materialized retry cap.
-func (p TrackerRespawnPolicy) EffectiveMaxRetries() int {
-	p = p.WithDefaults()
-	if p.MaxRetries == nil {
-		return DefaultWorkerRespawnMaxRetries
-	}
-	return *p.MaxRetries
 }
 
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
@@ -182,18 +156,10 @@ type TrackerIntakeConfig struct {
 	// durable spawn state is created. Lifecycle restore/re-adoption paths do not
 	// terminate saved work to enforce this admission cap retroactively.
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
-	// Respawn controls clean replacement workers for unfinished issues whose
-	// previous worker sessions terminated. Defaults to zero retries.
-	Respawn *TrackerRespawnPolicy `json:"respawn,omitempty"`
-}
-
-// EffectiveRespawnPolicy returns the configured respawn policy with defaults
-// applied without mutating the persisted config shape.
-func (c TrackerIntakeConfig) EffectiveRespawnPolicy() TrackerRespawnPolicy {
-	if c.Respawn == nil {
-		return (TrackerRespawnPolicy{}).WithDefaults()
-	}
-	return c.Respawn.WithDefaults()
+	// Respawn is retained only for persisted-config compatibility. The automatic
+	// worker respawn subsystem was removed (#313); intake ignores this field. A
+	// worker that dies with unfinished work requires an explicit operator restart.
+	Respawn *TrackerRespawnPolicy `json:"respawn,omitempty" deprecated:"true" description:"Ignored compatibility field; automatic worker respawn was removed. A dead worker requires an explicit operator restart."`
 }
 
 // WithDefaults fills the provider only when intake is enabled. Disabled intake
@@ -229,9 +195,6 @@ func (c TrackerIntakeConfig) Validate() error {
 	}
 	if c.MaxConcurrent <= 0 {
 		return fmt.Errorf("trackerIntake.maxConcurrent: must be positive when intake is enabled")
-	}
-	if c.Respawn != nil && c.Respawn.MaxRetries != nil && *c.Respawn.MaxRetries < 0 {
-		return fmt.Errorf("trackerIntake.respawn.maxRetries: must not be negative")
 	}
 	return nil
 }

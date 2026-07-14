@@ -348,10 +348,6 @@ export async function launchOrchestrator(
 	};
 }
 
-export async function mergePR(cfg: ServerConfig, pr: DashboardPR): Promise<void> {
-	await req(cfg, `${API}/prs/${pr.number}/merge`, { method: "POST" });
-}
-
 // Quick reachability probe for the Settings "Test connection" button.
 export async function pingServer(cfg: ServerConfig): Promise<number> {
 	const res = await req(cfg, `${API}/sessions`);

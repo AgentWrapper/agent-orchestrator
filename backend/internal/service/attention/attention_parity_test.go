@@ -560,18 +560,41 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			}},
 		},
 		{
-			name: "worker_retry_exhausted surfaces with PR deep link; worker_died_unfinished does not",
+			// #313: worker death is a terminal escalation requiring an explicit
+			// operator restart, so it surfaces as operator attention; informational
+			// types (pr_merged) stay out of the projection.
+			name: "worker_died_unfinished surfaces with PR deep link; informational pr_merged does not",
 			build: func() *parityFakeAttentionService {
-				exhPR := "https://github.com/aoagents/agent-orchestrator/pull/930"
+				diedPR := "https://github.com/aoagents/agent-orchestrator/pull/930"
 				return &parityFakeAttentionService{
 					notifications: []notificationsvc.Notification{
 						{NotificationRecord: domain.NotificationRecord{
-							ID: "n-exhausted", SessionID: "dead-1", ProjectID: "ao", PRURL: exhPR,
-							Type: domain.NotificationWorkerRetryExhausted, Title: "retry cap", Status: domain.NotificationUnread,
+							ID: "n-died", SessionID: "dead-1", ProjectID: "ao", PRURL: diedPR,
+							Type: domain.NotificationWorkerDiedUnfinished, Title: "died", Status: domain.NotificationUnread,
 							CreatedAt: now,
 						}},
 						{NotificationRecord: domain.NotificationRecord{
-							ID: "n-died", SessionID: "dead-2", ProjectID: "ao",
+							ID: "n-merged", SessionID: "done-1", ProjectID: "ao", PRURL: "https://github.com/aoagents/agent-orchestrator/pull/931",
+							Type: domain.NotificationPRMerged, Title: "merged", Status: domain.NotificationUnread,
+							CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "notification:ao:dead-1:worker_died_unfinished", kind: "worker_died_unfinished",
+				sessionID: "dead-1",
+				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/930",
+				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/930",
+			}},
+		},
+		{
+			name: "worker_died_unfinished without a PR URL falls back to the session deep link",
+			build: func() *parityFakeAttentionService {
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-nopr", SessionID: "dead-3", ProjectID: "ao",
 							Type: domain.NotificationWorkerDiedUnfinished, Title: "died", Status: domain.NotificationUnread,
 							CreatedAt: now,
 						}},
@@ -579,27 +602,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				}
 			},
 			want: []parityExpect{{
-				id: "notification:ao:dead-1:worker_retry_exhausted", kind: "worker_retry_exhausted",
-				sessionID: "dead-1",
-				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/930",
-				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/930",
-			}},
-		},
-		{
-			name: "worker_retry_exhausted without a PR URL falls back to the session deep link",
-			build: func() *parityFakeAttentionService {
-				return &parityFakeAttentionService{
-					notifications: []notificationsvc.Notification{
-						{NotificationRecord: domain.NotificationRecord{
-							ID: "n-nopr", SessionID: "dead-3", ProjectID: "ao",
-							Type: domain.NotificationWorkerRetryExhausted, Title: "retry cap", Status: domain.NotificationUnread,
-							CreatedAt: now,
-						}},
-					},
-				}
-			},
-			want: []parityExpect{{
-				id: "notification:ao:dead-3:worker_retry_exhausted", kind: "worker_retry_exhausted",
+				id: "notification:ao:dead-3:worker_died_unfinished", kind: "worker_died_unfinished",
 				sessionID: "dead-3",
 				prURL:     "",
 				deepLink:  "/projects/ao/sessions/dead-3",
@@ -723,8 +726,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 		},
 		{
 			// Phase 2 negative: informational / non-operator-attention notification
-			// types must NOT surface in the projection. worker_died_unfinished is
-			// a routine death (a replacement is queued); pr_merged is informational;
+			// types must NOT surface in the projection. pr_merged is informational;
 			// model_recovered is a recovery. needs_input and ready_to_merge are
 			// intentionally excluded here because the projection derives those from
 			// live session/decision and PR facts, not notification rows.
@@ -732,11 +734,6 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			build: func() *parityFakeAttentionService {
 				return &parityFakeAttentionService{
 					notifications: []notificationsvc.Notification{
-						{NotificationRecord: domain.NotificationRecord{
-							ID: "n-died", ProjectID: "ao", SessionID: "dead-x",
-							Type: domain.NotificationWorkerDiedUnfinished, Status: domain.NotificationUnread,
-							Title: "died", CreatedAt: now,
-						}},
 						{NotificationRecord: domain.NotificationRecord{
 							ID: "n-merged", ProjectID: "ao", SessionID: "m-x",
 							Type: domain.NotificationPRMerged, Status: domain.NotificationUnread,
@@ -1048,7 +1045,7 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 
 	t.Run("re-emitted rows for one subject collapse to one item; newest CreatedAt wins regardless of order", func(t *testing.T) {
 		// Two notification ROWS (distinct row ids) describe the same unresolved
-		// condition: worker_retry_exhausted for the same session. The item id is
+		// condition: worker_died_unfinished for the same session. The item id is
 		// keyed by subject identity, so appendAttentionItem collapses them and
 		// attentionItemSupersedes keeps the NEWER CreatedAt. Asserting the
 		// survivor's fields (not just that one row exists) defeats a "keep the
@@ -1058,18 +1055,18 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 		newerPR := "https://github.com/aoagents/agent-orchestrator/pull/971"
 		older := notificationsvc.Notification{NotificationRecord: domain.NotificationRecord{
 			ID: "row-old", SessionID: "s-dup", ProjectID: "ao", PRURL: olderPR,
-			Type: domain.NotificationWorkerRetryExhausted, Title: "older", Status: domain.NotificationUnread,
+			Type: domain.NotificationWorkerDiedUnfinished, Title: "older", Status: domain.NotificationUnread,
 			SubjectKind: domain.NotificationSubjectSession, SubjectID: "s-dup",
 			CreatedAt: now,
 		}}
 		newer := notificationsvc.Notification{NotificationRecord: domain.NotificationRecord{
 			ID: "row-new", SessionID: "s-dup", ProjectID: "ao", PRURL: newerPR,
-			Type: domain.NotificationWorkerRetryExhausted, Title: "newer", Status: domain.NotificationUnread,
+			Type: domain.NotificationWorkerDiedUnfinished, Title: "newer", Status: domain.NotificationUnread,
 			SubjectKind: domain.NotificationSubjectSession, SubjectID: "s-dup",
 			CreatedAt: now.Add(time.Hour),
 		}}
 		wantNewerWins := []parityExpect{{
-			id: "notification:ao:s-dup:worker_retry_exhausted", kind: "worker_retry_exhausted",
+			id: "notification:ao:s-dup:worker_died_unfinished", kind: "worker_died_unfinished",
 			sessionID: "s-dup", prURL: newerPR, deepLink: newerPR,
 		}}
 		for _, order := range []struct {
@@ -1095,7 +1092,7 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 			notifications: []notificationsvc.Notification{
 				{NotificationRecord: domain.NotificationRecord{
 					ID: "", SessionID: "s-x", ProjectID: "ao",
-					Type: domain.NotificationWorkerRetryExhausted, Title: "noid", Status: domain.NotificationUnread,
+					Type: domain.NotificationWorkerDiedUnfinished, Title: "noid", Status: domain.NotificationUnread,
 					CreatedAt: now,
 				}},
 			},
@@ -1105,7 +1102,7 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 			t.Fatalf("derive: %v", err)
 		}
 		assertProjectionEquals(t, items, []parityExpect{{
-			id: "notification:ao:s-x:worker_retry_exhausted", kind: "worker_retry_exhausted",
+			id: "notification:ao:s-x:worker_died_unfinished", kind: "worker_died_unfinished",
 			sessionID: "s-x", deepLink: "/projects/ao/sessions/s-x",
 		}})
 	})

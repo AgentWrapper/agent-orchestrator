@@ -32,9 +32,11 @@ type Store interface {
 	ListProjects(ctx context.Context) ([]domain.ProjectRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	// ListOpenPRs returns every tracked PR that is neither merged nor closed.
-	// Intake uses it to skip issues that already have an open linked PR even when
-	// the owning session row is gone (a replaced/respawned worker), which is the
-	// mechanical half of the duplicate-PR guard (issue #181).
+	// Intake pins an issue as seen when its open PR has a LIVE driver (a
+	// non-terminated owning session) — the mechanical half of the duplicate-PR
+	// guard (issue #181). A PR whose owner is terminated is deliberately NOT
+	// pinned: that is the died-with-open-PR case (#230), routed to the terminal
+	// death escalation instead. See seenIssueIDs.
 	ListOpenPRs(ctx context.Context) ([]domain.PullRequest, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	GetFleetPaused(ctx context.Context) (bool, error)
@@ -161,11 +163,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// A worker session may have ended (replaced/respawned) while its PR stays
-	// open. Reading open PRs lets intake treat "issue already has an open PR" as
-	// seen even when no live session ties back to it, closing the duplicate-PR
-	// intake gap (issue #181). A read failure must not silently re-dispatch a
-	// duplicate, so it fails the pass (retried after backoff).
+	// A worker session may have ended while its PR stays open. Reading open PRs
+	// lets intake treat "issue already has an open PR" as seen even when no live
+	// session ties back to it, closing the duplicate-PR intake gap (issue #181).
+	// A read failure must not silently re-dispatch a duplicate, so it fails the
+	// pass (retried after backoff).
 	openPRs, err := o.store.ListOpenPRs(ctx)
 	if err != nil {
 		return err
@@ -235,54 +237,34 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		sessionsForIssue := sessionsByIssue[issueID]
-		var postSpawnIntent *ports.NotificationIntent
-		var retry retryDecision
 		if seen[issueID] {
-			if _, _, ok := latestTerminatedWorker(sessionsForIssue); !ok {
+			// A live worker or live-driven open PR marks the issue handled — but a
+			// live NON-worker session (an orchestrator bound to the issue) must not
+			// silence a dead worker's terminal escalation, so fall through to the
+			// dispatch decision when a terminated worker exists. That decision never
+			// spawns while a terminated worker is present, so a seen issue can never
+			// be double-dispatched from here.
+			if _, ok := latestTerminatedWorker(sessionsForIssue); !ok {
 				continue
-			}
-			var err error
-			retry, err = o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
-			if err != nil {
-				o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
-				spawnFailed = true
-				continue
-			}
-			if retry.intent != nil && (!retry.spawn || !retry.intent.AdoptsOpenPR) {
-				o.emitNotification(ctx, *retry.intent)
-			}
-			if retry.done || !retry.spawn {
-				continue
-			}
-			if retry.intent != nil && retry.intent.AdoptsOpenPR {
-				postSpawnIntent = retry.intent
-			}
-		} else {
-			var err error
-			retry, err = o.retryDecision(ctx, cfg, issueID, sessionsForIssue, canAdoptOpenPR(project))
-			if err != nil {
-				o.logger.Error("tracker intake: retry decision failed", "project", project.ID, "issue", issueID, "err", err)
-				spawnFailed = true
-				continue
-			}
-			if retry.intent != nil && (!retry.spawn || !retry.intent.AdoptsOpenPR) {
-				o.emitNotification(ctx, *retry.intent)
-			}
-			if retry.done {
-				seen[issueID] = true
-				continue
-			}
-			if !retry.spawn {
-				continue
-			}
-			if retry.intent != nil && retry.intent.AdoptsOpenPR {
-				postSpawnIntent = retry.intent
 			}
 		}
+		decision, err := o.dispatchDecision(ctx, issueID, sessionsForIssue)
+		if err != nil {
+			o.logger.Error("tracker intake: dispatch decision failed", "project", project.ID, "issue", issueID, "err", err)
+			spawnFailed = true
+			continue
+		}
+		if decision.intent != nil {
+			o.emitNotification(ctx, *decision.intent)
+		}
+		if decision.done {
+			seen[issueID] = true
+			continue
+		}
+		if !decision.spawn {
+			continue
+		}
 		if workerPoolFull {
-			if postSpawnIntent != nil {
-				o.emitNotification(ctx, observationOnlyIntent(*postSpawnIntent))
-			}
 			o.logger.Debug("tracker intake: normal worker pool already full, deferring issue", "project", project.ID, "issue", issueID)
 			continue
 		}
@@ -292,31 +274,21 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			IssueTitle: issue.Title,
 			Kind:       domain.KindWorker,
 			Prompt:     BuildIssuePrompt(issue),
-			Branch:     retry.adoptBranch,
 		}
 		if harness, ok := domain.RoutingHarnessForIssueLabels(issue.Labels); ok {
 			spawnCfg.Harness = harness
 		}
 		if _, err := o.spawner.Spawn(ctx, spawnCfg); err != nil {
 			if isWorkerDeferral(err) {
-				if postSpawnIntent != nil {
-					o.emitNotification(ctx, observationOnlyIntent(*postSpawnIntent))
-				}
 				o.logger.Debug("tracker intake: spawn deferred by session allocator", "project", project.ID, "issue", issueID, "err", err)
 				if isWorkerConcurrencyCap(err) {
 					workerPoolFull = true
 				}
 				continue
 			}
-			if postSpawnIntent != nil {
-				o.emitNotification(ctx, observationOnlyIntent(*postSpawnIntent))
-			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
 			spawnFailed = true
 			continue
-		}
-		if postSpawnIntent != nil {
-			o.emitNotification(ctx, *postSpawnIntent)
 		}
 		seen[issueID] = true
 	}
@@ -337,95 +309,65 @@ func isWorkerMixBucketDown(err error) bool {
 	return errors.As(err, &apiError) && apiError.Code == "WORKER_MIX_BUCKET_DOWN"
 }
 
-func observationOnlyIntent(intent ports.NotificationIntent) ports.NotificationIntent {
-	intent.AdoptsOpenPR = false
-	return intent
+type dispatchDecision struct {
+	spawn  bool
+	done   bool
+	intent *ports.NotificationIntent
 }
 
-type retryDecision struct {
-	spawn       bool
-	done        bool
-	adoptBranch string
-	intent      *ports.NotificationIntent
-}
-
-// retryDecision decides what intake should do about an issue that already has
+// dispatchDecision decides what intake should do about an issue that already has
 // session history. The dedup key is a *live driver*, not the mere existence of a
 // PR (issue #230): only a non-terminated worker (or a landed/merged PR) makes an
-// issue "handled". A died-with-open-PR issue has no live driver, so it flows
-// through the same retry-cap machinery as a died-with-no-PR issue — respawning a
-// replacement (in claim mode when there is an open PR to adopt) or, past the cap,
-// escalating loudly. Silence is never the terminal state.
-func (o *Observer) retryDecision(ctx context.Context, cfg domain.TrackerIntakeConfig, issueID domain.IssueID, sessions []domain.SessionRecord, canAdopt bool) (retryDecision, error) {
+// issue "handled". A worker that died with unfinished work — with or without an
+// orphaned open PR — emits one terminal death notification and requires an
+// explicit operator restart; intake never launches replacement workers (#313).
+// Silence is never the terminal state.
+func (o *Observer) dispatchDecision(ctx context.Context, issueID domain.IssueID, sessions []domain.SessionRecord) (dispatchDecision, error) {
 	if len(sessions) == 0 {
-		return retryDecision{spawn: true}, nil
+		return dispatchDecision{spawn: true}, nil
 	}
 	// A live worker is actively driving the issue (its PR, if any, has a driver):
-	// this is the legitimate duplicate-PR guard case (#181). Never respawn, never
-	// notify — leave the live worker alone.
+	// this is the legitimate duplicate-PR guard case (#181). Never notify — leave
+	// the live worker alone.
 	if hasLiveWorker(sessions) {
-		return retryDecision{done: true}, nil
+		return dispatchDecision{done: true}, nil
 	}
-	// No live worker. Inspect the (necessarily terminated) sessions' PRs.
-	openPR, hasMerged, err := o.inspectHandledPRs(ctx, sessions)
+	// No live worker. Inspect the (necessarily terminated) sessions' PRs against
+	// the LATEST dead worker's chronology.
+	latest, hasDeadWorker := latestTerminatedWorker(sessions)
+	openPR, hasCurrentMerged, err := o.inspectHandledPRs(ctx, sessions, latest)
 	if err != nil {
-		return retryDecision{}, err
+		return dispatchDecision{}, err
 	}
-	if hasMerged && openPR.URL == "" {
-		// Work landed on a merged PR; nothing to respawn or escalate. Checked before
-		// the dead-worker gate so a landed PR can never fall through to a respawn.
-		return retryDecision{done: true}, nil
+	if hasCurrentMerged && openPR.URL == "" {
+		// Work landed on a merged PR that belongs to (or postdates) the latest
+		// dead worker; nothing left to do. Checked before the dead-worker gate so
+		// a landed PR can never trigger a death escalation. A merged PR that
+		// PREDATES the latest worker proves nothing about it — a reopened issue or
+		// a later worker dying after an earlier PR merged must still escalate.
+		return dispatchDecision{done: true}, nil
 	}
-	latest, deadCount, hasDeadWorker := latestTerminatedWorker(sessions)
 	if !hasDeadWorker {
-		return retryDecision{spawn: true}, nil
+		return dispatchDecision{spawn: true}, nil
 	}
-	// From here: a dead worker with either an orphaned open PR (openPR.URL != "")
-	// or no PR at all. Both run the retry-cap logic; an orphaned open PR is carried
-	// through so the replacement adopts it (claim mode) and the escalation names it.
-	policy := cfg.EffectiveRespawnPolicy()
-	limit := policy.EffectiveMaxRetries()
-	if !policy.IsEnabled() {
-		exhausted := workerRetryExhaustedIntent(latest, issueID, deadCount, 0)
-		exhausted.PRURL = openPR.URL
-		return retryDecision{spawn: false, intent: &exhausted}, nil
-	}
-	if deadCount > limit {
-		exhausted := workerRetryExhaustedIntent(latest, issueID, deadCount, limit)
-		exhausted.PRURL = openPR.URL
-		return retryDecision{spawn: false, intent: &exhausted}, nil
-	}
+	// A dead worker with unfinished work: escalate once (the notification store
+	// dedupes re-emissions) and wait for an explicit operator restart. An orphaned
+	// open PR is a fact the operator needs, so the notification names it.
 	intent := workerDiedIntent(latest, issueID)
-	decision := retryDecision{spawn: true, intent: &intent}
-	if openPR.URL != "" {
-		sourceBranch := strings.TrimSpace(openPR.SourceBranch)
-		if !canAdopt {
-			blocked := workerRetryBlockedIntent(latest, issueID, deadCount, limit, openPR.URL, "project uses in-place workspace mode, so ao cannot safely check out the orphaned PR branch")
-			return retryDecision{spawn: false, intent: &blocked}, nil
-		}
-		if sourceBranch == "" {
-			blocked := workerRetryBlockedIntent(latest, issueID, deadCount, limit, openPR.URL, "the orphaned PR has no recorded source branch to adopt")
-			return retryDecision{spawn: false, intent: &blocked}, nil
-		}
-		intent.AdoptsOpenPR = true
-		intent.PRURL = openPR.URL
-		decision.adoptBranch = sourceBranch
-	}
-	return decision, nil
-}
-
-func canAdoptOpenPR(project domain.ProjectRecord) bool {
-	return project.Config.ResolveWorkspaceMode(domain.KindWorker) == domain.WorkspaceModeWorktree
+	intent.PRURL = openPR.URL
+	return dispatchDecision{intent: &intent}, nil
 }
 
 // inspectHandledPRs summarizes the PRs owned by an issue's worker sessions:
-// openPR is the first still-open PR (zero if none) and hasMerged reports any
-// merged PR. Callers reach it only after ruling out a live worker, so an open PR
-// found here is orphaned by definition. Closed-unmerged PRs are retry-eligible
-// and reported as neither. The open PR source branch is carried to the respawn
-// SpawnConfig so the replacement works on the existing PR branch instead of
-// creating a duplicate branch for the same issue.
-func (o *Observer) inspectHandledPRs(ctx context.Context, sessions []domain.SessionRecord) (openPR domain.PullRequest, hasMerged bool, err error) {
+// openPR is the first still-open PR (zero if none) and hasCurrentMerged reports
+// a merged PR that belongs to the LATEST terminated worker or postdates its
+// chronology. A merged PR from an EARLIER worker generation proves nothing
+// about the latest one — a reopened issue, or a later worker dying after an
+// earlier worker's PR merged, must still escalate rather than be silenced by
+// stale history. Callers reach this only after ruling out a live worker, so an
+// open PR found here is orphaned by definition and is surfaced as a fact in
+// the terminal death notification. Closed-unmerged PRs are reported as neither.
+func (o *Observer) inspectHandledPRs(ctx context.Context, sessions []domain.SessionRecord, latest domain.SessionRecord) (openPR domain.PullRequest, hasCurrentMerged bool, err error) {
 	if o.store == nil {
 		return domain.PullRequest{}, false, nil
 	}
@@ -440,13 +382,33 @@ func (o *Observer) inspectHandledPRs(ctx context.Context, sessions []domain.Sess
 		for _, pr := range prs {
 			switch {
 			case pr.Merged:
-				hasMerged = true
+				if mergedPRIsCurrent(pr, sess, latest) {
+					hasCurrentMerged = true
+				}
 			case !pr.Closed && openPR.URL == "":
 				openPR = pr
 			}
 		}
 	}
-	return openPR, hasMerged, nil
+	return openPR, hasCurrentMerged, nil
+}
+
+// mergedPRIsCurrent reports whether a merged PR counts as completing the
+// CURRENT worker generation: it belongs to the latest terminated worker, or its
+// last observed update does not predate that worker's chronology (e.g. an
+// earlier worker's PR merged posthumously, after the latest worker died). The
+// timestamp comparison needs BOTH sides to be usable: a latest worker with no
+// recorded chronology must not let an earlier PR's nonzero timestamp silence
+// its death escalation.
+func mergedPRIsCurrent(pr domain.PullRequest, owner, latest domain.SessionRecord) bool {
+	if latest.ID == "" {
+		return true
+	}
+	if owner.ID == latest.ID {
+		return true
+	}
+	latestTime := sessionSortTime(latest)
+	return !pr.UpdatedAt.IsZero() && !latestTime.IsZero() && !pr.UpdatedAt.Before(latestTime)
 }
 
 // hasLiveWorker reports whether any non-terminated worker session is present for
@@ -470,19 +432,17 @@ func (o *Observer) emitNotification(ctx context.Context, intent ports.Notificati
 	}
 }
 
-func latestTerminatedWorker(sessions []domain.SessionRecord) (domain.SessionRecord, int, bool) {
+func latestTerminatedWorker(sessions []domain.SessionRecord) (domain.SessionRecord, bool) {
 	var latest domain.SessionRecord
-	var count int
 	for _, sess := range sessions {
 		if sess.Kind != domain.KindWorker || !sess.IsTerminated {
 			continue
 		}
-		count++
 		if latest.ID == "" || sessionSortTime(sess).After(sessionSortTime(latest)) {
 			latest = sess
 		}
 	}
-	return latest, count, count > 0
+	return latest, latest.ID != ""
 }
 
 func sessionSortTime(sess domain.SessionRecord) time.Time {
@@ -492,36 +452,20 @@ func sessionSortTime(sess domain.SessionRecord) time.Time {
 	return sess.CreatedAt
 }
 
+// workerDiedIntent is the terminal death escalation for a worker that
+// terminated with unfinished work. It carries the session's terminal failure
+// reason so the operator sees where the worker died; resuming the issue
+// requires an explicit operator restart.
 func workerDiedIntent(sess domain.SessionRecord, issueID domain.IssueID) ports.NotificationIntent {
 	return ports.NotificationIntent{
-		Type:               domain.NotificationWorkerDiedUnfinished,
-		SessionID:          sess.ID,
-		ProjectID:          sess.ProjectID,
-		IssueID:            issueID,
-		CreatedAt:          sessionSortTime(sess),
-		SessionDisplayName: sess.DisplayName,
-	}
-}
-
-func workerRetryExhaustedIntent(sess domain.SessionRecord, issueID domain.IssueID, retryCount, retryLimit int) ports.NotificationIntent {
-	return ports.NotificationIntent{
-		Type:                  domain.NotificationWorkerRetryExhausted,
+		Type:                  domain.NotificationWorkerDiedUnfinished,
 		SessionID:             sess.ID,
 		ProjectID:             sess.ProjectID,
 		IssueID:               issueID,
 		CreatedAt:             sessionSortTime(sess),
 		SessionDisplayName:    sess.DisplayName,
-		RetryCount:            retryCount,
-		RetryLimit:            retryLimit,
 		TerminalFailureReason: strings.TrimSpace(sess.TerminalFailureReason),
 	}
-}
-
-func workerRetryBlockedIntent(sess domain.SessionRecord, issueID domain.IssueID, retryCount, retryLimit int, prURL, reason string) ports.NotificationIntent {
-	intent := workerRetryExhaustedIntent(sess, issueID, retryCount, retryLimit)
-	intent.PRURL = strings.TrimSpace(prURL)
-	intent.Reason = strings.TrimSpace(reason)
-	return intent
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
@@ -580,11 +524,12 @@ func seenIssueIDs(projects []domain.ProjectRecord, sessions []domain.SessionReco
 	// differently), a live-driven open PR still pins its issue as seen.
 	//
 	// A PR owned by a *terminated* session is deliberately NOT pinned here: that
-	// is the died-with-open-PR case (issue #230). Pinning it seen would orphan the
-	// PR — no live worker drives it, yet intake refuses to respawn. Letting it fall
-	// through routes it to retryDecision, which respawns a replacement in claim
-	// mode (the new worker adopts the PR) or, past the retry cap, escalates. The
-	// dedup key is "open PR with a live driver", not merely "open PR exists".
+	// is the died-with-open-PR case (issue #230). Pinning it seen would silence the
+	// orphaned PR — no live worker drives it, yet intake would treat it as handled.
+	// Letting it fall through routes it to dispatchDecision, which escalates the
+	// terminal worker death (naming the orphaned PR) for an explicit operator
+	// restart. The dedup key is "open PR with a live driver", not merely "open PR
+	// exists".
 	for _, pr := range openPRs {
 		sess, ok := sessionByID[pr.SessionID]
 		if !ok || sess.IsTerminated {

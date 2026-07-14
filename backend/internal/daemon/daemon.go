@@ -219,7 +219,6 @@ func Run() error {
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
-		PRs:                buildPRActionService(store, scmProvider, trackerAdapter),
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
