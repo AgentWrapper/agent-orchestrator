@@ -117,6 +117,9 @@ func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 	if h := effectiveHarness("", domain.KindOrchestrator, cfg); h != domain.HarnessClaudeCode {
 		t.Fatalf("orchestrator harness = %q, want claude-code", h)
 	}
+	if h := effectiveHarness("", domain.KindReviewer, cfg); h != "" {
+		t.Fatalf("reviewer harness = %q, want explicit harness requirement", h)
+	}
 
 	// Role override merges over the base agent config (set fields win; unset keep base).
 	got := effectiveAgentConfig(domain.KindWorker, cfg)
@@ -126,6 +129,9 @@ func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 	// Orchestrator has no agent-config override, so the base config is used as-is.
 	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg); got.Model != "base" {
 		t.Fatalf("orchestrator config = %#v, want base", got)
+	}
+	if got := effectiveAgentConfig(domain.KindReviewer, cfg); got.Model != "base" || got.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("reviewer config = %#v, want base config without worker override", got)
 	}
 }
 

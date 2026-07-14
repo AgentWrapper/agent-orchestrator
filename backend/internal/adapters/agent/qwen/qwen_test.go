@@ -154,6 +154,39 @@ func TestGetLaunchCommandWorkerStartsInteractive(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandReviewerStartsInteractive(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+	workspace := t.TempDir()
+	dataDir := t.TempDir()
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:          domain.KindReviewer,
+		DataDir:       dataDir,
+		WorkspacePath: workspace,
+		Prompt:        "review this",
+		SessionID:     "repo/review#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS == "windows" {
+		want := []string{"qwen", "-i", "review this"}
+		if !reflect.DeepEqual(cmd, want) {
+			t.Fatalf("unexpected reviewer command\nwant: %#v\n got: %#v", want, cmd)
+		}
+		return
+	}
+
+	if len(cmd) != 3 || !reflect.DeepEqual(cmd[:2], []string{"sh", "-lc"}) {
+		t.Fatalf("unexpected reviewer command prefix: %#v", cmd)
+	}
+	script := cmd[2]
+	if !strings.Contains(script, `exec 'qwen' '--json-file'`) || strings.Contains(script, "'-p'") {
+		t.Fatalf("reviewer must use durable interactive launch, got: %s", script)
+	}
+}
+
 func TestSafeQwenSessionKeyDisambiguatesSanitizedCollisions(t *testing.T) {
 	first := safeQwenSessionKey("a.b-1")
 	second := safeQwenSessionKey("a_b-1")

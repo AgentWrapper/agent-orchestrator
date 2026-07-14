@@ -26,7 +26,7 @@ var (
 	ErrSCMUnavailable = errors.New("session: scm unavailable")
 	// ErrProjectMismatch is returned when the PR repository does not match the session project repository.
 	ErrProjectMismatch = errors.New("session: pr project mismatch")
-	// ErrSessionNotClaimable is returned when an orchestrator session tries to claim a PR.
+	// ErrSessionNotClaimable is returned when a non-worker session tries to claim a PR.
 	ErrSessionNotClaimable = errors.New("session: not claimable")
 	// ErrSessionNoWorkspace is returned when a session has no workspace path to associate with PR work.
 	ErrSessionNoWorkspace = errors.New("session: no workspace")
@@ -69,7 +69,7 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	if rec.IsTerminated {
 		return ClaimPRResult{}, sessionmanagerAPIError("SESSION_TERMINATED", "Session is terminated")
 	}
-	if rec.Kind == domain.KindOrchestrator {
+	if rec.Kind != domain.KindWorker {
 		return ClaimPRResult{}, ErrSessionNotClaimable
 	}
 	if strings.TrimSpace(rec.Metadata.WorkspacePath) == "" {

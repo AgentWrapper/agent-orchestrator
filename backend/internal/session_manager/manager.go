@@ -462,7 +462,7 @@ func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceI
 
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
 // otherwise the project's role override for the session kind applies. Empty is
-// invalid for new worker/orchestrator launches and is rejected by Spawn.
+// invalid for new launches and is rejected by Spawn.
 func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) domain.AgentHarness {
 	if explicit != "" {
 		return explicit
@@ -474,10 +474,14 @@ func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg
 }
 
 func roleConfigName(kind domain.SessionKind) string {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return "orchestrator"
+	case domain.KindReviewer:
+		return "reviewer"
+	default:
+		return "worker"
 	}
-	return "worker"
 }
 
 // effectiveAgentConfig merges the role override's agent config over the
@@ -495,10 +499,14 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return cfg.Orchestrator
+	case domain.KindReviewer:
+		return domain.RoleOverride{}
+	default:
+		return cfg.Worker
 	}
-	return cfg.Worker
 }
 
 // sessionPrefix returns the display prefix for a project: the explicit

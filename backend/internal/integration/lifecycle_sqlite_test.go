@@ -208,6 +208,51 @@ func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 	}
 }
 
+func TestReviewerSessionSQLiteLifecycle(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer",
+		IssueID:   "13",
+		Kind:      domain.KindReviewer,
+		Harness:   domain.HarnessClaudeCode,
+		Prompt:    "review issue 13",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Kind != domain.KindReviewer || sess.IssueID != "13" {
+		t.Fatalf("spawned reviewer wrong: %+v", sess)
+	}
+
+	rec, ok, err := st.store.GetSession(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("get reviewer err=%v ok=%v", err, ok)
+	}
+	rec.Metadata.AgentSessionID = "reviewer-native"
+	if err := st.store.UpdateSession(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.sm.Kill(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := st.sm.Restore(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Kind != domain.KindReviewer || restored.IssueID != "13" || restored.Metadata.AgentSessionID != "reviewer-native" {
+		t.Fatalf("restored reviewer wrong: %+v", restored)
+	}
+
+	list, err := st.sm.List(ctx, sessionsvc.ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Kind != domain.KindReviewer || list[0].IssueID != "13" {
+		t.Fatalf("listed reviewer wrong: %+v", list)
+	}
+}
+
 // TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux exercises
 // Manager.Reconcile against a real sqlite.Store:
 //

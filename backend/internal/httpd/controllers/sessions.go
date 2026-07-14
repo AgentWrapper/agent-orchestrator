@@ -134,6 +134,12 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
+	switch in.Kind {
+	case domain.KindWorker, domain.KindOrchestrator, domain.KindReviewer:
+	default:
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_SESSION_KIND", "kind must be worker, orchestrator, or reviewer", nil)
+		return
+	}
 	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
 	if err != nil {
 		envelope.WriteError(w, r, err)

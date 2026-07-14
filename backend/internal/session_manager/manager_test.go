@@ -586,6 +586,33 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 }
 
+func TestSpawnReviewerPersistsAndRestoresKind(t *testing.T) {
+	m, st, _, _ := newManager()
+	s, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer",
+		IssueID:   "13",
+		Kind:      domain.KindReviewer,
+		Harness:   domain.HarnessCodex,
+		Prompt:    "review issue 13",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Kind != domain.KindReviewer || s.IssueID != "13" || st.sessions[s.ID].Kind != domain.KindReviewer {
+		t.Fatalf("spawned reviewer = %#v stored=%#v", s, st.sessions[s.ID])
+	}
+	if _, err := m.Kill(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := m.Restore(ctx, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Kind != domain.KindReviewer || st.sessions[s.ID].Kind != domain.KindReviewer {
+		t.Fatalf("restored reviewer = %#v stored=%#v", restored, st.sessions[s.ID])
+	}
+}
+
 func TestSpawn_DeliversPromptAfterStartWhenAgentRequestsIt(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}

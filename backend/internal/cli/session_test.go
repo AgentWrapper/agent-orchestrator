@@ -199,6 +199,12 @@ func TestSessionGet_SuccessWithProjectScope(t *testing.T) {
 	}
 }
 
+func TestSessionRoleReportsReviewer(t *testing.T) {
+	if got := sessionRole(sessionDTO{Kind: "reviewer"}); got != "reviewer" {
+		t.Fatalf("sessionRole(reviewer) = %q, want reviewer", got)
+	}
+}
+
 func TestSessionGet_JSONOutputDecodes(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, _ := sessionCommandServer(t)

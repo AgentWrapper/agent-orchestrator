@@ -741,10 +741,14 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 }
 
 func sessionRole(sess sessionDTO) string {
-	if sess.Kind == "orchestrator" {
+	switch sess.Kind {
+	case "orchestrator":
 		return "orchestrator"
+	case "reviewer":
+		return "reviewer"
+	default:
+		return "worker"
 	}
-	return "worker"
 }
 
 func formatSessionAge(d time.Duration) string {
