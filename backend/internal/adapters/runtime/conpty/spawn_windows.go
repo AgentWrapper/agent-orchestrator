@@ -8,12 +8,12 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -23,6 +23,39 @@ import (
 var readyRE = regexp.MustCompile(`READY:(\d+) (\d+)`)
 
 const spawnReadyTimeout = 10 * time.Second
+
+// maxCapturedStderr bounds how much pty-host stderr we retain for diagnostics.
+const maxCapturedStderr = 8192
+
+// boundedBuffer is a thread-safe io.Writer that retains up to max bytes of what
+// is written and discards the rest. It always consumes its input (never blocks
+// or errors), so it is a safe stderr sink for the detached pty-host — matching
+// the previous io.Discard behavior while keeping a capped copy so a startup
+// failure (e.g. newConPTY) can be reported instead of only "exited without
+// printing READY".
+type boundedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := b.max - len(b.buf); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		b.buf = append(b.buf, p[:room]...)
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
+}
 
 // defaultSpawnHost resolves the current executable, builds the pty-host argv,
 // and spawns it detached on Windows. It reads stdout for "READY:<pid> <port>"
@@ -34,14 +67,24 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 		return "", 0, fmt.Errorf("conpty spawn: resolve executable: %w", err)
 	}
 
+	// Translate a leading `env NAME=VALUE ...` prefix into real child env vars.
+	// Windows has no `env` binary and the pty-host execs argv[0] directly, so an
+	// adapter that emits `env KEY=value <bin>` (e.g. opencode, to set
+	// OPENCODE_CONFIG) would otherwise fail with "env: executable file not
+	// found". The assignments are added to the pty-host environment below, which
+	// the ConPTY child inherits (host_conpty_windows.go passes os.Environ()).
+	envAssignments, argv := stripEnvAssignments(argv)
+
 	// Build: <exe> pty-host <sessionID> <cwd> <shellCmd> <shellArgs...>
 	args := append([]string{"pty-host", sessionID, cwd}, argv...)
 
-	// Merge env: inherit parent, then overlay caller-provided vars.
+	// Merge env: inherit parent, overlay caller-provided vars, then apply the
+	// assignments stripped from the argv prefix.
 	merged := os.Environ()
 	for k, v := range env {
 		merged = append(merged, k+"="+v)
 	}
+	merged = append(merged, envAssignments...)
 
 	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Dir = cwd
@@ -60,8 +103,11 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 	if err != nil {
 		return "", 0, fmt.Errorf("conpty spawn: stdout pipe: %w", err)
 	}
-	// Stderr is discarded; pty-host writes diagnostics there but we don't need them.
-	cmd.Stderr = io.Discard
+	// Capture a bounded copy of the pty-host's stderr. It writes its startup
+	// diagnostics there (listen/newConPTY failures) before exiting without
+	// printing READY; retaining them lets us report the real cause below.
+	stderr := &boundedBuffer{max: maxCapturedStderr}
+	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
 		return "", 0, fmt.Errorf("conpty spawn: start: %w", err)
@@ -90,11 +136,15 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 				return
 			}
 		}
+		msg := "conpty spawn: pty-host exited without printing READY"
+		if diag := strings.TrimSpace(stderr.String()); diag != "" {
+			msg += ": " + diag
+		}
 		readyC <- struct {
 			addr string
 			pid  int
 			err  error
-		}{"", 0, fmt.Errorf("conpty spawn: pty-host exited without printing READY")}
+		}{"", 0, fmt.Errorf("%s", msg)}
 	}()
 
 	timer := time.NewTimer(spawnReadyTimeout)
