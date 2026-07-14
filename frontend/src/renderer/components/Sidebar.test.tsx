@@ -7,11 +7,12 @@ import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 
-const { getMock, navigateMock, mockParams, renameSessionMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	navigateMock: vi.fn(),
 	mockParams: { projectId: undefined as string | undefined },
 	renameSessionMock: vi.fn().mockResolvedValue(undefined),
+	updateStatusMock: vi.fn(),
 }));
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
@@ -24,6 +25,16 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 		useParams: () => ({}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
+	};
+});
+
+vi.mock("../lib/bridge", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/bridge")>();
+	return {
+		aoBridge: {
+			...actual.aoBridge,
+			updates: { ...actual.aoBridge.updates, getStatus: updateStatusMock },
+		},
 	};
 });
 
@@ -183,6 +194,7 @@ beforeEach(() => {
 	});
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
+	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
 });
 
@@ -859,5 +871,31 @@ describe("Sidebar", () => {
 
 		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
 		expect(workingDot).toHaveClass("animate-status-pulse", "bg-working");
+	});
+
+	it("does not render the restart-to-update row unless an update is downloaded", async () => {
+		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
+		renderSidebar();
+
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+	});
+
+	it("renders the restart-to-update row with the working-orange treatment when escalated", async () => {
+		updateStatusMock.mockResolvedValue({
+			state: "downloaded",
+			version: "9.9.9",
+			stagedAt: Date.now(),
+			escalated: true,
+		});
+		renderSidebar();
+
+		// Both footer variants (expanded row and collapsed rail icon) are mounted.
+		const buttons = await screen.findAllByLabelText("Restart to install update v9.9.9");
+		expect(buttons.length).toBeGreaterThan(0);
+		for (const button of buttons) {
+			expect(button).toHaveClass("text-working", "bg-working/12");
+		}
+		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
 	});
 });

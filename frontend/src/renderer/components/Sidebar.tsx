@@ -32,6 +32,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
+import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import {
 	DropdownMenu,
@@ -826,26 +827,6 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 			</button>
 		</SidebarMenuSubItem>
 	);
-}
-
-// Live update status for the footer's restart prompt: seeded from getStatus,
-// then streamed via updates:status (same idiom as UpdatesSection). Subscribed
-// once in Sidebar and passed down so the row and rail variants share one IPC
-// subscription.
-function useUpdateStatus(): UpdateStatus {
-	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
-	useEffect(() => {
-		let live = true;
-		void aoBridge.updates.getStatus().then((s) => {
-			if (live) setStatus(s);
-		});
-		const off = aoBridge.updates.onStatus(setStatus);
-		return () => {
-			live = false;
-			off?.();
-		};
-	}, []);
-	return status;
 }
 
 // RestartToUpdateRow sits directly above the Settings row when an update is
