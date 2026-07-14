@@ -104,12 +104,13 @@ go build ./...
 ### Run the daemon
 
 ```bash
+cd backend
 # Start the daemon (loopback HTTP server on 127.0.0.1)
 go run .
 ```
 
-The CLI is built with Cobra. Run `go run ./cmd/ao --help` for available
-commands.
+The CLI is built with Cobra. From `backend/`, run `go run ./cmd/ao --help` for
+available commands.
 
 ### Run tests
 
@@ -241,12 +242,11 @@ go run ./cmd/ao --help
 
 ### Frontend build / test failures
 
-| Symptom                               | Likely cause                                                                         | Fix                                                                                                                                           |
-| ------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run typecheck` has type errors   | API types out of sync                                                                | Run `npm run api` from repo root to regenerate                                                                                                |
-| Electron app shows blank window       | Electron app not running through the managed dev flow, or the daemon failed to start | Launch the desktop app with `npm run dev` from `frontend/`; if the window is still blank, inspect the Electron and backend logs under `~/.ao` |
-| `npm run dev` fails on native modules | Missing build tools                                                                  | Install Python + C++ build tools for `node-gyp`                                                                                               |
-| `npm install` or `npm ci` fails       | Node.js version too old                                                              | `node --version`; must be 20.19.0+ (see prerequisites above)                                                                                  |
+| Symptom                               | Likely cause            | Fix                                                          |
+| ------------------------------------- | ----------------------- | ------------------------------------------------------------ |
+| `npm run typecheck` has type errors   | API types out of sync   | Run `npm run api` from repo root to regenerate               |
+| `npm run dev` fails on native modules | Missing build tools     | Install Python + C++ build tools for `node-gyp`              |
+| `npm install` or `npm ci` fails       | Node.js version too old | `node --version`; must be 20.19.0+ (see prerequisites above) |
 
 ### Code generation drift
 
