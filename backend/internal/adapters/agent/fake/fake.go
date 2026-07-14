@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -88,6 +89,22 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnknown, err
 	}
 	return ports.AgentAuthStatusAuthorized, nil
+}
+
+// ResolveBinary satisfies ports.AgentBinaryResolver. The fake harness launches
+// via the system shell (`sh -lc`), which is always present, so it resolves to
+// the shell path. This makes the agent catalog report `fake` as installed, so
+// `ao spawn --agent fake` passes CLI preflight without --skip-agent-check.
+func (p *Plugin) ResolveBinary(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if path, err := exec.LookPath("sh"); err == nil {
+		return path, nil
+	}
+	// sh is part of the POSIX base system; fall back to the conventional path
+	// rather than failing the catalog check on an unusual PATH.
+	return "/bin/sh", nil
 }
 
 // DeriveActivityState maps a fake hook sub-command name onto an AO activity
