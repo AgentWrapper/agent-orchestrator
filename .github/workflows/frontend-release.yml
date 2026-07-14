@@ -33,6 +33,11 @@ on:
     tags:
       - "desktop-v*"
   workflow_dispatch:
+    inputs:
+      skip_e2e_gate:
+        description: "Skip the advisory pod e2e gate (emergency/override)."
+        type: boolean
+        default: false
 
 jobs:
   release:
@@ -236,6 +241,46 @@ jobs:
   # electron-updater feed (latest*.yml + .blockmap sidecars) from the versioned
   # assets and upload them to the same release. Runs once, on Linux: it only
   # hashes already-built artifacts, so it needs no per-OS runner.
+  # Advisory pod e2e gate. Installs the just-published Linux release build in an
+  # ephemeral Daytona pod and runs the real-app smoke suite, posting an
+  # `ao-stable-gate` commit status. NON-BLOCKING: publish-feed does NOT depend on
+  # it, and the run step is continue-on-error, so it can prove itself on live
+  # releases without ever blocking a good build. Once trusted, add `e2e-gate` to
+  # publish-feed `needs` to make it a required gate. Override: skip_e2e_gate input.
+  e2e-gate:
+    needs: [release, release-intel]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # post a commit status via gh api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install pod-runner deps
+        if: ${{ inputs.skip_e2e_gate != true }}
+        run: npm --prefix scripts ci
+      - name: Run pod e2e gate (advisory)
+        id: gate
+        if: ${{ inputs.skip_e2e_gate != true }}
+        continue-on-error: true
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          tag="v$(node -p "require('./frontend/package.json').version")"
+          node scripts/ao-e2e-pod-gate.mjs --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --tag "$tag" --suite T0
+      - name: Post ao-stable-gate commit status
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "${{ steps.gate.outcome }}" in
+            success) state=success; desc="T0 pod smoke passed" ;;
+            skipped) state=success; desc="e2e gate skipped (advisory)" ;;
+            *)       state=failure; desc="T0 pod smoke failed (advisory)" ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context="ao-stable-gate" -f description="$desc"
+
   publish-feed:
     needs: [release, release-intel]
     runs-on: ubuntu-latest
