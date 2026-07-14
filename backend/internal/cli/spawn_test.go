@@ -691,3 +691,34 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 		t.Fatalf("spawn request = %#v", req)
 	}
 }
+
+// TestSpawnCommand_RejectsInvalidKind asserts `ao spawn` rejects a --kind value
+// outside worker/orchestrator at the CLI boundary, without contacting the daemon.
+func TestSpawnCommand_RejectsInvalidKind(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--kind", "orchestartor")
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), `--kind must be "worker" or "orchestrator"`) {
+		t.Fatalf("err=%v exit=%d, want --kind validation error", err, ExitCode(err))
+	}
+}
+
+// TestResolveSpawnHarness_OrchestratorDefault asserts the orchestrator role falls
+// back to the project's orchestrator agent (and worker to the worker agent), while
+// an explicit --agent always wins.
+func TestResolveSpawnHarness_OrchestratorDefault(t *testing.T) {
+	project := projectDetails{
+		ID: "demo",
+		Config: &projectConfig{
+			Worker:       roleOverride{Agent: "codex"},
+			Orchestrator: roleOverride{Agent: "claude-code"},
+		},
+	}
+	if got, err := resolveSpawnHarness("", "orchestrator", project); err != nil || got != "claude-code" {
+		t.Fatalf("orchestrator default: got %q err %v, want claude-code", got, err)
+	}
+	if got, err := resolveSpawnHarness("", "worker", project); err != nil || got != "codex" {
+		t.Fatalf("worker default: got %q err %v, want codex", got, err)
+	}
+	if got, err := resolveSpawnHarness("aider", "orchestrator", project); err != nil || got != "aider" {
+		t.Fatalf("explicit agent: got %q err %v, want aider", got, err)
+	}
+}

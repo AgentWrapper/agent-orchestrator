@@ -78,6 +78,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
 			}
 
+			if opts.kind != "" && opts.kind != "worker" && opts.kind != "orchestrator" {
+				return usageError{fmt.Errorf(`--kind must be "worker" or "orchestrator"`)}
+			}
+
 			project, err := ctx.resolveSpawnProject(cmd.Context(), opts.project)
 			if err != nil {
 				return err
