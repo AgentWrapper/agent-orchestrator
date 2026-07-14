@@ -446,8 +446,12 @@ export function shortLabel(value: string, max = MAX_LABEL): string {
 // reprinting the project slug. Ids that don't follow the convention fall back to
 // a middle-truncated label.
 export function shortSessionId(s: DashboardSession): string {
-	const rest = s.projectId && s.id.startsWith(s.projectId) ? s.id.slice(s.projectId.length).replace(/^[-_]/, "") : "";
-	return rest ? `#${rest}` : shortLabel(s.id);
+	const { projectId, id } = s;
+	// The separator is required: a bare `startsWith(projectId)` would also match a
+	// longer sibling slug (project `app`, session `apple-1`) and print `#le-1`.
+	const prefixed = projectId && (id.startsWith(`${projectId}-`) || id.startsWith(`${projectId}_`));
+	const rest = prefixed ? id.slice(projectId.length + 1) : "";
+	return rest ? `#${rest}` : shortLabel(id);
 }
 
 // All PRs across sessions, de-duplicated by number+repo.
