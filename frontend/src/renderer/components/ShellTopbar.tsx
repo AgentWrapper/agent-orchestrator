@@ -16,7 +16,6 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
-import { NewTaskDialog } from "./NewTaskDialog";
 import { cn } from "../lib/utils";
 import { StatusPill } from "./StatusPill";
 import {
@@ -66,8 +65,8 @@ export function ShellTopbar() {
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const [isSpawning, setIsSpawning] = useState(false);
-	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const all = useWorkspaceQuery().data ?? [];
 
 	const session = params.sessionId
@@ -97,16 +96,7 @@ export function ShellTopbar() {
 
 	const openNewTask = () => {
 		if (!projectId || isProjectRestarting) return;
-		setIsNewTaskOpen(true);
-	};
-
-	const handleTaskCreated = async (sessionId: string) => {
-		if (!projectId || isProjectRestarting) return;
-		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
-		});
+		requestNewTask(projectId);
 	};
 
 	const openOrchestrator = async () => {
@@ -251,12 +241,6 @@ export function ShellTopbar() {
 					</>
 				) : null}
 			</div>
-			<NewTaskDialog
-				open={isNewTaskOpen}
-				projectId={projectId}
-				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
-				onOpenChange={setIsNewTaskOpen}
-			/>
 		</header>
 	);
 }

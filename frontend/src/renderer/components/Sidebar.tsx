@@ -286,9 +286,6 @@ export function Sidebar({
 			</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				{/* Headless: opens the create-project flow when ⌘N fires with no
-				    project in scope (see requestCreateProject in _shell.tsx). */}
-				<CreateProjectShortcutBridge onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
@@ -831,39 +828,22 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	);
 }
 
-// Headless bridge: routes the ⌘N "no project in scope" fallback into the same
-// create-project flow the sidebar "+" button uses. Mounted once so the store
-// nonce never double-fires (the visible + buttons are CSS-toggled per collapse
-// state and can briefly co-exist). Renders no chrome of its own.
-function CreateProjectShortcutBridge({
-	onCreateProject,
-	onInitializeProject,
-}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
-	return (
-		<CreateProjectFlow mode="choose" onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
-			{({ choosePath }) => <CreateProjectNonceListener choosePath={choosePath} />}
-		</CreateProjectFlow>
-	);
-}
-
-function CreateProjectNonceListener({ choosePath }: { choosePath: () => void }) {
-	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
-	// Seed with the current value so we never fire the flow on mount.
-	const lastNonce = useRef(createProjectNonce);
-	useEffect(() => {
-		if (createProjectNonce === lastNonce.current) return;
-		lastNonce.current = createProjectNonce;
-		choosePath();
-	}, [createProjectNonce, choosePath]);
-	return null;
-}
-
 function CreateProjectButton({
 	onCreateProject,
 	onInitializeProject,
 }: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
+	// This "+" is always mounted (the collapsed rail only CSS-hides it), so it
+	// owns the ⌘N "no project in scope" fallback via openSignal — no separate
+	// delegating component needed. The collapsed-only list item does not, to
+	// avoid a double open while both are mounted.
+	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
 	return (
-		<CreateProjectFlow mode="choose" onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
+		<CreateProjectFlow
+			mode="choose"
+			onCreateProject={onCreateProject}
+			onInitializeProject={onInitializeProject}
+			openSignal={createProjectNonce}
+		>
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>
 					<TooltipTrigger asChild>

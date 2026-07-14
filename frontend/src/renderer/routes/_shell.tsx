@@ -20,7 +20,8 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
-import { isEditableTarget, isNewSessionShortcut } from "../lib/shortcuts";
+import { dispatchNewSession, resolveScopedProjectId } from "../lib/new-session-shortcut";
+import { aoBridge } from "../lib/bridge";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -45,7 +46,6 @@ const isLinux =
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
 		.toLowerCase()
 		.includes("linux");
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
@@ -66,11 +66,7 @@ function ShellLayout() {
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
-	const scopedProjectId =
-		routeParams.projectId ??
-		(routeParams.sessionId
-			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
-			: undefined);
+	const scopedProjectId = resolveScopedProjectId(routeParams, workspaces);
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
@@ -247,26 +243,23 @@ function ShellLayout() {
 					event.preventDefault();
 					void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 				}
-				return;
-			}
-
-			// New session: ⌘N (mac) / Ctrl+Shift+N (win/linux). Never hijack the
-			// combo while the user is typing into a field.
-			if (isNewSessionShortcut(event, isMac)) {
-				if (isEditableTarget(event.target)) return;
-				event.preventDefault();
-				if (scopedProjectId) {
-					requestNewTask(scopedProjectId);
-				} else {
-					// No project in scope (root board / PR list / settings) — fall back
-					// to the create-project flow so the shortcut never dead-ends.
-					requestCreateProject();
-				}
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [navigate, workspaces, scopedProjectId, requestNewTask, requestCreateProject]);
+	}, [navigate, workspaces]);
+
+	// New session (⌘N / Ctrl+Shift+N) is detected in the main process and
+	// delivered here, so it fires even when focus is inside xterm or a native
+	// Browser-preview view. The shell owns the routing: open the New Task flow
+	// for the in-scope project, else fall back to create-project.
+	useEffect(
+		() =>
+			aoBridge.app.onNewSessionShortcut(() =>
+				dispatchNewSession(scopedProjectId, { requestNewTask, requestCreateProject }),
+			),
+		[scopedProjectId, requestNewTask, requestCreateProject],
+	);
 
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>

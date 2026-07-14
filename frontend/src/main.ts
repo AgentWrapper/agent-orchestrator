@@ -38,6 +38,8 @@ import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import { NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
+import { attachNewSessionShortcut } from "./main/new-session-shortcut";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -334,6 +336,15 @@ function createWindow(): void {
 		}
 	});
 
+	// New-session shortcut (⌘N / Ctrl+Shift+N) handled at the app level so it
+	// fires no matter which web contents holds focus — the shell renderer,
+	// xterm's helper textarea, or a browser-preview view (wired per-view in the
+	// browser host). Each hook just tells the shell renderer to open the flow.
+	const isMac = process.platform === "darwin";
+	attachNewSessionShortcut(mainWindow.webContents, isMac, () =>
+		mainWindow?.webContents.send(NEW_SESSION_SHORTCUT_CHANNEL),
+	);
+
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
 		ipcMain,
@@ -341,6 +352,7 @@ function createWindow(): void {
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: RENDERER_ORIGIN,
+		isMac,
 	});
 
 	void mainWindow.loadURL(rendererUrl());

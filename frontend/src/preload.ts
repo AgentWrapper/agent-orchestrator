@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
@@ -47,6 +48,15 @@ const api = {
 		openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url) as Promise<void>,
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
+		// Fired by the main process when the app-level new-session shortcut
+		// (⌘N / Ctrl+Shift+N) is pressed in any web contents.
+		onNewSessionShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(NEW_SESSION_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(NEW_SESSION_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
 	},
 	terminal: {
 		saveDroppedFile: (input: { name: string; bytes: Uint8Array }) =>
