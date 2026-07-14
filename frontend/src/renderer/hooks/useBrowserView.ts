@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { OPEN_MODAL_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
 
@@ -54,8 +55,6 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 };
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
-
-const OPEN_MODAL_SELECTOR = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]';
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
