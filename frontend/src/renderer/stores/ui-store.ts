@@ -15,6 +15,7 @@ type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
 	isInspectorOpen: boolean;
+	isCommandPaletteOpen: boolean;
 	theme: Theme;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, string>;
@@ -24,6 +25,7 @@ type UiState = {
 	toggleTheme: () => void;
 	toggleSidebar: () => void;
 	toggleInspector: () => void;
+	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
@@ -49,6 +51,7 @@ export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	isInspectorOpen: initialInspectorOpen(),
+	isCommandPaletteOpen: false,
 	theme: resolveTheme(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
@@ -76,6 +79,7 @@ export const useUiStore = create<UiState>((set) => ({
 			getLocalStorage()?.setItem(inspectorStorageKey, String(isInspectorOpen));
 			return { isInspectorOpen };
 		}),
+	setCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),
 	setProjectRestarting: (projectId, restarting) =>
 		set((state) => {
 			const restartingProjectIds = new Set(state.restartingProjectIds);

@@ -152,6 +152,7 @@ const ORCHESTRATOR_SPAWN_SOURCES = new Set([
 	"project_add",
 	"settings",
 	"restart",
+	"command_palette",
 ]);
 
 export async function sanitizeRendererProperties(

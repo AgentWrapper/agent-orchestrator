@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef } from "react";
+import { CommandPalette } from "../components/CommandPalette";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
@@ -300,6 +301,7 @@ function ShellLayout() {
 					projectId={replacementErrorProjectId}
 					workspaces={workspaces}
 				/>
+				<CommandPalette />
 			</div>
 		</ShellProvider>
 	);
