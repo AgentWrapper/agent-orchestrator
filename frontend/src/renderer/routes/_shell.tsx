@@ -1,7 +1,8 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef } from "react";
 import { NotificationRuntime } from "../components/NotificationCenter";
+import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -19,6 +20,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
+import { isEditableTarget, isNewSessionShortcut } from "../lib/shortcuts";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -43,6 +45,7 @@ const isLinux =
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
 		.toLowerCase()
 		.includes("linux");
+const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
@@ -57,6 +60,17 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	// Project in scope for a new-session shortcut: the route's project, or the
+	// workspace owning the open session (so the shortcut works from a worker's
+	// detail view, where the URL carries only a sessionId).
+	const scopedProjectId =
+		routeParams.projectId ??
+		(routeParams.sessionId
+			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
+			: undefined);
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
@@ -233,15 +247,31 @@ function ShellLayout() {
 					event.preventDefault();
 					void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 				}
+				return;
+			}
+
+			// New session: ⌘N (mac) / Ctrl+Shift+N (win/linux). Never hijack the
+			// combo while the user is typing into a field.
+			if (isNewSessionShortcut(event, isMac)) {
+				if (isEditableTarget(event.target)) return;
+				event.preventDefault();
+				if (scopedProjectId) {
+					requestNewTask(scopedProjectId);
+				} else {
+					// No project in scope (root board / PR list / settings) — fall back
+					// to the create-project flow so the shortcut never dead-ends.
+					requestCreateProject();
+				}
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [navigate, workspaces]);
+	}, [navigate, workspaces, scopedProjectId, requestNewTask, requestCreateProject]);
 
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
+			<GlobalNewTaskDialog />
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the

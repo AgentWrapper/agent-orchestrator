@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { useUiStore } from "../stores/ui-store";
 
 const { getMock, navigateMock, mockParams, renameSessionMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -238,6 +239,19 @@ describe("Sidebar", () => {
 		expect(await screen.findByText("Failed to remove project")).toBeInTheDocument();
 		// Dialog stays open on failure so the user can retry or cancel
 		expect(screen.getByRole("dialog", { name: "Remove project" })).toBeInTheDocument();
+	});
+
+	it("requests a new task for the project from the kebab menu", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		const before = useUiStore.getState().newTaskRequest?.nonce ?? 0;
+
+		await user.click(screen.getByLabelText("Project actions for Project One"));
+		await user.click(await screen.findByRole("menuitem", { name: /New session/ }));
+
+		const request = useUiStore.getState().newTaskRequest;
+		expect(request?.projectId).toBe("proj-1");
+		expect(request?.nonce ?? 0).toBeGreaterThan(before);
 	});
 
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
