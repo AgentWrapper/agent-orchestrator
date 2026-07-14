@@ -63,7 +63,10 @@ export function ShellTopbar() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
+	const currentSessionId = params.sessionId;
+	const isInspectorOpen = useUiStore((state) =>
+		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? false) : false,
+	);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const [isSpawning, setIsSpawning] = useState(false);
@@ -98,6 +101,11 @@ export function ShellTopbar() {
 	const openNewTask = () => {
 		if (!projectId || isProjectRestarting) return;
 		setIsNewTaskOpen(true);
+	};
+
+	const handleToggleInspector = () => {
+		if (!currentSessionId) return;
+		toggleInspector(currentSessionId);
 	};
 
 	const handleTaskCreated = async (sessionId: string) => {
@@ -236,7 +244,7 @@ export function ShellTopbar() {
 							<TopbarButton
 								aria-label={isInspectorOpen ? "Close inspector panel" : "Open inspector panel"}
 								aria-pressed={isInspectorOpen}
-								onClick={toggleInspector}
+								onClick={handleToggleInspector}
 								style={noDragStyle}
 								title={`${isInspectorOpen ? "Close" : "Open"} inspector · ⌘⇧B`}
 								variant="icon"

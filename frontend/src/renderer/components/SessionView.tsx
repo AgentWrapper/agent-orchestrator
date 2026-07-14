@@ -3,9 +3,9 @@ import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
-import { SessionInspector, type InspectorView } from "./SessionInspector";
+import { SessionInspector } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
-import { useUiStore } from "../stores/ui-store";
+import { useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
@@ -21,6 +21,13 @@ function initialSplitPercent(): number {
 	const parsed = raw === null ? Number.NaN : Number(raw);
 	if (!Number.isFinite(parsed)) return 28;
 	return Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed));
+}
+
+function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
+	const target = previewUrl?.trim();
+	if (!target) return "";
+	if (typeof previewRevision === "number") return `revision:${previewRevision}`;
+	return `url:${target}`;
 }
 
 type SessionViewProps = {
@@ -41,22 +48,24 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const { theme } = useUiStore();
-	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
+	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? false);
+	const inspectorView = useUiStore((state) => state.inspectorSessions[sessionId]?.view ?? "summary");
+	const setInspectorOpen = useUiStore((state) => state.setInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
+	const setInspectorView = useUiStore((state) => state.setInspectorView);
+	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
-	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
-	const hasInspector = !isOrchestrator;
+	const hasInspector = Boolean(session && !isOrchestrator);
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
-	const revealedPreviewRef = useRef<number | null>(null);
 	const browserView = useBrowserView({
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
@@ -73,22 +82,35 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
-		setInspectorView("summary");
-		revealedPreviewRef.current = null;
 	}, [sessionId]);
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); surface the result
-	// in the inspector rail's Browser tab (opening the rail if collapsed), not the
-	// center pane. Tracked per preview revision so re-revealing fires on every
-	// `ao preview` (even a re-run of the same target) while a manual tab switch
-	// sticks for a given revision. `ao preview clear` (empty url) does not reveal.
+	// in this session's inspector rail Browser tab (opening the rail if collapsed),
+	// not the center pane. Navigation alone must not reveal an already-present
+	// preview target, so the first observed preview key for each session is
+	// baselined as "seen"; only a later revision/URL opens the rail.
 	useEffect(() => {
-		const revision = previewRevision ?? 0;
-		if (!previewUrl || revealedPreviewRef.current === revision) return;
-		revealedPreviewRef.current = revision;
-		setInspectorView("browser");
-		if (!useUiStore.getState().isInspectorOpen) toggleInspector();
-	}, [previewRevision, previewUrl, toggleInspector]);
+		if (!hasInspector) return;
+		const previewKey = previewRevealKey(previewUrl, previewRevision);
+		const seenKey = useUiStore.getState().inspectorSessions[sessionId]?.previewKey;
+		if (seenKey === undefined) {
+			markInspectorPreviewSeen(sessionId, previewKey);
+			return;
+		}
+		if (seenKey === previewKey) return;
+		markInspectorPreviewSeen(sessionId, previewKey);
+		if (!previewKey) return;
+		setInspectorView(sessionId, "browser");
+		setInspectorOpen(sessionId, true);
+	}, [
+		hasInspector,
+		markInspectorPreviewSeen,
+		previewRevision,
+		previewUrl,
+		sessionId,
+		setInspectorOpen,
+		setInspectorView,
+	]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
@@ -116,11 +138,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			if (event.key.toLowerCase() !== "b" || !event.shiftKey) return;
 			if (!event.metaKey && !event.ctrlKey) return;
 			event.preventDefault();
-			toggleInspector();
+			toggleInspector(sessionId);
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [hasInspector, toggleInspector]);
+	}, [hasInspector, sessionId, toggleInspector]);
 
 	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
 	// drag-to-collapse all stay in sync. hasInspector must NOT be a dep: when
@@ -130,9 +152,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// constraints not found for Panel inspector" and unwinds the route. The
 	// panel mounts in sync via inspectorDefaultSize above; only later toggles
 	// need the imperative API, by which point registration has settled.
+	const inspectorImperativeReadyRef = useRef(false);
+	if (!hasInspector) {
+		inspectorImperativeReadyRef.current = false;
+	}
 	useEffect(() => {
 		const panel = inspectorRef.current;
 		if (!panel) return;
+		if (!inspectorImperativeReadyRef.current) {
+			inspectorImperativeReadyRef.current = true;
+			return;
+		}
 		if (isInspectorOpen) {
 			panel.expand();
 			// expand() restores the "most recent" size, which is 0 when the panel
@@ -162,15 +192,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-			const open = useUiStore.getState().isInspectorOpen;
+			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? false;
 			if (size.asPercentage > 0) {
 				window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
-				if (!open) toggleInspector();
-			} else if (open) {
-				toggleInspector();
+				if (!currentOpen) toggleInspector(sessionId);
+			} else if (currentOpen) {
+				toggleInspector(sessionId);
 			}
 		},
-		[toggleInspector],
+		[sessionId, toggleInspector],
 	);
 
 	if (!session && !workspaceQuery.isLoading) {
@@ -224,7 +254,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
 									onToggleBrowserPopOut={setBrowserPoppedOut}
-									onViewChange={setInspectorView}
+									onViewChange={(next: InspectorView) => setInspectorView(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}
 									session={session}
