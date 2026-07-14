@@ -1,11 +1,12 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { useUiStore } from "../stores/ui-store";
 
 const { getMock, navigateMock, mockParams, renameSessionMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -478,6 +479,19 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /project actions/i }));
 
 		expect(await screen.findByRole("menuitem", { name: /settings/i })).toBeInTheDocument();
+	});
+
+	it("opens the command palette from the footer Search item (enabled builds)", async () => {
+		const user = userEvent.setup();
+		act(() => useUiStore.setState({ isCommandPaletteOpen: false }));
+		renderSidebar();
+
+		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
+		const searchItem = await screen.findByRole("menuitem", { name: /search/i });
+		expect(searchItem).toHaveTextContent(/⌘K|Ctrl\+K/);
+
+		await user.click(searchItem);
+		await waitFor(() => expect(useUiStore.getState().isCommandPaletteOpen).toBe(true));
 	});
 
 	it("shows needs-auth agents as unavailable while keeping authorized agents selectable", async () => {

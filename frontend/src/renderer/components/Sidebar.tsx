@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
@@ -24,7 +24,9 @@ import {
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
-import { aoBridge } from "../lib/bridge";
+import { isCommandPaletteEnabled, isNightlyBuild } from "../lib/build-channel";
+import { isAnyModalOpen } from "../lib/dom-selectors";
+import { useAppVersion } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
@@ -191,12 +193,10 @@ export function Sidebar({
 	// Fetch the running app version to derive the build channel. Channel is
 	// identity: derived from the version string, not the update-channel setting
 	// (the setting can be changed mid-session; the binary cannot).
-	const { data: appVersion } = useQuery({
-		queryKey: ["app-version"],
-		queryFn: () => aoBridge.app.getVersion(),
-		staleTime: Infinity,
-	});
-	const isNightly = typeof appVersion === "string" && appVersion.includes("-nightly.");
+	const appVersion = useAppVersion();
+	const isNightly = isNightlyBuild(appVersion);
+	const commandPaletteEnabled = isCommandPaletteEnabled(appVersion);
+	const openCommandPalette = useUiStore((s) => s.setCommandPaletteOpen);
 
 	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
@@ -371,11 +371,20 @@ export function Sidebar({
 								<GitPullRequest aria-hidden="true" />
 								Pull requests
 							</DropdownMenuItem>
-							<DropdownMenuItem disabled>
-								<Search aria-hidden="true" />
-								Search
-								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
-							</DropdownMenuItem>
+							{commandPaletteEnabled && (
+								<DropdownMenuItem
+									onSelect={() =>
+										setTimeout(() => {
+											if (isAnyModalOpen()) return;
+											openCommandPalette(true);
+										}, 0)
+									}
+								>
+									<Search aria-hidden="true" />
+									Search
+									<DropdownMenuShortcut>{isMac ? "⌘K" : "Ctrl+K"}</DropdownMenuShortcut>
+								</DropdownMenuItem>
+							)}
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onSelect={() => setTimeout(() => setMobileOpen(true), 0)}>
 								<Smartphone aria-hidden="true" />
@@ -440,11 +449,20 @@ export function Sidebar({
 								<GitPullRequest aria-hidden="true" />
 								Pull requests
 							</DropdownMenuItem>
-							<DropdownMenuItem disabled>
-								<Search aria-hidden="true" />
-								Search
-								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
-							</DropdownMenuItem>
+							{commandPaletteEnabled && (
+								<DropdownMenuItem
+									onSelect={() =>
+										setTimeout(() => {
+											if (isAnyModalOpen()) return;
+											openCommandPalette(true);
+										}, 0)
+									}
+								>
+									<Search aria-hidden="true" />
+									Search
+									<DropdownMenuShortcut>{isMac ? "⌘K" : "Ctrl+K"}</DropdownMenuShortcut>
+								</DropdownMenuItem>
+							)}
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onSelect={() => setTimeout(() => setMobileOpen(true), 0)}>
 								<Smartphone aria-hidden="true" />
