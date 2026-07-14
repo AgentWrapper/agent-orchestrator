@@ -105,7 +105,7 @@ go build ./...
 
 ```bash
 # Start the daemon (loopback HTTP server on 127.0.0.1)
-go run ./cmd/ao start
+go run .
 ```
 
 The CLI is built with Cobra. Run `go run ./cmd/ao --help` for available
@@ -158,15 +158,15 @@ npm run dev:web        # Web-only (no Electron, for quick UI iteration)
 ```bash
 cd frontend
 npm run package        # Package for current platform
-npm run make           # Create distributable (dmg/AppImage/exe)
+npm run make           # Create distributables (macOS zip, Windows exe, Linux AppImage/deb/rpm)
 ```
 
 ### Run tests
 
 ```bash
 cd frontend
-npm run test           # Vitest unit tests
-npm run test:e2e       # Playwright end-to-end tests
+npm run test           # Vitest unit tests in a simulated renderer environment
+npm run test:e2e       # Playwright browser-based renderer E2E tests
 npx playwright show-report  # View Playwright report
 ```
 
@@ -185,19 +185,13 @@ npm run frontend:typecheck
 
 ## Mobile companion app
 
-```bash
-cd packages/mobile
-npm install
-npx expo start
-```
-
-See `packages/mobile/README.md` for details.
+See `packages/mobile/README.md` for setup, build, pairing, everyday dev loop, troubleshooting, and project layout.
 
 ## Running end-to-end
 
-1. Start the daemon (see Backend > Run the daemon above).
-2. Start the frontend (see Frontend > Run in development mode above).
-3. Open the desktop app - it connects to the loopback daemon automatically.
+1. Start the desktop app with `npm run dev` from `frontend/`.
+2. The Electron main process starts and supervises the loopback daemon for you.
+3. Use `npm run dev:web` only for renderer-only development; it does not launch Electron.
 
 For CLI-only usage, open two terminals:
 
@@ -205,7 +199,7 @@ For CLI-only usage, open two terminals:
 
 ```bash
 cd backend
-go run ./cmd/ao start
+go run .
 ```
 
 **Terminal 2 -- interact while the daemon is running:**
@@ -224,13 +218,12 @@ go run ./cmd/ao --help
   required.
 - Run the narrowest relevant test suite first (e.g. `go test ./internal/cli/`),
   then the full suite.
-- When adding SQL queries, update the schema/queries and run `npm run sqlc`
-  to regenerate, then test the generated code.
 
 ### Frontend
 
 - Unit tests use Vitest and run in a simulated renderer environment.
-- E2E tests use Playwright with a full Electron app.
+- E2E tests use Playwright against the web renderer started by `npm run dev:web`;
+  they do not launch the full Electron app.
 - After changing API types, run `npm run api` from root to regenerate
   `frontend/src/api/schema.ts`.
 
@@ -238,29 +231,28 @@ go run ./cmd/ao --help
 
 ### Backend build / test failures
 
-| Symptom                              | Likely cause                        | Fix                                                                          |
-| ------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------- |
-| `go: go.mod requires go >= 1.25`     | Wrong Go version                    | `go version`; install Go 1.25+ from [go.dev]                                 |
-| `sqlc generate` produces errors      | Edited queries/schema without regen | Run `npm run sqlc` from repo root                                            |
-| `openapi.yaml` is stale              | Changed DTOs without regenerating   | Run `npm run api` from repo root                                             |
-| `golangci-lint` failures             | Linter version mismatch             | Install v2.12.2 or use `npm run lint` from root                              |
-| Tests fail with "connection refused" | Test tries real daemon              | Tests should use `httptest`; check for `go test ./...` without a live daemon |
+| Symptom                              | Likely cause                               | Fix                                                                                                                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `go: go.mod requires go >= 1.25`     | Wrong Go version                           | `go version`; install Go 1.25.7+ from [go.dev]                                                                                                                                                                                                                                    |
+| `sqlc generate` produces errors      | Query SQL syntax or schema migration issue | Check `backend/internal/storage/sqlite/queries/` for SQL syntax, placeholder counts, and referenced columns/tables; if you changed the schema, add a new migration in `backend/internal/storage/sqlite/migrations/` instead of editing an existing one, then rerun `npm run sqlc` |
+| `openapi.yaml` is stale              | Changed DTOs without regenerating          | Run `npm run api` from repo root                                                                                                                                                                                                                                                  |
+| `golangci-lint` failures             | Linter version mismatch                    | Install v2.12.2 or use `npm run lint` from root                                                                                                                                                                                                                                   |
+| Tests fail with "connection refused" | Test tries real daemon                     | Tests should use `httptest`; check for `go test ./...` without a live daemon                                                                                                                                                                                                      |
 
 ### Frontend build / test failures
 
-| Symptom                               | Likely cause            | Fix                                                          |
-| ------------------------------------- | ----------------------- | ------------------------------------------------------------ |
-| `npm run typecheck` has type errors   | API types out of sync   | Run `npm run api` from repo root to regenerate               |
-| Electron app shows blank window       | Missing daemon          | Start daemon first: `go run ./cmd/ao start`                  |
-| `npm run dev` fails on native modules | Missing build tools     | Install Python + C++ build tools for `node-gyp`              |
-| `npm install` or `npm ci` fails       | Node.js version too old | `node --version`; must be 20.19.0+ (see prerequisites above) |
+| Symptom                               | Likely cause                                                                         | Fix                                                                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run typecheck` has type errors   | API types out of sync                                                                | Run `npm run api` from repo root to regenerate                                                                                                |
+| Electron app shows blank window       | Electron app not running through the managed dev flow, or the daemon failed to start | Launch the desktop app with `npm run dev` from `frontend/`; if the window is still blank, inspect the Electron and backend logs under `~/.ao` |
+| `npm run dev` fails on native modules | Missing build tools                                                                  | Install Python + C++ build tools for `node-gyp`                                                                                               |
+| `npm install` or `npm ci` fails       | Node.js version too old                                                              | `node --version`; must be 20.19.0+ (see prerequisites above)                                                                                  |
 
 ### Code generation drift
 
-If CI fails on the `api-drift` or `sqlc` check, the generated files are out of sync with source. Regenerate both locally and commit the updated files:
+If CI fails on the `api-drift` check, the OpenAPI-generated files are out of sync with source. Regenerate them locally and commit the updated files:
 
 ```bash
-npm run sqlc
 npm run api
 ```
 
