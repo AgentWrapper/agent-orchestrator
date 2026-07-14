@@ -1,22 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useState, useRef } from "react";
 import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 
 if (typeof window !== "undefined") {
 	gsap.registerPlugin(ScrollTrigger, useGSAP);
-}
-
-function DownloadIcon({ className = "" }: { className?: string }) {
-	return (
-		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-			<path d="M12 3v12" />
-			<path d="m7 10 5 5 5-5" />
-			<path d="M5 21h14" />
-		</svg>
-	);
 }
 
 function MenuIcon({ className = "" }: { className?: string }) {
@@ -46,6 +36,14 @@ function XSocialIcon({ className = "" }: { className?: string }) {
 	);
 }
 
+function GithubIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.38 7.86 10.9.58.1.79-.25.79-.56v-2.15c-3.2.7-3.88-1.37-3.88-1.37-.52-1.34-1.28-1.7-1.28-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.3-.52-1.47.11-3.05 0 0 .97-.31 3.18 1.18A10.96 10.96 0 0 1 12 5.99c.98 0 1.97.13 2.9.38 2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.41.36.78 1.07.78 2.16v3.2c0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+		</svg>
+	);
+}
+
 function DiscordIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -55,6 +53,11 @@ function DiscordIcon({ className = "" }: { className?: string }) {
 }
 
 const socials = [
+	{
+		label: "GitHub",
+		href: "https://github.com/AgentWrapper/agent-orchestrator",
+		icon: GithubIcon,
+	},
 	{
 		label: "Discord",
 		href: "https://discord.com/invite/UZv7JjxbwG",
@@ -73,36 +76,10 @@ const navLinks = [
 	{ label: "Docs", href: "/docs" },
 ];
 
-function getPlatformLabel() {
-	if (typeof navigator === "undefined") return "Install AO";
-
-	const isSmallViewport = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
-	const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
-	const isPortableDevice =
-		isSmallViewport ||
-		/android|iphone|ipad|ipod|mobile|tablet/.test(platform) ||
-		(platform.includes("mac") && navigator.maxTouchPoints > 1);
-
-	if (isPortableDevice) return "Setup guide";
-	if (platform.includes("mac")) return "Install for macOS";
-	if (platform.includes("win")) return "Install for Windows";
-	if (platform.includes("linux") || platform.includes("x11")) return "Install for Linux";
-	return "Install AO";
-}
-
 export function LandingNav() {
 	const [open, setOpen] = useState(false);
-	const [installLabel, setInstallLabel] = useState("Install AO");
 	const navRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
-
-	useEffect(() => {
-		const updatePlatformLabel = () => setInstallLabel(getPlatformLabel());
-
-		updatePlatformLabel();
-		window.addEventListener("resize", updatePlatformLabel);
-		return () => window.removeEventListener("resize", updatePlatformLabel);
-	}, []);
 
 	useGSAP(() => {
 		// Shrink + hide-on-scroll only on desktop (>=768px). On mobile/tablet the
@@ -150,7 +127,7 @@ export function LandingNav() {
 		>
 			<div
 				ref={innerRef}
-				className="w-full max-w-6xl mx-auto flex h-14 items-center justify-between gap-6 rounded-full border border-[color:var(--border)] bg-[color:var(--bg)]/70 px-6 backdrop-blur-xl shadow-lg transition-all duration-500 ease-out [.nav-scrolled_&]:h-12 [.nav-scrolled_&]:max-w-4xl [.nav-scrolled_&]:bg-[color:var(--bg)]/90"
+				className="relative mx-auto flex h-14 w-full max-w-4xl items-center justify-between gap-5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg)]/70 px-5 backdrop-blur-xl shadow-lg transition-all duration-500 ease-out [.nav-scrolled_&]:h-12 [.nav-scrolled_&]:max-w-3xl [.nav-scrolled_&]:bg-[color:var(--bg)]/90"
 			>
 				<a href="/" data-testid="nav-logo" className="group inline-flex h-10 shrink-0 items-center gap-3">
 					<img
@@ -163,7 +140,7 @@ export function LandingNav() {
 					</span>
 				</a>
 
-				<nav className="hidden items-center gap-8 md:flex" aria-label="Primary">
+				<nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-7 md:flex" aria-label="Primary">
 					{navLinks.map((item) => (
 						<a
 							key={item.label}
@@ -175,7 +152,8 @@ export function LandingNav() {
 					))}
 				</nav>
 
-				<div className="flex items-center gap-3">
+				<div className="flex items-center gap-2">
+					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block" />
 					<div className="hidden items-center gap-3 lg:flex">
 						{socials.map((item) => {
 							const Icon = item.icon;
@@ -194,17 +172,6 @@ export function LandingNav() {
 							);
 						})}
 					</div>
-					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block" />
-					<a
-						href="/docs/installation"
-						data-testid="nav-cta-btn"
-						style={{ color: "#000000" }}
-						className="fluid-press group/cta inline-flex h-9 items-center gap-2 rounded-full bg-[color:var(--accent)] px-5 text-[13px] font-semibold shadow-[0_8px_24px_-14px_var(--accent-glow)] hover:shadow-[0_14px_34px_-12px_var(--accent-glow)] hover:brightness-[1.07] max-[365px]:hidden [.nav-scrolled_&]:h-8 [.nav-scrolled_&]:px-4 [.nav-scrolled_&]:text-[12px]"
-					>
-						<DownloadIcon className="h-3.5 w-3.5 transition-transform duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/cta:translate-y-0.5" />
-						<span>{installLabel}</span>
-					</a>
-
 					<button
 						type="button"
 						aria-label={open ? "Close navigation menu" : "Open navigation menu"}
@@ -223,15 +190,6 @@ export function LandingNav() {
 					id="mobile-navigation-menu"
 					className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden"
 				>
-					<a
-						href="/docs/installation"
-						onClick={() => setOpen(false)}
-						style={{ color: "#000000" }}
-						className="mb-1 hidden items-center justify-center gap-2 rounded-lg bg-[color:var(--accent)] px-4 py-3 text-[15px] font-semibold max-[365px]:flex"
-					>
-						<DownloadIcon className="h-4 w-4" />
-						<span>{installLabel}</span>
-					</a>
 					{navLinks.map((item) => (
 						<a
 							key={item.label}

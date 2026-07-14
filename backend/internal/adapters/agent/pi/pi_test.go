@@ -132,7 +132,7 @@ func TestGetLaunchCommandAppendsSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandInlinesSystemPromptFileContents(t *testing.T) {
+func TestGetLaunchCommandPrefersInlineSystemPrompt(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "system.md")
 	if err := os.WriteFile(file, []byte("file contents win"), 0o600); err != nil {
@@ -142,13 +142,13 @@ func TestGetLaunchCommandInlinesSystemPromptFileContents(t *testing.T) {
 	p := &Plugin{resolvedBinary: "pi"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPromptFile: file,
-		SystemPrompt:     "inline ignored",
+		SystemPrompt:     "inline wins",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"pi", "--append-system-prompt", "file contents win"}
+	want := []string{"pi", "--append-system-prompt", "inline wins"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -158,7 +158,6 @@ func TestGetLaunchCommandSystemPromptFileReadError(t *testing.T) {
 	p := &Plugin{resolvedBinary: "pi"}
 	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
-		SystemPrompt:     "inline ignored",
 	})
 	if err == nil {
 		t.Fatal("expected error for unreadable system-prompt file, got nil")
@@ -168,6 +167,8 @@ func TestGetLaunchCommandSystemPromptFileReadError(t *testing.T) {
 func TestGetRestoreCommand(t *testing.T) {
 	p := &Plugin{resolvedBinary: "pi"}
 	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "019e950e-52e0-7411-961b-d380ca7e610f"},
 		},
@@ -180,7 +181,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	want := []string{"pi", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
+	want := []string{"pi", "--append-system-prompt", "restore inline wins", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

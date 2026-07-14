@@ -604,9 +604,10 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 	});
 
-	it("opens terminal links via window.open so Electron routes them to the OS browser", () => {
+	it("opens terminal links externally and reports the clicked URL", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
-		render(<XtermTerminal theme="dark" />);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
 
 		// The default WebLinksAddon handler opens an empty window first, which the
 		// Electron main process denies; ours must pass the matched URL directly.
@@ -614,6 +615,22 @@ describe("XtermTerminal", () => {
 		state.linkHandler!({} as MouseEvent, "https://example.com");
 
 		expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
+		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com");
+		open.mockRestore();
+	});
+
+	it("opens OSC 8 links externally and reports the clicked URL", () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+		const oscLinkHandler = state.lastTerminal!.options.linkHandler as {
+			activate: (event: MouseEvent, uri: string) => void;
+		};
+
+		oscLinkHandler.activate({} as MouseEvent, "http://localhost:3000");
+
+		expect(open).toHaveBeenCalledWith("http://localhost:3000", "_blank", "noopener");
+		expect(onLinkOpen).toHaveBeenCalledWith("http://localhost:3000");
 		open.mockRestore();
 	});
 

@@ -488,10 +488,12 @@ func commentsFromGraphQL(pr map[string]any) []ports.PRCommentObservation {
 			}
 			out = append(out, ports.PRCommentObservation{
 				ID:       str(cn["id"]),
+				ThreadID: str(th["id"]),
 				Author:   str(author["login"]),
 				File:     str(cn["path"]),
 				Line:     int(num(cn["line"])),
 				Body:     str(cn["body"]),
+				URL:      str(cn["url"]),
 				Resolved: false,
 			})
 		}

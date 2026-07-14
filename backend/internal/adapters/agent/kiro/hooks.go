@@ -102,7 +102,10 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		}
 	}
 
-	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, cfg.SystemPrompt, cfg.Config); err != nil {
+	if strings.TrimSpace(cfg.SystemPrompt) != "" && strings.TrimSpace(cfg.SystemPromptFile) == "" {
+		return fmt.Errorf("kiro.GetAgentHooks: %w", errors.New("kiro: system prompt file required to build agent config"))
+	}
+	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, "", cfg.SystemPromptFile, cfg.Config); err != nil {
 		return fmt.Errorf("kiro.GetAgentHooks: %w", err)
 	}
 	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), kiroAgentFileName); err != nil {
@@ -142,7 +145,7 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 		}
 	}
 
-	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, "", ports.AgentConfig{}); err != nil {
+	if err := writeKiroHooks(hooksPath, topLevel, rawHooks, "", "", ports.AgentConfig{}); err != nil {
 		return fmt.Errorf("kiro.UninstallHooks: %w", err)
 	}
 	return nil
@@ -215,8 +218,8 @@ func readKiroHooks(hooksPath string) (topLevel, rawHooks map[string]json.RawMess
 
 // writeKiroHooks folds rawHooks back into topLevel and writes the file. An
 // empty hooks map drops the "hooks" key entirely.
-func writeKiroHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMessage, systemPrompt string, agentConfig ports.AgentConfig) error {
-	if err := setKiroAgentDefaults(topLevel, systemPrompt, agentConfig); err != nil {
+func writeKiroHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMessage, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig) error {
+	if err := setKiroAgentDefaults(topLevel, systemPrompt, systemPromptFile, agentConfig); err != nil {
 		return err
 	}
 
@@ -244,7 +247,7 @@ func writeKiroHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMess
 	return nil
 }
 
-func setKiroAgentDefaults(topLevel map[string]json.RawMessage, systemPrompt string, agentConfig ports.AgentConfig) error {
+func setKiroAgentDefaults(topLevel map[string]json.RawMessage, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig) error {
 	defaults := map[string]any{
 		"name":           kiroAgentName,
 		"description":    kiroAgentDescription,
@@ -257,8 +260,10 @@ func setKiroAgentDefaults(topLevel map[string]json.RawMessage, systemPrompt stri
 		"toolsSettings":  map[string]any{},
 		"includeMcpJson": true,
 	}
-	if systemPrompt != "" {
+	if strings.TrimSpace(systemPrompt) != "" {
 		defaults["prompt"] = systemPrompt
+	} else if promptFile := strings.TrimSpace(systemPromptFile); promptFile != "" {
+		defaults["prompt"] = "file://" + filepath.ToSlash(promptFile)
 	}
 	if model := strings.TrimSpace(agentConfig.Model); model != "" {
 		defaults["model"] = model

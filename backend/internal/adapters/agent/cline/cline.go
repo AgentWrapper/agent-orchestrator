@@ -122,6 +122,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 8)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-s", cfg.SystemPrompt)
+	}
 	cmd = append(cmd, "--id", agentSessionID)
 	return cmd, true, nil
 }

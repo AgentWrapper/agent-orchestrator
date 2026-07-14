@@ -1,5 +1,6 @@
 import posthog from "posthog-js/dist/module.full.no-external";
 import { aoBridge } from "./bridge";
+import { isLoopbackHostname } from "./loopback";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
@@ -7,14 +8,29 @@ const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POS
 const RELEASE_TAG = "2026-01-30";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
+const DAILY_ACTIVE_STORAGE_KEY = "ao.telemetry.lastActiveDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
+let fallbackDailyActiveDate = "";
 
 type TelemetryProperties = Record<string, unknown>;
+type DailyActiveStorage = Pick<Storage, "getItem" | "setItem">;
+type DailyActiveEventTarget = {
+	addEventListener: (type: string, listener: EventListener, options?: AddEventListenerOptions) => void;
+	removeEventListener: (type: string, listener: EventListener, options?: EventListenerOptions) => void;
+};
+
+export type DailyActiveHeartbeatOptions = {
+	storage?: DailyActiveStorage;
+	now?: () => Date;
+	capture: () => void;
+	window: DailyActiveEventTarget;
+	document: DailyActiveEventTarget & Pick<Document, "visibilityState">;
+};
 
 export function buildTelemetryContext(appVersion: string, platform: string): TelemetryProperties {
 	const version = appVersion.trim() || "unknown";
@@ -28,6 +44,60 @@ export function buildTelemetryContext(appVersion: string, platform: string): Tel
 
 function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
 	return { ...telemetryContext, ...properties };
+}
+
+export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
+	const utcDate = now.toISOString().slice(0, 10);
+	if (!storage) {
+		if (fallbackDailyActiveDate === utcDate) return false;
+		fallbackDailyActiveDate = utcDate;
+		return true;
+	}
+	try {
+		if (storage.getItem(DAILY_ACTIVE_STORAGE_KEY) === utcDate) return false;
+		storage.setItem(DAILY_ACTIVE_STORAGE_KEY, utcDate);
+		return true;
+	} catch {
+		if (fallbackDailyActiveDate === utcDate) return false;
+		fallbackDailyActiveDate = utcDate;
+		return true;
+	}
+}
+
+export function startDailyActiveHeartbeat({
+	storage,
+	now = () => new Date(),
+	capture,
+	window,
+	document,
+}: DailyActiveHeartbeatOptions): () => void {
+	const maybeCapture = () => {
+		if (reserveDailyActiveCapture(storage, now())) {
+			capture();
+		}
+	};
+	const onVisibilityChange = () => {
+		if (document.visibilityState === "visible") {
+			maybeCapture();
+		}
+	};
+	const activityEvents = ["pointerdown", "keydown"] as const;
+	const passiveOptions = { passive: true };
+
+	maybeCapture();
+	window.addEventListener("focus", maybeCapture);
+	document.addEventListener("visibilitychange", onVisibilityChange);
+	for (const event of activityEvents) {
+		document.addEventListener(event, maybeCapture, passiveOptions);
+	}
+
+	return () => {
+		window.removeEventListener("focus", maybeCapture);
+		document.removeEventListener("visibilitychange", onVisibilityChange);
+		for (const event of activityEvents) {
+			document.removeEventListener(event, maybeCapture);
+		}
+	};
 }
 
 function normalizeException(reason: unknown): Error {
@@ -70,13 +140,10 @@ async function hashedTelemetryID(value: unknown): Promise<string | undefined> {
 function isLocalURL(value: string): boolean {
 	try {
 		const url = new URL(value);
-		const hostname = url.hostname.replace(/^\[(.*)\]$/, "$1");
 		return (
 			url.protocol === "file:" ||
 			(url.protocol === "app:" && url.host === "renderer") ||
-			hostname === "localhost" ||
-			hostname === "127.0.0.1" ||
-			hostname === "::1"
+			isLoopbackHostname(url.hostname)
 		);
 	} catch {
 		return false;
@@ -293,10 +360,25 @@ export async function initTelemetry(): Promise<boolean> {
 			surface: "renderer",
 		});
 		bindErrorHandlers();
-		posthog.capture(
-			"ao.app.active",
-			withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
-		);
+		let storage: DailyActiveStorage | undefined;
+		try {
+			storage = window.localStorage;
+		} catch {
+			storage = undefined;
+		}
+		startDailyActiveHeartbeat({
+			storage,
+			window,
+			document,
+			capture: () => {
+				void (async () => {
+					posthog.capture(
+						"ao.app.active",
+						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
+					);
+				})();
+			},
+		});
 		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
 		return true;
 	})().catch(() => false);

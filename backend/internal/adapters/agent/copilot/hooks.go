@@ -20,6 +20,9 @@ const (
 	copilotHooksDir      = ".github/hooks"
 	copilotHooksFileName = "ao.json"
 
+	copilotAgentsDir     = ".github/agents"
+	copilotAgentSentinel = "<!-- managed by agent-orchestrator: copilot agent profile -->"
+
 	// copilotHooksVersion is the schema version of the hooks file (Copilot uses 1).
 	copilotHooksVersion = 1
 
@@ -84,17 +87,22 @@ var copilotManagedHooks = []copilotHookSpec{
 	{Event: "agentStop", Command: "stop"},
 }
 
-// GetAgentHooks installs AO's Copilot hooks into the worktree-local
-// .github/hooks/ao.json file (the repository-scope hooks config Copilot CLI
-// reads). The hooks report normalized activity-state signals back into AO's
-// store. Existing AO entries are not duplicated and any unrelated keys are
-// preserved, so the install is idempotent.
+// GetAgentHooks installs AO's Copilot workspace integration:
+//   - .github/hooks/ao.json for normalized activity-state signals.
+//   - .github/agents/ao-<session>.agent.md for an explicit per-session role.
+//
+// The launch command selects that profile with --agent=ao-<session>. Avoid
+// writing a repository-root AGENTS.md here so AO does not compete with
+// project-owned instructions.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.WorkspacePath) == "" {
 		return errors.New("copilot.GetAgentHooks: WorkspacePath is required")
+	}
+	if err := installCopilotAgent(cfg.WorkspacePath, cfg.SessionID, cfg.SystemPrompt, cfg.SystemPromptFile); err != nil {
+		return fmt.Errorf("copilot.GetAgentHooks: %w", err)
 	}
 
 	hooksPath := copilotHooksPath(cfg.WorkspacePath)
@@ -126,6 +134,108 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		return fmt.Errorf("copilot.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
+}
+
+func installCopilotAgent(workspacePath, sessionID, inlinePrompt, promptFile string) error {
+	systemPrompt, err := copilotSystemPromptText(inlinePrompt, promptFile)
+	if err != nil {
+		return err
+	}
+	agentName := copilotAgentName(sessionID, inlinePrompt, promptFile)
+	if systemPrompt == "" || agentName == "" {
+		return nil
+	}
+	agentPath := filepath.Join(workspacePath, copilotAgentsDir, agentName+".agent.md")
+	existing, err := os.ReadFile(agentPath) //nolint:gosec // path built from caller-owned workspace dir
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", agentPath, err)
+	}
+	if err == nil && !strings.Contains(string(existing), copilotAgentSentinel) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(agentPath), 0o750); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(agentPath), err)
+	}
+	body := copilotAgentProfile(agentName, sessionID, systemPrompt)
+	if err := hookutil.AtomicWriteFile(agentPath, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", agentPath, err)
+	}
+	if err := ignoreCopilotPath(workspacePath, "/"+filepath.ToSlash(filepath.Join(copilotAgentsDir, agentName+".agent.md"))); err != nil {
+		return fmt.Errorf("git exclude: %w", err)
+	}
+	return nil
+}
+
+func copilotAgentProfile(agentName, sessionID, systemPrompt string) string {
+	return "---\n" +
+		"name: " + agentName + "\n" +
+		"description: Agent Orchestrator role profile for AO session " + strings.TrimSpace(sessionID) + ". Use for all work in this session.\n" +
+		"target: github-copilot\n" +
+		"---\n\n" +
+		copilotAgentSentinel + "\n\n" +
+		strings.TrimRight(systemPrompt, "\n") + "\n"
+}
+
+func ignoreCopilotPath(workspacePath, pattern string) error {
+	gitDir, err := workspaceGitDir(workspacePath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(gitDir) == "" {
+		return nil
+	}
+	excludePath := filepath.Join(gitDir, "info", "exclude")
+	data, err := os.ReadFile(excludePath) //nolint:gosec // path derived from the workspace .git metadata
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", excludePath, err)
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || strings.Contains(string(data), pattern) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0o750); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(excludePath), err)
+	}
+	body := strings.TrimRight(string(data), "\n")
+	if body != "" {
+		body += "\n"
+	}
+	body += "# agent-orchestrator Copilot session files\n" + pattern + "\n"
+	if err := hookutil.AtomicWriteFile(excludePath, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", excludePath, err)
+	}
+	return nil
+}
+
+func workspaceGitDir(workspacePath string) (string, error) {
+	gitPath := filepath.Join(workspacePath, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat %s: %w", gitPath, err)
+	}
+	if info.IsDir() {
+		return gitPath, nil
+	}
+	data, err := os.ReadFile(gitPath) //nolint:gosec // path built from caller-owned workspace dir
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", gitPath, err)
+	}
+	text := strings.TrimSpace(string(data))
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(text, prefix) {
+		return "", nil
+	}
+	dir := strings.TrimSpace(strings.TrimPrefix(text, prefix))
+	if dir == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(dir) {
+		return dir, nil
+	}
+	return filepath.Clean(filepath.Join(workspacePath, dir)), nil
 }
 
 // UninstallHooks removes AO's Copilot hooks from the workspace-local

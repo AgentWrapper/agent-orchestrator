@@ -374,6 +374,76 @@ describe("dispose after the window is destroyed", () => {
 	});
 });
 
+describe("getLastFocusedPanelContents", () => {
+	// Mock that captures each panel's "focus" listener so the test can fire it.
+	function setup() {
+		let focusListener: (() => void) | undefined;
+		const webContents = {
+			canGoBack: () => false,
+			canGoForward: () => false,
+			clearHistory: () => undefined,
+			getTitle: () => "",
+			getURL: () => "",
+			goBack: () => undefined,
+			goForward: () => undefined,
+			isLoading: () => false,
+			loadURL: async () => undefined,
+			reload: () => undefined,
+			send: () => undefined,
+			setWindowOpenHandler: () => undefined,
+			stop: () => undefined,
+			close: () => undefined,
+			isDestroyed: () => false,
+			on: (event: string, listener: () => void) => {
+				if (event === "focus") focusListener = listener;
+			},
+		};
+		const view = { webContents, setBounds: () => undefined, setVisible: () => undefined };
+		const handlers = new Map<string, InvokeHandler>();
+		const record = (channel: string, fn: InvokeHandler) => handlers.set(channel, fn);
+		const host = createBrowserViewHost({
+			mainWindow: {
+				contentView: { addChildView: () => undefined, removeChildView: () => undefined },
+				getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+				webContents: { id: 1, send: () => undefined },
+			} as never,
+			ipcMain: { handle: record, on: record, removeHandler: () => undefined, off: () => undefined } as never,
+			shell: { openExternal: async () => undefined },
+			WebContentsView: function () {
+				return view;
+			} as never,
+			annotatePreloadPath: "/preload.js",
+			rendererOrigin: "http://localhost:5173",
+		});
+		const call = (channel: string, ...args: unknown[]) =>
+			handlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
+		return { host, call, webContents, focus: () => focusListener?.() };
+	}
+
+	it("is null until a panel is focused", async () => {
+		const { host, call } = setup();
+		await call("browser:ensure", "s");
+		expect(host.getLastFocusedPanelContents()).toBeNull();
+	});
+
+	it("tracks the focused panel, then clears on hide and destroy", async () => {
+		const { host, call, webContents, focus } = setup();
+		await call("browser:ensure", "s");
+
+		focus();
+		expect(host.getLastFocusedPanelContents()).toBe(webContents);
+
+		call("browser:setBounds", { viewId: "1:s", rect: { x: 0, y: 0, width: 10, height: 10 }, visible: false });
+		expect(host.getLastFocusedPanelContents()).toBeNull();
+
+		focus();
+		expect(host.getLastFocusedPanelContents()).toBe(webContents);
+
+		call("browser:destroy", "1:s");
+		expect(host.getLastFocusedPanelContents()).toBeNull();
+	});
+});
+
 describe("clampBoundsToWindow", () => {
 	it("rounds and clamps bounds to the window content area", () => {
 		expect(

@@ -9,12 +9,12 @@
 //
 // Launch shape:
 //
-//	auggie --print [--instruction-file <f> | --instruction <s>] [-- <prompt>]
+//	auggie --print [--rules <f>] [-- <prompt>]
 //
 // The prompt is the print-mode positional, passed after `--` so a prompt
-// beginning with "-" is not mistaken for a flag. A system prompt, when supplied,
-// is injected via Auggie's `--instruction-file` / `--instruction` flags, which
-// append guidance to the workspace rules.
+// beginning with "-" is not mistaken for a flag. A system prompt, when supplied
+// as an AO-owned file, is injected via Auggie's `--rules` flag, which appends
+// guidance to the workspace rules.
 //
 // Permissions: Auggie has no single "approve everything" flag. It governs
 // unattended tool/file approval through granular `--permission <tool>:<allow|deny>`
@@ -80,11 +80,12 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new headless Auggie session:
 //
-//	auggie --print [--instruction-file <f> | --instruction <s>] [-- <prompt>]
+//	auggie --print [--rules <f>] [-- <prompt>]
 //
 // The prompt is passed after `--` so a prompt beginning with "-" is not mistaken
-// for a flag. A system prompt is injected via --instruction-file / --instruction,
-// mirroring the system-prompt handling of the other adapters.
+// for a flag. Auggie's `--instruction` flags are the task input, not a rule or
+// system-prompt surface; AO standing instructions use `--rules` when the
+// manager provides a prompt file.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -96,9 +97,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary, "--print"}
 	if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "--instruction-file", cfg.SystemPromptFile)
-	} else if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "--instruction", cfg.SystemPrompt)
+		cmd = append(cmd, "--rules", cfg.SystemPromptFile)
 	}
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
@@ -126,7 +125,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = []string{binary, "--print", "--resume", agentSessionID}
+	cmd = []string{binary, "--print"}
+	if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "--rules", cfg.SystemPromptFile)
+	}
+	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
 

@@ -525,6 +525,8 @@ function sessionBadge(session: WorkspaceSession): { label: string; className: st
 			return { label: "Merged", className: "text-passive" };
 		case "terminated":
 			return { label: "Terminated", className: "text-passive" };
+		case "idle":
+			return { label: "Idle", className: "text-passive" };
 		default:
 			return { label: "Working", className: "text-working" };
 	}

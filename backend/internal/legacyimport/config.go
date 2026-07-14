@@ -17,33 +17,34 @@ type legacyConfig struct {
 	Projects map[string]legacyProjectConfig `yaml:"projects"`
 }
 
-// legacyProjectConfig is one project's block. Only the fields the rewrite can
-// represent are typed; the rest are captured as raw nodes purely so the importer
-// can report them as dropped (issue #247 §4).
+// legacyProjectConfig is one project's block. Prompt rule fields stay raw so
+// scalar strings can be copied while non-string legacy values are reported as
+// dropped; fields with no rewrite home are also captured as raw nodes purely for
+// dropped-field notes (issue #247 §4).
 type legacyProjectConfig struct {
 	Path string `yaml:"path"`
 	Name string `yaml:"name"`
 	// Repo is captured as a raw YAML node but never consumed; the origin URL is
 	// re-resolved from the repo path at import time.
-	Repo          *yaml.Node         `yaml:"repo"`
-	DefaultBranch string             `yaml:"defaultBranch"`
-	SessionPrefix string             `yaml:"sessionPrefix"`
-	Env           map[string]string  `yaml:"env"`
-	Symlinks      []string           `yaml:"symlinks"`
-	PostCreate    []string           `yaml:"postCreate"`
-	AgentConfig   *legacyAgentConfig `yaml:"agentConfig"`
-	Worker        *legacyRole        `yaml:"worker"`
-	Orchestrator  *legacyRole        `yaml:"orchestrator"`
+	Repo             *yaml.Node         `yaml:"repo"`
+	DefaultBranch    string             `yaml:"defaultBranch"`
+	SessionPrefix    string             `yaml:"sessionPrefix"`
+	Env              map[string]string  `yaml:"env"`
+	Symlinks         []string           `yaml:"symlinks"`
+	PostCreate       []string           `yaml:"postCreate"`
+	AgentConfig      *legacyAgentConfig `yaml:"agentConfig"`
+	Worker           *legacyRole        `yaml:"worker"`
+	Orchestrator     *legacyRole        `yaml:"orchestrator"`
+	AgentRules       *yaml.Node         `yaml:"agentRules"`
+	AgentRulesFile   *yaml.Node         `yaml:"agentRulesFile"`
+	OrchestratorRule *yaml.Node         `yaml:"orchestratorRules"`
 
 	// Captured only to surface as dropped in the report (no rewrite home).
-	Tracker          *yaml.Node `yaml:"tracker"`
-	SCM              *yaml.Node `yaml:"scm"`
-	AgentRules       *yaml.Node `yaml:"agentRules"`
-	AgentRulesFile   *yaml.Node `yaml:"agentRulesFile"`
-	OrchestratorRule *yaml.Node `yaml:"orchestratorRules"`
-	Runtime          *yaml.Node `yaml:"runtime"`
-	Workspace        *yaml.Node `yaml:"workspace"`
-	Reactions        *yaml.Node `yaml:"reactions"`
+	Tracker   *yaml.Node `yaml:"tracker"`
+	SCM       *yaml.Node `yaml:"scm"`
+	Runtime   *yaml.Node `yaml:"runtime"`
+	Workspace *yaml.Node `yaml:"workspace"`
+	Reactions *yaml.Node `yaml:"reactions"`
 }
 
 type legacyAgentConfig struct {

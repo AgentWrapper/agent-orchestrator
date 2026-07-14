@@ -147,6 +147,14 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set mouse %s: %w", id, err)
 	}
 
+	// Size the shared window to the largest attached client, not the most recent
+	// one, so a small secondary viewer (e.g. the phone) can't strip down a larger
+	// client's view (see setWindowSizeLargestArgs).
+	if _, err := r.run(ctx, setWindowSizeLargestArgs(id)...); err != nil {
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set window-size %s: %w", id, err)
+	}
+
 	handle := ports.RuntimeHandle{ID: id}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {

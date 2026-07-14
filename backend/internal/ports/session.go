@@ -14,10 +14,14 @@ var ErrSessionNotFound = errors.New("session not found")
 type SpawnConfig struct {
 	ProjectID domain.ProjectID
 	IssueID   domain.IssueID
-	Kind      domain.SessionKind
-	Harness   domain.AgentHarness
-	Branch    string
-	Prompt    string
+	// IssueContext is optional pre-fetched tracker context for the task prompt.
+	// Standing rules stay in SystemPrompt; issue facts belong to the user task.
+	IssueContext string
+	Kind         domain.SessionKind
+	Harness      domain.AgentHarness
+	Branch       string
+	Prompt       string
+
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).
 	DisplayName string

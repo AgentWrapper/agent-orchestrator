@@ -44,12 +44,12 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if s != ports.PromptDeliveryInCommand {
-		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryInCommand)
+	if s != ports.PromptDeliveryAfterStart {
+		t.Fatalf("strategy = %q, want %q", s, ports.PromptDeliveryAfterStart)
 	}
 }
 
-func TestGetLaunchCommandDeliversPromptWithFlag(t *testing.T) {
+func TestGetLaunchCommandOmitsPromptForInteractiveDelivery(t *testing.T) {
 	p := &Plugin{resolvedBinary: "aider"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Prompt: "add a health check",
@@ -58,9 +58,14 @@ func TestGetLaunchCommandDeliversPromptWithFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"aider", "-m", "add a health check", "--no-check-update", "--no-stream", "--no-pretty"}
+	want := []string{"aider", "--no-check-update", "--no-stream", "--no-pretty"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	for _, arg := range cmd {
+		if arg == "-m" || arg == "add a health check" {
+			t.Fatalf("cmd = %#v unexpectedly contains prompt argv", cmd)
+		}
 	}
 }
 
@@ -82,7 +87,7 @@ func TestGetLaunchCommandOmitsPromptFlagWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandAlwaysAppendsHeadlessFlags(t *testing.T) {
+func TestGetLaunchCommandAlwaysAppendsStableOutputFlags(t *testing.T) {
 	p := &Plugin{resolvedBinary: "aider"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "do the thing"})
 	if err != nil {
@@ -98,7 +103,7 @@ func TestGetLaunchCommandAlwaysAppendsHeadlessFlags(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("cmd = %#v missing headless flag %q", cmd, want)
+			t.Fatalf("cmd = %#v missing stable output flag %q", cmd, want)
 		}
 	}
 }
@@ -176,7 +181,7 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandSystemPromptFileUsesRead(t *testing.T) {
+func TestGetLaunchCommandSystemPromptFileUsesReadOnlyContext(t *testing.T) {
 	p := &Plugin{resolvedBinary: "aider"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Prompt:           "do the thing",
@@ -186,7 +191,7 @@ func TestGetLaunchCommandSystemPromptFileUsesRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"aider", "-m", "do the thing", "--no-check-update", "--no-stream", "--no-pretty", "--read", "/tmp/system.md"}
+	want := []string{"aider", "--no-check-update", "--no-stream", "--no-pretty", "--read", "/tmp/system.md"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -202,7 +207,7 @@ func TestGetLaunchCommandInlineSystemPromptIsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"aider", "-m", "do the thing", "--no-check-update", "--no-stream", "--no-pretty"}
+	want := []string{"aider", "--no-check-update", "--no-stream", "--no-pretty"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
