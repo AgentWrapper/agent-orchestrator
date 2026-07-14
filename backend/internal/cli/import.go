@@ -66,7 +66,7 @@ func (c *commandContext) runImport(cmd *cobra.Command, opts importOptions) error
 	// Surface a parse error instead of masking it as "no data" (issue #2186):
 	// a broken legacy store is distinct from an absent or empty one.
 	if parseErr := legacyimport.LegacyConfigError(root); parseErr != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Cannot read legacy config at %s: %v\n", root, parseErr)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Cannot read legacy config at %s: %v\n", root, parseErr)
 		return parseErr
 	}
 	if !legacyimport.HasLegacyData(root) {
