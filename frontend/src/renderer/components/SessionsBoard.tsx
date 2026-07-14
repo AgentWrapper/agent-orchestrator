@@ -317,6 +317,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									type="button"
 								>
 									<span className="text-xs text-muted-foreground">{s.title}</span>
+									<span className="font-mono text-micro text-passive">{s.id}</span>
 								</button>
 							))}
 						</div>
