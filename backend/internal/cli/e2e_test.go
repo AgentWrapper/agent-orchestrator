@@ -151,9 +151,15 @@ func (e env) startDaemon(t *testing.T) {
 		e.run(t, "stop")
 		select {
 		case <-waitDone:
+			return
 		case <-time.After(5 * time.Second):
-			t.Log("daemon process did not exit during cleanup")
 		}
+		// The daemon did not exit on `ao stop` within the timeout: a shutdown
+		// regression is hiding behind a green test. Fail, force-kill, and wait
+		// for the child to be reaped so it cannot survive the test.
+		t.Errorf("daemon process did not exit within 5s of `ao stop`; forcing kill")
+		_ = cmd.Process.Kill()
+		<-waitDone
 	})
 
 	deadline := time.Now().Add(10 * time.Second)
