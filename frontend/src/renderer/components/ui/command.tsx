@@ -68,7 +68,11 @@ function CommandDialog({
 
 function CommandInput({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Input>) {
 	return (
-		<div data-slot="command-input-wrapper" className="flex items-center gap-2 border-b border-border px-4" cmdk-input-wrapper="">
+		<div
+			data-slot="command-input-wrapper"
+			className="flex items-center gap-2 border-b border-border px-4"
+			cmdk-input-wrapper=""
+		>
 			<Search className="size-icon-lg shrink-0 text-passive" aria-hidden="true" />
 			<CommandPrimitive.Input
 				data-slot="command-input"
@@ -99,7 +103,9 @@ function CommandEmpty({ ...props }: React.ComponentProps<typeof CommandPrimitive
 }
 
 function CommandGroup({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Group>) {
-	return <CommandPrimitive.Group data-slot="command-group" className={cn("overflow-hidden py-1", className)} {...props} />;
+	return (
+		<CommandPrimitive.Group data-slot="command-group" className={cn("overflow-hidden py-1", className)} {...props} />
+	);
 }
 
 function CommandItem({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Item>) {
@@ -118,12 +124,4 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
 	);
 }
 
-export {
-	Command,
-	CommandDialog,
-	CommandInput,
-	CommandList,
-	CommandEmpty,
-	CommandGroup,
-	CommandItem,
-};
+export { Command, CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem };

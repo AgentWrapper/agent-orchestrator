@@ -19,14 +19,7 @@ import { findProjectOrchestrator } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
-import {
-	CommandDialog,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "./ui/command";
+import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 function terminalHasFocus(): boolean {
 	if (typeof document === "undefined") return false;
@@ -285,7 +278,11 @@ export function CommandPalette() {
 				onOpenChange={setIsNewTaskOpen}
 			/>
 
-			<CreateProjectFlow mode="choose" onCreateProject={createProject} onInitializeProject={initializeProjectRepository}>
+			<CreateProjectFlow
+				mode="choose"
+				onCreateProject={createProject}
+				onInitializeProject={initializeProjectRepository}
+			>
 				{({ choosePath }) => <BindChoosePath choosePath={choosePath} choosePathRef={choosePathRef} />}
 			</CreateProjectFlow>
 		</>

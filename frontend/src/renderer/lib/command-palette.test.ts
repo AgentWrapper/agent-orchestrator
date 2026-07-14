@@ -90,7 +90,6 @@ describe("buildCommands grouping", () => {
 		const orch = buildCommands({ workspaces: workspaces(), currentSessionId: "orch" });
 		expect(byId(orch).has("current-copy-branch")).toBe(false);
 	});
-
 });
 
 describe("buildCommands attention", () => {

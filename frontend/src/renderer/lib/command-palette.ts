@@ -84,7 +84,11 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		subtitle: currentProject?.name,
 		keywords: ["worker", "chat", "start"],
 		disabled: !currentProject || isProjectRestarting,
-		disabledReason: !currentProject ? "No current project" : isProjectRestarting ? "Orchestrator restarting" : undefined,
+		disabledReason: !currentProject
+			? "No current project"
+			: isProjectRestarting
+				? "Orchestrator restarting"
+				: undefined,
 		...(currentProject ? { action: { kind: "open-new-task" as const, projectId: currentProject.id } } : {}),
 	});
 
@@ -127,10 +131,12 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		.flatMap((workspace) => workerSessions(workspace.sessions).map((session) => ({ workspace, session })))
 		.filter(
 			({ session }) =>
-				session.id !== currentSessionId &&
-				(attentionZone(session) === "merge" || sessionNeedsAttention(session)),
+				session.id !== currentSessionId && (attentionZone(session) === "merge" || sessionNeedsAttention(session)),
 		)
-		.sort((a, b) => attentionZoneOrder.indexOf(attentionZone(a.session)) - attentionZoneOrder.indexOf(attentionZone(b.session)));
+		.sort(
+			(a, b) =>
+				attentionZoneOrder.indexOf(attentionZone(a.session)) - attentionZoneOrder.indexOf(attentionZone(b.session)),
+		);
 
 	const attentionIds = new Set(attentionSessions.map(({ session }) => session.id));
 
@@ -143,7 +149,10 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 			keywords: [workspace.name, session.branch, session.issueId ?? ""],
 			action: {
 				kind: "navigate",
-				target: { to: "/projects/$projectId/sessions/$sessionId", params: { projectId: workspace.id, sessionId: session.id } },
+				target: {
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: workspace.id, sessionId: session.id },
+				},
 			},
 		});
 	}
@@ -187,7 +196,15 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 					group: "prs",
 					title: `#${pr.number}`,
 					subtitle: `${session.title} · ${workspace.name}`,
-					keywords: [`#${pr.number}`, String(pr.number), pr.url, session.title, session.branch, workspace.name, pr.state],
+					keywords: [
+						`#${pr.number}`,
+						String(pr.number),
+						pr.url,
+						session.title,
+						session.branch,
+						workspace.name,
+						pr.state,
+					],
 					action: {
 						kind: "navigate",
 						target: {
