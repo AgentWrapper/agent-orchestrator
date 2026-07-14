@@ -16,7 +16,11 @@ import (
 // typed-nil ports.Tracker would compare != nil here even though the concrete Tracker
 // is nil, which is exactly the regression.
 func TestTrackerForSession_NilInterfaceWhenNoToken(t *testing.T) {
+	// EnvTokenSource falls back to GITHUB_TOKEN after AO_GITHUB_TOKEN, so clear
+	// both — otherwise a CI/local shell with GITHUB_TOKEN set would make
+	// newGitHubTracker return a valid tracker and the nil assertion false-fails.
 	t.Setenv("AO_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	tracker := trackerForSession(log)
