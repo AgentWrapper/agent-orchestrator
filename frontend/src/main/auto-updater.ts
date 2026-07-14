@@ -35,6 +35,7 @@ let eventsWired = false;
 // captured from whichever entry point wired the events (both receive it).
 let stagedVersion: string | undefined;
 let stagedAtMs: number | undefined;
+let stagedEscalated = false;
 let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
 
@@ -96,28 +97,42 @@ async function fetchNightlyImportant(owner: string, repo: string, version: strin
 	}
 }
 
+// stagedDownloadedStatus rebuilds the enriched downloaded status from module
+// state, so transient check states can restore the row without recomputing.
+function stagedDownloadedStatus(): UpdateStatus {
+	return { state: "downloaded", version: stagedVersion, stagedAt: stagedAtMs, escalated: stagedEscalated };
+}
+
 // runEscalationCheck re-reads settings and feeds, then rebroadcasts the
-// downloaded status with a fresh escalated flag. It only runs while the last
-// status is still "downloaded" (clears the timer otherwise) and never
-// broadcasts an error state: every failure degrades to escalated staying put.
+// downloaded status with a fresh escalated flag. The timer is keyed on a build
+// being staged (stagedAtMs set), NOT on lastStatus: a manual re-check flips
+// lastStatus through checking/available while the build stays staged, and that
+// must not kill the loop. Never broadcasts an error state: every failure
+// degrades to escalated staying put.
 async function runEscalationCheck(): Promise<void> {
-	if (stagedVersion === undefined || stagedAtMs === undefined || escalationStateDir === undefined) return;
-	if (lastStatus.state !== "downloaded") {
+	if (stagedAtMs === undefined) {
 		stopEscalationTimer();
 		return;
 	}
+	if (escalationStateDir === undefined) return;
+	// A newer build is being pulled; let its progress own the status stream.
+	if (lastStatus.state === "downloading") return;
 	try {
 		const settings = await readUpdateSettings(escalationStateDir);
 		let important = false;
 		let latestStableVersion: string | undefined;
 		const coords = await readAppUpdateYml();
 		if (coords && settings.channel === "nightly") {
+			// stagedVersion is only needed by the important-flag fetch; the
+			// latest-channel 48h rule (and the behind-stable check) work without it.
 			[latestStableVersion, important] = await Promise.all([
 				fetchLatestStableVersion(coords.owner, coords.repo),
-				fetchNightlyImportant(coords.owner, coords.repo, stagedVersion),
+				stagedVersion !== undefined
+					? fetchNightlyImportant(coords.owner, coords.repo, stagedVersion)
+					: Promise.resolve(false),
 			]);
 		}
-		const escalated = evaluateEscalation({
+		stagedEscalated = evaluateEscalation({
 			channel: settings.channel,
 			stagedAt: stagedAtMs,
 			now: Date.now(),
@@ -125,7 +140,7 @@ async function runEscalationCheck(): Promise<void> {
 			runningVersion: app.getVersion(),
 			latestStableVersion,
 		});
-		broadcast({ state: "downloaded", version: stagedVersion, stagedAt: stagedAtMs, escalated });
+		broadcast(stagedDownloadedStatus());
 	} catch (err) {
 		console.debug("escalation check skipped:", err);
 	}
@@ -144,16 +159,34 @@ function stopEscalationTimer(): void {
 function wireUpdaterEvents(): void {
 	if (eventsWired) return;
 	eventsWired = true;
+	// With a build staged, "checking" briefly hides the sidebar restart row; that
+	// is acceptable and self-healing: the available / not-available handlers below
+	// restore the enriched downloaded status right after.
 	autoUpdater.on("checking-for-update", () => broadcast({ state: "checking" }));
-	autoUpdater.on("update-available", (info) => broadcast({ state: "available", version: info?.version }));
-	autoUpdater.on("update-not-available", () => broadcast({ state: "not-available" }));
+	autoUpdater.on("update-available", (info) => {
+		// A manual re-check reports the already-staged build as merely "available"
+		// (autoDownload is off on that path). It is still in cache and installs on
+		// quit, so keep the richer downloaded status instead of hiding the row.
+		if (stagedAtMs !== undefined && info?.version === stagedVersion) {
+			broadcast(stagedDownloadedStatus());
+			return;
+		}
+		broadcast({ state: "available", version: info?.version });
+	});
+	autoUpdater.on("update-not-available", () => {
+		broadcast({ state: "not-available" });
+		// The staged build outlives a "nothing newer" answer (e.g. after a channel
+		// switch); follow up so the restart row returns.
+		if (stagedAtMs !== undefined) broadcast(stagedDownloadedStatus());
+	});
 	autoUpdater.on("download-progress", (p) =>
 		broadcast({ state: "downloading", percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))) }),
 	);
 	autoUpdater.on("update-downloaded", (info) => {
 		stagedVersion = info?.version;
 		stagedAtMs = Date.now();
-		broadcast({ state: "downloaded", version: stagedVersion, stagedAt: stagedAtMs, escalated: false });
+		stagedEscalated = false;
+		broadcast(stagedDownloadedStatus());
 		// Evaluate now (nightly can escalate immediately), then every 30 minutes
 		// while the update sits uninstalled. unref so the timer never holds the
 		// process open on quit.
