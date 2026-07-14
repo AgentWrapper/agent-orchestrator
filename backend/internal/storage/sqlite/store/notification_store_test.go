@@ -572,3 +572,191 @@ func TestNotificationStore_DifferentHeadSHADoesNotDedupe(t *testing.T) {
 		})
 	}
 }
+
+// TestNotificationStore_ListUnreadSensitiveOnly pins the SensitiveOnly filter
+// (#268/#319 review finding 1): the operator-attention projection queries
+// sensitive ready_to_merge rows with their own budget, so routine (non-
+// sensitive) rows must be filtered in SQL, never fetched and discarded.
+func TestNotificationStore_ListUnreadSensitiveOnly(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	for _, rec := range []domain.NotificationRecord{
+		{ID: "ntf_routine", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "routine", Status: domain.NotificationUnread, CreatedAt: base},
+		{ID: "ntf_sensitive", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/2", Type: domain.NotificationReadyToMerge, Title: "sensitive", Sensitive: true, Status: domain.NotificationUnread, CreatedAt: base.Add(time.Minute)},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
+	}
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{
+		Limit:         10,
+		Types:         []domain.NotificationType{domain.NotificationReadyToMerge},
+		SensitiveOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ntf_sensitive" {
+		t.Fatalf("rows = %+v, want only the sensitive row", rows)
+	}
+}
+
+// TestNotificationStore_ListUnreadCursorPagination pins the ack-independent
+// composite cursor (created_at, id) used by readers that never mark rows read
+// on delivery (#268/#319 review finding 7).
+func TestNotificationStore_ListUnreadCursorPagination(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	// Three rows: two share a created_at (id tie-break), one older. Distinct
+	// bodies and head SHAs keep them clear of the store's content dedupe.
+	for _, rec := range []domain.NotificationRecord{
+		{ID: "ntf_a", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationWorkerDiedUnfinished, Title: "oldest", Body: "a", HeadSHA: "sha-a", Status: domain.NotificationUnread, CreatedAt: base},
+		{ID: "ntf_b", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationWorkerDiedUnfinished, Title: "tie-low", Body: "b", HeadSHA: "sha-b", Status: domain.NotificationUnread, CreatedAt: base.Add(time.Minute)},
+		{ID: "ntf_c", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationWorkerDiedUnfinished, Title: "tie-high", Body: "c", HeadSHA: "sha-c", Status: domain.NotificationUnread, CreatedAt: base.Add(time.Minute)},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
+	}
+
+	// Page 1 (no cursor): newest-first with id DESC tie-break.
+	page1, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) != 2 || page1[0].ID != "ntf_c" || page1[1].ID != "ntf_b" {
+		t.Fatalf("page1 = %+v, want [ntf_c ntf_b]", page1)
+	}
+
+	// Page 2: cursor = last row of page 1.
+	page2, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{
+		Limit:         2,
+		CreatedBefore: page1[1].CreatedAt,
+		BeforeID:      page1[1].ID,
+	})
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2) != 1 || page2[0].ID != "ntf_a" {
+		t.Fatalf("page2 = %+v, want [ntf_a]", page2)
+	}
+
+	// Tie-break correctness: cursor at (tie timestamp, ntf_c) must return ntf_b.
+	tie, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{
+		Limit:         1,
+		CreatedBefore: page1[0].CreatedAt,
+		BeforeID:      page1[0].ID,
+	})
+	if err != nil {
+		t.Fatalf("tie: %v", err)
+	}
+	if len(tie) != 1 || tie[0].ID != "ntf_b" {
+		t.Fatalf("tie page = %+v, want [ntf_b]", tie)
+	}
+}
+
+// TestNotificationStore_MarkAllReadKeepsSensitiveReadyToMergeUnread pins the
+// sensitive-merge carve-out (#268/#319 review finding 2): read-all must not
+// clear a parked_sensitive_merge item out of the operator-attention projection
+// while its PR is still open. Routine ready_to_merge rows ARE cleared.
+func TestNotificationStore_MarkAllReadKeepsSensitiveReadyToMergeUnread(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	for _, rec := range []domain.NotificationRecord{
+		{ID: "ntf_routine", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "routine", Status: domain.NotificationUnread, CreatedAt: base},
+		{ID: "ntf_parked", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/2", Type: domain.NotificationReadyToMerge, Title: "parked", Sensitive: true, Status: domain.NotificationUnread, CreatedAt: base.Add(time.Minute)},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
+	}
+	read, err := s.MarkAllNotificationsRead(ctx, domain.OperatorAttentionNotificationTypes())
+	if err != nil {
+		t.Fatalf("MarkAllNotificationsRead: %v", err)
+	}
+	if len(read) != 1 || read[0].ID != "ntf_routine" {
+		t.Fatalf("read rows = %+v, want only the routine ready_to_merge", read)
+	}
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ntf_parked" {
+		t.Fatalf("unread rows = %+v, want the sensitive parked row preserved", rows)
+	}
+}
+
+// TestNotificationStore_CursorOffsetEquivalence pins UTC normalization of the
+// pagination cursor (#319 cycle-2 finding 2): SQLite compares the stored
+// created_at TEXT lexically, so an equivalent instant expressed in a non-UTC
+// offset must page identically to its UTC form — never skip or duplicate rows.
+func TestNotificationStore_CursorOffsetEquivalence(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	base := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	for _, rec := range []domain.NotificationRecord{
+		{ID: "ntf_a", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationWorkerDiedUnfinished, Title: "older", Body: "a", HeadSHA: "sha-a", Status: domain.NotificationUnread, CreatedAt: base},
+		{ID: "ntf_b", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationWorkerDiedUnfinished, Title: "newer", Body: "b", HeadSHA: "sha-b", Status: domain.NotificationUnread, CreatedAt: base.Add(time.Hour)},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
+	}
+	// The same instant as ntf_b's CreatedAt, expressed at +02:00.
+	offsetCursor := base.Add(time.Hour).In(time.FixedZone("CEST", 2*60*60))
+	rows, err := s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{
+		Limit:         10,
+		CreatedBefore: offsetCursor,
+		BeforeID:      "ntf_b",
+	})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ntf_a" {
+		t.Fatalf("rows = %+v, want exactly [ntf_a] (offset cursor must page like its UTC equivalent)", rows)
+	}
+	// And a row WRITTEN with a non-UTC CreatedAt must still order/paginate
+	// consistently with UTC-written rows.
+	offsetRow := domain.NotificationRecord{
+		ID: "ntf_c", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationWorkerDiedUnfinished,
+		Title: "offset-written", Body: "c", HeadSHA: "sha-c", Status: domain.NotificationUnread,
+		CreatedAt: base.Add(30 * time.Minute).In(time.FixedZone("CEST", 2*60*60)),
+	}
+	if _, inserted, err := s.CreateNotification(ctx, offsetRow); err != nil || !inserted {
+		t.Fatalf("insert ntf_c inserted=%v err=%v", inserted, err)
+	}
+	rows, err = s.ListUnreadNotifications(ctx, notificationsvc.ListFilter{
+		Limit:         10,
+		CreatedBefore: base.Add(time.Hour),
+		BeforeID:      "ntf_b",
+	})
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != "ntf_c" || rows[1].ID != "ntf_a" {
+		t.Fatalf("rows = %+v, want [ntf_c ntf_a]", rows)
+	}
+}

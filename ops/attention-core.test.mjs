@@ -3,504 +3,250 @@ import { describe, it } from "node:test";
 
 import {
 	AttentionTracker,
-	attentionFromMainCI,
-	attentionFromMainCIRecords,
-	normalizeEvent,
+	attentionRecordFromItem,
+	attentionRecordsFromProjection,
 	renderAlert,
 	renderDigest,
 	resolveMentionUserId,
 	signature,
-	touchesSensitivePath,
 } from "./attention-core.mjs";
 
-describe("resolveMentionUserId — SLACK_MEMBER_ID native (acceptance #4)", () => {
+// After the #268/#313 consolidation, attention-core is TRANSPORT ONLY: it no
+// longer classifies sessions or notifications into attention. The daemon owns
+// that derivation (GET /api/v1/attention/operator). These tests pin the render
+// and posting-dedup helpers the notifier reuses.
+
+describe("resolveMentionUserId — SLACK_MEMBER_ID native", () => {
 	it("reads SLACK_MEMBER_ID directly", () => {
-		assert.equal(resolveMentionUserId({ SLACK_MEMBER_ID: "U_NATIVE" }), "U_NATIVE");
+		assert.equal(resolveMentionUserId({ SLACK_MEMBER_ID: "U1" }), "U1");
 	});
 	it("prefers SLACK_MEMBER_ID over the legacy alias", () => {
-		assert.equal(resolveMentionUserId({ SLACK_MEMBER_ID: "U_NATIVE", SLACK_MENTION_USER_ID: "U_OLD" }), "U_NATIVE");
+		assert.equal(resolveMentionUserId({ SLACK_MEMBER_ID: "U1", SLACK_MENTION_USER_ID: "U2" }), "U1");
 	});
 	it("falls back to the legacy alias only when native is unset", () => {
-		assert.equal(resolveMentionUserId({ SLACK_MENTION_USER_ID: "U_OLD" }), "U_OLD");
+		assert.equal(resolveMentionUserId({ SLACK_MENTION_USER_ID: "U2" }), "U2");
 	});
 	it("returns empty string when neither is set", () => {
 		assert.equal(resolveMentionUserId({}), "");
 	});
 	it("trims whitespace", () => {
-		assert.equal(resolveMentionUserId({ SLACK_MEMBER_ID: "  U_TRIM  " }), "U_TRIM");
+		assert.equal(resolveMentionUserId({ SLACK_MEMBER_ID: "  U3  " }), "U3");
 	});
 });
 
-describe("normalizeEvent", () => {
-	it("normalizes a needs_input notification as an attention event", () => {
-		const rec = normalizeEvent({
-			type: "needs_input",
-			notification: { sessionId: "agent-1", projectId: "ao", message: "permission prompt" },
-		});
+function item(overrides = {}) {
+	return {
+		id: "session:a:decision",
+		kind: "decision",
+		projectId: "ao",
+		sessionId: "a",
+		reason: "waiting on an operator decision",
+		action: "answer it",
+		deepLink: "/projects/ao/sessions/a",
+		...overrides,
+	};
+}
+
+describe("attentionRecordFromItem — projection Item DTO adapter", () => {
+	it("maps a projection item to a flat render record marked attention", () => {
+		const rec = attentionRecordFromItem(item());
 		assert.deepEqual(rec, {
-			kind: "needs_input",
-			sessionId: "agent-1",
-			subjectKind: "session",
-			subjectId: "agent-1",
+			id: "session:a:decision",
+			kind: "decision",
+			sessionId: "a",
 			projectId: "ao",
-			title: "permission prompt",
-			url: "",
+			title: "waiting on an operator decision",
+			url: "/projects/ao/sessions/a",
+			prUrl: "",
 			attention: true,
 		});
 	});
-
-	it("treats a park-shaped payload as blocked attention", () => {
-		const rec = normalizeEvent({
-			type: "queue_update",
-			payload: { sessionId: "agent-3", projectId: "ao", message: "Parked awaiting operator decision" },
-		});
-		assert.equal(rec.kind, "blocked");
-		assert.equal(rec.attention, true);
+	it("prefers prUrl for the link when there is no deepLink", () => {
+		const rec = attentionRecordFromItem(item({ deepLink: "", prUrl: "http://pr/1" }));
+		assert.equal(rec.url, "http://pr/1");
 	});
-
-	it("classifies ready_to_merge on a sensitive path as parked_sensitive_merge (attention)", () => {
-		const rec = normalizeEvent(
-			{
-				type: "ready_to_merge",
-				notification: { sessionId: "agent-9", projectId: "ao", title: "PR ready", prUrl: "http://pr/9" },
-			},
-			{ sensitivePaths: ["backend/internal/daemon/manager.go"] },
-		);
-		assert.equal(rec.kind, "parked_sensitive_merge");
-		assert.equal(rec.attention, true);
+	it("keeps prUrl as a separate identity even when deepLink differs (terminal-event resolve)", () => {
+		const rec = attentionRecordFromItem(item({ deepLink: "/projects/ao/sessions/a", prUrl: "http://pr/9" }));
+		assert.equal(rec.url, "/projects/ao/sessions/a");
+		assert.equal(rec.prUrl, "http://pr/9");
 	});
-
-	it("classifies ready_to_merge on a non-sensitive path as routine (no attention)", () => {
-		const rec = normalizeEvent(
-			{
-				type: "ready_to_merge",
-				notification: { sessionId: "agent-9", projectId: "ao", title: "PR ready", prUrl: "http://pr/9" },
-			},
-			{ sensitivePaths: ["ops/attention-core.mjs"] },
-		);
-		assert.equal(rec.kind, "ready_to_merge");
-		assert.equal(rec.attention, false);
+	it("falls back to the session title when there is no reason", () => {
+		const rec = attentionRecordFromItem(item({ reason: "", sessionTitle: "ao #12 fix" }));
+		assert.equal(rec.title, "ao #12 fix");
 	});
-
-	it("keeps pr_merged as informational (no attention)", () => {
-		const rec = normalizeEvent({
-			type: "pr_merged",
-			notification: { sessionId: "agent-4", projectId: "ao", title: "merged" },
-		});
-		assert.equal(rec.attention, false);
-	});
-
-	it("normalizes a red main notification as needs-response attention", () => {
-		const rec = normalizeEvent({
-			type: "main_ci_red",
-			notification: {
-				projectId: "ao",
-				title: "main is red at fee462ed: go, cli-e2e",
-				sha: "fee462ed",
-				failedJobs: ["go", "cli-e2e"],
-				url: "https://github.example/actions/runs/1",
-			},
-		});
-		assert.deepEqual(rec, {
-			kind: "main_ci_red",
-			sessionId: "main",
-			subjectKind: "project",
-			subjectId: "ao",
-			projectId: "ao",
-			title: "main is red at fee462ed: go, cli-e2e",
-			url: "https://github.example/actions/runs/1",
-			attention: true,
-		});
-	});
-
-	it("uses typed subject identity in signatures when present", () => {
-		const rec = normalizeEvent({
-			type: "main_ci_red",
-			notification: {
-				projectId: "ao",
-				sessionId: "",
-				subject: { kind: "project", id: "ao" },
-				title: "main is red",
-			},
-		});
-		assert.equal(rec.sessionId, "main");
-		assert.equal(signature(rec), "ao/project:ao#main_ci_red");
-		assert.match(renderDigest([rec], { now: new Date("2026-07-12T00:00:00Z") }), /`main`/);
-	});
-
-	it("keeps worker terminal notifications session-scoped even when they include a PR URL", () => {
-		const rec = normalizeEvent({
-			type: "worker_retry_exhausted",
-			notification: {
-				projectId: "ao",
-				sessionId: "agent-7",
-				prUrl: "https://github.example/pr/7",
-				title: "worker retry cap exhausted",
-			},
-		});
-		assert.equal(signature(rec), "ao/session:agent-7#worker_retry_exhausted");
-	});
-
-	it("returns null for uninteresting events", () => {
-		assert.equal(normalizeEvent({ type: "pr_check_recorded", payload: { name: "backend" } }), null);
-		assert.equal(normalizeEvent(null), null);
+	it("returns null for a non-object", () => {
+		assert.equal(attentionRecordFromItem(null), null);
 	});
 });
 
-describe("touchesSensitivePath", () => {
-	it("matches each sensitive prefix", () => {
-		assert.equal(touchesSensitivePath(["backend/internal/daemon/x.go"]), true);
-		assert.equal(touchesSensitivePath(["backend/internal/session_manager/x.go"]), true);
-		assert.equal(touchesSensitivePath(["backend/internal/lifecycle/x.go"]), true);
+describe("attentionRecordsFromProjection — response mapper", () => {
+	it("maps {items:[...]} to render records", () => {
+		const recs = attentionRecordsFromProjection({ items: [item(), item({ id: "pr:1:merge", kind: "pr" })] });
+		assert.equal(recs.length, 2);
+		assert.equal(recs[0].kind, "decision");
+		assert.equal(recs[1].kind, "pr");
 	});
-	it("does not match ops-only diffs", () => {
-		assert.equal(touchesSensitivePath(["ops/x.mjs", "frontend/y.ts"]), false);
-		assert.equal(touchesSensitivePath([]), false);
+	it("accepts a bare array too", () => {
+		const recs = attentionRecordsFromProjection([item()]);
+		assert.equal(recs.length, 1);
+	});
+	it("returns an empty array for a shapeless payload", () => {
+		assert.deepEqual(attentionRecordsFromProjection({}), []);
+	});
+});
+
+describe("signature — posting-dedup key", () => {
+	it("uses the projection item id when present", () => {
+		assert.equal(signature(attentionRecordFromItem(item())), "session:a:decision");
+	});
+	it("falls back to project/session/kind for synthetic records without an id", () => {
+		assert.equal(signature({ kind: "main_ci_red", projectId: "ao", sessionId: "main" }), "ao/main#main_ci_red");
 	});
 });
 
 describe("renderAlert", () => {
-	it("@mentions attention events when a member id is configured", () => {
-		const rec = normalizeEvent({
-			type: "needs_input",
-			notification: { sessionId: "agent-1", projectId: "ao", message: "permission prompt" },
-		});
-		assert.equal(renderAlert(rec, "U123"), "<@U123> 🖐️ *needs_input* [ao] agent-1: permission prompt");
-	});
-	it("does not @mention informational events", () => {
-		const rec = normalizeEvent({
-			type: "pr_merged",
-			notification: { sessionId: "agent-4", projectId: "ao", title: "merged" },
-		});
-		assert.equal(renderAlert(rec, "U123"), "🚀 *pr_merged* [ao] agent-4: merged");
+	it("@mentions attention records when a member id is configured", () => {
+		const msg = renderAlert(attentionRecordFromItem(item()), "U123");
+		assert.match(msg, /^<@U123> 🖐️ \*decision\* \[ao\] a: waiting on an operator decision/);
 	});
 	it("omits the mention when no member id is configured", () => {
-		const rec = normalizeEvent({
-			type: "needs_input",
-			notification: { sessionId: "agent-5", projectId: "ao", message: "question" },
-		});
-		assert.equal(renderAlert(rec, ""), "🖐️ *needs_input* [ao] agent-5: question");
+		const msg = renderAlert(attentionRecordFromItem(item()), "");
+		assert.doesNotMatch(msg, /<@/);
+		assert.match(msg, /\*decision\*/);
+	});
+	it("uses a distinct glyph per kind", () => {
+		assert.match(renderAlert(attentionRecordFromItem(item({ kind: "blocked" })), ""), /🚧 \*blocked\*/);
+		assert.match(
+			renderAlert(attentionRecordFromItem(item({ kind: "parked_sensitive_merge" })), ""),
+			/🛑 \*parked_sensitive_merge\*/,
+		);
 	});
 });
 
-describe("AttentionTracker — dedup (acceptance #1, #2)", () => {
-	const mk = (session, kind = "needs_input", project = "ao") => ({
-		kind,
-		sessionId: session,
-		projectId: project,
-		title: "",
-		url: "",
-		attention: true,
-	});
-
-	it("alerts once per new signature, not on repeat of the same state", () => {
-		const t = new AttentionTracker();
-		assert.equal(t.observe(mk("a")).alert, true);
-		assert.equal(t.observe(mk("a")).alert, false);
-		assert.equal(t.observe(mk("a")).alert, false);
-	});
-
-	it("alerts on a genuinely new transition (same session, different kind)", () => {
-		const t = new AttentionTracker();
-		assert.equal(t.observe(mk("a", "needs_input")).alert, true);
-		assert.equal(t.observe(mk("a", "blocked")).alert, true);
-	});
-
-	it("dedupes by stable notification id across replay/reconnect", () => {
-		const t = new AttentionTracker();
-		assert.equal(t.observe(mk("a"), "ntf_1").alert, true);
-		assert.equal(t.observe(mk("a"), "ntf_1").alert, false); // replayed same id
-	});
-
-	it("re-alerts after a state resolves and re-enters", () => {
-		const t = new AttentionTracker();
-		assert.equal(t.observe(mk("a")).alert, true);
-		const resolved = t.reconcile([]); // 'a' no longer pending -> resolved
-		assert.equal(resolved.length, 1);
-		assert.equal(t.observe(mk("a")).alert, true); // re-entry alerts again
-	});
-
-	it("reconcile keeps still-pending signatures without re-alerting", () => {
-		const t = new AttentionTracker();
-		t.observe(mk("a"));
-		t.observe(mk("b"));
-		const resolved = t.reconcile([mk("a"), mk("b")]);
-		assert.equal(resolved.length, 0);
-		assert.equal(t.pending().length, 2);
-	});
-
-	it("ignores non-attention records", () => {
-		const t = new AttentionTracker();
-		const info = { ...mk("a"), attention: false };
-		assert.equal(t.observe(info).alert, false);
-		assert.equal(t.pending().length, 0);
-	});
-});
-
-describe("renderDigest — 'what needs me' view (acceptance #3)", () => {
-	const mk = (session, kind, project, title = "") => ({
-		kind,
-		sessionId: session,
-		projectId: project,
-		title,
-		url: "",
-		attention: true,
-	});
-
+describe("renderDigest — 'what needs me' view", () => {
+	const now = new Date("2026-07-07T00:00:00Z");
 	it("renders an explicit empty state", () => {
-		const out = renderDigest([], { now: new Date("2026-07-07T00:00:00Z") });
-		assert.match(out, /Nothing needs you/);
+		assert.match(renderDigest([], { now }), /Nothing needs you/);
 	});
-
-	it("aggregates pending items across projects with reasons", () => {
-		const out = renderDigest([mk("a", "needs_input", "ao", "prompt"), mk("b", "blocked", "coachclaw", "stuck on X")], {
-			now: new Date("2026-07-07T00:00:00Z"),
-			mentionUserId: "U1",
-		});
+	it("aggregates pending records across projects with reasons", () => {
+		const recs = [
+			attentionRecordFromItem(item()),
+			attentionRecordFromItem(
+				item({ id: "n:mainci", kind: "main_ci_red", projectId: "cc", sessionId: "main", reason: "main is red" }),
+			),
+		];
+		const out = renderDigest(recs, { now });
 		assert.match(out, /2 things need you/);
-		assert.match(out, /<@U1>/);
 		assert.match(out, /\*ao\*/);
-		assert.match(out, /\*coachclaw\*/);
-		assert.match(out, /agent-1|`a`/);
-		assert.match(out, /needs_input/);
-		assert.match(out, /stuck on X/);
+		assert.match(out, /\*cc\*/);
+		assert.match(out, /waiting on an operator decision/);
+		assert.match(out, /main is red/);
 	});
-
 	it("excludes non-attention records from the digest", () => {
-		const info = { ...mk("c", "pr_merged", "ao"), attention: false };
-		const out = renderDigest([info], { now: new Date("2026-07-07T00:00:00Z") });
+		const out = renderDigest([{ kind: "decision", projectId: "ao", sessionId: "a", attention: false }], { now });
 		assert.match(out, /Nothing needs you/);
 	});
-
-	it("uses singular phrasing for exactly one item", () => {
-		const out = renderDigest([mk("a", "needs_input", "ao", "prompt")], {
-			now: new Date("2026-07-07T00:00:00Z"),
-		});
-		assert.match(out, /1 thing needs you/);
+	it("uses singular phrasing for exactly one record", () => {
+		assert.match(renderDigest([attentionRecordFromItem(item())], { now }), /1 thing needs you/);
 	});
 });
 
-describe("signature", () => {
-	it("is stable per (project, session, kind)", () => {
-		const rec = { projectId: "ao", sessionId: "a", kind: "needs_input" };
-		assert.equal(signature(rec), "ao/session:a#needs_input");
-	});
-});
+describe("AttentionTracker — posting dedup / resolve ledger", () => {
+	const rec = () => attentionRecordFromItem(item());
 
-describe("attentionFromSession — poll-based current state (acceptance #1, #3)", async () => {
-	const { attentionFromSession, attentionFromSessions } = await import("./attention-core.mjs");
-
-	it("maps a waiting_input session to needs_input attention", () => {
-		const rec = attentionFromSession({
-			id: "agent-48",
-			projectId: "ao",
-			activity: { state: "waiting_input" },
-			status: "needs_input",
-			isTerminated: false,
-		});
-		assert.equal(rec.kind, "needs_input");
-		assert.equal(rec.sessionId, "agent-48");
-		assert.equal(rec.subjectKind, "session");
-		assert.equal(rec.subjectId, "agent-48");
-		assert.equal(rec.attention, true);
-	});
-
-	it("matches notification and session-poll signatures for the same session", () => {
-		const fromPoll = attentionFromSession({
-			id: "agent-48",
-			projectId: "ao",
-			activity: { state: "waiting_input" },
-		});
-		const fromNotification = normalizeEvent({
-			type: "needs_input",
-			notification: { sessionId: "agent-48", projectId: "ao", title: "needs input" },
-		});
-		assert.equal(signature(fromPoll), signature(fromNotification));
-	});
-
-	it("maps a blocked session to blocked attention", () => {
-		const rec = attentionFromSession({ id: "a", projectId: "ao", activity: { state: "blocked" } });
-		assert.equal(rec.kind, "blocked");
-	});
-
-	it("classifies blocked BEFORE status-derived needs_input (backend reports both)", () => {
-		// A blocked session carries status:needs_input from the backend; the
-		// explicit activity state must win so the blocked reason + signature hold.
-		const rec = attentionFromSession({
-			id: "a",
-			projectId: "ao",
-			activity: { state: "blocked" },
-			status: "needs_input",
-		});
-		assert.equal(rec.kind, "blocked");
-	});
-
-	it("ignores terminated / active / idle / exited sessions", () => {
-		assert.equal(attentionFromSession({ id: "a", activity: { state: "waiting_input" }, isTerminated: true }), null);
-		assert.equal(attentionFromSession({ id: "a", activity: { state: "active" } }), null);
-		assert.equal(attentionFromSession({ id: "a", activity: { state: "idle" } }), null);
-		assert.equal(attentionFromSession({ id: "a", activity: { state: "exited" } }), null);
-	});
-
-	it("surfaces a PR url when present", () => {
-		const rec = attentionFromSession({
-			id: "a",
-			projectId: "ao",
-			activity: { state: "blocked" },
-			prs: [{ url: "http://pr/1" }],
-		});
-		assert.equal(rec.url, "http://pr/1");
-	});
-
-	it("maps a full sessions payload to the attention set", () => {
-		const recs = attentionFromSessions({
-			sessions: [
-				{ id: "a", projectId: "ao", activity: { state: "waiting_input" } },
-				{ id: "b", projectId: "ao", activity: { state: "active" } },
-				{ id: "c", projectId: "cc", activity: { state: "blocked" } },
-			],
-		});
-		assert.equal(recs.length, 2);
-		assert.deepEqual(recs.map((r) => r.sessionId).sort(), ["a", "c"]);
-	});
-
-	it("accepts a bare array payload too", () => {
-		const recs = attentionFromSessions([{ id: "a", projectId: "ao", activity: { state: "waiting_input" } }]);
-		assert.equal(recs.length, 1);
-	});
-});
-
-describe("attentionFromMainCI — project-level red-main inventory", () => {
-	it("maps a failing main branch into a needs-response record", () => {
-		const rec = attentionFromMainCI({
-			projectId: "ao",
-			sha: "fee462ed3aabb",
-			status: "failing",
-			failedJobs: ["go", "cli-e2e"],
-			url: "https://github.example/actions/runs/1",
-		});
-		assert.deepEqual(rec, {
-			kind: "main_ci_red",
-			sessionId: "main",
-			subjectKind: "project",
-			subjectId: "ao",
-			projectId: "ao",
-			title: "main is red at fee462ed: go, cli-e2e",
-			url: "https://github.example/actions/runs/1",
-			attention: true,
-		});
-	});
-
-	it("matches notification and main-CI poll signatures for the same project", () => {
-		const fromPoll = attentionFromMainCI({
-			projectId: "ao",
-			sha: "fee462ed3aabb",
-			status: "failing",
-			failedJobs: ["go"],
-		});
-		const fromNotification = normalizeEvent({
-			type: "main_ci_red",
-			notification: {
-				projectId: "ao",
-				sessionId: "",
-				subject: { kind: "project", id: "ao" },
-				title: "main is red",
-			},
-		});
-		assert.equal(signature(fromPoll), signature(fromNotification));
-	});
-
-	it("ignores non-failing main branch records", () => {
-		assert.equal(attentionFromMainCI({ projectId: "ao", status: "passing", sha: "abc" }), null);
-		assert.deepEqual(attentionFromMainCIRecords([{ status: "pending" }, { status: "passing" }]), []);
-	});
-});
-
-describe("AttentionTracker.isOpen/markOpen — deferred commit (retry fix)", () => {
-	const mk = (s) => ({ kind: "needs_input", sessionId: s, projectId: "ao", title: "", url: "", attention: true });
 	it("isOpen is false until markOpen commits the signature", () => {
 		const t = new AttentionTracker();
-		const r = mk("a");
-		assert.equal(t.isOpen(r), false);
-		t.markOpen(r);
-		assert.equal(t.isOpen(r), true);
+		assert.equal(t.isOpen(rec()), false);
+		t.markOpen(rec());
+		assert.equal(t.isOpen(rec()), true);
 	});
+
 	it("markOpen ignores non-attention records", () => {
 		const t = new AttentionTracker();
-		t.markOpen({ ...mk("a"), attention: false });
-		assert.equal(t.pending().length, 0);
+		t.markOpen({ id: "x", kind: "decision", attention: false });
+		assert.equal(t.isOpen({ id: "x" }), false);
+	});
+
+	it("reconcile resolves records no longer present and keeps still-pending ones", () => {
+		const t = new AttentionTracker();
+		const a = rec();
+		const b = attentionRecordFromItem(item({ id: "pr:1:merge", kind: "pr", sessionId: "b" }));
+		t.markOpen(a);
+		t.markOpen(b);
+		const resolved = t.reconcile([a]); // b is gone
+		assert.deepEqual(
+			resolved.map((r) => r.id),
+			["pr:1:merge"],
+		);
+		assert.equal(t.isOpen(a), true);
+		assert.equal(t.isOpen(b), false);
+	});
+
+	it("re-alerts (re-opens) after a record resolves and re-enters", () => {
+		const t = new AttentionTracker();
+		t.markOpen(rec());
+		t.reconcile([]); // resolved away
+		assert.equal(t.isOpen(rec()), false);
+		t.markOpen(rec());
+		assert.equal(t.isOpen(rec()), true);
+	});
+
+	it("serialize/deserialize restores open signatures across a restart", () => {
+		const t = new AttentionTracker();
+		t.markOpen(rec());
+		const restored = AttentionTracker.deserialize(t.serialize());
+		assert.equal(restored.isOpen(rec()), true);
+	});
+
+	it("a reconciled-away record does re-alert after restart", () => {
+		const t = new AttentionTracker();
+		t.markOpen(rec());
+		t.reconcile([]);
+		const restored = AttentionTracker.deserialize(t.serialize());
+		assert.equal(restored.isOpen(rec()), false);
+	});
+
+	it("deserialize tolerates malformed input", () => {
+		assert.doesNotThrow(() => AttentionTracker.deserialize("not json"));
+		assert.doesNotThrow(() => AttentionTracker.deserialize({}));
 	});
 });
 
-describe("attentionFromSession — extended attention states (cycle-2 review)", async () => {
-	const { attentionFromSession } = await import("./attention-core.mjs");
+describe("escapeMrkdwn — Slack control characters in projection-controlled text", async () => {
+	const { escapeMrkdwn } = await import("./attention-core.mjs");
 
-	it("maps a no_signal orchestrator to orchestrator_dead", () => {
-		const rec = attentionFromSession({
-			id: "orc",
-			projectId: "ao",
-			kind: "orchestrator",
-			status: "no_signal",
-			activity: { state: "idle" },
-		});
-		assert.equal(rec.kind, "orchestrator_dead");
-		assert.equal(rec.attention, true);
+	it("escapes &, < and >", () => {
+		assert.equal(escapeMrkdwn("a & <b> > c"), "a &amp; &lt;b&gt; &gt; c");
 	});
 
-	it("maps a no_signal worker to no_signal", () => {
-		const rec = attentionFromSession({
-			id: "w",
-			projectId: "ao",
-			kind: "worker",
-			status: "no_signal",
-			activity: { state: "idle" },
-		});
-		assert.equal(rec.kind, "no_signal");
+	it("renderAlert cannot be injected with a fake mention via the reason field", () => {
+		const rec = attentionRecordFromItem(item({ reason: "<@U999> pwned & <http://evil|click>" }));
+		const msg = renderAlert(rec, "U123");
+		assert.doesNotMatch(msg, /<@U999>/);
+		assert.match(msg, /&lt;@U999&gt;/);
+		assert.match(msg, /^<@U123> /); // the legitimate mention survives
 	});
 
-	it("does not page for a normally exited orchestrator (no false positives)", () => {
-		assert.equal(
-			attentionFromSession({
-				id: "orc",
-				projectId: "ao",
-				kind: "orchestrator",
-				status: "terminated",
-				activity: { state: "exited" },
-				isTerminated: true,
-			}),
-			null,
-		);
-		assert.equal(
-			attentionFromSession({
-				id: "orc",
-				projectId: "ao",
-				kind: "orchestrator",
-				status: "idle",
-				activity: { state: "exited" },
-			}),
-			null,
-		);
+	it("renderDigest escapes reason and URL fields", () => {
+		const rec = attentionRecordFromItem(item({ reason: "a & b", deepLink: "http://x/?a=1&b=<2>" }));
+		const out = renderDigest([rec], { now: new Date("2026-07-07T00:00:00Z") });
+		assert.match(out, /a &amp; b/);
+		assert.match(out, /<http:\/\/x\/\?a=1&amp;b=&lt;2&gt;\|link>/);
 	});
 });
 
-describe("AttentionTracker serialize/deserialize — dedup survives restart (cycle-6 fix)", () => {
-	const mk = (s) => ({ kind: "needs_input", sessionId: s, projectId: "ao", title: "", url: "", attention: true });
-	it("restores open signatures so a still-pending session is not re-alerted", () => {
-		const t = new AttentionTracker();
-		assert.equal(t.observe(mk("a")).alert, true);
-		const restored = AttentionTracker.deserialize(t.serialize());
-		// After a restart, the same still-pending session must NOT re-alert.
-		assert.equal(restored.isOpen(mk("a")), true);
-	});
-	it("a resolved session (reconciled away) does re-alert after restart", () => {
-		const t = new AttentionTracker();
-		t.observe(mk("a"));
-		t.reconcile([]); // 'a' resolved
-		const restored = AttentionTracker.deserialize(t.serialize());
-		assert.equal(restored.isOpen(mk("a")), false);
-	});
-	it("tolerates malformed input", () => {
-		const t = AttentionTracker.deserialize("not json");
-		assert.equal(t.pending().length, 0);
+describe("canonicalPrKey — mirrors the daemon's PR identity normalization", async () => {
+	const { canonicalPrKey } = await import("./attention-core.mjs");
+
+	it("matches the shared cross-language contract table (canonical-pr-key-fixtures.json)", async () => {
+		// The SAME fixture file drives the Go test
+		// (backend/internal/service/attention TestCanonicalPRKey), so the two
+		// parsers cannot drift.
+		const { readFile } = await import("node:fs/promises");
+		const cases = JSON.parse(await readFile(new URL("./canonical-pr-key-fixtures.json", import.meta.url), "utf8"));
+		assert.ok(cases.length > 0, "shared fixture table is empty");
+		for (const { in: input, want } of cases) {
+			assert.equal(canonicalPrKey(input), want, `canonicalPrKey(${JSON.stringify(input)})`);
+		}
 	});
 });

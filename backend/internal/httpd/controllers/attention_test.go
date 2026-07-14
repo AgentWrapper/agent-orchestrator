@@ -77,10 +77,10 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	setSessionPRFacts(svc, "fix-1", "https://github.com/aoagents/agent-orchestrator/pull/227", 227, domain.CIPassing, domain.ReviewApproved, domain.MergeMergeable, now)
 	setSessionPRFacts(svc, "other-1", "https://github.com/acme/other/pull/224", 224, domain.CIPassing, domain.ReviewApproved, domain.MergeMergeable, now)
 	setSessionPRFacts(svc, "ci-1", "https://github.com/aoagents/agent-orchestrator/pull/225", 225, domain.CIFailing, domain.ReviewRequired, domain.MergeBlocked, now)
-	svc.decisions = map[domain.SessionID]domain.PendingDecision{
-		"perm-1": {Kind: domain.DecisionKindPermission, Question: "Allow command?"},
-		"ask-1":  {Kind: domain.DecisionKindQuestion, Question: "Use strategy A or B?", Options: []string{"A", "B"}},
-	}
+	// The projection reads captured dialogs straight off the session snapshot
+	// (Metadata.PendingDecision), never via the Decision endpoint.
+	setSessionPendingDecision(svc, "perm-1", domain.PendingDecision{Kind: domain.DecisionKindPermission, Question: "Allow command?"})
+	setSessionPendingDecision(svc, "ask-1", domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "Use strategy A or B?", Options: []string{"A", "B"}})
 	svc.notifications = []notificationsvc.Notification{
 		{NotificationRecord: domain.NotificationRecord{
 			ID:        "n-exhausted",
@@ -221,7 +221,7 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 	pr224 := "pr:https://github.com/aoagents/agent-orchestrator/pull/224:merge"
 	pr226 := "pr:https://github.com/aoagents/agent-orchestrator/pull/226:merge"
 	otherPR224 := "pr:https://github.com/acme/other/pull/224:merge"
-	retryExhausted := "notification:n-exhausted:operator"
+	retryExhausted := "notification:ao:dead-worker:worker_retry_exhausted"
 	for _, want := range []string{"session:perm-1:decision", "session:ask-1:decision", "session:orch-dead:no_signal", "session:prime-dead:no_signal", pr224, pr226, otherPR224, retryExhausted} {
 		if got[want] == 0 {
 			t.Fatalf("missing %s in %#v; body=%s", want, got, body)
@@ -321,9 +321,7 @@ func TestAttentionAPI_ListOperatorWaitingSurvivesNotificationReadFailure(t *test
 	svc.sessions = map[domain.SessionID]domain.Session{
 		"perm-1": sessionForAttention("perm-1", "ao", domain.StatusNeedsInput, now),
 	}
-	svc.decisions = map[domain.SessionID]domain.PendingDecision{
-		"perm-1": {Kind: domain.DecisionKindPermission, Question: "Allow command?"},
-	}
+	setSessionPendingDecision(svc, "perm-1", domain.PendingDecision{Kind: domain.DecisionKindPermission, Question: "Allow command?"})
 	svc.notificationErr = errors.New("sqlite busy")
 	srv := newSessionTestServer(t, svc)
 
@@ -340,6 +338,13 @@ func TestAttentionAPI_ListOperatorWaitingSurvivesNotificationReadFailure(t *test
 	if len(resp.Items) != 1 || resp.Items[0].ID != "session:perm-1:decision" {
 		t.Fatalf("items = %#v; body=%s", resp.Items, body)
 	}
+}
+
+func setSessionPendingDecision(svc *fakeSessionService, id domain.SessionID, decision domain.PendingDecision) {
+	sess := svc.sessions[id]
+	sess.Metadata.PendingDecision = &decision
+	sess.Activity.State = domain.ActivityWaitingInput
+	svc.sessions[id] = sess
 }
 
 func sessionForAttention(id domain.SessionID, project domain.ProjectID, status domain.SessionStatus, now time.Time) domain.Session {

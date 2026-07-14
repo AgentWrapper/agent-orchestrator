@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -48,12 +49,14 @@ type Item struct {
 }
 
 // SessionReader is the session read surface needed to derive the operator queue.
-// It is the same contract the controller previously required; defining it here
-// keeps the projection owner transport-neutral (it depends on service read
-// models, never on HTTP).
+// Defining it here keeps the projection owner transport-neutral (it depends on
+// service read models, never on HTTP). Decision classification deliberately
+// reads sess.Metadata.PendingDecision from the SAME List snapshot instead of a
+// per-session Decision() call: session_manager.Decision synthesizes a permission
+// decision for every blocked session, which would make captured-vs-uncaptured
+// indistinguishable, and a second read could disagree with the snapshot.
 type SessionReader interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
-	Decision(ctx context.Context, id domain.SessionID) (domain.PendingDecision, bool, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 }
 
@@ -100,17 +103,25 @@ func deriveOperatorAttention(ctx context.Context, sessions SessionReader, notifi
 	}
 	items := make([]Item, 0)
 	seen := map[string]attentionItemIndex{}
+	// terminalPRs collects canonical PR identities the session facts show as
+	// terminal (including on terminated sessions — a merged PR is merged
+	// regardless). Read != delivery means an unread ready_to_merge notification
+	// row can outlive its PR; a parked_sensitive_merge item must not keep
+	// reporting a human-gated merge the daemon's own PR state says already
+	// resolved. Unknown identities stay unsuppressed: the projection fails
+	// toward showing attention.
+	terminalPRs := terminalPRIdentities(list)
+	notificationItems, parkedPRs := deriveNotificationAttention(ctx, notifications, terminalPRs)
 	for _, sess := range list {
-		if !sess.IsTerminated && sess.Status == domain.StatusNeedsInput {
-			decision, ok, err := sessions.Decision(ctx, sess.ID)
-			if err != nil {
-				if isAttentionNotFound(err) {
-					continue
-				}
-				return nil, fmt.Errorf("decision %s: %w", sess.ID, err)
-			}
-			if ok {
-				items = appendAttentionItem(items, seen, decisionAttentionItem(sess, decision), true)
+		if !sess.IsTerminated && sess.Activity.State != domain.ActivityExited {
+			// Captured-vs-uncaptured comes straight from the List snapshot (see the
+			// SessionReader doc): a captured dialog renders as a decision item; a
+			// blocked session WITHOUT captured dialog metadata is the JS notifier's
+			// `blocked` classification ("stuck on an unknown dialog").
+			if sess.Status == domain.StatusNeedsInput && sess.Metadata.PendingDecision != nil {
+				items = appendAttentionItem(items, seen, decisionAttentionItem(sess, *sess.Metadata.PendingDecision), true)
+			} else if sess.Activity.State == domain.ActivityBlocked {
+				items = appendAttentionItem(items, seen, blockedAttentionItem(sess), true)
 			}
 		}
 		if !sess.IsTerminated && sess.Status == domain.StatusNoSignal {
@@ -129,28 +140,20 @@ func deriveOperatorAttention(ctx context.Context, sessions SessionReader, notifi
 			return nil, fmt.Errorf("pr summaries %s: %w", sess.ID, err)
 		}
 		for _, pr := range prs {
-			if item, ok := prAttentionItem(sess, pr); ok {
-				items = appendAttentionItem(items, seen, item, !sess.IsTerminated)
+			item, ok := prAttentionItem(sess, pr)
+			if !ok {
+				continue
 			}
+			// A parked_sensitive_merge item supersedes the generic live "pr" item
+			// for the same PR: the operator sees one item, and it is the human-gate.
+			if parkedPRs[canonicalPRKey(firstNonEmptyString(pr.HTMLURL, pr.URL))] {
+				continue
+			}
+			items = appendAttentionItem(items, seen, item, !sess.IsTerminated)
 		}
 	}
-	if notifications != nil {
-		unread, err := notifications.ListUnread(ctx, notificationsvc.ListFilter{
-			Limit: notificationsvc.MaxListLimit,
-			Types: domain.OperatorAttentionNotificationTypes(),
-		})
-		if err != nil {
-			// Notifications add durable operator escalations, but the core waiting
-			// surface must still render live session decisions and mergeable PRs if
-			// notification storage is temporarily unavailable.
-			slog.WarnContext(ctx, "attention: notification read failed; returning session-derived operator attention only", "err", err)
-		} else {
-			for _, notification := range unread {
-				if item, ok := notificationAttentionItem(notification); ok {
-					items = appendAttentionItem(items, seen, item, false)
-				}
-			}
-		}
+	for _, item := range notificationItems {
+		items = appendAttentionItem(items, seen, item, false)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if !items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
@@ -159,6 +162,108 @@ func deriveOperatorAttention(ctx context.Context, sessions SessionReader, notifi
 		return items[i].ID < items[j].ID
 	})
 	return items, nil
+}
+
+// terminalPRIdentities resolves each canonical PR identity across ALL session
+// facts by recency: a merged fact is permanently terminal (merges cannot be
+// undone), while closed-vs-open is decided by the NEWEST fact, so a reopened PR
+// — or a stale closed fact on an old session sharing the PR with a newer one —
+// never wrongly suppresses a parked_sensitive_merge item. A tie between an open
+// and a closed fact at the same instant reads as open (fail toward attention).
+func terminalPRIdentities(list []domain.Session) map[string]bool {
+	type prFactState struct {
+		merged       bool
+		seen         bool
+		newestAt     time.Time
+		newestClosed bool
+	}
+	facts := map[string]*prFactState{}
+	for _, sess := range list {
+		for _, pr := range sess.PRs {
+			if pr.URL == "" {
+				continue
+			}
+			key := canonicalPRKey(pr.URL)
+			st := facts[key]
+			if st == nil {
+				st = &prFactState{}
+				facts[key] = st
+			}
+			if pr.Merged {
+				st.merged = true
+			}
+			switch {
+			case !st.seen || pr.UpdatedAt.After(st.newestAt):
+				st.seen = true
+				st.newestAt = pr.UpdatedAt
+				st.newestClosed = pr.Closed
+			case pr.UpdatedAt.Equal(st.newestAt) && !pr.Closed:
+				st.newestClosed = false
+			}
+		}
+	}
+	terminal := map[string]bool{}
+	for key, st := range facts {
+		if st.merged || st.newestClosed {
+			terminal[key] = true
+		}
+	}
+	return terminal
+}
+
+// deriveNotificationAttention folds unread durable notifications into projection
+// items. It issues two bounded reads so unbounded routine rows can never crowd
+// escalations out of a shared page (finding 1, PR #319 review): the durable
+// escalation types get their own budget, and ready_to_merge is fetched
+// sensitive-only in SQL with a separate budget. It returns the items plus the
+// set of canonical PR identities that are parked for a human.
+func deriveNotificationAttention(ctx context.Context, notifications NotificationReader, terminalPRs map[string]bool) ([]Item, map[string]bool) {
+	parkedPRs := map[string]bool{}
+	if notifications == nil {
+		return nil, parkedPRs
+	}
+	items := make([]Item, 0)
+	durable, err := notifications.ListUnread(ctx, notificationsvc.ListFilter{
+		Limit: notificationsvc.MaxListLimit,
+		Types: domain.OperatorAttentionNotificationTypes(),
+	})
+	if err != nil {
+		// Notifications add durable operator escalations, but the core waiting
+		// surface must still render live session decisions and mergeable PRs if
+		// notification storage is temporarily unavailable.
+		slog.WarnContext(ctx, "attention: notification read failed; returning session-derived operator attention only", "err", err)
+	} else {
+		for _, notification := range durable {
+			if item, ok := notificationAttentionItem(notification); ok {
+				items = append(items, item)
+			}
+		}
+	}
+	parked, err := notifications.ListUnread(ctx, notificationsvc.ListFilter{
+		Limit:         notificationsvc.MaxListLimit,
+		Types:         []domain.NotificationType{domain.NotificationReadyToMerge},
+		SensitiveOnly: true,
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "attention: sensitive ready_to_merge read failed; parked merges omitted this cycle", "err", err)
+		return items, parkedPRs
+	}
+	for _, notification := range parked {
+		// A row for a PR the session facts show merged/closed is stale delivery
+		// state, not attention: suppress it (see terminalPRs).
+		if terminalPRs[canonicalPRKey(notification.PRURL)] {
+			continue
+		}
+		item, ok := parkedSensitiveMergeItem(notification)
+		if !ok {
+			continue
+		}
+		if notification.PRURL != "" {
+			parkedPRs[canonicalPRKey(notification.PRURL)] = true
+		}
+		items = append(items, item)
+	}
+	return items, parkedPRs
 }
 
 type operatorAttentionNotificationMetadata struct {
@@ -173,11 +278,10 @@ type operatorAttentionNotificationMetadata struct {
 // worker_died_unfinished, …) are excluded so the
 // projection stays a "what needs me" surface, not a notification mirror.
 //
-// This is the durable-notification half of the JS notifier's
-// isMentionableNotification set (ops/ao-slack-notifier.mjs). needs_input and
-// ready_to_merge are intentionally covered by live session/PR derivation instead
-// of unread notification rows; Phase 5 must keep or replace any extra Slack-only
-// signal, such as sensitive merge parking, before deleting JS classification.
+// needs_input is covered by live session/decision derivation. ready_to_merge
+// is handled separately in parkedSensitiveMergeItem: only its SENSITIVE rows
+// are an operator-attention condition (a human-gated parked merge), so the
+// sensitivity check is per-record, not per-type.
 func operatorAttentionNotificationMetadataFor(t domain.NotificationType) (operatorAttentionNotificationMetadata, bool) {
 	switch t {
 	case domain.NotificationWorkerRetryExhausted:
@@ -205,6 +309,92 @@ func operatorAttentionNotificationMetadataFor(t domain.NotificationType) (operat
 	}
 }
 
+// parkedSensitiveMergeMetadata is the copy for a ready_to_merge notification
+// whose diff touches sensitive paths: autonomous merge is parked for a human.
+var parkedSensitiveMergeMetadata = operatorAttentionNotificationMetadata{
+	action:        "Review the sensitive-path change and merge the pull request yourself; autonomous merge is parked for a human.",
+	defaultReason: "A ready-to-merge PR touches sensitive paths and needs a human to merge it.",
+}
+
+// parkedSensitiveMergeItem builds the human-gated parked-merge item from a
+// SENSITIVE unread ready_to_merge notification. The item is keyed by the PR's
+// canonical identity, not the notification row id, so multiple unread rows for
+// the same PR (one per head SHA) collapse into one item and the parked item can
+// supersede the generic live "pr" item for that PR (finding 4, PR #319 review).
+func parkedSensitiveMergeItem(notification notificationsvc.Notification) (Item, bool) {
+	if notification.Type != domain.NotificationReadyToMerge || !notification.Sensitive {
+		return Item{}, false
+	}
+	id := notificationAttentionID(notification)
+	if notification.PRURL != "" {
+		id = "pr:" + canonicalPRKey(notification.PRURL) + ":parked_sensitive_merge"
+	}
+	subjectID := notificationSubjectID(notification)
+	return Item{
+		ID:           id,
+		Kind:         "parked_sensitive_merge",
+		ProjectID:    notification.ProjectID,
+		SessionID:    notification.SessionID,
+		SessionTitle: firstNonEmptyString(notification.Title, notification.Body, subjectID, string(notification.SessionID)),
+		Reason:       firstNonEmptyString(notification.Body, notification.Title, parkedSensitiveMergeMetadata.defaultReason),
+		Action:       parkedSensitiveMergeMetadata.action,
+		DeepLink:     notificationAttentionDeepLink(notification),
+		UpdatedAt:    notification.CreatedAt,
+		PRURL:        notification.PRURL,
+	}, true
+}
+
+// canonicalPRKey normalizes a PR URL to "host/owner/repo#number" for identity
+// comparisons: terminal suppression, parked-item dedup, and parked-over-live-pr
+// supersede. It also folds provider URL variants onto one identity: GitLab's
+// web form ("/owner/repo/-/merge_requests/N" — the "-" separator is dropped)
+// and GitHub's API form ("https://api.github.com/repos/o/r/pulls/N" — the
+// "repos" segment and "api." host prefix are dropped). Unparseable or non-PR
+// URLs return the trimmed raw string, so they only ever match themselves
+// exactly (fail open: an unrecognized URL never suppresses someone else's
+// attention item). ops/attention-core.mjs canonicalPrKey mirrors this parser;
+// ops/canonical-pr-key-fixtures.json is the shared cross-language contract.
+func canonicalPRKey(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Host == "" {
+		return trimmed
+	}
+	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(segs) < 4 {
+		return trimmed
+	}
+	kind, number := segs[len(segs)-2], segs[len(segs)-1]
+	if (kind != "pull" && kind != "pulls" && kind != "merge_requests") || !isAllDigits(number) {
+		return trimmed
+	}
+	host := strings.ToLower(u.Host)
+	repoSegs := segs[:len(segs)-2]
+	if repoSegs[len(repoSegs)-1] == "-" {
+		repoSegs = repoSegs[:len(repoSegs)-1] // GitLab web form separator
+	}
+	if len(repoSegs) > 1 && repoSegs[0] == "repos" && strings.HasPrefix(host, "api.") {
+		repoSegs = repoSegs[1:] // GitHub API form
+		host = strings.TrimPrefix(host, "api.")
+	}
+	if len(repoSegs) == 0 {
+		return trimmed
+	}
+	return host + "/" + strings.ToLower(strings.Join(repoSegs, "/")) + "#" + number
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func notificationAttentionItem(notification notificationsvc.Notification) (Item, bool) {
 	metadata, ok := operatorAttentionNotificationMetadataFor(notification.Type)
 	if !ok {
@@ -225,10 +415,12 @@ func notificationAttentionItem(notification notificationsvc.Notification) (Item,
 	}, true
 }
 
+// notificationAttentionID keys a durable notification item by its SUBJECT
+// identity (never the notification row id): re-emitted rows for one unresolved
+// condition collapse to a single projection item (newest wins), and a renderer's
+// persisted per-item state survives row churn because the id is reconstructible
+// from (project, subject, type) alone.
 func notificationAttentionID(notification notificationsvc.Notification) string {
-	if notification.ID != "" {
-		return "notification:" + notification.ID + ":operator"
-	}
 	subjectKind, subjectID := notificationSubject(notification)
 	if subjectKind == string(domain.NotificationSubjectSession) {
 		return fmt.Sprintf("notification:%s:%s:%s", notification.ProjectID, subjectID, notification.Type)
@@ -323,6 +515,23 @@ func noSignalAttentionItem(sess domain.Session) (Item, bool) {
 		DeepLink:     sessionDeepLink(sess),
 		UpdatedAt:    sess.UpdatedAt,
 	}, true
+}
+
+// blockedAttentionItem surfaces a session stopped on the operator (activity
+// state blocked) for which no pending decision record is retrievable. Copy
+// mirrors the JS notifier's "blocked / stuck" classification.
+func blockedAttentionItem(sess domain.Session) Item {
+	return Item{
+		ID:           "session:" + string(sess.ID) + ":blocked",
+		Kind:         "blocked",
+		ProjectID:    sess.ProjectID,
+		SessionID:    sess.ID,
+		SessionTitle: sessionAttentionTitle(sess),
+		Reason:       "Session is blocked or stuck and needs the operator.",
+		Action:       "Inspect the session terminal and unblock it.",
+		DeepLink:     sessionDeepLink(sess),
+		UpdatedAt:    sess.UpdatedAt,
+	}
 }
 
 func decisionAttentionItem(sess domain.Session, decision domain.PendingDecision) Item {

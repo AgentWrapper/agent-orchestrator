@@ -53,9 +53,15 @@ func (t NotificationType) Valid() bool {
 }
 
 // OperatorAttentionNotificationTypes returns durable notification types whose
-// unread rows represent an operator-actionable condition. Session-derived
-// attention, such as needs_input and ready_to_merge, is intentionally not
-// included here because service/attention derives it from live session/PR state.
+// unread rows represent an operator-actionable condition regardless of row
+// content. It doubles as the type-level mark-all-read exclusion set: read-all
+// must not clear a fleet-health escalation the operator has not resolved.
+// Session-derived attention, such as needs_input, is intentionally not included
+// because service/attention derives it from live session state. ready_to_merge
+// is also not here — only its SENSITIVE rows are operator attention (the
+// parked_sensitive_merge item), which the projection queries with a
+// sensitive-only filter and the mark-all-read SQL preserves via a matching
+// row-level carve-out (see the sqlite notification store).
 func OperatorAttentionNotificationTypes() []NotificationType {
 	return []NotificationType{
 		NotificationWorkerRetryExhausted,

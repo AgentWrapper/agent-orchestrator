@@ -1,0 +1,16 @@
+[
+	{
+		"in": "https://github.com/AOAgents/Agent-Orchestrator/pull/990",
+		"want": "github.com/aoagents/agent-orchestrator#990"
+	},
+	{ "in": "https://github.com/o/r/pull/1/", "want": "github.com/o/r#1" },
+	{ "in": "http://GitHub.com/o/r/pull/9", "want": "github.com/o/r#9" },
+	{ "in": "  https://github.com/o/r/pull/1  ", "want": "github.com/o/r#1" },
+	{ "in": "https://gitlab.com/group/sub/repo/-/merge_requests/7", "want": "gitlab.com/group/sub/repo#7" },
+	{ "in": "https://gitlab.com/group/repo/merge_requests/7", "want": "gitlab.com/group/repo#7" },
+	{ "in": "https://api.github.com/repos/o/r/pulls/55", "want": "github.com/o/r#55" },
+	{ "in": "https://github.com/o/r/issues/1", "want": "https://github.com/o/r/issues/1" },
+	{ "in": "https://gitlab.com/-/merge_requests/7", "want": "https://gitlab.com/-/merge_requests/7" },
+	{ "in": "not a url", "want": "not a url" },
+	{ "in": "", "want": "" }
+]

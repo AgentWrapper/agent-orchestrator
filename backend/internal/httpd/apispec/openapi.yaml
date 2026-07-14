@@ -479,6 +479,25 @@ paths:
           maximum: 100
           minimum: 1
           type: integer
+      - description: 'Exclusive pagination cursor: return rows created strictly before
+          this RFC 3339 timestamp (with beforeId as the same-timestamp tie-break).
+          Lets ack-independent readers page an unread backlog larger than one page.'
+        in: query
+        name: before
+        schema:
+          description: 'Exclusive pagination cursor: return rows created strictly
+            before this RFC 3339 timestamp (with beforeId as the same-timestamp tie-break).
+            Lets ack-independent readers page an unread backlog larger than one page.'
+          format: date-time
+          type: string
+      - description: 'Optional id tie-break for the before cursor: among rows created
+          exactly at the before timestamp, return only ids sorting below this value.'
+        in: query
+        name: beforeId
+        schema:
+          description: 'Optional id tie-break for the before cursor: among rows created
+            exactly at the before timestamp, return only ids sorting below this value.'
+          type: string
       responses:
         "200":
           content:
@@ -3123,7 +3142,9 @@ components:
         kind:
           enum:
           - decision
+          - blocked
           - pr
+          - parked_sensitive_merge
           - worker_retry_exhausted
           - main_ci_red
           - duplicate_pr

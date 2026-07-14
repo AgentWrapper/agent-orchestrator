@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -166,12 +167,22 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 	if limit > notificationsvc.MaxListLimit {
 		limit = notificationsvc.MaxListLimit
 	}
-	return notificationsvc.ListFilter{Limit: limit}, nil
+	filter := notificationsvc.ListFilter{Limit: limit}
+	if raw := q.Get("before"); raw != "" {
+		before, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return notificationsvc.ListFilter{}, errNotificationBeforeInvalid
+		}
+		filter.CreatedBefore = before.UTC()
+		filter.BeforeID = q.Get("beforeId")
+	}
+	return filter, nil
 }
 
 var (
 	errNotificationStatusUnsupported = notificationQueryError("status must be unread")
 	errNotificationLimitInvalid      = notificationQueryError("limit must be a positive integer")
+	errNotificationBeforeInvalid     = notificationQueryError("before must be an RFC 3339 timestamp")
 )
 
 type notificationQueryError string

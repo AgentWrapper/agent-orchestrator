@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ao-slack-notifier — read-only glue (decision D-b, adoption report).
-// Consumes the ao daemon's notification stream and posts the operator-relevant
-// notifications to Slack. Reads ao; never modifies it. No workflow logic lives here.
+// ao-slack-notifier — read-only Slack transport for ao (decision D-b, adoption
+// report). It reads ao's public HTTP surface and posts to Slack; it never
+// modifies ao and owns NO attention classification of its own (#268/#313).
 //
 // Config (env or /home/orchestrator/agent-orchestrator/.env):
 //   SLACK_BOT_TOKEN + SLACK_CHANNEL_NOTIFY / SLACK_CHANNEL_NEEDS_RESPONSE -> chat.postMessage (preferred)
@@ -9,37 +9,38 @@
 //   SLACK_WEBHOOK_URL                 -> incoming webhook   (fallback)
 //   SLACK_MEMBER_ID                   -> user id to @mention for attention
 //   AO_PORT (default 3001)
-//   AO_SLACK_NOTIFIER_STATE           -> persisted dedup cursor
-//   AO_SESSION_ATTENTION_POLL_MS      -> session attention poll period (0 disables)
+//   AO_SLACK_NOTIFIER_STATE           -> persisted delivery ledger
+//   AO_SESSION_ATTENTION_POLL_MS      -> operator-attention poll period (0 disables)
 //   AO_MAIN_CI_POLL_MS                -> main-branch CI poll/cache period (default 60s)
 //   AO_AGENT_HEALTH_POLL_MS           -> agent-health poll period (0 disables)
 //   AO_AGENT_HEALTH_NOTIFIER_STATE    -> persisted per-harness health cursor
 //
-// Notifications forwarded:
-//   needs_input    -> @mention
-//   ready_to_merge -> plain post, or @mention when server-marked sensitive
-//   pr_merged      -> plain post
-//   pr_closed_unmerged -> plain post
-//   orchestrator_replaced -> plain post
-//   orchestrator_replacement_capped -> @mention (needs-response)
-//   worker_died_unfinished -> plain post
-//   worker_retry_exhausted -> @mention (needs-response)
-//   duplicate_pr -> @mention
+// Two Slack surfaces, one attention source:
 //
-// It also polls GET /api/v1/sessions and @mentions on blocked, no_signal,
-// orchestrator_dead, and daemon_unhealthy conditions. A changed "what needs
-// me" digest is posted when the current attention set changes.
+//   1. ATTENTION (loud). pollOperatorAttention() consumes the daemon's ONE
+//      canonical projection, GET /api/v1/attention/operator (the same projection
+//      `ao waiting` and the web waiting page render). Items whose kind is in
+//      MENTION_KINDS get an individual, resolvable @mention in the needs-response
+//      channel; every item feeds the rolling "what needs me" digest. The daemon
+//      decides membership and item kind — this file only chooses how loudly to
+//      render. The one exception is main-CI-red: the daemon does not compute it
+//      into a notification, so a GitHub check-runs probe (mainCISource) is folded
+//      in, exactly like the daemon-unreachable alarm the daemon cannot self-report.
+//
+//   2. INFORMATIONAL (quiet). The notification stream + catch-up poll forward
+//      non-attention events (pr_merged, pr_closed_unmerged, orchestrator_replaced,
+//      worker_died_unfinished, model_unreachable, model_recovered) as PLAIN posts.
 //
 // It also polls GET /api/v1/agents/health and @mentions on a harness going
 // unhealthy (login expired / binary missing), with a recovery post — see
 // agent-health-core.mjs.
 //
-// Reliability model: the live SSE stream has no durable sequence id today, so
-// the notifier pairs it with a replay-safe catch-up poll of persisted unread
-// notifications. A notification is marked read only after it has been delivered
-// to Slack (or intentionally seeded during first bootstrap), which advances the
-// server-side unread cursor so reconnects can drain backlogs larger than one
-// API page without re-paging Nick.
+// Read != delivery (#268/#313): the notifier NEVER marks notifications read on
+// delivery — the daemon's notifications.status is operator acknowledgment only
+// (web PATCH / read-all). The notifier's OWN persisted state (seen ids, posting
+// cooldown, needs-response bindings, digest cursor) is its delivery ledger, so a
+// reconnect drains backlogs without re-paging Nick and without silently clearing
+// the durable operator-attention notification rows out of the projection.
 
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
@@ -48,7 +49,8 @@ import { dirname } from "node:path";
 import { AgentHealthNotifier } from "./agent-health-core.mjs";
 import {
 	AttentionTracker,
-	attentionFromSessions,
+	attentionRecordsFromProjection,
+	canonicalPrKey,
 	renderAlert,
 	renderDigest,
 	resolveMentionUserId,
@@ -129,33 +131,44 @@ async function updatePost(ts, text, { channel = NEEDS_RESPONSE_CHANNEL } = {}) {
 	return true;
 }
 
-const INTERESTING = new Set([
-	"needs_input",
-	"ready_to_merge",
+// INFORMATIONAL is the set of notification types the notifier forwards to Slack
+// as PLAIN transport (never an @mention). Every operator-attention condition is
+// now driven by the daemon's canonical projection (GET /attention/operator),
+// polled in pollOperatorAttention — the notification stream carries only these
+// informational events. needs_input, ready_to_merge, worker_retry_exhausted,
+// duplicate_pr, orchestrator_replacement_capped and main_ci_red are deliberately
+// absent: they surface through the projection, not this stream, so they are
+// never double-posted.
+const INFORMATIONAL = new Set([
 	"pr_merged",
 	"pr_closed_unmerged",
 	"orchestrator_replaced",
-	"orchestrator_replacement_capped",
-	"duplicate_pr",
 	"worker_died_unfinished",
-	"worker_retry_exhausted",
-	"main_ci_red",
 	"model_unreachable",
 	"model_recovered",
 ]);
-const POLL_ALERT_KINDS = new Set(["blocked", "orchestrator_dead", "no_signal", "main_ci_red"]);
+// MENTION_KINDS are the projection item kinds loud enough to earn an individual,
+// resolvable @mention (a needs-response message) in addition to the rolling
+// digest. "pr" (a routine locally-mergeable PR) is intentionally excluded: it
+// gets a single plain (no-mention) post plus the digest line, matching the old plain
+// ready_to_merge post.
+const MENTION_KINDS = new Set([
+	"decision",
+	"blocked",
+	"prime_dead",
+	"orchestrator_dead",
+	"no_signal",
+	"main_ci_red",
+	"worker_retry_exhausted",
+	"duplicate_pr",
+	"orchestrator_replacement_capped",
+	"parked_sensitive_merge",
+]);
 const ICONS = {
-	needs_input: "🖐️",
-	ready_to_merge: "🟢",
-	parked_sensitive_merge: "🛑",
 	pr_merged: "🚀",
 	pr_closed_unmerged: "🗑️",
 	orchestrator_replaced: "🔁",
-	orchestrator_replacement_capped: "🚨",
-	duplicate_pr: "♊",
 	worker_died_unfinished: "🧯",
-	worker_retry_exhausted: "🚨",
-	main_ci_red: "🚨",
 	model_unreachable: "🧠",
 	model_recovered: "🧠",
 };
@@ -242,7 +255,7 @@ export function normalizeNotification(raw) {
 	if (!raw || typeof raw !== "object") return null;
 	const n = raw.notification ?? raw.payload ?? raw;
 	const type = n.type ?? n.kind ?? raw.type ?? raw.event ?? "";
-	if (!INTERESTING.has(type)) return null;
+	if (!INFORMATIONAL.has(type)) return null;
 	const subject = n.subject ?? raw.subject ?? {};
 	const prUrl = n.prUrl ?? n.url ?? raw.prUrl ?? raw.url ?? "";
 	const projectId = n.projectId ?? n.project ?? raw.projectId ?? "";
@@ -282,62 +295,62 @@ export function normalizeNotification(raw) {
 	};
 }
 
-function notificationLabel(n) {
-	if (n.type === "ready_to_merge" && n.sensitive) return "parked_sensitive_merge";
-	return n.type;
-}
-
-function isMentionableNotification(n) {
-	// duplicate_pr is a loud operator alert (issue #181): the fleet opened a
-	// second PR for one issue and a human should intervene, so @mention it.
-	return (
-		n.type === "needs_input" ||
-		n.type === "orchestrator_replacement_capped" ||
-		n.type === "duplicate_pr" ||
-		n.type === "worker_retry_exhausted" ||
-		n.type === "main_ci_red" ||
-		(n.type === "ready_to_merge" && n.sensitive)
-	);
-}
-
-function isNeedsResponseNotification(n) {
-	return (
-		n.type === "needs_input" ||
-		n.type === "orchestrator_replacement_capped" ||
-		n.type === "main_ci_red" ||
-		// Consecutive worker deaths exhausted the respawn cap (issue #230): respawns
-		// are suspended and a human must intervene, so track it in the needs-response
-		// channel until resolved rather than letting a one-shot @mention scroll away.
-		n.type === "worker_retry_exhausted" ||
-		(n.type === "ready_to_merge" && n.sensitive)
-	);
-}
-
 function isTerminalPRNotification(n) {
 	return n?.type === "pr_merged" || n?.type === "pr_closed_unmerged";
 }
 
-function needsResponseRecordFromNotification(raw) {
-	const n = normalizeNotification(raw);
-	if (!n || !isNeedsResponseNotification(n)) return null;
-	return {
-		kind: notificationLabel(n),
-		sessionId: String(n.sessionId ?? ""),
-		subjectKind: String(n.subjectKind ?? ""),
-		subjectId: String(n.subjectId ?? ""),
-		projectId: String(n.projectId ?? ""),
-		title: String(n.title || n.body || ""),
-		url: String(n.prUrl ?? ""),
-		headSha: String(n.headSha ?? ""),
-		attention: true,
-	};
+// rowIsNewerThanCursor compares a raw notification row against the persisted
+// (createdAt, id) high-water mark using the same composite ordering the daemon
+// paginates by. Both timestamps are compared as INSTANTS (epoch), never as raw
+// strings, so representation differences (offset, sub-second precision) cannot
+// misorder them. Rows with a missing/unparseable createdAt compare as NOT
+// newer, so a malformed row can never wedge the high-water mark.
+function rowIsNewerThanCursor(raw, cursor) {
+	const rowAt = Date.parse(String(raw?.createdAt ?? ""));
+	const cursorAt = Date.parse(String(cursor?.createdAt ?? ""));
+	if (!Number.isFinite(rowAt) || !Number.isFinite(cursorAt)) return false;
+	if (rowAt !== cursorAt) return rowAt > cursorAt;
+	return String(raw?.id ?? "") > String(cursor?.id ?? "");
 }
 
+function compareNotificationRows(a, b) {
+	const at = String(a?.createdAt ?? "");
+	const bt = String(b?.createdAt ?? "");
+	if (at !== bt) return at < bt ? -1 : 1;
+	const ai = String(a?.id ?? "");
+	const bi = String(b?.id ?? "");
+	if (ai === bi) return 0;
+	return ai < bi ? -1 : 1;
+}
+
+// The needs-response ledger is keyed on the projection item's stable, deduped id
+// (signature(rec) === rec.id). The daemon already coalesces re-emissions (e.g. a
+// new head SHA yields a new notification row and therefore a new item id), so no
+// extra url/head disambiguation is needed here.
 function needsResponseSignature(rec) {
 	if (!rec) return "";
-	const url = rec.url ? `|${rec.url}` : "";
-	const head = rec.headSha ? `|${rec.headSha}` : "";
-	return `${signature(rec)}${url}${head}`;
+	return signature(rec);
+}
+
+// mainCIAttentionRecord maps a fetchMainCI result to a projection-shaped render
+// record. Main-branch CI health is the one operator-attention condition the
+// daemon does NOT compute into a notification, so this GitHub check-runs probe
+// is its only source — kept as a transport alarm the daemon cannot self-report,
+// exactly like the daemon-unreachable alarm.
+export function mainCIAttentionRecord(main) {
+	if (!main || typeof main !== "object") return null;
+	if (main.status !== "failing" && main.state !== "failing") return null;
+	const sha = String(main.sha ?? main.headSha ?? "").slice(0, 8);
+	const jobs = Array.isArray(main.failedJobs) && main.failedJobs.length ? main.failedJobs.join(", ") : "unknown jobs";
+	return {
+		id: `main_ci_red:${String(main.projectId ?? "")}`,
+		kind: "main_ci_red",
+		sessionId: "main",
+		projectId: String(main.projectId ?? ""),
+		title: `main is red at ${sha || "unknown"}: ${jobs}`,
+		url: String(main.url ?? main.htmlUrl ?? ""),
+		attention: true,
+	};
 }
 
 function renderResolvedNeedsResponse(rec, { reason, resolvedAt = new Date(), clearedBy = "" } = {}) {
@@ -371,17 +384,19 @@ function notificationSubjectKey(n) {
 	return `session:${n?.sessionId ?? ""}`;
 }
 
-export function describeSlackMessage(raw, mentionUserId = MENTION_USER_ID) {
+// describeSlackMessage renders an INFORMATIONAL notification (pr_merged,
+// pr_closed_unmerged, orchestrator_replaced, worker_died_unfinished, model_*) as
+// a plain Slack post. These are never @mentions — every attention condition is
+// delivered by the projection poll, not this notification path.
+export function describeSlackMessage(raw) {
 	const n = normalizeNotification(raw);
 	if (!n) return null;
-	const label = notificationLabel(n);
-	const icon = ICONS[label] ?? "📌";
+	const icon = ICONS[n.type] ?? "📌";
 	const proj = n.projectId ? `[${n.projectId}] ` : "";
-	const displaySubject = n.sessionId || (n.type === "main_ci_red" ? "main" : n.subjectId || "");
+	const displaySubject = n.sessionId || n.subjectId || "";
 	const sess = displaySubject ? `${displaySubject}: ` : "";
 	const title = n.title || n.body;
-	const text = `${icon} *${label}* ${proj}${sess}${title} ${n.prUrl}`.trim();
-	if (mentionUserId && isMentionableNotification(n)) return `<@${mentionUserId}> ${text}`;
+	const text = `${icon} *${n.type}* ${proj}${sess}${title} ${n.prUrl}`.trim();
 	return text;
 }
 
@@ -406,18 +421,71 @@ export function parseSSEFrames(buffer) {
 	return { frames, rest };
 }
 
-function requireSessionListPayload(payload) {
-	if (Array.isArray(payload)) return;
-	if (Array.isArray(payload?.sessions)) return;
-	if (Array.isArray(payload?.data)) return;
-	throw new Error("sessions: invalid payload shape");
+// STATE_VERSION identifies the state-file schema. v2 keys attention records by
+// the daemon projection's item ids; unversioned (v1) files carry records keyed
+// by the deleted classifier's signatures and are re-keyed on load (see
+// migrateLegacyAttentionState) so a deploy does not resolve every open Slack
+// message and re-page every still-open condition.
+export const STATE_VERSION = 2;
+
+// migrateLegacyAttentionRecord maps a pre-projection (v1) attention record to
+// its projection identity: the item id the daemon now emits for the same
+// condition. Records with no projection counterpart (e.g. worker no_signal,
+// which the daemon deliberately excludes) are returned unchanged; the next
+// reconcile resolves them, which is the correct daemon-truth outcome.
+function migrateLegacyAttentionRecord(rec) {
+	if (!rec || typeof rec !== "object" || rec.id) return rec;
+	const kind = String(rec.kind ?? "");
+	const sessionId = String(rec.sessionId ?? "");
+	const projectId = String(rec.projectId ?? "");
+	const url = String(rec.url ?? "");
+	if (kind === "needs_input" && sessionId) return { ...rec, id: `session:${sessionId}:decision`, kind: "decision" };
+	if (kind === "blocked" && sessionId) return { ...rec, id: `session:${sessionId}:blocked` };
+	if (kind === "orchestrator_dead" && sessionId) return { ...rec, id: `session:${sessionId}:no_signal` };
+	// The old poll classified every non-orchestrator no-signal session —
+	// including PRIME sessions — as plain no_signal. The projection emits
+	// session:<id>:no_signal for prime (kind prime_dead) and orchestrator roles
+	// and nothing for workers, so this mapping lets a prime record match its
+	// projection item while a worker record reconciles away (daemon truth).
+	if (kind === "no_signal" && sessionId) return { ...rec, id: `session:${sessionId}:no_signal` };
+	if (kind === "main_ci_red" && projectId) return { ...rec, id: `main_ci_red:${projectId}` };
+	if (kind === "parked_sensitive_merge" && url) {
+		return { ...rec, id: `pr:${canonicalPrKey(url)}:parked_sensitive_merge`, prUrl: String(rec.prUrl || url) };
+	}
+	// Durable notification escalations were needs-response tracked too; the
+	// projection keys them by subject identity (notification:<project>:<session>:
+	// <type>), which is reconstructible from the legacy record.
+	if ((kind === "worker_retry_exhausted" || kind === "orchestrator_replacement_capped") && projectId && sessionId) {
+		return { ...rec, id: `notification:${projectId}:${sessionId}:${kind}` };
+	}
+	return rec;
+}
+
+function migrateLegacyAttentionState(raw) {
+	if (!raw || typeof raw !== "object" || Number(raw.version) >= STATE_VERSION) return raw;
+	const open = Array.isArray(raw.attentionTracker?.open) ? raw.attentionTracker.open : [];
+	const migratedOpen = open.map(([key, rec]) => {
+		const migrated = migrateLegacyAttentionRecord(rec);
+		return [migrated?.id ?? key, migrated];
+	});
+	const needsResponse = {};
+	for (const [sig, msg] of Object.entries(raw.needsResponseMessages ?? {})) {
+		if (!msg || typeof msg !== "object") continue;
+		const record = migrateLegacyAttentionRecord(msg.record);
+		needsResponse[sig] = { ...msg, record };
+	}
+	return {
+		...raw,
+		attentionTracker: { open: migratedOpen },
+		needsResponseMessages: needsResponse,
+	};
 }
 
 export function loadState(file = STATE_FILE) {
 	try {
-		const raw = JSON.parse(readFileSync(file, "utf8"));
+		const raw = migrateLegacyAttentionState(JSON.parse(readFileSync(file, "utf8")));
 		return {
-			seen: new Set(Array.isArray(raw.seen) ? raw.seen.map(migratePipeSubjectKey) : []),
+			seen: new Set(Array.isArray(raw.seen) ? raw.seen.map(String) : []),
 			lastEventId: String(raw.lastEventId ?? ""),
 			lastHeartbeatAt: Number(raw.lastHeartbeatAt ?? 0),
 			initialized: Boolean(raw.initialized),
@@ -427,6 +495,7 @@ export function loadState(file = STATE_FILE) {
 			postedSignatures: normalizePostedSignatures(raw.postedSignatures),
 			needsResponseMessages: normalizeNeedsResponseMessages(raw.needsResponseMessages),
 			threadBindings: normalizeThreadBindings(raw.threadBindings),
+			catchUpCursor: normalizeCatchUpCursor(raw.catchUpCursor),
 		};
 	} catch {
 		return {
@@ -440,8 +509,49 @@ export function loadState(file = STATE_FILE) {
 			postedSignatures: {},
 			needsResponseMessages: {},
 			threadBindings: {},
+			catchUpCursor: null,
 		};
 	}
+}
+
+// catchUpCursor is the durable high-water mark of the unread catch-up walk:
+// the newest (createdAt, id) already processed. With read-on-delivery gone the
+// unread list is append-mostly, so this cursor — not the ack status — decides
+// where a catch-up stops walking, keeping the walk bounded and keeping rows
+// evicted from the bounded seen-set from ever re-posting.
+function normalizeCatchUpCursor(raw) {
+	if (!raw || typeof raw !== "object") return null;
+	return catchUpCursorFrom(raw.createdAt, raw.id);
+}
+
+// RFC3339_DATE_TIME accepts only a FULL date-time with an explicit offset or Z
+// (fractional seconds optional). Date.parse alone is too lenient — it happily
+// normalizes date-only, locale, or timezone-less strings — and a corrupted or
+// hand-edited cursor must drop to the seeding path, never be "repaired" into a
+// wrong high-water mark.
+const RFC3339_DATE_TIME = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+
+// catchUpCursorFrom builds the persisted high-water mark: createdAt must be
+// strict RFC 3339 and is stored normalized to UTC (toISOString), so an
+// offset-equivalent cursor (…+02:00 vs …Z) can never replay history or
+// suppress rows — the same defect class fixed in the Go store's cursor.
+// Comparison happens on epoch time (see rowIsNewerThanCursor), never on raw
+// strings. The id tie-breaks rows at the same instant; the empty id is valid
+// only for the initialized-empty sentinel (every real id sorts above it).
+function catchUpCursorFrom(createdAt, id) {
+	const text = String(createdAt ?? "");
+	if (!RFC3339_DATE_TIME.test(text)) return null;
+	const at = Date.parse(text);
+	if (!Number.isFinite(at)) return null;
+	return { createdAt: new Date(at).toISOString(), id: String(id ?? "") };
+}
+
+// emptyCatchUpCursor is the explicit "initialized on an EMPTY unread snapshot"
+// high-water marker: everything that appears later is genuinely new and must
+// post. Persisting it (instead of nothing) keeps the next catch-up from
+// mistaking the first future row for history and seeding it away silently.
+function emptyCatchUpCursor() {
+	return { createdAt: new Date(0).toISOString(), id: "" };
 }
 
 // threadBindings maps a posted Slack message ts -> the session that raised the
@@ -468,7 +578,7 @@ function normalizePostedSignatures(raw) {
 	if (!raw || typeof raw !== "object") return out;
 	for (const [sig, ts] of Object.entries(raw)) {
 		const n = Number(ts);
-		if (Number.isFinite(n)) out[migratePipeSubjectKey(sig)] = n;
+		if (Number.isFinite(n)) out[String(sig)] = n;
 	}
 	return out;
 }
@@ -479,7 +589,7 @@ function normalizeNeedsResponseMessages(raw) {
 	for (const [sig, msg] of Object.entries(raw)) {
 		if (!msg || typeof msg !== "object") continue;
 		const record = msg.record && typeof msg.record === "object" ? msg.record : null;
-		const key = record ? needsResponseSignature(record) : migrateAttentionSignature(sig);
+		const key = record ? needsResponseSignature(record) : String(sig);
 		out[key] = {
 			ts: String(msg.ts ?? ""),
 			channel: String(msg.channel ?? ""),
@@ -489,43 +599,6 @@ function normalizeNeedsResponseMessages(raw) {
 		};
 	}
 	return out;
-}
-
-function migratePipeSubjectKey(key) {
-	const parts = String(key ?? "").split("|");
-	if (parts.length < 3 || parts[2].includes(":")) return String(key ?? "");
-	const prUrl = [parts[3], parts[5]].find((part) => looksLikeURL(part)) ?? "";
-	parts[2] = legacySubjectKey(parts[0], parts[1], parts[2], prUrl);
-	return parts.join("|");
-}
-
-function migrateAttentionSignature(key) {
-	const text = String(key ?? "");
-	const match = /^([^/]+)\/([^#]+)#(.+)$/.exec(text);
-	if (!match || match[2].includes(":")) return text;
-	return `${match[1]}/${legacySubjectKey(match[3], match[1], match[2])}#${match[3]}`;
-}
-
-function legacySubjectKey(type, projectId, sessionId, prUrl = "") {
-	if (type === "main_ci_red") return `project:${projectId}`;
-	if (prUrl && PR_SUBJECT_TYPES.has(type)) return `pr:${prUrl}`;
-	return `session:${sessionId}`;
-}
-
-const PR_SUBJECT_TYPES = new Set([
-	"ready_to_merge",
-	"parked_sensitive_merge",
-	"pr_merged",
-	"pr_closed_unmerged",
-	"duplicate_pr",
-]);
-
-function looksLikeURL(value) {
-	return /^https?:\/\//.test(String(value ?? ""));
-}
-
-function isPollBackedAttention(rec) {
-	return rec?.kind === "needs_input" || POLL_ALERT_KINDS.has(rec?.kind);
 }
 
 export function saveState(
@@ -555,6 +628,7 @@ export function saveState(
 		writeFileSync(
 			tmp,
 			JSON.stringify({
+				version: STATE_VERSION,
 				seen,
 				lastEventId: state.lastEventId || "",
 				lastHeartbeatAt: state.lastHeartbeatAt || 0,
@@ -565,6 +639,7 @@ export function saveState(
 				postedSignatures: state.postedSignatures ?? {},
 				needsResponseMessages: state.needsResponseMessages ?? {},
 				threadBindings: Object.fromEntries(bindingEntries),
+				catchUpCursor: state.catchUpCursor ?? null,
 			}),
 			"utf8",
 		);
@@ -622,16 +697,16 @@ export class SlackNotificationNotifier {
 		this.webhookThreadingWarned = false;
 		this.bootstrapMode = bootstrapMode;
 		this.pageLimit = pageLimit;
-		this.sessionPollMs = parsePollMs(sessionPollMs, SESSION_ATTENTION_POLL_MS);
+		this.attentionPollMs = parsePollMs(sessionPollMs, SESSION_ATTENTION_POLL_MS);
 		this.dedupeCooldownMs = Number.isFinite(dedupeCooldownMs) && dedupeCooldownMs > 0 ? dedupeCooldownMs : 0;
 		this.mainCISource = mainCISource;
 		this.mainCIPollMs = parsePollMs(mainCIPollMs, MAIN_CI_POLL_MS);
 		this.mainCICache = { checkedAt: Number.NEGATIVE_INFINITY, records: [] };
 		this.consecutiveErrors = 0;
-		this.consecutiveSessionPollErrors = 0;
+		this.consecutiveAttentionPollErrors = 0;
 		this.streamUnhealthyPaged = false;
-		this.sessionUnhealthyPaged = false;
-		this.emptySessionPolls = 0;
+		this.attentionUnhealthyPaged = false;
+		this.emptyAttentionPolls = 0;
 		this.state.attentionTracker ??= new AttentionTracker();
 		this.state.lastDigestKey ??= null;
 		this.state.digestTs ??= null;
@@ -639,72 +714,139 @@ export class SlackNotificationNotifier {
 		this.state.needsResponseMessages ??= {};
 	}
 
+	// catchUpUnread walks the unread backlog with the API's (createdAt, id)
+	// cursor and stops at the notifier's own durable high-water mark
+	// (state.catchUpCursor). Read != delivery makes the unread list append-mostly
+	// (delivery never advances the server-side ack status), so ack-independent
+	// pagination is what lets a backlog larger than one page drain, keeps every
+	// catch-up bounded to rows not yet processed, and keeps rows evicted from the
+	// bounded seen-set from ever re-posting.
 	async catchUpUnread() {
 		const sent = [];
 		const bootstrapping = !this.state.initialized;
-		for (;;) {
+		const highWater = this.state.catchUpCursor;
+		// An initialized state with NO cursor (a v1->v2 migration, or a corrupt
+		// cursor dropped by normalizeCatchUpCursor) must never replay full
+		// history: rows evicted from the bounded seen-set would re-post. Seed the
+		// high-water mark at the current newest row without posting anything —
+		// bootstrap semantics; genuinely new rows still arrive via the SSE stream
+		// and every later catch-up has a cursor.
+		if (!bootstrapping && !highWater) {
 			const res = await this.fetchImpl(`${this.baseUrl}/notifications?status=unread&limit=${this.pageLimit}`, {
 				headers: { accept: "application/json" },
 			});
 			if (!res.ok) throw new Error(`notifications list: HTTP ${res.status}`);
 			const payload = await res.json();
 			const list = Array.isArray(payload) ? payload : (payload.notifications ?? payload.data ?? []);
-			// Oldest first keeps Slack chronology sensible after a reconnect gap.
-			list.sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")));
+			const newest = list[0];
+			// An EMPTY snapshot still persists an explicit epoch high-water marker:
+			// leaving the cursor null would make the NEXT catch-up seed again and
+			// silently swallow whatever row arrived in between.
+			const seeded = list.length === 0 ? emptyCatchUpCursor() : catchUpCursorFrom(newest?.createdAt, newest?.id);
+			if (seeded) {
+				this.state.catchUpCursor = seeded;
+				saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+				this.logger.warn?.(
+					"ao-slack-notifier: catch-up cursor was missing; seeded at the newest unread row without replaying history",
+				);
+			}
+			return sent;
+		}
+		const collected = [];
+		let cursor = null;
+		let previousFirstKey = null;
+		pages: for (;;) {
+			let url = `${this.baseUrl}/notifications?status=unread&limit=${this.pageLimit}`;
+			if (cursor) {
+				url += `&before=${encodeURIComponent(cursor.createdAt)}&beforeId=${encodeURIComponent(cursor.id)}`;
+			}
+			const res = await this.fetchImpl(url, { headers: { accept: "application/json" } });
+			if (!res.ok) throw new Error(`notifications list: HTTP ${res.status}`);
+			const payload = await res.json();
+			const list = Array.isArray(payload) ? payload : (payload.notifications ?? payload.data ?? []);
+			// A daemon that ignores the cursor params would return the same page
+			// forever; detect that and stop rather than loop.
+			const firstKey = list.length ? `${list[0]?.createdAt ?? ""}|${list[0]?.id ?? ""}` : "";
+			if (cursor && firstKey && firstKey === previousFirstKey) {
+				this.logger.warn?.("ao-slack-notifier: daemon ignored the notifications cursor; processing one page only");
+				break;
+			}
+			previousFirstKey = firstKey;
 			for (const raw of list) {
-				const n = normalizeNotification(raw);
-				// First deploy against an existing daemon can have a large backlog of old
-				// unread informational notifications. Seed those as delivered so deploy
-				// does not spam historical pr_merged posts, while still paging current
-				// attention items that may have been silently missed before #87.
-				if (bootstrapping && this.bootstrapMode === "attention_only" && n && !isMentionableNotification(n)) {
-					await this.recordDelivered(raw, { post: false });
-					continue;
-				}
-				if (await this.handleNotification(raw)) sent.push(n);
+				// Newest-first pages: once a row is at or below the high-water mark,
+				// everything after it has already been processed by a previous run.
+				if (highWater && !rowIsNewerThanCursor(raw, highWater)) break pages;
+				collected.push(raw);
 			}
 			if (list.length < this.pageLimit) break;
+			const last = list[list.length - 1];
+			const createdAt = String(last?.createdAt ?? "");
+			const id = String(last?.id ?? "");
+			if (!createdAt || !id) break; // cannot advance safely
+			cursor = { createdAt, id };
 		}
-		if (bootstrapping) {
-			this.state.initialized = true;
-			saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+		// Oldest first keeps Slack chronology sensible after a reconnect gap.
+		collected.sort(compareNotificationRows);
+		let changed = bootstrapping;
+		for (const raw of collected) {
+			const n = normalizeNotification(raw);
+			// First deploy against an existing daemon can have a large backlog of old
+			// unread informational notifications. Seed them as delivered so deploy
+			// does not spam historical pr_merged posts. Every attention condition is
+			// delivered by the projection poll now, so the stream/catch-up path only
+			// ever carries informational events — on bootstrap, seed them all.
+			if (bootstrapping && this.bootstrapMode === "attention_only" && n) {
+				await this.recordDelivered(raw, { post: false });
+			} else if (await this.handleNotification(raw)) {
+				sent.push(n);
+			}
+			// Advance the cursor as each row completes, so the NEXT row's delivery
+			// ledger write persists the progress — a crash mid-drain replays at
+			// most the one-row persistence lag, which the seen-set absorbs. The
+			// advance deliberately happens AFTER successful processing: advancing
+			// first would skip a row whose Slack post failed on the in-process
+			// retry.
+			if (raw?.id && (!this.state.catchUpCursor || rowIsNewerThanCursor(raw, this.state.catchUpCursor))) {
+				const advanced = catchUpCursorFrom(raw.createdAt, raw.id);
+				if (advanced) {
+					this.state.catchUpCursor = advanced;
+					changed = true;
+				}
+			}
 		}
+		if (bootstrapping) this.state.initialized = true;
+		if (changed) saveState(this.stateFile, this.state, this.seenLimit, this.logger);
 		return sent;
 	}
 
-	async markRead(id) {
-		if (!id) return;
-		const res = await this.fetchImpl(`${this.baseUrl}/notifications/${encodeURIComponent(id)}`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json", accept: "application/json" },
-			body: JSON.stringify({ status: "read" }),
-		});
-		if (!res.ok) throw new Error(`notifications mark-read ${id}: HTTP ${res.status}`);
-	}
-
+	// recordDelivered posts one INFORMATIONAL notification to Slack and records it
+	// as delivered in the notifier's OWN ledger (seen ids + posting cooldown).
+	//
+	// Read != delivery (#268/#313): the notifier NEVER PATCHes notifications.status
+	// to read on delivery. The daemon's `status` column is now operator
+	// acknowledgment ONLY (web PATCH / read-all); flipping it here would drop the
+	// durable operator-attention notification types out of the unread projection
+	// even though the operator never saw them. The notifier's persisted state IS
+	// its delivery ledger.
 	async recordDelivered(raw, { post: shouldPost = true } = {}) {
 		const key = notificationKey(raw);
 		const n = normalizeNotification(raw);
 		if (!key || !n) return false;
 		if (!this.state.seen.has(key)) {
 			const suppressed = shouldPost && this.suppressedByCooldown(raw);
-			const rec = shouldPost && !suppressed ? needsResponseRecordFromNotification(raw) : null;
-			const msg = shouldPost && !suppressed && !rec ? describeSlackMessage(raw, this.mentionUserId) : null;
-			if (shouldPost && !suppressed && !rec && !msg) return false;
-			if (rec) {
-				await this.postNeedsResponse(rec, { trackWithSessionAttention: isPollBackedAttention(rec) });
-				this.recordPostedSignature(raw);
-			} else if (msg) {
-				const posted = await this.postMessage(msg, { channel: this.notifyChannel });
-				// Plain informational posts are threadable too — Nick can reply in the
-				// thread of a pr_merged/worker_died post to talk to that session. The ts
-				// used to be dropped on the floor here (#293/M6).
-				this.rememberThreadBinding(posted, { sessionId: n.sessionId, projectId: n.projectId });
-				this.recordPostedSignature(raw);
+			if (shouldPost && !suppressed) {
+				const msg = describeSlackMessage(raw);
+				if (msg) {
+					const posted = await this.postMessage(msg, { channel: this.notifyChannel });
+					// Plain informational posts are threadable too — Nick can reply in the
+					// thread of a pr_merged/worker_died post to talk to that session.
+					this.rememberThreadBinding(posted, { sessionId: n.sessionId, projectId: n.projectId });
+					this.recordPostedSignature(raw);
+				}
 			} else if (suppressed) {
 				// A matching post is still within the cooldown: swallow the Slack
-				// message but keep advancing seen + the server-side read cursor so
-				// the row is not re-paged forever (issue #190 belt-and-suspenders).
+				// message but keep advancing seen so the row is not re-posted forever
+				// (issue #190 belt-and-suspenders).
 				this.logger.info?.(
 					`ao-slack-notifier: suppressed duplicate ${n.type} for ${n.sessionId || n.prUrl} within cooldown`,
 				);
@@ -712,16 +854,13 @@ export class SlackNotificationNotifier {
 		}
 		this.state.seen.add(key);
 		this.pruneSeen();
-		saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+		// A terminal PR event resolves any open parked-sensitive-merge needs-response
+		// message for that PR (transport resolve of a posted Slack message).
 		if (isTerminalPRNotification(n)) {
 			await this.resolveNeedsResponsesForNotification(n);
-			if (this.hasNeedsResponsesForNotification(n)) {
-				saveState(this.stateFile, this.state, this.seenLimit, this.logger);
-				return false;
-			}
 		}
-		await this.markRead(n.id);
-		return !this.state.seen.has(key) || shouldPost;
+		saveState(this.stateFile, this.state, this.seenLimit, this.logger);
+		return shouldPost;
 	}
 
 	// Bind the Slack message we just posted to the session that raised it, so a
@@ -811,7 +950,9 @@ export class SlackNotificationNotifier {
 		for (const [sig, msg] of Object.entries(this.state.needsResponseMessages ?? {})) {
 			const rec = msg.record;
 			if (!rec || rec.kind !== "parked_sensitive_merge") continue;
-			if (!n.prUrl || rec.url !== n.prUrl) continue;
+			// PR identity is rec.prUrl (kept separately from the display url, which
+			// prefers deepLink); fall back to url for records that predate the split.
+			if (!n.prUrl || (rec.prUrl || rec.url) !== n.prUrl) continue;
 			const text = renderResolvedNeedsResponse(rec, {
 				reason: n.type,
 				clearedBy: n.title || n.prUrl,
@@ -829,15 +970,6 @@ export class SlackNotificationNotifier {
 		}
 		if (changed) saveState(this.stateFile, this.state, this.seenLimit, this.logger);
 		return changed;
-	}
-
-	hasNeedsResponsesForNotification(n) {
-		if (!isTerminalPRNotification(n)) return false;
-		for (const msg of Object.values(this.state.needsResponseMessages ?? {})) {
-			const rec = msg.record;
-			if (rec?.kind === "parked_sensitive_merge" && n.prUrl && rec.url === n.prUrl) return true;
-		}
-		return false;
 	}
 
 	// suppressedByCooldown reports whether an identical-content notification was
@@ -899,16 +1031,18 @@ export class SlackNotificationNotifier {
 		);
 	}
 
-	async alertSessionPollUnhealthy(message) {
-		if (this.consecutiveSessionPollErrors < 3) return;
+	async alertOperatorPollUnhealthy(message) {
+		if (this.consecutiveAttentionPollErrors < 3) return;
+		// The daemon cannot self-report that its own attention endpoint is
+		// unreachable, so this is a transport-level alarm we must raise ourselves.
 		await this.alertDaemonUnhealthy(
-			"session",
-			`Slack notifier cannot poll ao sessions (${message}) — blocked/no-signal alerts may be delayed until this recovers.`,
+			"attention",
+			`Slack notifier cannot reach the ao attention projection (${message}) — operator-attention alerts may be delayed until this recovers.`,
 		);
 	}
 
 	async alertDaemonUnhealthy(source, message) {
-		const ownLatch = source === "session" ? "sessionUnhealthyPaged" : "streamUnhealthyPaged";
+		const ownLatch = source === "attention" ? "attentionUnhealthyPaged" : "streamUnhealthyPaged";
 		if (this[ownLatch]) return;
 		const prefix = this.mentionUserId ? `<@${this.mentionUserId}> ` : "";
 		try {
@@ -919,41 +1053,50 @@ export class SlackNotificationNotifier {
 		}
 	}
 
-	async pollSessionAttention() {
-		let payload;
+	// pollOperatorAttention consumes the daemon's ONE canonical operator-attention
+	// projection (GET /api/v1/attention/operator) and renders it to Slack. The
+	// notifier owns no attention classification: the daemon decides membership and
+	// item kind; this method only decides HOW LOUDLY to render each item
+	// (MENTION_KINDS -> resolvable @mention; everything else -> digest) and keeps
+	// the posting idempotent. The main-CI-red GitHub probe is folded in because
+	// the daemon does not compute that condition into a notification.
+	async pollOperatorAttention() {
+		let current;
 		try {
-			const res = await this.fetchImpl(`${this.baseUrl}/sessions?active=true`, {
+			const res = await this.fetchImpl(`${this.baseUrl}/attention/operator`, {
 				headers: { accept: "application/json" },
 			});
-			if (!res.ok) throw new Error(`sessions: HTTP ${res.status}`);
-			payload = await res.json();
-			requireSessionListPayload(payload);
-			this.consecutiveSessionPollErrors = 0;
-			this.sessionUnhealthyPaged = false;
+			if (!res.ok) throw new Error(`attention: HTTP ${res.status}`);
+			const payload = await res.json();
+			// Validate the payload shape BEFORE resetting the error latches: a 200
+			// with a malformed body is an unreachable-class failure, never an
+			// all-clear that would silently resolve every open attention item.
+			const items = Array.isArray(payload) ? payload : payload?.items;
+			if (!Array.isArray(items)) throw new Error("attention: invalid payload shape");
+			current = attentionRecordsFromProjection(items);
+			this.consecutiveAttentionPollErrors = 0;
+			this.attentionUnhealthyPaged = false;
 		} catch (e) {
-			this.consecutiveSessionPollErrors += 1;
-			this.logger.error?.("ao-slack-notifier: session poll failed:", e.message);
-			await this.alertSessionPollUnhealthy(e.message);
+			this.consecutiveAttentionPollErrors += 1;
+			this.logger.error?.("ao-slack-notifier: attention poll failed:", e.message);
+			await this.alertOperatorPollUnhealthy(e.message);
 			return { alerted: [], resolved: [], error: true };
 		}
-
-		const current = attentionFromSessions(payload);
 		if (this.mainCISource && this.mainCIPollMs > 0) {
 			try {
 				const now = this.clock().getTime();
 				if (now - this.mainCICache.checkedAt >= this.mainCIPollMs) {
 					this.mainCICache = { checkedAt: now, records: await this.mainCISource() };
 				}
-				const mainCI = this.mainCICache.records;
-				current.unshift(...attentionFromSessions({ mainCI }));
+				current.unshift(...this.mainCICache.records.map(mainCIAttentionRecord).filter(Boolean));
 			} catch (e) {
 				this.logger.error?.("ao-slack-notifier: main CI poll failed:", e.message);
 			}
 		}
 		const hadAttentionDigest = (this.state.lastDigestKey ?? "") !== "";
 		if (current.length === 0 && (this.state.attentionTracker.pending().length > 0 || hadAttentionDigest)) {
-			this.emptySessionPolls += 1;
-			if (this.emptySessionPolls < 2) {
+			this.emptyAttentionPolls += 1;
+			if (this.emptyAttentionPolls < 2) {
 				return {
 					alerted: [],
 					resolved: [],
@@ -962,23 +1105,41 @@ export class SlackNotificationNotifier {
 				};
 			}
 		} else {
-			this.emptySessionPolls = 0;
+			this.emptyAttentionPolls = 0;
 		}
 		const resolved = this.state.attentionTracker.reconcile(current);
 		let changed = resolved.length > 0;
 		for (const rec of resolved) {
 			if (await this.resolveNeedsResponse(rec, { reason: "state cleared" })) changed = true;
 		}
+		// Every projection record is TRACKED and appears in the digest — this
+		// renderer never drops a daemon-declared attention item. The kind only
+		// decides how loudly the item gets its individual post: MENTION_KINDS ->
+		// resolvable @mention; "pr" -> one plain thread-bound post; anything else
+		// (including kinds newer than this notifier) -> digest-only.
 		const alerted = [];
 		for (const rec of current) {
-			if (!POLL_ALERT_KINDS.has(rec.kind)) continue;
 			if (this.state.attentionTracker.isOpen(rec)) continue;
 			try {
-				await this.postNeedsResponse(rec);
+				if (MENTION_KINDS.has(rec.kind)) {
+					await this.postNeedsResponse(rec);
+				} else if (rec.kind === "pr") {
+					// A routine locally-mergeable PR gets one plain (no-mention) post in
+					// the notify channel — the pre-projection ready_to_merge behavior —
+					// deduped by the tracker and thread-bound so a reply reaches the
+					// session that raised it.
+					const posted = await this.postMessage(renderAlert(rec, ""), { channel: this.notifyChannel });
+					this.state.attentionTracker.markOpen(rec);
+					this.rememberThreadBinding(posted, { sessionId: rec.sessionId, projectId: rec.projectId });
+				} else {
+					this.state.attentionTracker.markOpen(rec);
+					changed = true;
+					continue;
+				}
 				alerted.push(rec);
 				changed = true;
 			} catch (e) {
-				this.logger.error?.("ao-slack-notifier: session attention post failed:", e.message);
+				this.logger.error?.("ao-slack-notifier: operator attention post failed:", e.message);
 			}
 		}
 
@@ -1064,17 +1225,17 @@ export class SlackNotificationNotifier {
 		}
 	}
 
-	async runSessionAttention({ signal } = {}) {
-		if (this.sessionPollMs <= 0) return;
-		this.logger.info?.(`ao-slack-notifier: polling ${this.baseUrl}/sessions for attention`);
+	async runOperatorAttention({ signal } = {}) {
+		if (this.attentionPollMs <= 0) return;
+		this.logger.info?.(`ao-slack-notifier: polling ${this.baseUrl}/attention/operator`);
 		for (;;) {
 			if (signal?.aborted) return;
 			try {
-				await this.pollSessionAttention();
+				await this.pollOperatorAttention();
 			} catch (e) {
-				this.logger.error?.("ao-slack-notifier: session attention loop error:", e.message);
+				this.logger.error?.("ao-slack-notifier: operator attention loop error:", e.message);
 			}
-			await sleep(this.sessionPollMs, signal);
+			await sleep(this.attentionPollMs, signal);
 		}
 	}
 }
@@ -1096,8 +1257,8 @@ if (isMain()) {
 	];
 	if (SESSION_ATTENTION_POLL_MS > 0) {
 		loops.push(
-			notifier.runSessionAttention({ signal: controller.signal }).catch((e) => {
-				console.error("ao-slack-notifier session attention fatal:", e.message);
+			notifier.runOperatorAttention({ signal: controller.signal }).catch((e) => {
+				console.error("ao-slack-notifier operator attention fatal:", e.message);
 				process.exit(1);
 			}),
 		);

@@ -1231,7 +1231,7 @@ export interface components {
             deepLink: string;
             id: string;
             /** @enum {string} */
-            kind: "decision" | "pr" | "worker_retry_exhausted" | "main_ci_red" | "duplicate_pr" | "orchestrator_replacement_capped" | "prime_dead" | "orchestrator_dead";
+            kind: "decision" | "blocked" | "pr" | "parked_sensitive_merge" | "worker_retry_exhausted" | "main_ci_red" | "duplicate_pr" | "orchestrator_replacement_capped" | "prime_dead" | "orchestrator_dead";
             prNumber?: number;
             prTitle?: string;
             prUrl?: string;
@@ -2350,6 +2350,10 @@ export interface operations {
                 status?: "unread";
                 /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
                 limit?: number;
+                /** @description Exclusive pagination cursor: return rows created strictly before this RFC 3339 timestamp (with beforeId as the same-timestamp tie-break). Lets ack-independent readers page an unread backlog larger than one page. */
+                before?: string;
+                /** @description Optional id tie-break for the before cursor: among rows created exactly at the before timestamp, return only ids sorting below this value. */
+                beforeId?: string;
             };
             header?: never;
             path?: never;

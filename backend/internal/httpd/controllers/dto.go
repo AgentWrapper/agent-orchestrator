@@ -177,7 +177,7 @@ type ListOperatorAttentionResponse struct {
 // OperatorAttentionItem is one live-derived item that only the operator can clear.
 type OperatorAttentionItem struct {
 	ID           string              `json:"id"`
-	Kind         string              `json:"kind" enum:"decision,pr,worker_retry_exhausted,main_ci_red,duplicate_pr,orchestrator_replacement_capped,prime_dead,orchestrator_dead"`
+	Kind         string              `json:"kind" enum:"decision,blocked,pr,parked_sensitive_merge,worker_retry_exhausted,main_ci_red,duplicate_pr,orchestrator_replacement_capped,prime_dead,orchestrator_dead"`
 	ProjectID    domain.ProjectID    `json:"projectId"`
 	SessionID    domain.SessionID    `json:"sessionId,omitempty"`
 	SessionTitle string              `json:"sessionTitle,omitempty"`
@@ -602,6 +602,10 @@ type AgentInfo = agentsvc.Info
 type ListNotificationsQuery struct {
 	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
+	Before string `query:"before,omitempty" format:"date-time" description:"Exclusive pagination cursor: return rows created strictly before this RFC 3339 timestamp (with beforeId as the same-timestamp tie-break). Lets ack-independent readers page an unread backlog larger than one page."`
+	// BeforeID tie-breaks rows sharing the exact `before` timestamp: rows at
+	// that timestamp are returned only when their id sorts below this value.
+	BeforeID string `query:"beforeId,omitempty" description:"Optional id tie-break for the before cursor: among rows created exactly at the before timestamp, return only ids sorting below this value."`
 }
 
 // NotificationStreamQuery is the query string accepted by GET /api/v1/notifications/stream.

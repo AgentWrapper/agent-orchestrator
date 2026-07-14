@@ -33,7 +33,10 @@ package attention
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -47,30 +50,21 @@ import (
 // parityFakeAttentionService is a minimal implementation of the two derivation
 // collaborators (SessionReader and NotificationReader). It lets the parity
 // contract drive the Service with no HTTP, DB, or Slack, and it travels with the
-// derivation logic (moved here from the controller in Phase 1).
+// derivation logic (moved here from the controller in Phase 1). ListUnread
+// applies the filter's Types/SensitiveOnly the way the sqlite store does, so
+// scenarios seed one notification list and the projection's two bounded reads
+// (durable escalations; sensitive ready_to_merge) each see only their rows.
 type parityFakeAttentionService struct {
-	sessions           []domain.Session
-	decisions          map[domain.SessionID]domain.PendingDecision
-	decisionErrs       map[domain.SessionID]error
-	prSummaries        map[domain.SessionID][]sessionsvc.PRSummary
-	prSummaryErrs      map[domain.SessionID]error
-	notifications      []notificationsvc.Notification
-	notificationFilter notificationsvc.ListFilter
-	notificationErr    error
+	sessions            []domain.Session
+	prSummaries         map[domain.SessionID][]sessionsvc.PRSummary
+	prSummaryErrs       map[domain.SessionID]error
+	notifications       []notificationsvc.Notification
+	notificationFilters []notificationsvc.ListFilter
+	notificationErr     error
 }
 
 func (f *parityFakeAttentionService) List(_ context.Context, _ sessionsvc.ListFilter) ([]domain.Session, error) {
 	return f.sessions, nil
-}
-
-func (f *parityFakeAttentionService) Decision(_ context.Context, id domain.SessionID) (domain.PendingDecision, bool, error) {
-	if err, ok := f.decisionErrs[id]; ok {
-		return domain.PendingDecision{}, false, err
-	}
-	if d, ok := f.decisions[id]; ok {
-		return d, true, nil
-	}
-	return domain.PendingDecision{}, false, nil
 }
 
 func (f *parityFakeAttentionService) ListPRSummaries(_ context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error) {
@@ -84,11 +78,25 @@ func (f *parityFakeAttentionService) ListPRSummaries(_ context.Context, id domai
 }
 
 func (f *parityFakeAttentionService) ListUnread(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
-	f.notificationFilter = filter
+	f.notificationFilters = append(f.notificationFilters, filter)
 	if f.notificationErr != nil {
 		return nil, f.notificationErr
 	}
-	return f.notifications, nil
+	types := map[domain.NotificationType]bool{}
+	for _, t := range filter.Types {
+		types[t] = true
+	}
+	out := make([]notificationsvc.Notification, 0, len(f.notifications))
+	for _, n := range f.notifications {
+		if len(types) > 0 && !types[n.Type] {
+			continue
+		}
+		if filter.SensitiveOnly && !n.Sensitive {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func (f *parityFakeAttentionService) MarkRead(context.Context, string) (notificationsvc.Notification, bool, error) {
@@ -120,6 +128,18 @@ func parityWorker(id domain.SessionID, project domain.ProjectID, status domain.S
 		},
 		Status: status,
 	}
+}
+
+// parityDecisionWorker returns a needs_input worker whose List snapshot carries
+// a CAPTURED dialog (Metadata.PendingDecision) — the production shape for a
+// decision item. The projection reads the snapshot metadata directly; it never
+// calls session_manager.Decision (which synthesizes a permission decision for
+// every blocked session and would erase the captured-vs-uncaptured distinction).
+func parityDecisionWorker(id domain.SessionID, project domain.ProjectID, decision domain.PendingDecision, now time.Time) domain.Session {
+	s := parityWorker(id, project, domain.StatusNeedsInput, now)
+	s.Activity.State = domain.ActivityWaitingInput
+	s.Metadata.PendingDecision = &decision
+	return s
 }
 
 func parityRole(id domain.SessionID, project domain.ProjectID, kind domain.SessionKind, status domain.SessionStatus, now time.Time) domain.Session {
@@ -198,10 +218,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			name: "decision/question pins DecisionKind, Question, reason and action",
 			build: func() *parityFakeAttentionService {
 				return &parityFakeAttentionService{
-					sessions: []domain.Session{parityWorker("ask-1", "ao", domain.StatusNeedsInput, now)},
-					decisions: map[domain.SessionID]domain.PendingDecision{
-						"ask-1": {Kind: domain.DecisionKindQuestion, Question: "A or B?", Options: []string{"A", "B"}},
-					},
+					sessions: []domain.Session{parityDecisionWorker("ask-1", "ao", domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "A or B?", Options: []string{"A", "B"}}, now)},
 				}
 			},
 			want: []parityExpect{{
@@ -217,10 +234,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			name: "decision/permission has the permission-specific reason and action",
 			build: func() *parityFakeAttentionService {
 				return &parityFakeAttentionService{
-					sessions: []domain.Session{parityWorker("perm-1", "ao", domain.StatusNeedsInput, now)},
-					decisions: map[domain.SessionID]domain.PendingDecision{
-						"perm-1": {Kind: domain.DecisionKindPermission, Question: "Allow command?"},
-					},
+					sessions: []domain.Session{parityDecisionWorker("perm-1", "ao", domain.PendingDecision{Kind: domain.DecisionKindPermission, Question: "Allow command?"}, now)},
 				}
 			},
 			want: []parityExpect{{
@@ -235,9 +249,244 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 		{
 			name: "needs_input session with no pending decision projects nothing",
 			build: func() *parityFakeAttentionService {
-				// Decision() returns ok=false (no entry in decisions map).
+				// waiting_input with no captured Metadata.PendingDecision: the agent is
+				// at an empty prompt, not stopped on a dialog — nothing to project.
+				s := parityWorker("ask-none", "ao", domain.StatusNeedsInput, now)
+				s.Activity.State = domain.ActivityWaitingInput
+				return &parityFakeAttentionService{sessions: []domain.Session{s}}
+			},
+			want: nil,
+		},
+		{
+			name: "blocked session with no pending decision surfaces as a blocked item",
+			build: func() *parityFakeAttentionService {
+				// activity_state=blocked, status=needs_input (production shape), but
+				// Decision() returns ok=false (no entry) so no decision item is built.
+				sess := parityWorker("stuck-1", "ao", domain.StatusNeedsInput, now)
+				sess.Activity.State = domain.ActivityBlocked
 				return &parityFakeAttentionService{
-					sessions: []domain.Session{parityWorker("ask-none", "ao", domain.StatusNeedsInput, now)},
+					sessions: []domain.Session{sess},
+				}
+			},
+			want: []parityExpect{{
+				id: "session:stuck-1:blocked", kind: "blocked", sessionID: "stuck-1",
+				deepLink: "/projects/ao/sessions/stuck-1",
+				reason:   "Session is blocked or stuck and needs the operator.",
+				action:   "Inspect the session terminal and unblock it.",
+			}},
+		},
+		{
+			name: "blocked session WITH a captured decision surfaces the decision item, not a blocked item",
+			build: func() *parityFakeAttentionService {
+				sess := parityWorker("perm-block", "ao", domain.StatusNeedsInput, now)
+				sess.Activity.State = domain.ActivityBlocked
+				sess.Metadata.PendingDecision = &domain.PendingDecision{Kind: domain.DecisionKindPermission, Question: "Allow command?"}
+				return &parityFakeAttentionService{
+					sessions: []domain.Session{sess},
+				}
+			},
+			want: []parityExpect{{
+				id: "session:perm-block:decision", kind: "decision", sessionID: "perm-block",
+				deepLink:     "/projects/ao/sessions/perm-block",
+				decisionKind: domain.DecisionKindPermission,
+				reason:       "Session is paused on a permission dialog.",
+				action:       "Approve or deny the permission in the session terminal.",
+			}},
+		},
+		{
+			name: "ready_to_merge notification that is SENSITIVE surfaces as parked_sensitive_merge",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/990"
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-parked", ProjectID: "ao", SessionID: "sens-1", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, ChangedPaths: []string{"backend/internal/daemon/x.go"},
+							Title:     "Ready and human-gated",
+							Body:      "PR touches backend/internal/daemon; a human must merge it.",
+							CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "pr:github.com/aoagents/agent-orchestrator#990:parked_sensitive_merge", kind: "parked_sensitive_merge",
+				sessionID: "sens-1",
+				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/990",
+				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/990",
+				reason:    "PR touches backend/internal/daemon; a human must merge it.",
+			}},
+		},
+		{
+			// Finding 4 (PR #319 review): parked items are keyed by PR identity, so
+			// one sensitive PR yields ONE item even when it is simultaneously
+			// merge-ready live (the parked human-gate supersedes the generic "pr"
+			// item) and has multiple unread rows (one per head SHA; newest wins).
+			name: "one sensitive PR: parked supersedes the live pr item and head-SHA rows collapse",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/995"
+				sess, pr := mergeReadyPRSession("sens-live", "ao", prURL, 995, now, now)
+				return &parityFakeAttentionService{
+					sessions:    []domain.Session{sess},
+					prSummaries: map[domain.SessionID][]sessionsvc.PRSummary{"sens-live": {pr}},
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-parked-new", ProjectID: "ao", SessionID: "sens-live", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, HeadSHA: "sha-2", Title: "newer head", CreatedAt: now.Add(time.Minute),
+						}},
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-parked-old", ProjectID: "ao", SessionID: "sens-live", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, HeadSHA: "sha-1", Title: "older head", CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "pr:github.com/aoagents/agent-orchestrator#995:parked_sensitive_merge", kind: "parked_sensitive_merge",
+				sessionID: "sens-live",
+				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/995",
+				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/995",
+				reason:    "newer head",
+			}},
+		},
+		{
+			// Read != delivery means an unread ready_to_merge row can outlive its PR.
+			// The projection must not keep reporting a parked merge for a PR the
+			// daemon's own session facts show as merged — that is the projection
+			// misrepresenting attention (#268/#313).
+			name: "parked_sensitive_merge is suppressed when session PR facts show the PR merged",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/992"
+				sess := parityWorker("sens-merged", "ao", domain.StatusMerged, now)
+				sess.PRs = []domain.PRFacts{{URL: prURL, Number: 992, Merged: true, UpdatedAt: now}}
+				return &parityFakeAttentionService{
+					sessions: []domain.Session{sess},
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-parked-merged", ProjectID: "ao", SessionID: "sens-merged", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, Title: "Ready and human-gated", CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: nil,
+		},
+		{
+			name: "parked_sensitive_merge is suppressed when session PR facts show the PR closed unmerged",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/993"
+				sess := parityWorker("sens-closed", "ao", domain.StatusTerminated, now)
+				sess.IsTerminated = true
+				sess.PRs = []domain.PRFacts{{URL: prURL, Number: 993, Closed: true, UpdatedAt: now}}
+				return &parityFakeAttentionService{
+					sessions: []domain.Session{sess},
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-parked-closed", ProjectID: "ao", SessionID: "sens-closed", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, Title: "Ready and human-gated", CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: nil,
+		},
+		{
+			// Terminal state is resolved from the NEWEST fact per PR identity: a
+			// stale closed fact (an old session sharing the PR, or a reopened PR)
+			// must not suppress the parked human-gate.
+			name: "reopened PR: a newer open fact overrides a stale closed fact, parked item stays",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/996"
+				stale := parityWorker("sens-stale", "ao", domain.StatusTerminated, now)
+				stale.IsTerminated = true
+				stale.PRs = []domain.PRFacts{{URL: prURL, Number: 996, Closed: true, UpdatedAt: now.Add(-time.Hour)}}
+				fresh := parityWorker("sens-fresh", "ao", domain.StatusPROpen, now)
+				fresh.PRs = []domain.PRFacts{{URL: prURL, Number: 996, CI: domain.CIFailing, UpdatedAt: now}}
+				return &parityFakeAttentionService{
+					sessions: []domain.Session{stale, fresh},
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-reopened", ProjectID: "ao", SessionID: "sens-fresh", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, Title: "Ready and human-gated", CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "pr:github.com/aoagents/agent-orchestrator#996:parked_sensitive_merge", kind: "parked_sensitive_merge",
+				sessionID: "sens-fresh",
+				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/996",
+				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/996",
+			}},
+		},
+		{
+			// Merged is permanently terminal: even a NEWER open-looking fact cannot
+			// resurrect a merged PR's parked item (merges cannot be undone).
+			name: "merged PR stays suppressed even when a newer fact looks open",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/997"
+				merged := parityWorker("sens-merged-old", "ao", domain.StatusTerminated, now)
+				merged.IsTerminated = true
+				merged.PRs = []domain.PRFacts{{URL: prURL, Number: 997, Merged: true, UpdatedAt: now.Add(-time.Hour)}}
+				open := parityWorker("sens-open-new", "ao", domain.StatusPROpen, now)
+				open.PRs = []domain.PRFacts{{URL: prURL, Number: 997, CI: domain.CIFailing, UpdatedAt: now}}
+				return &parityFakeAttentionService{
+					sessions: []domain.Session{merged, open},
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-merged-old", ProjectID: "ao", SessionID: "sens-merged-old", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, Title: "Ready and human-gated", CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: nil,
+		},
+		{
+			// Fail toward showing attention: session PR facts that still show the PR
+			// OPEN (or a PR the sessions do not know at all) keep the parked item.
+			name: "parked_sensitive_merge stays when session PR facts show the PR still open",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/994"
+				sess := parityWorker("sens-open", "ao", domain.StatusPROpen, now)
+				sess.PRs = []domain.PRFacts{{URL: prURL, Number: 994, CI: domain.CIFailing, UpdatedAt: now}}
+				return &parityFakeAttentionService{
+					sessions: []domain.Session{sess},
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-parked-open", ProjectID: "ao", SessionID: "sens-open", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: true, Title: "Ready and human-gated", CreatedAt: now,
+						}},
+					},
+				}
+			},
+			want: []parityExpect{{
+				id: "pr:github.com/aoagents/agent-orchestrator#994:parked_sensitive_merge", kind: "parked_sensitive_merge",
+				sessionID: "sens-open",
+				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/994",
+				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/994",
+			}},
+		},
+		{
+			name: "ready_to_merge notification that is NOT sensitive is excluded from the projection",
+			build: func() *parityFakeAttentionService {
+				prURL := "https://github.com/aoagents/agent-orchestrator/pull/991"
+				return &parityFakeAttentionService{
+					notifications: []notificationsvc.Notification{
+						{NotificationRecord: domain.NotificationRecord{
+							ID: "n-green", ProjectID: "ao", SessionID: "green-1", PRURL: prURL,
+							Type: domain.NotificationReadyToMerge, Status: domain.NotificationUnread,
+							Sensitive: false, Title: "green PR", CreatedAt: now,
+						}},
+					},
 				}
 			},
 			want: nil,
@@ -330,7 +579,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				}
 			},
 			want: []parityExpect{{
-				id: "notification:n-exhausted:operator", kind: "worker_retry_exhausted",
+				id: "notification:ao:dead-1:worker_retry_exhausted", kind: "worker_retry_exhausted",
 				sessionID: "dead-1",
 				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/930",
 				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/930",
@@ -350,7 +599,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				}
 			},
 			want: []parityExpect{{
-				id: "notification:n-nopr:operator", kind: "worker_retry_exhausted",
+				id: "notification:ao:dead-3:worker_retry_exhausted", kind: "worker_retry_exhausted",
 				sessionID: "dead-3",
 				prURL:     "",
 				deepLink:  "/projects/ao/sessions/dead-3",
@@ -376,7 +625,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				}
 			},
 			want: []parityExpect{{
-				id: "notification:n-mainci:operator", kind: "main_ci_red",
+				id: "notification:ao:project:ao:main_ci_red", kind: "main_ci_red",
 				sessionID:     "",
 				prURL:         "",
 				exactDeepLink: true,
@@ -398,7 +647,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				}
 			},
 			want: []parityExpect{{
-				id: "notification:n-mainci-empty:operator", kind: "main_ci_red",
+				id: "notification:ao:project:ao:main_ci_red", kind: "main_ci_red",
 				sessionID:     "",
 				prURL:         "",
 				exactDeepLink: true,
@@ -424,7 +673,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				}
 			},
 			want: []parityExpect{{
-				id: "notification:n-dup:operator", kind: "duplicate_pr",
+				id: "notification:ao:pr:https://github.com/aoagents/agent-orchestrator/pull/981:duplicate_pr", kind: "duplicate_pr",
 				sessionID: "dup-sess",
 				prURL:     "https://github.com/aoagents/agent-orchestrator/pull/981",
 				deepLink:  "https://github.com/aoagents/agent-orchestrator/pull/981",
@@ -449,7 +698,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 				}
 			},
 			want: []parityExpect{{
-				id: "notification:n-capped:operator", kind: "orchestrator_replacement_capped",
+				id: "notification:ao:orch-1:orchestrator_replacement_capped", kind: "orchestrator_replacement_capped",
 				sessionID: "orch-1",
 				prURL:     "",
 				deepLink:  "/projects/ao/sessions/orch-1",
@@ -555,22 +804,13 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			},
 		},
 		{
-			name: "sessions deleted mid-derive (NotFound on decision/PR) are skipped, not fatal",
+			name: "sessions deleted mid-derive (NotFound on PR summaries) are skipped, not fatal",
 			build: func() *parityFakeAttentionService {
 				url := "https://github.com/aoagents/agent-orchestrator/pull/950"
 				gonePR := parityWorker("gone-pr", "ao", domain.StatusMergeable, now)
 				gonePR.PRs = []domain.PRFacts{{URL: url, Number: 950, CI: domain.CIPassing, Review: domain.ReviewApproved, Mergeability: domain.MergeMergeable, UpdatedAt: now}}
 				return &parityFakeAttentionService{
-					sessions: []domain.Session{
-						parityWorker("gone-decision", "ao", domain.StatusNeedsInput, now),
-						gonePR,
-					},
-					decisions: map[domain.SessionID]domain.PendingDecision{
-						"gone-decision": {Kind: domain.DecisionKindQuestion, Question: "?"},
-					},
-					decisionErrs: map[domain.SessionID]error{
-						"gone-decision": apierr.NotFound("SESSION_NOT_FOUND", "gone"),
-					},
+					sessions: []domain.Session{gonePR},
 					prSummaryErrs: map[domain.SessionID]error{
 						"gone-pr": apierr.NotFound("SESSION_NOT_FOUND", "gone"),
 					},
@@ -582,10 +822,7 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 			name: "notification read failure degrades to session-derived items only",
 			build: func() *parityFakeAttentionService {
 				return &parityFakeAttentionService{
-					sessions: []domain.Session{parityWorker("perm-1", "ao", domain.StatusNeedsInput, now)},
-					decisions: map[domain.SessionID]domain.PendingDecision{
-						"perm-1": {Kind: domain.DecisionKindPermission, Question: "Allow?"},
-					},
+					sessions:        []domain.Session{parityDecisionWorker("perm-1", "ao", domain.PendingDecision{Kind: domain.DecisionKindPermission, Question: "Allow?"}, now)},
 					notificationErr: errors.New("sqlite busy"),
 				}
 			},
@@ -612,7 +849,12 @@ func TestOperatorAttentionParity_Ordered(t *testing.T) {
 	}
 }
 
-func TestOperatorAttentionRequestsOnlyDurableAttentionNotifications(t *testing.T) {
+// TestOperatorAttentionNotificationReadsAreBounded pins the two-query read
+// (finding 1, PR #319 review): the durable escalation types get their own page
+// budget, and ready_to_merge is fetched SENSITIVE-ONLY in SQL with a separate
+// budget, so accumulating routine green-PR rows can never crowd escalations out
+// of a shared page.
+func TestOperatorAttentionNotificationReadsAreBounded(t *testing.T) {
 	now := parityTime(t)
 	svc := &parityFakeAttentionService{
 		notifications: []notificationsvc.Notification{
@@ -626,16 +868,54 @@ func TestOperatorAttentionRequestsOnlyDurableAttentionNotifications(t *testing.T
 	if _, err := New(Deps{Sessions: svc, Notifications: svc}).ListOperator(context.Background()); err != nil {
 		t.Fatalf("ListOperator: %v", err)
 	}
-	if svc.notificationFilter.Limit != notificationsvc.MaxListLimit {
-		t.Fatalf("notification limit = %d, want %d", svc.notificationFilter.Limit, notificationsvc.MaxListLimit)
+	if len(svc.notificationFilters) != 2 {
+		t.Fatalf("notification reads = %d (%+v), want 2", len(svc.notificationFilters), svc.notificationFilters)
+	}
+	durable := svc.notificationFilters[0]
+	if durable.Limit != notificationsvc.MaxListLimit || durable.SensitiveOnly {
+		t.Fatalf("durable filter = %+v, want limit=%d sensitiveOnly=false", durable, notificationsvc.MaxListLimit)
 	}
 	wantTypes := domain.OperatorAttentionNotificationTypes()
-	if len(svc.notificationFilter.Types) != len(wantTypes) {
-		t.Fatalf("notification types = %+v, want %+v", svc.notificationFilter.Types, wantTypes)
+	if len(durable.Types) != len(wantTypes) {
+		t.Fatalf("durable types = %+v, want %+v", durable.Types, wantTypes)
 	}
 	for i, want := range wantTypes {
-		if svc.notificationFilter.Types[i] != want {
-			t.Fatalf("notification types = %+v, want %+v", svc.notificationFilter.Types, wantTypes)
+		if durable.Types[i] != want {
+			t.Fatalf("durable types = %+v, want %+v", durable.Types, wantTypes)
+		}
+	}
+	parked := svc.notificationFilters[1]
+	if parked.Limit != notificationsvc.MaxListLimit || !parked.SensitiveOnly {
+		t.Fatalf("parked filter = %+v, want limit=%d sensitiveOnly=true", parked, notificationsvc.MaxListLimit)
+	}
+	if len(parked.Types) != 1 || parked.Types[0] != domain.NotificationReadyToMerge {
+		t.Fatalf("parked types = %+v, want [ready_to_merge]", parked.Types)
+	}
+}
+
+// TestCanonicalPRKey pins the PR-identity normalization used for terminal
+// suppression, parked-item dedup, and parked-over-live-pr supersede.
+// Unparseable URLs fall open: they only match themselves. The fixture table is
+// SHARED with the JS mirror (ops/attention-core.mjs canonicalPrKey) so the two
+// parsers cannot drift: both tests read ops/canonical-pr-key-fixtures.json.
+func TestCanonicalPRKey(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "ops", "canonical-pr-key-fixtures.json"))
+	if err != nil {
+		t.Fatalf("read shared fixtures: %v", err)
+	}
+	var cases []struct {
+		In   string `json:"in"`
+		Want string `json:"want"`
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatalf("parse shared fixtures: %v", err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("shared fixture table is empty")
+	}
+	for _, tc := range cases {
+		if got := canonicalPRKey(tc.In); got != tc.Want {
+			t.Errorf("canonicalPRKey(%q) = %q, want %q", tc.In, got, tc.Want)
 		}
 	}
 }
@@ -766,29 +1046,31 @@ func TestOperatorAttentionParity_SupersedeAndDedup(t *testing.T) {
 		}})
 	})
 
-	t.Run("duplicate notification IDs collapse to one item; newest CreatedAt wins regardless of order", func(t *testing.T) {
-		// Two notifications share ID "dup". appendAttentionItem keys the seen-map
-		// on the item ID, and attentionItemSupersedes prefers the newer UpdatedAt
-		// (a notification's UpdatedAt is its CreatedAt). So exactly one survives
-		// and it must be the NEWER one. Asserting the survivor's fields (not just
-		// that one row exists) defeats a "keep the first duplicate" regression;
-		// running both input orders proves the winner is chosen by timestamp, not
-		// by list position.
+	t.Run("re-emitted rows for one subject collapse to one item; newest CreatedAt wins regardless of order", func(t *testing.T) {
+		// Two notification ROWS (distinct row ids) describe the same unresolved
+		// condition: worker_retry_exhausted for the same session. The item id is
+		// keyed by subject identity, so appendAttentionItem collapses them and
+		// attentionItemSupersedes keeps the NEWER CreatedAt. Asserting the
+		// survivor's fields (not just that one row exists) defeats a "keep the
+		// first duplicate" regression; running both input orders proves the winner
+		// is chosen by timestamp, not by list position.
 		olderPR := "https://github.com/aoagents/agent-orchestrator/pull/970"
 		newerPR := "https://github.com/aoagents/agent-orchestrator/pull/971"
 		older := notificationsvc.Notification{NotificationRecord: domain.NotificationRecord{
-			ID: "dup", SessionID: "s-old", ProjectID: "ao", PRURL: olderPR,
+			ID: "row-old", SessionID: "s-dup", ProjectID: "ao", PRURL: olderPR,
 			Type: domain.NotificationWorkerRetryExhausted, Title: "older", Status: domain.NotificationUnread,
+			SubjectKind: domain.NotificationSubjectSession, SubjectID: "s-dup",
 			CreatedAt: now,
 		}}
 		newer := notificationsvc.Notification{NotificationRecord: domain.NotificationRecord{
-			ID: "dup", SessionID: "s-new", ProjectID: "ao", PRURL: newerPR,
+			ID: "row-new", SessionID: "s-dup", ProjectID: "ao", PRURL: newerPR,
 			Type: domain.NotificationWorkerRetryExhausted, Title: "newer", Status: domain.NotificationUnread,
+			SubjectKind: domain.NotificationSubjectSession, SubjectID: "s-dup",
 			CreatedAt: now.Add(time.Hour),
 		}}
 		wantNewerWins := []parityExpect{{
-			id: "notification:dup:operator", kind: "worker_retry_exhausted",
-			sessionID: "s-new", prURL: newerPR, deepLink: newerPR,
+			id: "notification:ao:s-dup:worker_retry_exhausted", kind: "worker_retry_exhausted",
+			sessionID: "s-dup", prURL: newerPR, deepLink: newerPR,
 		}}
 		for _, order := range []struct {
 			name  string

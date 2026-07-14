@@ -50,7 +50,9 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		ChangedPaths: encodeNotificationPaths(rec.ChangedPaths),
 		HeadSha:      rec.HeadSHA,
 		Status:       rec.Status,
-		CreatedAt:    rec.CreatedAt,
+		// Stored in UTC so the lexical created_at ordering and the pagination
+		// cursor comparison are offset-independent.
+		CreatedAt: rec.CreatedAt.UTC(),
 	})
 	if err != nil {
 		if isSQLiteUnique(err) {
@@ -98,16 +100,10 @@ func notificationDedupeSurvivesRead(t domain.NotificationType) bool {
 	}
 }
 
-// ListUnreadNotifications returns unread notifications newest-first.
+// ListUnreadNotifications returns unread notifications newest-first (with an id
+// DESC tie-break so the (created_at, id) pagination cursor is deterministic).
 func (s *Store) ListUnreadNotifications(ctx context.Context, filter notificationsvc.ListFilter) ([]domain.NotificationRecord, error) {
-	if len(filter.Types) == 0 {
-		rows, err := s.qr.ListUnreadNotifications(ctx, int64(filter.Limit))
-		if err != nil {
-			return nil, fmt.Errorf("list unread notifications: %w", err)
-		}
-		return notificationsFromGen(rows), nil
-	}
-	rows, err := s.queryUnreadNotificationsByTypes(ctx, filter.Types, filter.Limit)
+	rows, err := s.queryUnreadNotifications(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("list unread notifications: %w", err)
 	}
@@ -150,12 +146,41 @@ func (s *Store) MarkAllNotificationsRead(ctx context.Context, excludeTypes []dom
 
 const notificationColumns = "id, session_id, project_id, pr_url, type, subject_kind, subject_id, title, body, status, created_at, sensitive, changed_paths, head_sha"
 
-const listUnreadNotificationsByTypes = "SELECT " + notificationColumns + " FROM notifications WHERE status = 'unread' AND type IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT ?"
+// markAllNotificationsReadExcludingTypesSQL additionally keeps SENSITIVE
+// ready_to_merge rows unread: an unread sensitive ready_to_merge row backs the
+// parked_sensitive_merge operator-attention item (a human-gated merge park),
+// so a bulk "mark all read" of the notification center must not silently clear
+// it while the PR is still open. Routine (non-sensitive) ready_to_merge rows
+// are cleared as before. Per-id PATCH still acknowledges an individual row.
+const markAllNotificationsReadExcludingTypesSQL = "UPDATE notifications SET status = 'read' WHERE status = 'unread' AND type NOT IN (SELECT value FROM json_each(?)) AND NOT (type = 'ready_to_merge' AND sensitive = 1) RETURNING " + notificationColumns
 
-const markAllNotificationsReadExcludingTypesSQL = "UPDATE notifications SET status = 'read' WHERE status = 'unread' AND type NOT IN (SELECT value FROM json_each(?)) RETURNING " + notificationColumns
-
-func (s *Store) queryUnreadNotificationsByTypes(ctx context.Context, types []domain.NotificationType, limit int) ([]domain.NotificationRecord, error) {
-	rows, err := s.readDB.QueryContext(ctx, listUnreadNotificationsByTypes, encodeNotificationTypes(types), limit)
+func (s *Store) queryUnreadNotifications(ctx context.Context, filter notificationsvc.ListFilter) ([]domain.NotificationRecord, error) {
+	query := "SELECT " + notificationColumns + " FROM notifications WHERE status = 'unread'"
+	args := make([]any, 0, 5)
+	if len(filter.Types) > 0 {
+		query += " AND type IN (SELECT value FROM json_each(?))"
+		args = append(args, encodeNotificationTypes(filter.Types))
+	}
+	if filter.SensitiveOnly {
+		query += " AND sensitive = 1"
+	}
+	if !filter.CreatedBefore.IsZero() {
+		// created_at is TEXT and SQLite compares it lexically, so the cursor must
+		// be normalized to the same UTC representation rows are written with —
+		// an equivalent instant at another offset would otherwise skip or
+		// duplicate rows across pages.
+		before := filter.CreatedBefore.UTC()
+		if filter.BeforeID != "" {
+			query += " AND (created_at < ? OR (created_at = ? AND id < ?))"
+			args = append(args, before, before, filter.BeforeID)
+		} else {
+			query += " AND created_at < ?"
+			args = append(args, before)
+		}
+	}
+	query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+	args = append(args, filter.Limit)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

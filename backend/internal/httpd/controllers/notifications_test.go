@@ -255,3 +255,25 @@ func TestNotificationsAPI_StreamWithoutPublisherIs501(t *testing.T) {
 	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications/stream", "")
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
+
+// TestNotificationsAPI_BeforeCursor pins the ack-independent pagination cursor
+// (#268/#319): before + beforeId page an unread backlog larger than one page
+// for readers that never mark rows read on delivery.
+func TestNotificationsAPI_BeforeCursor(t *testing.T) {
+	svc := &fakeNotificationService{}
+	srv := newNotificationTestServer(t, svc)
+
+	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=10&before=2026-06-11T10%3A00%3A00Z&beforeId=ntf_5", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	want := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	if !svc.gotFilter.CreatedBefore.Equal(want) || svc.gotFilter.BeforeID != "ntf_5" {
+		t.Fatalf("filter = %+v, want CreatedBefore=%s BeforeID=ntf_5", svc.gotFilter, want)
+	}
+
+	_, status, _ = doRequest(t, srv, "GET", "/api/v1/notifications?before=not-a-time", "")
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid before: status = %d, want 400", status)
+	}
+}

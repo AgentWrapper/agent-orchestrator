@@ -1,7 +1,11 @@
 // Package notification exposes read-only notification DTOs for REST controllers.
 package notification
 
-import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+import (
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
 
 // TargetKind describes what a dashboard should navigate to for a notification.
 type TargetKind string
@@ -39,4 +43,17 @@ type Notification struct {
 type ListFilter struct {
 	Limit int
 	Types []domain.NotificationType
+	// SensitiveOnly restricts the listing to rows with the sensitive flag set.
+	// The operator-attention projection uses it so unbounded routine (non-
+	// sensitive) ready_to_merge rows can never consume the page budget that
+	// durable escalations share.
+	SensitiveOnly bool
+	// CreatedBefore / BeforeID form an exclusive composite pagination cursor
+	// over the newest-first ordering (created_at DESC, id DESC): rows strictly
+	// older than CreatedBefore, plus rows at exactly CreatedBefore with a
+	// smaller id. They let ack-independent readers (the Slack notifier, which
+	// never marks rows read on delivery) walk an unread backlog larger than one
+	// page. Zero values disable the cursor.
+	CreatedBefore time.Time
+	BeforeID      string
 }
