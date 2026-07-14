@@ -213,7 +213,11 @@ function windowIconPath(): string | undefined {
 	const candidate = app.isPackaged
 		? path.join(process.resourcesPath, iconFile)
 		: path.join(__dirname, `../../assets/${iconFile}`);
-	return existsSync(candidate) ? candidate : undefined;
+	if (existsSync(candidate)) return candidate;
+	const fallback = app.isPackaged
+		? path.join(process.resourcesPath, "icon.png")
+		: path.join(__dirname, "../../assets/icon.png");
+	return existsSync(fallback) ? fallback : undefined;
 }
 
 function applyRuntimeAppIcon(): void {
