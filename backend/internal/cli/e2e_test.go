@@ -145,9 +145,15 @@ func (e env) startDaemon(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("spawn ao daemon: %v", err)
 	}
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
 	t.Cleanup(func() {
 		e.run(t, "stop")
-		_, _ = cmd.Process.Wait()
+		select {
+		case <-waitDone:
+		case <-time.After(5 * time.Second):
+			t.Log("daemon process did not exit during cleanup")
+		}
 	})
 
 	deadline := time.Now().Add(10 * time.Second)
