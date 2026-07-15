@@ -51,9 +51,12 @@ export function PushManager(): null {
 		}
 		registeredHostRef.current = host;
 
-		void registerForPush(config);
+		const safeRegister = () => {
+			registerForPush(config).catch((e) => console.warn("[push] registration failed", e));
+		};
+		safeRegister();
 		const sub = AppState.addEventListener("change", (s) => {
-			if (s === "active") void registerForPush(config);
+			if (s === "active") safeRegister();
 		});
 		return () => sub.remove();
 	}, [config, connection]);

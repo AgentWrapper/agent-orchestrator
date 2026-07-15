@@ -6,7 +6,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { Linking, Platform } from "react-native";
 import { registerPushDevice, unregisterPushDevice } from "./api";
 import type { ServerConfig } from "./config";
 
@@ -73,14 +73,53 @@ export async function registerForPush(cfg: ServerConfig): Promise<string | null>
 		return null;
 	}
 
-	const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
-	await registerPushDevice(cfg, {
-		token,
-		platform: Platform.OS,
-		deviceName: Device.deviceName ?? undefined,
-	});
-	await AsyncStorage.setItem(LAST_TOKEN_KEY, token);
-	return token;
+	// Acquiring the token can throw when the build lacks push support — most
+	// commonly on iOS with no APNs `aps-environment` entitlement (a local dev
+	// build not provisioned for push), or on a simulator. Treat that as "push
+	// unavailable on this build" and no-op rather than crashing the app.
+	try {
+		const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+		await registerPushDevice(cfg, {
+			token,
+			platform: Platform.OS,
+			deviceName: Device.deviceName ?? undefined,
+		});
+		await AsyncStorage.setItem(LAST_TOKEN_KEY, token);
+		return token;
+	} catch (e) {
+		console.warn("[push] could not obtain/register an Expo push token (build not provisioned for push?)", e);
+		return null;
+	}
+}
+
+// Current push state, for the Settings Notifications section.
+export type PushStatus = {
+	supported: boolean; // remote push only works on a physical device
+	granted: boolean; // OS notification permission granted
+	canAskAgain: boolean; // false once the user permanently denied (must use system settings)
+	registered: boolean; // we hold a token registered with a daemon
+};
+
+// Reads the live permission + registration state without prompting.
+export async function getPushStatus(): Promise<PushStatus> {
+	const perm = await Notifications.getPermissionsAsync();
+	const token = await AsyncStorage.getItem(LAST_TOKEN_KEY);
+	return {
+		supported: Device.isDevice,
+		granted: perm.status === "granted",
+		canAskAgain: perm.canAskAgain ?? true,
+		registered: !!token,
+	};
+}
+
+// Opens this app's OS settings page so the user can flip notifications back on
+// after a permanent denial (the OS won't let us re-prompt in that case).
+export async function openNotificationSettings(): Promise<void> {
+	try {
+		await Linking.openSettings();
+	} catch {
+		/* best-effort */
+	}
 }
 
 // Best-effort unregister of the last-registered token from the given daemon
