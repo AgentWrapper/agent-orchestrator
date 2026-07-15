@@ -2,7 +2,7 @@ import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerAppImage from "./makers/maker-appimage";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 
 // Default GitHub release target (production). aoagents was the temporary rewrite
 // home; releases land on AgentWrapper (spec §1.1).
@@ -13,6 +13,8 @@ const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
 // shortcut/launcher at the SAME name. Drift here means a broken Start menu
 // shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
 const EXECUTABLE_NAME = "agent-orchestrator";
+const REMOTE_CLIENT_BUILD = process.env.AO_REMOTE_CLIENT === "1";
+const REMOTE_CLIENT_MARKER = "remote-client.json";
 
 // parseReleaseRepo turns an "owner/repo" string (from AO_RELEASE_REPO) into the
 // publisher-github { owner, name } shape, falling back to the production default
@@ -37,7 +39,12 @@ const config: ForgeConfig = {
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
-		extraResource: ["daemon", "assets/icon.png", "assets/icon.ico", "app-update.yml"],
+		extraResource: [
+			...(REMOTE_CLIENT_BUILD ? [REMOTE_CLIENT_MARKER] : ["daemon"]),
+			"assets/icon.png",
+			"assets/icon.ico",
+			"app-update.yml",
+		],
 		// Notarization. Two paths:
 		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8
 		//    (the workflow decodes APPLE_API_KEY_BASE64 to a temp file), plus the
@@ -70,6 +77,11 @@ const config: ForgeConfig = {
 		// and macOS reports the app as "damaged". owner/repo are baked from
 		// AO_RELEASE_REPO at build time.
 		prePackage: async () => {
+			if (REMOTE_CLIENT_BUILD) {
+				writeFileSync(REMOTE_CLIENT_MARKER, `${JSON.stringify({ remoteClient: true }, null, 2)}\n`);
+			} else {
+				rmSync(REMOTE_CLIENT_MARKER, { force: true });
+			}
 			const { owner, name } = parseReleaseRepo(process.env.AO_RELEASE_REPO);
 			const yml = [
 				"provider: github",
