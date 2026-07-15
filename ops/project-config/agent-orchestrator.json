@@ -36,11 +36,7 @@
 		"assignee": "*",
 		"enabled": true,
 		"maxConcurrent": 2,
-		"provider": "github",
-		"respawn": {
-			"disabled": true,
-			"maxRetries": 0
-		}
+		"provider": "github"
 	},
 	"worker": {
 		"agent": "codex",
@@ -56,7 +52,7 @@
 		},
 		{
 			"agent": "codex-fugu",
-			"model": "fugu-ultra",
+			"model": "fugu",
 			"weight": 27
 		},
 		{
@@ -65,5 +61,5 @@
 			"weight": 18
 		}
 	],
-	"workspace": "in-place"
+	"workspace": "worktree"
 }

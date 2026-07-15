@@ -43,7 +43,7 @@ func TestConfiguredModelPinsUseLaunchPrecedence(t *testing.T) {
 		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex},
 		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 		WorkerMix: domain.WorkerMix{
-			{Harness: domain.HarnessCodexFugu, Model: "fugu-ultra", Weight: 50},
+			{Harness: domain.HarnessCodexFugu, Model: "fugu", Weight: 50},
 			{Harness: domain.HarnessClaudeCode, Weight: 50},
 		},
 	}
@@ -53,7 +53,7 @@ func TestConfiguredModelPinsUseLaunchPrecedence(t *testing.T) {
 		{Scope: "worker", Harness: domain.HarnessCodex, Model: "gpt-5.5-codex"},
 		{Scope: "orchestrator", Harness: domain.HarnessClaudeCode, Model: "opus"},
 		{Scope: "agentConfig.modelByHarness[aider]", Harness: domain.HarnessAider, Model: "aider-model"},
-		{Scope: "workerMix[0]", Harness: domain.HarnessCodexFugu, Model: "fugu-ultra"},
+		{Scope: "workerMix[0]", Harness: domain.HarnessCodexFugu, Model: "fugu"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("pins = %#v, want %#v", got, want)

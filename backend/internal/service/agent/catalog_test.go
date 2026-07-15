@@ -485,9 +485,21 @@ func TestModelAvailabilityClassifiesProbeResults(t *testing.T) {
 	if codex.Status != ModelStatusUnreachable || !strings.Contains(codex.Reason, "400 model not available") {
 		t.Fatalf("codex model = %#v, want unreachable with provider reason", codex)
 	}
-	fugu := byHarness[string(domain.HarnessCodexFugu)].Models[0]
+	fugu, ok := findModel(byHarness[string(domain.HarnessCodexFugu)].Models, "fugu-ultra")
+	if !ok {
+		t.Fatalf("fugu models = %#v, want configured pin", byHarness[string(domain.HarnessCodexFugu)].Models)
+	}
 	if fugu.Status != ModelStatusUnknown || !strings.Contains(fugu.Reason, "codex exec usage error") {
 		t.Fatalf("fugu model = %#v, want unknown with probe-unavailable reason", fugu)
+	}
+	// The known-set baseline (fugu) is listed but unprobed: truthfully unknown,
+	// never fabricated healthy.
+	baseline, ok := findModel(byHarness[string(domain.HarnessCodexFugu)].Models, "fugu")
+	if !ok {
+		t.Fatalf("fugu models = %#v, want known-set baseline listed", byHarness[string(domain.HarnessCodexFugu)].Models)
+	}
+	if baseline.Status != ModelStatusUnknown {
+		t.Fatalf("fugu baseline = %#v, want unknown (unprobed)", baseline)
 	}
 }
 

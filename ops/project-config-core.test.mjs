@@ -33,7 +33,7 @@ const BASE_CONFIG = {
 	},
 	workerMix: [
 		{ agent: "codex", model: "gpt-5.5", weight: 55 },
-		{ agent: "codex-fugu", model: "fugu-ultra", weight: 27 },
+		{ agent: "codex-fugu", model: "fugu", weight: 27 },
 		{ agent: "claude-code", model: "opus", weight: 18 },
 	],
 	trackerIntake: {

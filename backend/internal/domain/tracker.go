@@ -41,8 +41,8 @@ var standardIssueLabels = []IssueLabelSpec{
 	{Name: "charter", Kind: IssueLabelKindStatus, Color: "c2e0c6", Description: "Informational status: charter-managed work"},
 	{Name: "charter-audit", Kind: IssueLabelKindStatus, Color: "c2e0c6", Description: "Informational status: charter audit work"},
 	{Name: "human-review", Kind: IssueLabelKindStatus, Color: "b60205", Description: "Informational status: human review requested"},
-	{Name: "agent:codex", Kind: IssueLabelKindRouting, Color: "1d76db", Description: "Route this ticket to codex (gpt-5.5-codex), within pool cap"},
-	{Name: "agent:fugu", Kind: IssueLabelKindRouting, Color: "5319e7", Description: "Route this ticket to codex-fugu (fugu-ultra), within pool cap"},
+	{Name: "agent:codex", Kind: IssueLabelKindRouting, Color: "1d76db", Description: "Route this ticket to codex (gpt-5.5), within pool cap"},
+	{Name: "agent:fugu", Kind: IssueLabelKindRouting, Color: "5319e7", Description: "Route this ticket to codex-fugu (fugu), within pool cap"},
 	{Name: "agent:claude", Kind: IssueLabelKindRouting, Color: "d4a017", Description: "Route this ticket to claude-code (opus), within pool cap"},
 }
 

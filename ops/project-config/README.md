@@ -1,5 +1,15 @@
 # Config-as-code: project config specs (#250)
 
+## Model-tier policy (operator ruling, 2026-07-15)
+
+Premium model tiers — **`fugu-ultra`** (codex-fugu) and **`fable`** (claude-code) —
+are high-cost, special-use, and **manual-only**: they are chosen explicitly per
+invocation by the operator, and are NEVER a default, NEVER a workerMix pin,
+NEVER a `modelByHarness` baseline, and NEVER captured into a spec here. The
+standing baselines are `fugu` (codex-fugu), `gpt-5.5` (codex), and
+`claude-opus-4-8`/`opus` (claude-code). If a capture ever shows a premium tier
+in these specs, that is an incident to investigate, not a state to commit.
+
 Each `<project>.json` here is the committed, clean-boot spec for one ao
 project's per-project config — the object returned as `.project.config` by
 `ao project get <project> --json`. **The system's clean-boot state is its

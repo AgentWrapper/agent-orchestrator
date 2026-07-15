@@ -16,7 +16,7 @@
 	"autonomousMerge": true,
 	"defaultBranch": "main",
 	"env": {
-		"POLYPOWERS_REPO": "polymath-ventures/coachclaw"
+		"POLYPOWERS_REPO": "polymath-ventures/agent-vault"
 	},
 	"orchestrator": {
 		"agent": "claude-code",
@@ -27,7 +27,7 @@
 	"prime": {
 		"agentConfig": {}
 	},
-	"projectPrefix": "cc",
+	"projectPrefix": "av",
 	"trackerIntake": {},
 	"worker": {
 		"agent": "codex",

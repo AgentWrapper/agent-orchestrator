@@ -16,7 +16,7 @@ func cfgWithMix() domain.ProjectConfig {
 			ModelByHarness: map[domain.AgentHarness]domain.HarnessModel{
 				domain.HarnessClaudeCode: {Model: "opus", Effort: domain.EffortHigh},
 				domain.HarnessCodex:      {Model: "gpt-5.5-codex", Effort: domain.EffortHigh},
-				domain.HarnessCodexFugu:  {Model: "fugu-ultra"},
+				domain.HarnessCodexFugu:  {Model: "fugu"},
 			},
 		},
 	}
@@ -34,7 +34,7 @@ func TestEffectiveAgentConfig_PerHarnessMap(t *testing.T) {
 	}{
 		{domain.HarnessClaudeCode, "opus", domain.EffortHigh},
 		{domain.HarnessCodex, "gpt-5.5-codex", domain.EffortHigh},
-		{domain.HarnessCodexFugu, "fugu-ultra", ""},
+		{domain.HarnessCodexFugu, "fugu", ""},
 	}
 	for _, tc := range cases {
 		got, err := effectiveAgentConfig(domain.KindWorker, cfg, "", tc.harness)

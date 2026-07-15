@@ -1,5 +1,16 @@
 {
 	"agentConfig": {
+		"modelByHarness": {
+			"claude-code": {
+				"model": "claude-opus-4-8"
+			},
+			"codex": {
+				"model": "gpt-5.5"
+			},
+			"codex-fugu": {
+				"model": "fugu"
+			}
+		},
 		"permissions": "bypass-permissions"
 	},
 	"autonomousMerge": true,
@@ -10,8 +21,11 @@
 	"orchestrator": {
 		"agent": "claude-code",
 		"agentConfig": {
-			"model": "opus"
+			"model": "claude-opus-4-8"
 		}
+	},
+	"prime": {
+		"agentConfig": {}
 	},
 	"projectPrefix": "learn-breakt",
 	"trackerIntake": {},
@@ -29,12 +43,12 @@
 		},
 		{
 			"agent": "codex-fugu",
-			"model": "fugu-ultra",
+			"model": "fugu",
 			"weight": 27
 		},
 		{
 			"agent": "claude-code",
-			"model": "opus",
+			"model": "claude-opus-4-8",
 			"weight": 18
 		}
 	],

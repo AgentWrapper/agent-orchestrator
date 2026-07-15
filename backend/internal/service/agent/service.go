@@ -716,9 +716,15 @@ func knownModelsForHarness(h domain.AgentHarness) []string {
 	case domain.HarnessClaudeCode:
 		return []string{domain.DefaultClaudeCodeModel, "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001", "claude-fable-5"}
 	case domain.HarnessCodex:
-		return []string{"gpt-5.5-codex", "gpt-5-codex", "gpt-5.4-codex"}
+		// Baseline first. The *-codex names are legacy candidates kept only so the
+		// live probe can label them truthfully (see DefaultCodexModel: this
+		// account 400s on gpt-5.5-codex).
+		return []string{domain.DefaultCodexModel, "gpt-5.5-codex", "gpt-5-codex", "gpt-5.4-codex"}
 	case domain.HarnessCodexFugu:
-		return []string{"fugu-ultra"}
+		// Baseline first. fugu-ultra is a premium tier: manual-only, never a
+		// default or workerMix/modelByHarness pin (operator ruling 2026-07-15;
+		// see ops/project-config/README.md).
+		return []string{"fugu", "fugu-ultra"}
 	default:
 		return nil
 	}

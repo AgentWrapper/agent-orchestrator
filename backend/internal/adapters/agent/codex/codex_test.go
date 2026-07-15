@@ -100,7 +100,7 @@ func TestFuguManifestAndLaunchCommandMirrorCodex(t *testing.T) {
 		Prompt:           "-fix this",
 		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
 		WorkspacePath:    workspace,
-		Config:           ports.AgentConfig{Model: "fugu-ultra"},
+		Config:           ports.AgentConfig{Model: "explicitly-chosen-premium-model"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestFuguManifestAndLaunchCommandMirrorCodex(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"--model", "fugu-ultra",
+		"--model", "explicitly-chosen-premium-model",
 		"-c", "model_instructions_file="+filepath.Join("tmp", "prompt with spaces.md"),
 		"--", "-fix this",
 	)
@@ -485,7 +485,7 @@ func TestFuguValidateModelPreservesWrapperFlag(t *testing.T) {
 
 	plugin := NewFugu()
 	plugin.resolvedBinary = bin
-	if err := plugin.ValidateModel(context.Background(), "fugu-ultra"); err != nil {
+	if err := plugin.ValidateModel(context.Background(), "explicitly-chosen-premium-model"); err != nil {
 		t.Fatalf("ValidateModel: %v", err)
 	}
 	data, err := os.ReadFile(argsFile)
@@ -889,7 +889,7 @@ func TestFuguGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeAuto,
-		Config:      ports.AgentConfig{Model: "fugu-ultra"},
+		Config:      ports.AgentConfig{Model: "explicitly-chosen-premium-model"},
 		Session: ports.SessionRef{
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
 			WorkspacePath: workspace,
@@ -917,7 +917,7 @@ func TestFuguGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"--model", "fugu-ultra",
+		"--model", "explicitly-chosen-premium-model",
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {
