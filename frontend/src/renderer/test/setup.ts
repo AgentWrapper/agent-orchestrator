@@ -1,8 +1,15 @@
 import "@testing-library/jest-dom/vitest";
+import { beforeAll } from "vitest";
+import { initialiseI18n } from "../i18n";
+
+beforeAll(async () => {
+	await initialiseI18n();
+});
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
 // ponytail: single guard; node env has no DOM to stub.
+
 if (typeof window !== "undefined") {
 	class ResizeObserverStub {
 		observe() {}

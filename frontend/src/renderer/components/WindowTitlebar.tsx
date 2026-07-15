@@ -10,6 +10,7 @@ import {
 	DropdownMenuShortcut,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { useTranslation } from "react-i18next";
 
 // Windows-only: macOS keeps its system menu bar and inset traffic lights; Linux
 // keeps the existing minimal chrome. Only Windows loses the native title bar and
@@ -67,6 +68,7 @@ function TopMenu({
 }
 
 export function WindowTitlebar() {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const theme = useUiStore((state) => state.theme);
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
@@ -99,71 +101,75 @@ export function WindowTitlebar() {
 			<img alt="" aria-hidden="true" className="window-titlebar__logo" draggable={false} src={aoLogo} />
 			<span className="window-titlebar__title">Agent Orchestrator</span>
 			<nav className="window-titlebar__menus">
-				<TopMenu id="file" label="File" openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={() => void navigate({ to: "/settings" })}>Settings</DropdownMenuItem>
+				<TopMenu id="file" label={t("windowTitlebar.menu.file")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
+					<DropdownMenuItem onSelect={() => void navigate({ to: "/settings" })}>
+						{t("windowTitlebar.items.settings")}
+					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("app.quit")}>
-						Quit
+						{t("windowTitlebar.items.quit")}
 						<DropdownMenuShortcut>Alt+F4</DropdownMenuShortcut>
 					</DropdownMenuItem>
 				</TopMenu>
 
-				<TopMenu id="edit" label="Edit" openMenu={openMenu} setOpenMenu={setOpenMenu}>
+				<TopMenu id="edit" label={t("windowTitlebar.menu.edit")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={act("edit.undo")}>
-						Undo
+						{t("windowTitlebar.items.undo")}
 						<DropdownMenuShortcut>Ctrl+Z</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("edit.redo")}>
-						Redo
+						{t("windowTitlebar.items.redo")}
 						<DropdownMenuShortcut>Ctrl+Y</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("edit.cut")}>
-						Cut
+						{t("windowTitlebar.items.cut")}
 						<DropdownMenuShortcut>Ctrl+X</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("edit.copy")}>
-						Copy
+						{t("windowTitlebar.items.copy")}
 						<DropdownMenuShortcut>Ctrl+C</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("edit.paste")}>
-						Paste
+						{t("windowTitlebar.items.paste")}
 						<DropdownMenuShortcut>Ctrl+V</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("edit.selectAll")}>
-						Select All
+						{t("windowTitlebar.items.selectAll")}
 						<DropdownMenuShortcut>Ctrl+A</DropdownMenuShortcut>
 					</DropdownMenuItem>
 				</TopMenu>
 
-				<TopMenu id="view" label="View" openMenu={openMenu} setOpenMenu={setOpenMenu}>
+				<TopMenu id="view" label={t("windowTitlebar.menu.view")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={act("view.reload")}>
-						Reload
+						{t("windowTitlebar.items.reload")}
 						<DropdownMenuShortcut>Ctrl+R</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("view.devtools")}>
-						Toggle DevTools
+						{t("windowTitlebar.items.toggleDevTools")}
 						<DropdownMenuShortcut>Ctrl+Shift+I</DropdownMenuShortcut>
 					</DropdownMenuItem>
 					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={act("view.zoomIn")}>Zoom In</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("view.zoomOut")}>Zoom Out</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("view.zoomReset")}>Reset Zoom</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("view.zoomIn")}>{t("windowTitlebar.items.zoomIn")}</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("view.zoomOut")}>{t("windowTitlebar.items.zoomOut")}</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("view.zoomReset")}>{t("windowTitlebar.items.resetZoom")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("view.fullscreen")}>
-						Toggle Full Screen
+						{t("windowTitlebar.items.toggleFullScreen")}
 						<DropdownMenuShortcut>F11</DropdownMenuShortcut>
 					</DropdownMenuItem>
 				</TopMenu>
 
-				<TopMenu id="window" label="Window" openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={act("window.minimize")}>Minimize</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("window.maximize")}>Maximize / Restore</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("window.close")}>Close</DropdownMenuItem>
+				<TopMenu id="window" label={t("windowTitlebar.menu.window")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
+					<DropdownMenuItem onSelect={act("window.minimize")}>{t("windowTitlebar.items.minimize")}</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("window.maximize")}>
+						{t("windowTitlebar.items.maximizeRestore")}
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("window.close")}>{t("windowTitlebar.items.close")}</DropdownMenuItem>
 				</TopMenu>
 
-				<TopMenu id="help" label="Help" openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={act("help.about")}>About Agent Orchestrator</DropdownMenuItem>
+				<TopMenu id="help" label={t("windowTitlebar.menu.help")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
+					<DropdownMenuItem onSelect={act("help.about")}>{t("windowTitlebar.items.aboutAO")}</DropdownMenuItem>
 				</TopMenu>
 			</nav>
 		</header>

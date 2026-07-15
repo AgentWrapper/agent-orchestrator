@@ -1,0 +1,383 @@
+{
+	"board": {
+		"title": "看板",
+		"subtitle": "实时查看代理会话从开发 → 审查 → 合并的流程。",
+
+		"columns": {
+			"working": "开发中",
+			"action": "需要处理",
+			"pending": "审核中",
+			"merge": "准备合并"
+		},
+
+		"actions": {
+			"newTask": "新建任务",
+			"orchestrator": "编排器",
+			"spawnOrchestrator": "启动编排器",
+			"restart": "重启",
+			"restarting": "正在重启…",
+			"spawning": "正在启动…"
+		},
+
+		"errors": {
+			"spawnFailed": "无法启动编排器",
+			"loadSessions": "无法加载会话。"
+		},
+
+		"status": {
+			"working": "开发中",
+			"inputNeeded": "需要输入",
+			"noSignal": "无响应",
+			"ciFailed": "CI 失败",
+			"changesRequested": "需要修改",
+			"reviewPending": "等待审核",
+			"draftPR": "草稿 PR",
+			"prOpen": "PR 已开启",
+			"approved": "已批准",
+			"ready": "准备就绪",
+			"merged": "已合并",
+			"terminated": "已终止",
+			"idle": "空闲"
+		},
+
+		"lifecycle": {
+			"open": "开启",
+			"merged": "已合并",
+			"draft": "草稿",
+			"closed": "已关闭"
+		},
+
+		"done": "已完成 / 已终止",
+		"intakeIssue": "接入问题：{{id}}",
+		"noPR": "暂无 PR"
+	},
+
+	"sidebar": {
+		"projects": "项目",
+		"settings": "设置",
+		"nightly": "夜间版",
+
+		"tooltips": {
+			"board": "编排器看板",
+			"collapse": "折叠侧边栏 · ⌘B",
+			"expand": "展开侧边栏 · ⌘B",
+			"dashboard": "仪表板",
+			"orchestrator": "编排器",
+			"spawnOrchestrator": "启动编排器",
+			"restarting": "正在重启…",
+			"spawning": "正在启动…",
+			"newProject": "新建项目",
+			"opening": "正在打开…",
+			"creating": "正在创建…",
+			"initializing": "正在初始化…",
+			"settingUp": "正在设置…"
+		},
+
+		"menu": {
+			"lightMode": "浅色模式",
+			"darkMode": "深色模式",
+			"pullRequests": "拉取请求",
+			"search": "搜索",
+			"projectSettings": "项目设置",
+			"globalSettings": "全局设置",
+			"connectMobile": "连接手机"
+		},
+
+		"errors": {
+			"loadProjects": "无法加载项目。",
+			"noProjects": "暂无项目。",
+			"registerRepo": "点击<plus/>上方注册一个 Git 仓库。",
+			"removeProject": "无法删除项目。",
+			"addProject": "无法添加项目"
+		},
+
+		"dialogs": {
+			"removeProjectTitle": "删除项目",
+			"removeProjectBody": "这将从 AO 中移除 <strong>{{name}}</strong>",
+			"removeProjectMess": "这将停止其所有正在运行的会话，并将其从侧边栏移除，但会保留仓库文件夹以及磁盘上的历史记录。",
+			"removing": "正在移除…",
+			"remove": "移除"
+		},
+
+		"aria": {
+			"openOrchestrator": "打开 {{name}} 编排器",
+			"spawnOrchestrator": "为 {{name}} 启动编排器",
+			"openDashboard": "打开 {{name}} 仪表板",
+			"projectActions": "{{name}} 的项目操作",
+			"renameSession": "重命名 {{name}}",
+			"openSession": "打开 {{name}}",
+			"daemon": "守护进程 {{state}}",
+			"eventsOffline": " · 事件连接已断开"
+		}
+	},
+
+	"notifications": {
+		"title": "通知",
+
+		"empty": "暂无未读通知。",
+
+		"actions": {
+			"markAll": "全部标记",
+			"markAllRead": "将所有通知标记为已读",
+			"markRead": "标记为已读",
+			"open": "打开目标"
+		},
+
+		"errors": {
+			"load": "无法加载通知。",
+			"markRead": "无法将通知标记为已读。",
+			"markAllRead": "无法将所有通知标记为已读。"
+		},
+
+		"aria": {
+			"unread": "{{count}} 条未读通知",
+			"open": "打开通知目标",
+			"markRead": "将通知标记为已读"
+		}
+	},
+
+	"settings": {
+		"globalSettings": {
+			"title": "全局设置",
+			"subtitle": "适用于所有项目的设置"
+		},
+
+		"updates": {
+			"title": "更新",
+			"automaticUpdates": "自动更新",
+			"updateChannel": "更新渠道",
+			"saveChanges": "保存更改",
+
+			"enabled": "启用",
+			"disabled": "禁用",
+
+			"stable": "稳定版（最新正式版本）",
+			"nightly": "夜间版（预发布）",
+
+			"nightlyWarning": "夜间版每天构建，可能不稳定或导致数据丢失。仅在您了解相关风险时使用。",
+
+			"saving": "正在保存…",
+			"saved": "已保存。",
+			"saveFailed": "保存失败。",
+
+			"currentVersion": "当前版本",
+			"checkForUpdates": "检查更新",
+
+			"updateTo": "更新到 {{version}}",
+			"updateLatest": "更新到最新版本",
+
+			"restartInstall": "重启并安装",
+
+			"checking": "正在检查更新…",
+			"updateAvailable": "发现可用更新 {{version}}。",
+			"downloading": "正在下载… {{percent}}%",
+			"downloaded": "下载完成。请重启以完成更新。",
+
+			"latestVersion": "当前已是最新版本。",
+			"unsupported": "更新功能需要已安装的应用程序。",
+			"updateFailed": "更新失败。"
+		},
+
+		"migration": {
+			"title": "迁移",
+			"description": "从旧版 Agent Orchestrator 导入项目和编排器会话。不会修改原有文件，并且可以安全地重复执行。",
+
+			"status": {
+				"pending": "尚未迁移",
+				"completed": "已完成",
+				"declined": "已拒绝",
+				"failed": "上次迁移失败"
+			},
+
+			"labels": {
+				"status": "状态",
+				"completed": "完成时间",
+				"lastAttempt": "上次尝试",
+				"lastReport": "最近报告",
+				"legacyInstall": "旧版安装"
+			},
+
+			"messages": {
+				"checking": "正在检查…",
+				"found": "已找到",
+				"noneFound": "未找到",
+
+				"migrationFailed": "迁移失败。",
+				"migrationComplete": "迁移完成。",
+				"nothingToImport": "没有可从旧版安装导入的内容。",
+
+				"legacyUntouched": "您的旧版项目不会受到影响（不会删除任何内容）。",
+
+				"report": "已导入 {{imported}} 个，已存在 {{skipped}} 个"
+			},
+
+			"buttons": {
+				"run": "开始迁移",
+				"rerun": "重新运行迁移",
+				"retry": "重试迁移",
+				"running": "正在迁移…"
+			}
+		}
+	},
+
+	"pullRequests": {
+		"title": "拉取请求",
+		"subtitle": "查看所有代理会话中的 PR，并进行处理与合并。",
+		"empty": "暂无打开的拉取请求。",
+
+		"table": {
+			"pr": "PR",
+			"worker": "工作器",
+			"state": "状态",
+			"actions": "操作"
+		},
+
+		"actions": {
+			"resolve": "解决",
+			"merge": "合并",
+			"merging": "正在合并…"
+		},
+
+		"messages": {
+			"merged": "已合并（{{method}}）",
+			"mergeFailed": "合并失败。",
+			"commentsResolved": "评论已解决。",
+			"resolveFailed_other": "解决 {{count}} 个失败的仓库以继续"
+		}
+	},
+
+	"topbar": {
+		"status": {
+			"active": "工作中",
+			"idle": "空闲",
+			"waiting": "等待输入",
+			"blocked": "等待决策",
+			"exit": "已退出",
+			"unknown": "未知"
+		},
+		"orchestrator": "编排器",
+		"newTask": "新建任务",
+		"openKanban": "打开看板",
+		"kanban": "看板",
+		"openOrchestrator": "打开编排器",
+		"restarting": "正在重启…",
+		"spawning": "正在启动…",
+		"inspector": {
+			"close": "关闭检查面板",
+			"open": "打开检查面板",
+			"closeAction": "关闭",
+			"openAction": "打开",
+			"shortcutTitle": "{{action}}检查面板 · ⌘⇧B"
+		},
+		"kill": {
+			"failed": "终止失败",
+			"confirm": "确认终止",
+			"killing": "正在终止…",
+			"cancel": "取消",
+			"session": "终止会话",
+			"label": "终止"
+		}
+	},
+
+	"createProject": {
+		"title": "导入到 Agent Orchestrator",
+		"subtitle": "您要导入什么？",
+		"closeAria": "关闭新建项目对话框",
+		"pickerTitleWorkspace": "选择一个工作区文件夹",
+		"pickerTitleProject": "选择一个项目仓库",
+
+		"workspace": {
+			"title": "工作区",
+			"description": "位于同一父文件夹下的多个 Git 仓库。",
+			"tag": "多个仓库"
+		},
+
+		"singleRepo": {
+			"title": "项目",
+			"description": "单个 Git 仓库 —— 一个代码库，由一个仓库跟踪。",
+			"tag": "单个仓库"
+		},
+
+		"folder": {
+			"backAria": "返回导入类型选择",
+			"closeAria": "关闭导入对话框",
+			"titleWorkspace": "导入工作区",
+			"titleProject": "导入项目",
+			"descriptionWorkspace": "选择一个包含您的 Git 仓库的文件夹。其中的每个仓库都将加入该工作区。",
+			"descriptionProject": "将单个 Git 仓库导入为一个项目。",
+			"workspaceRoot": "工作区根目录",
+			"projectFolder": "项目文件夹",
+			"change": "更改",
+			"importFailedWorkspace": "导入失败 · 工作区未注册",
+			"importFailedProject": "导入失败 · 项目未注册",
+			"noReposDetected": "在此文件夹中未检测到任何仓库。",
+			"chooseFolder": "选择一个文件夹",
+			"chooseProjectFolder": "选择一个项目文件夹",
+			"chooseFolderHintWorkspace": "打开系统文件选择器 —— 选择包含您仓库的文件夹",
+			"chooseFolderHintProject": "打开系统文件选择器 —— 选择一个仓库文件夹",
+			"cancel": "取消",
+			"importWorkspace": "导入工作区",
+			"importProject": "导入项目",
+			"resolveFailed": "解决 {{count}} 个失败的仓库以继续",
+			"noReposToImport": "没有可导入的仓库",
+			"noProjectSelected": "未选择项目",
+			"repoCannotImport": "无法导入该仓库"
+		}
+	},
+
+	"connectMobile": {
+		"title": "连接移动设备",
+		"description": "通过局域网将 Agent Orchestrator 移动应用与此桌面配对。",
+
+		"status": {
+			"checking": "正在检查状态…",
+			"loadFailed": "无法加载移动设备状态。"
+		},
+
+		"toggle": {
+			"title": "启用移动连接",
+			"description": "在本地网络上开启受密码保护的端口，以便手机连接。"
+		},
+
+		"fields": {
+			"address": "地址",
+			"password": "密码"
+		},
+
+		"buttons": {
+			"copy": "复制",
+			"copied": "已复制",
+			"regenerate": "重新生成密码"
+		}
+	},
+	"windowTitlebar": {
+		"menu": {
+			"file": "文件",
+			"edit": "编辑",
+			"view": "视图",
+			"window": "窗口",
+			"help": "帮助"
+		},
+
+		"items": {
+			"settings": "设置",
+			"quit": "退出",
+			"undo": "撤销",
+			"redo": "重做",
+			"cut": "剪切",
+			"copy": "复制",
+			"paste": "粘贴",
+			"selectAll": "全选",
+			"reload": "重新加载",
+			"toggleDevTools": "切换开发者工具",
+			"zoomIn": "放大",
+			"zoomOut": "缩小",
+			"resetZoom": "重置缩放",
+			"toggleFullScreen": "切换全屏",
+			"minimize": "最小化",
+			"maximizeRestore": "最大化 / 还原",
+			"close": "关闭",
+			"aboutAO": "关于 Agent Orchestrator"
+		}
+	}
+}

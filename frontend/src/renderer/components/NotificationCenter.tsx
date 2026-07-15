@@ -20,6 +20,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { useTranslation } from "react-i18next";
 
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
@@ -69,6 +70,7 @@ export function NotificationRuntime() {
 }
 
 export function NotificationCenter({ style }: NotificationCenterProps) {
+	const { t } = useTranslation();
 	const notificationsQuery = useNotificationsQuery();
 	const markRead = useMarkNotificationReadMutation();
 	const markAllRead = useMarkAllNotificationsReadMutation();
@@ -85,7 +87,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "single" });
 		} catch (error) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "single" });
-			setActionError(error instanceof Error ? error.message : "Could not mark notification read");
+			setActionError(error instanceof Error ? error.message : t("notifications.errors.markRead"));
 		}
 	};
 
@@ -97,7 +99,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" });
 		} catch (error) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
-			setActionError(error instanceof Error ? error.message : "Could not mark notifications read");
+			setActionError(error instanceof Error ? error.message : t("notifications.errors.markAllRead"));
 		}
 	};
 
@@ -105,7 +107,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
 				<TopbarButton
-					aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
+					aria-label={
+						unreadCount > 0 ? t("notifications.aria.unread", { count: unreadCount }) : t("notifications.title")
+					}
 					className="relative"
 					style={style}
 					variant="icon"
@@ -120,23 +124,25 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-notification-width p-0" sideOffset={8}>
 				<div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-					<DropdownMenuLabel className="px-0 py-0">Notifications</DropdownMenuLabel>
+					<DropdownMenuLabel className="px-0 py-0">{t("notifications.title")}</DropdownMenuLabel>
 					<button
-						aria-label="Mark all notifications read"
+						aria-label={t("notifications.actions.markAllRead")}
 						className="inline-flex h-control-md items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
 						disabled={unreadCount === 0 || markAllRead.isPending}
 						onClick={() => void markAll()}
 						type="button"
 					>
 						<CheckCheck className="size-icon-md" aria-hidden="true" />
-						Mark all
+						{t("notifications.actions.markAll")}
 					</button>
 				</div>
 				{actionError ? <div className="border-b border-border px-3 py-2 text-xs text-error">{actionError}</div> : null}
 				{notificationsQuery.isError && unreadCount === 0 ? (
-					<div className="px-3 py-8 text-center text-control text-muted-foreground">Could not load notifications.</div>
+					<div className="px-3 py-8 text-center text-control text-muted-foreground">
+						{t("notifications.errors.load")}
+					</div>
 				) : unreadCount === 0 ? (
-					<div className="px-3 py-8 text-center text-control text-muted-foreground">No unread notifications.</div>
+					<div className="px-3 py-8 text-center text-control text-muted-foreground">{t("notifications.empty")}</div>
 				) : (
 					<div className="max-h-notification-max-height overflow-y-auto p-1">
 						{notifications.map((notification, index) => (
@@ -168,6 +174,7 @@ function NotificationItem({
 	onMarkRead: (id: string) => Promise<void>;
 	onOpen: (notification: NotificationDTO) => void;
 }) {
+	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
 	return (
 		<div className="grid grid-cols-notification gap-2 rounded-md px-2 py-2.5">
@@ -193,20 +200,20 @@ function NotificationItem({
 			</div>
 			<div className="flex items-start gap-1">
 				<button
-					aria-label="Open notification target"
+					aria-label={t("notifications.aria.open")}
 					className="grid size-control-md place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground"
 					onClick={() => onOpen(notification)}
-					title="Open target"
+					title={t("notifications.actions.open")}
 					type="button"
 				>
 					<ExternalLink className="size-icon-md" aria-hidden="true" />
 				</button>
 				<button
-					aria-label="Mark notification read"
+					aria-label={t("notifications.aria.markRead")}
 					className="grid size-control-md place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
 					disabled={disabled}
 					onClick={() => void onMarkRead(notification.id)}
-					title="Mark read"
+					title={t("notifications.actions.markRead")}
 					type="button"
 				>
 					<Check className="size-icon-md" aria-hidden="true" />

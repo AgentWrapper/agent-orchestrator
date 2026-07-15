@@ -7,6 +7,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { MigrationState, MigrationStatus } from "../../main/app-state";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { useTranslation } from "react-i18next";
 
 export const migrationSettingsQueryKey = ["migration-settings"] as const;
 
@@ -31,13 +32,6 @@ async function fetchMigrationSettings(): Promise<MigrationView> {
 	};
 }
 
-const STATUS_LABEL: Record<MigrationStatus, string> = {
-	pending: "Not migrated yet",
-	completed: "Completed",
-	declined: "Declined",
-	failed: "Last attempt failed",
-};
-
 function statusClass(status: MigrationStatus): string {
 	switch (status) {
 		case "completed":
@@ -61,6 +55,7 @@ function formatTime(iso?: string): string {
 // idempotent POST /api/v1/import (safe even when completed/declined/failed).
 // Issue #2205.
 export function MigrationSection() {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: migrationSettingsQueryKey,
@@ -99,62 +94,75 @@ export function MigrationSection() {
 	const report = migration.report;
 	const completed = migration.status === "completed";
 	const buttonLabel = run.isPending
-		? "Running…"
+		? t("settings.migration.buttons.running")
 		: completed
-			? "Re-run migration"
+			? t("settings.migration.buttons.rerun")
 			: migration.status === "failed"
-				? "Retry migration"
-				: "Run migration";
+				? t("settings.migration.buttons.retry")
+				: t("settings.migration.buttons.run");
+
+	const STATUS_LABEL: Record<MigrationStatus, string> = {
+		pending: t("settings.migration.status.pending"),
+		completed: t("settings.migration.status.completed"),
+		declined: t("settings.migration.status.declined"),
+		failed: t("settings.migration.status.failed"),
+	};
 
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="text-control">Migration</CardTitle>
+				<CardTitle className="text-control">{t("settings.migration.title")}</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
-				<p className="text-xs leading-row text-muted-foreground">
-					Import projects and orchestrator sessions from an earlier Agent Orchestrator install. Your old files are never
-					modified, and this is safe to run more than once.
-				</p>
+				<p className="text-xs leading-row text-muted-foreground">{t("settings.migration.description")}</p>
 
 				<div className="flex flex-col gap-2 text-xs">
-					<Row label="Status">
+					<Row label={t("settings.migration.labels.status")}>
 						<span className={statusClass(migration.status)}>{STATUS_LABEL[migration.status]}</span>
 					</Row>
 					{formatTime(migration.completedAt || migration.lastAttemptAt) && (
-						<Row label={completed ? "Completed" : "Last attempt"}>
+						<Row
+							label={completed ? t("settings.migration.labels.completed") : t("settings.migration.labels.lastAttempt")}
+						>
 							<span className="text-foreground">{formatTime(migration.completedAt || migration.lastAttemptAt)}</span>
 						</Row>
 					)}
 					{report && (
-						<Row label="Last report">
+						<Row label={t("settings.migration.labels.lastReport")}>
 							<span className="text-foreground">
-								{report.projectsImported} imported, {report.projectsSkipped} already present
+								{t("settings.migration.messages.report", {
+									imported: report.projectsImported,
+									skipped: report.projectsSkipped,
+								})}
 							</span>
 						</Row>
 					)}
-					<Row label="Legacy install">
+					<Row label={t("settings.migration.labels.legacyInstall")}>
 						{query.isLoading ? (
-							<span className="text-passive">Checking…</span>
+							<span className="text-passive">{t("settings.migration.messages.checking")}</span>
 						) : available ? (
-							<span className="font-mono text-caption text-foreground">{legacyRoot || "found"}</span>
+							<span className="font-mono text-caption text-foreground">
+								{legacyRoot || t("settings.migration.messages.found")}
+							</span>
 						) : (
-							<span className="text-passive">None found</span>
+							<span className="text-passive">{t("settings.migration.messages.noneFound")}</span>
 						)}
 					</Row>
 				</div>
 
 				{migration.status === "failed" && migration.error && (
 					<p className="text-xs leading-row text-error">
-						{migration.error}. Your legacy projects are untouched (nothing is ever deleted).
+						{migration.error}. {t("settings.migration.messages.legacyUntouched")}
 					</p>
 				)}
 				{run.isError && (
 					<p className="text-xs leading-row text-error">
-						{run.error instanceof Error ? run.error.message : "Migration failed."}
+						{run.error instanceof Error ? run.error.message : t("settings.migration.messages.migrationFailed")}
 					</p>
 				)}
-				{run.isSuccess && !run.isPending && <p className="text-xs leading-row text-success">Migration complete.</p>}
+				{run.isSuccess && !run.isPending && (
+					<p className="text-xs leading-row text-success">{t("settings.migration.messages.migrationComplete")}</p>
+				)}
 
 				<div className="flex items-center gap-3">
 					<Button
@@ -167,7 +175,7 @@ export function MigrationSection() {
 						{buttonLabel}
 					</Button>
 					{!available && !query.isLoading && (
-						<span className="text-xs text-passive">Nothing to import from a legacy install.</span>
+						<span className="text-xs text-passive">{t("settings.migration.messages.nothingToImport")}</span>
 					)}
 				</div>
 			</CardContent>

@@ -6,6 +6,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Switch } from "./ui/switch";
+import { useTranslation } from "react-i18next";
 
 export const mobileStatusQueryKey = ["mobile-status"] as const;
 
@@ -43,6 +44,7 @@ interface ConnectMobileModalProps {
 // a QR code (host/port/password), the plaintext address + password with a copy
 // affordance, and a Regenerate action. Flipping it off tears the bridge down.
 export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalProps) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 
@@ -110,29 +112,34 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-w-md">
 				<DialogHeader>
-					<DialogTitle className="text-[15px]">Connect Mobile</DialogTitle>
-					<DialogDescription>Pair the Agent Orchestrator mobile app with this desktop over your LAN.</DialogDescription>
+					<DialogTitle className="text-[15px]">{t("connectMobile.title")}</DialogTitle>
+					<DialogDescription>{t("connectMobile.description")}</DialogDescription>
 				</DialogHeader>
 
 				{query.isLoading ? (
-					<p className="text-[12px] text-muted-foreground">Checking status…</p>
+					<p className="text-[12px] text-muted-foreground">{t("connectMobile.status.checking")}</p>
 				) : query.isError ? (
 					<p className="text-[12px] text-error">
-						{query.error instanceof Error ? query.error.message : "Failed to load mobile status."}
+						{query.error instanceof Error ? query.error.message : t("connectMobile.status.loadFailed")}
 					</p>
 				) : status ? (
 					<div className="flex flex-col gap-4">
 						{/* Toggle row — always visible. Flipping it starts/stops the bridge. */}
 						<div className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface/40 p-3">
 							<div className="flex min-w-0 flex-col">
-								<span className="text-[13px] text-foreground">Enable mobile</span>
+								<span className="text-[13px] text-foreground">{t("connectMobile.toggle.title")}</span>
 								<span className="text-[12px] leading-5 text-muted-foreground">
-									Open a password-protected port on your local network so your phone can connect.
+									{t("connectMobile.toggle.description")}
 								</span>
 							</div>
 							<div className="flex shrink-0 items-center gap-2">
 								{busy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-								<Switch checked={enabled} onCheckedChange={onToggle} disabled={busy} aria-label="Enable mobile" />
+								<Switch
+									checked={enabled}
+									onCheckedChange={onToggle}
+									disabled={busy}
+									aria-label={t("connectMobile.toggle.title")}
+								/>
 							</div>
 						</div>
 
@@ -146,16 +153,16 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 								</div>
 
 								<div className="flex flex-col gap-2 text-[12px]">
-									<Row label="Address">
+									<Row label={t("connectMobile.fields.address")}>
 										<span className="font-mono text-[11px] text-foreground">
 											{status.host}:{status.port}
 										</span>
 									</Row>
-									<Row label="Password">
+									<Row label={t("connectMobile.fields.password")}>
 										<div className="flex min-w-0 flex-1 items-center gap-2">
 											<span className="truncate font-mono text-[11px] text-foreground">{status.password}</span>
 											<Button type="button" variant="outline" size="sm" onClick={() => void copyPassword()}>
-												{copied ? "Copied" : "Copy"}
+												{copied ? t("connectMobile.buttons.copied") : t("connectMobile.buttons.copy")}
 											</Button>
 										</div>
 									</Row>
@@ -170,7 +177,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 								<div>
 									<Button type="button" variant="outline" onClick={() => regenerate.mutate()} disabled={busy}>
 										{regenerate.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-										Regenerate password
+										{t("connectMobile.buttons.regenerate")}
 									</Button>
 								</div>
 							</div>
