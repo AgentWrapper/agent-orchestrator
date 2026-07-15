@@ -122,6 +122,59 @@ type PRReviewThread struct {
 	UpdatedAt    time.Time
 }
 
+type PipelineArtifact struct {
+	ID            string
+	PipelineRunID string
+	ProjectID     domain.ProjectID
+	StageRunID    string
+	StageName     string
+	Kind          string
+	Fingerprint   string
+	Status        string
+	SentToAgentAt sql.NullTime
+	Payload       string
+	CreatedAt     time.Time
+}
+
+type PipelineDefinition struct {
+	ID         string
+	ProjectID  domain.ProjectID
+	Name       string
+	YamlSource string
+	ConfigJson string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type PipelineRun struct {
+	ID                string
+	ProjectID         domain.ProjectID
+	PipelineID        string
+	PipelineName      string
+	SessionID         string
+	HeadSha           string
+	LoopState         string
+	TerminationReason string
+	LoopRounds        int64
+	ConfigSnapshot    string
+	Fingerprints      string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type PipelineStageRun struct {
+	RunID        string
+	ProjectID    domain.ProjectID
+	StageName    string
+	StageRunID   string
+	Status       string
+	Attempt      int64
+	Verdict      string
+	StartedAt    sql.NullTime
+	CompletedAt  sql.NullTime
+	ErrorMessage string
+}
+
 type Project struct {
 	ID            domain.ProjectID
 	Path          string
