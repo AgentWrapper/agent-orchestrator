@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -47,6 +48,7 @@ type setActivityAPIRequest struct {
 	ToolName     string              `json:"toolName,omitempty"`
 	ToolUseID    string              `json:"toolUseId,omitempty"`
 	Decision     *decisionAPIRequest `json:"decision,omitempty"`
+	Usage        *usageAPIRequest    `json:"usage,omitempty"`
 }
 
 type decisionAPIRequest struct {
@@ -55,11 +57,20 @@ type decisionAPIRequest struct {
 	Options  []string `json:"options,omitempty"`
 }
 
+type usageAPIRequest struct {
+	InputTokens  *float64 `json:"input_tokens,omitempty"`
+	OutputTokens *float64 `json:"output_tokens,omitempty"`
+	TotalTokens  *float64 `json:"total_tokens,omitempty"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
+}
+
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
 // payload before they go on the wire — they are ids/names, anything longer is
 // garbage and gets dropped rather than truncated (a truncated id would never
 // match its pre/post counterpart).
 const maxActivityMetaLen = 256
+
+const maxUsageNumericField = 1e14
 
 // activityMeta extracts the tool-use correlation facts from a native hook
 // payload. The field names are shared vocabulary across agent CLIs that emit
@@ -79,6 +90,48 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 		p.ToolUseID = ""
 	}
 	return p.ToolName, p.ToolUseID
+}
+
+func usageMeta(event string, payload []byte) *usageAPIRequest {
+	if event != "stop" {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return nil
+	}
+	source := raw
+	if usageRaw, ok := raw["usage"]; ok {
+		var nested map[string]json.RawMessage
+		if err := json.Unmarshal(usageRaw, &nested); err == nil {
+			source = nested
+		}
+	}
+	usage := &usageAPIRequest{
+		InputTokens:  usageNumber(source, "input_tokens"),
+		OutputTokens: usageNumber(source, "output_tokens"),
+		TotalTokens:  usageNumber(source, "total_tokens"),
+		CostUSD:      usageNumber(source, "cost_usd"),
+	}
+	if usage.InputTokens == nil && usage.OutputTokens == nil && usage.TotalTokens == nil && usage.CostUSD == nil {
+		return nil
+	}
+	return usage
+}
+
+func usageNumber(raw map[string]json.RawMessage, key string) *float64 {
+	value, ok := raw[key]
+	if !ok {
+		return nil
+	}
+	var f float64
+	if err := json.Unmarshal(value, &f); err != nil {
+		return nil
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > maxUsageNumericField {
+		return nil
+	}
+	return &f
 }
 
 func decisionMeta(agent, event string, payload []byte, state, toolName string) *decisionAPIRequest {
@@ -273,11 +326,12 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	toolName, toolUseID := activityMeta(payload)
+	usage := usageMeta(event, payload)
 	stateText := string(state)
 	decision := decisionMeta(agent, event, payload, stateText, toolName)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	runtimeToken := strings.TrimSpace(os.Getenv("AO_RUNTIME_TOKEN"))
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: stateText, Agent: agent, RuntimeToken: runtimeToken, Event: event, ToolName: toolName, ToolUseID: toolUseID, Decision: decision}, nil); err != nil {
+	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: stateText, Agent: agent, RuntimeToken: runtimeToken, Event: event, ToolName: toolName, ToolUseID: toolUseID, Decision: decision, Usage: usage}, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)

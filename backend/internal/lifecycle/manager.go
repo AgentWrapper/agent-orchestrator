@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -226,6 +227,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
+	usageEvent, hasUsageEvent := usageTelemetryEvent(rec, s, now)
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
 	next := rec
@@ -238,6 +240,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameActivity(rec.Activity, act) && pendingDecisionEqual(rec.Metadata.PendingDecision, pendingDecision) && !rec.FirstSignalAt.IsZero() {
 		m.mu.Unlock()
+		if hasUsageEvent {
+			m.emitTelemetry(ctx, usageEvent)
+		}
 		return nil
 	}
 	next.Activity = act
@@ -268,6 +273,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	if hasUsageEvent {
+		waitingEvents = append(waitingEvents, usageEvent)
+	}
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
@@ -509,6 +517,58 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		return s
 	}
 }
+
+func usageTelemetryEvent(rec domain.SessionRecord, s ports.ActivitySignal, now time.Time) (ports.TelemetryEvent, bool) {
+	payload := usageTelemetryPayload(s.Usage)
+	if len(payload) == 0 {
+		return ports.TelemetryEvent{}, false
+	}
+	harness := rec.Harness
+	if harness == "" {
+		harness = s.Harness
+	}
+	if harness != "" {
+		payload["harness"] = string(harness)
+	} else {
+		payload["harness"] = "unknown"
+	}
+	projectID := rec.ProjectID
+	sessionID := rec.ID
+	return ports.TelemetryEvent{
+		Name:       "ao.session.usage",
+		Source:     "lifecycle",
+		OccurredAt: now.UTC(),
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload:    payload,
+	}, true
+}
+
+func usageTelemetryPayload(usage *ports.UsageSignal) map[string]any {
+	if usage == nil {
+		return nil
+	}
+	payload := map[string]any{}
+	addUsageNumber(payload, "input_tokens", usage.InputTokens)
+	addUsageNumber(payload, "output_tokens", usage.OutputTokens)
+	addUsageNumber(payload, "total_tokens", usage.TotalTokens)
+	addUsageNumber(payload, "cost_usd", usage.CostUSD)
+	return payload
+}
+
+func addUsageNumber(payload map[string]any, key string, v *float64) {
+	if v == nil {
+		return
+	}
+	f := *v
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > maxUsageNumericField {
+		return
+	}
+	payload[key] = f
+}
+
+const maxUsageNumericField = 1e14
 
 func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain.ActivityState, prevAt, now time.Time) []ports.TelemetryEvent {
 	if m.telemetry == nil {

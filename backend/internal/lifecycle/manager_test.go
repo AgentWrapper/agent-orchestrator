@@ -433,6 +433,119 @@ func TestActivity_MissingRuntimeTokenDuringSwitchIsTreatedAsStale(t *testing.T) 
 	}
 }
 
+func TestActivity_UsageTelemetryEmitsAfterCurrentRuntimeToken(t *testing.T) {
+	tele := &telemetrySink{}
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	m := New(st, msg, WithTelemetry(tele))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:            "mer-1",
+		ProjectID:     "mer",
+		Harness:       domain.HarnessCodexFugu,
+		Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+		FirstSignalAt: now.Add(-time.Minute),
+		Metadata:      domain.SessionMetadata{RuntimeToken: "current-token"},
+	}
+	input, output, total, cost := 11.0, 7.0, 18.0, 0.019
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:        true,
+		State:        domain.ActivityIdle,
+		Harness:      domain.HarnessCodexFugu,
+		RuntimeToken: "current-token",
+		Usage:        &ports.UsageSignal{InputTokens: &input, OutputTokens: &output, TotalTokens: &total, CostUSD: &cost},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(tele.events) != 1 {
+		t.Fatalf("telemetry events = %#v, want one usage event", tele.events)
+	}
+	ev := tele.events[0]
+	if ev.Name != "ao.session.usage" || ev.Source != "lifecycle" || ev.Level != ports.TelemetryLevelInfo {
+		t.Fatalf("usage event = %+v", ev)
+	}
+	if ev.ProjectID == nil || *ev.ProjectID != "mer" || ev.SessionID == nil || *ev.SessionID != "mer-1" {
+		t.Fatalf("usage event ids = %+v", ev)
+	}
+	want := map[string]any{
+		"input_tokens":  input,
+		"output_tokens": output,
+		"total_tokens":  total,
+		"cost_usd":      cost,
+		"harness":       "codex-fugu",
+	}
+	if !reflect.DeepEqual(ev.Payload, want) {
+		t.Fatalf("usage payload = %#v, want %#v", ev.Payload, want)
+	}
+}
+
+func TestActivity_UsageTelemetryLabelsUnknownHarness(t *testing.T) {
+	tele := &telemetrySink{}
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	m := New(st, msg, WithTelemetry(tele))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+	}
+	input := 11.0
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityActive,
+		Usage: &ports.UsageSignal{InputTokens: &input},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(tele.events) != 1 {
+		t.Fatalf("telemetry events = %#v, want one usage event", tele.events)
+	}
+	if got := tele.events[0].Payload["harness"]; got != "unknown" {
+		t.Fatalf("harness = %#v, want unknown", got)
+	}
+}
+
+func TestActivity_StaleRuntimeTokenSuppressesUsageTelemetry(t *testing.T) {
+	tele := &telemetrySink{}
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	m := New(st, msg, WithTelemetry(tele))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+		Metadata:  domain.SessionMetadata{RuntimeToken: "current-token"},
+	}
+	input := 11.0
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:        true,
+		State:        domain.ActivityActive,
+		Harness:      domain.HarnessCodex,
+		RuntimeToken: "old-token",
+		Usage:        &ports.UsageSignal{InputTokens: &input},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(tele.events) != 0 {
+		t.Fatalf("telemetry events = %#v, want none for stale runtime token", tele.events)
+	}
+	if got := st.sessions["mer-1"]; got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("activity state = %q, want unchanged idle", got.Activity.State)
+	}
+}
+
 func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")

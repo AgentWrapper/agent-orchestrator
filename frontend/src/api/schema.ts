@@ -951,6 +951,12 @@ export interface components {
             /** @enum {string} */
             verdict?: "approved" | "changes_requested";
         };
+        ControllersSessionUsagePayload: {
+            cost_usd?: null | number;
+            input_tokens?: null | number;
+            output_tokens?: null | number;
+            total_tokens?: null | number;
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -1501,6 +1507,8 @@ export interface components {
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
             toolUseId?: string;
+            /** @description Optional token/cost usage facts reported by the harness for this turn. */
+            usage?: components["schemas"]["ControllersSessionUsagePayload"];
         };
         SetActivityResponse: {
             ok: boolean;

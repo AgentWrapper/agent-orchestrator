@@ -103,6 +103,27 @@ func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_ActivityThreadsUsageFields(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"idle","agent":"codex-fugu","usage":{"input_tokens":11,"output_tokens":7,"total_tokens":18,"cost_usd":0.019}}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if rec.calls != 1 {
+		t.Fatalf("recorder calls=%d, want 1", rec.calls)
+	}
+	if rec.gotSignal.Usage == nil {
+		t.Fatal("usage signal = nil, want usage")
+	}
+	if *rec.gotSignal.Usage.InputTokens != 11 || *rec.gotSignal.Usage.OutputTokens != 7 ||
+		*rec.gotSignal.Usage.TotalTokens != 18 || *rec.gotSignal.Usage.CostUSD != 0.019 {
+		t.Fatalf("usage signal = %+v", rec.gotSignal.Usage)
+	}
+}
+
 func TestSessionsAPI_ActivityCapsOverlongCorrelationFields(t *testing.T) {
 	// Overlong values are dropped, not truncated: a truncated id could never
 	// match its pre/post counterpart, so an empty value (fail-safe: no

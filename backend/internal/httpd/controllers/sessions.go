@@ -632,6 +632,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		Event:           capActivityMeta(domain.SanitizeControlChars(in.Event)),
 		ToolName:        capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
 		ToolUseID:       capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		Usage:           activityUsage(in.Usage),
 		PendingDecision: decision,
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
@@ -643,6 +644,18 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
+}
+
+func activityUsage(in *SessionUsagePayload) *ports.UsageSignal {
+	if in == nil {
+		return nil
+	}
+	return &ports.UsageSignal{
+		InputTokens:  in.InputTokens,
+		OutputTokens: in.OutputTokens,
+		TotalTokens:  in.TotalTokens,
+		CostUSD:      in.CostUSD,
+	}
 }
 
 // capActivityMeta bounds an optional activity correlation string; overlong

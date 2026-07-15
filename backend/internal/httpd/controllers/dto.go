@@ -547,6 +547,7 @@ type SetActivityRequest struct {
 	ToolName     string                  `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
 	ToolUseID    string                  `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
 	Decision     *SessionDecisionPayload `json:"decision,omitempty" description:"Structured pending dialog metadata, when the harness reports it."`
+	Usage        *SessionUsagePayload    `json:"usage,omitempty" description:"Optional token/cost usage facts reported by the harness for this turn."`
 }
 
 // SessionDecisionPayload is the activity-hook wire form of a pending decision.
@@ -554,6 +555,14 @@ type SessionDecisionPayload struct {
 	Kind     domain.DecisionKind `json:"kind" enum:"question,permission"`
 	Question string              `json:"question,omitempty"`
 	Options  []string            `json:"options,omitempty"`
+}
+
+// SessionUsagePayload is the activity-hook wire form of per-turn usage/cost.
+type SessionUsagePayload struct {
+	InputTokens  *float64 `json:"input_tokens,omitempty"`
+	OutputTokens *float64 `json:"output_tokens,omitempty"`
+	TotalTokens  *float64 `json:"total_tokens,omitempty"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.

@@ -97,6 +97,17 @@ func capturedDecision(t *testing.T, capture *activityCapture) struct {
 	return req.Decision
 }
 
+func capturedUsage(t *testing.T, capture *activityCapture) map[string]float64 {
+	t.Helper()
+	var req struct {
+		Usage map[string]float64 `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	return req.Usage
+}
+
 func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
@@ -122,6 +133,69 @@ func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	}
 	if got := capturedRuntimeToken(t, capture); got != "runtime-7" {
 		t.Errorf("runtimeToken = %q, want runtime-7", got)
+	}
+}
+
+func TestHooks_ForwardsUsagePayload(t *testing.T) {
+	for _, agent := range []string{"claude-code", "codex", "codex-fugu"} {
+		t.Run(agent, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "ao-7")
+			cfg := setConfigEnv(t)
+			srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+			writeRunFileFor(t, cfg, srv)
+
+			_, _, err := executeCLI(t, Deps{
+				In:           strings.NewReader(`{"usage":{"input_tokens":123,"output_tokens":45,"total_tokens":168,"cost_usd":0.0123}}`),
+				ProcessAlive: func(int) bool { return true },
+			}, "hooks", agent, "stop")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := capturedAgent(t, capture); got != agent {
+				t.Fatalf("agent = %q, want %q", got, agent)
+			}
+			usage := capturedUsage(t, capture)
+			want := map[string]float64{"input_tokens": 123, "output_tokens": 45, "total_tokens": 168, "cost_usd": 0.0123}
+			if !reflect.DeepEqual(usage, want) {
+				t.Fatalf("usage = %#v, want %#v", usage, want)
+			}
+		})
+	}
+}
+
+func TestHooks_DropsInvalidUsagePayload(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"usage":{"input_tokens":-1,"output_tokens":"5","cost_usd":1e300}}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "stop")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if usage := capturedUsage(t, capture); len(usage) != 0 {
+		t.Fatalf("usage = %#v, want omitted/empty invalid usage", usage)
+	}
+}
+
+func TestHooks_IgnoresUsageOnNonTurnBoundaryEvents(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"tool_name":"Bash","tool_use_id":"toolu_1","usage":{"input_tokens":123}}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "post-tool-use")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if usage := capturedUsage(t, capture); len(usage) != 0 {
+		t.Fatalf("usage = %#v, want omitted for non-stop event", usage)
 	}
 }
 

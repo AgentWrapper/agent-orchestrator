@@ -42,7 +42,16 @@ type ActivitySignal struct {
 	Event        string
 	ToolName     string
 	ToolUseID    string
+	Usage        *UsageSignal
 	// PendingDecision carries structured dialog metadata for blocked/question
 	// states when the harness exposes it. Nil keeps legacy state-only behavior.
 	PendingDecision *domain.PendingDecision
+}
+
+// UsageSignal carries allowlisted per-turn token/cost facts from agent hooks.
+type UsageSignal struct {
+	InputTokens  *float64
+	OutputTokens *float64
+	TotalTokens  *float64
+	CostUSD      *float64
 }

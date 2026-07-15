@@ -2443,6 +2443,25 @@ components:
       required:
       - status
       type: object
+    ControllersSessionUsagePayload:
+      properties:
+        cost_usd:
+          type:
+          - "null"
+          - number
+        input_tokens:
+          type:
+          - "null"
+          - number
+        output_tokens:
+          type:
+          - "null"
+          - number
+        total_tokens:
+          type:
+          - "null"
+          - number
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -3885,6 +3904,10 @@ components:
         toolUseId:
           description: Native tool-use id, for tool-use hook events.
           type: string
+        usage:
+          $ref: '#/components/schemas/ControllersSessionUsagePayload'
+          description: Optional token/cost usage facts reported by the harness for
+            this turn.
       required:
       - state
       type: object
