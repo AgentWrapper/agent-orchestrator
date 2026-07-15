@@ -200,7 +200,7 @@ export function RemoteDirectoryPickerDialog({
 						<Button
 							type="button"
 							variant="primary"
-							disabled={disabled || loading || !current}
+							disabled={disabled || loading || !current || path.trim() !== current.path}
 							onClick={() => current && onSelect(current.path)}
 						>
 							Select this folder

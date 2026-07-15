@@ -113,6 +113,45 @@ describe("RemoteDirectoryPickerDialog", () => {
 		expect(screen.getByRole("dialog", { name: "Browse server project folders" })).toBeInTheDocument();
 	});
 
+	it("disables selection when the edited path differs from the loaded directory", async () => {
+		const user = userEvent.setup();
+		getMock.mockResolvedValueOnce(response("/home/claude/code", "/home/claude", []));
+		renderPicker();
+
+		const selectButton = await screen.findByRole("button", { name: "Select this folder" });
+		expect(selectButton).toBeEnabled();
+		const pathInput = screen.getByLabelText("Server path");
+		await user.clear(pathInput);
+		await user.type(pathInput, "/srv/projects");
+
+		expect(selectButton).toBeDisabled();
+	});
+
+	it("keeps selection disabled when navigation to the edited path fails", async () => {
+		const user = userEvent.setup();
+		getMock
+			.mockResolvedValueOnce(response("/home/claude/code", "/home/claude", []))
+			.mockResolvedValueOnce({ data: undefined, error: { message: "Permission denied" } });
+		renderPicker();
+
+		const pathInput = await screen.findByLabelText("Server path");
+		await user.clear(pathInput);
+		await user.type(pathInput, "/srv/private");
+		await user.click(screen.getByRole("button", { name: "Go" }));
+		await screen.findByRole("alert");
+
+		expect(screen.getByRole("button", { name: "Select this folder" })).toBeDisabled();
+	});
+
+	it("shows a loading status while the directory request is pending", async () => {
+		getMock.mockReturnValue(new Promise<never>(() => undefined));
+		renderPicker();
+
+		const status = await screen.findByRole("status");
+		expect(status).toHaveTextContent("Loading folders...");
+		expect(screen.getByRole("button", { name: "Select this folder" })).toBeDisabled();
+	});
+
 	it("selects the current folder", async () => {
 		const user = userEvent.setup();
 		const onSelect = vi.fn();
