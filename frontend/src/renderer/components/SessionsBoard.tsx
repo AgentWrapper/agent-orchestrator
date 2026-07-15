@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Plus, RotateCw } from "lucide-react";
+import { AlertTriangle, Plus, RotateCcw, RotateCw } from "lucide-react";
 import { DashboardSubhead } from "./DashboardSubhead";
 import {
 	type AttentionZone,
@@ -13,6 +13,7 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
@@ -24,13 +25,13 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
 const isLinux =
 	typeof navigator !== "undefined" &&
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
 		.toLowerCase()
 		.includes("linux");
-
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
 	projectId?: string;
@@ -85,6 +86,7 @@ const COLUMNS: Column[] = [
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
@@ -137,12 +139,43 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// Collapsed by default, like agent-orchestrator's done-bar: finished and
 	// killed sessions cost one quiet line under the board until expanded.
 	const [doneExpanded, setDoneExpanded] = useState(false);
+	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
+	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
+	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
 
 	const openSession = (session: WorkspaceSession) =>
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
+
+	const restoreDoneSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
+		event.stopPropagation();
+		if (restoringSessionId) return;
+		setRestoringSessionId(session.id);
+		setRestoreErrors((current) => {
+			const next = { ...current };
+			delete next[session.id];
+			return next;
+		});
+		try {
+			const result = await restoreSessionById(session.id);
+			if (result.status === "success") {
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: session.workspaceId, sessionId: session.id },
+				});
+				return;
+			}
+			if (result.status === "not_resumable") {
+				setRestoreUnavailableSession(session);
+				return;
+			}
+			setRestoreErrors((current) => ({ ...current, [session.id]: result.message }));
+		} finally {
+			setRestoringSessionId(undefined);
+		}
+	};
 
 	const openOrchestrator = async () => {
 		if (!projectId || isProjectRestarting) return;
@@ -310,14 +343,47 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{doneExpanded && (
 						<div className="flex flex-wrap gap-2 pb-2.5 pt-1">
 							{done.map((s) => (
-								<button
+								<div
 									key={s.id}
-									className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
-									onClick={() => openSession(s)}
-									type="button"
+									className="group relative rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-transform duration-normal hover:z-30 hover:scale-[1.025] hover:border-border-strong focus-within:z-30 focus-within:scale-[1.025] focus-within:border-border-strong"
 								>
-									<span className="text-xs text-muted-foreground">{s.title}</span>
-								</button>
+									<div
+										className={cn(
+											"pointer-events-none absolute inset-0 z-0 rounded-md border border-border-strong bg-surface opacity-0 shadow-sm transition-opacity duration-normal ease-out group-hover:opacity-100 group-focus-within:opacity-100",
+											restoringSessionId === s.id && "opacity-100",
+										)}
+									/>
+									<button
+										className="relative z-10 min-w-0 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+										onClick={() => openSession(s)}
+										type="button"
+									>
+										<span className="line-clamp-1">{s.title}</span>
+									</button>
+									{s.status === "terminated" && (
+										<button
+											aria-label={`Restore ${s.title}`}
+											title={`Restore ${s.title}`}
+											className={cn(
+												"absolute right-0.75 top-1/2 z-40 inline-flex size-control-xs -translate-y-1/2 items-center justify-center rounded-sm border border-accent bg-accent text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out hover:opacity-90 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-50 group-hover:opacity-100 group-focus-within:opacity-100",
+												restoringSessionId === s.id && "opacity-100",
+											)}
+											disabled={restoringSessionId !== undefined}
+											onClick={(event) => void restoreDoneSession(event, s)}
+											type="button"
+										>
+											<RotateCcw
+												className={cn("size-3", restoringSessionId === s.id && "animate-spin")}
+												aria-hidden="true"
+											/>
+										</button>
+									)}
+									{restoreErrors[s.id] && (
+										<div className="relative z-10 mt-1 max-w-content-max truncate text-2xs text-destructive">
+											{restoreErrors[s.id]}
+										</div>
+									)}
+								</div>
 							))}
 						</div>
 					)}
@@ -329,6 +395,18 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
 				onOpenChange={setIsNewTaskOpen}
 			/>
+			{restoreUnavailableSession && (
+				<RestoreUnavailableDialog
+					open={true}
+					session={restoreUnavailableSession}
+					onOpenChange={(open) => {
+						if (!open) setRestoreUnavailableSession(undefined);
+					}}
+					onRecreated={async () => {
+						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+					}}
+				/>
+			)}
 		</div>
 	);
 }
