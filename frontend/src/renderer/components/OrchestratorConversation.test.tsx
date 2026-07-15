@@ -7,6 +7,7 @@ import {
 	findConversationInputRequest,
 	formatThinkingDuration,
 	OrchestratorConversation,
+	parseResponseBlocks,
 } from "./OrchestratorConversation";
 
 const postMock = vi.fn();
@@ -93,6 +94,26 @@ describe("buildConversationGroups", () => {
 			prompt: "Do you want to proceed?",
 		});
 	});
+
+	it("turns response markdown and terminal markers into readable blocks", () => {
+		const groups = buildConversationGroups([
+			"● Update complete.",
+			"## What changed",
+			"- Added `Thinking` status",
+			"- Preserved **chat history**",
+			"",
+			"```ts",
+			"const ready = true;",
+			"```",
+		]);
+
+		expect(parseResponseBlocks(groups)).toEqual([
+			{ kind: "paragraph", text: "Update complete." },
+			{ kind: "heading", level: 2, text: "What changed" },
+			{ kind: "unordered-list", items: ["Added `Thinking` status", "Preserved **chat history**"] },
+			{ kind: "code", code: "const ready = true;", language: "ts" },
+		]);
+	});
 });
 
 describe("OrchestratorConversation", () => {
@@ -142,9 +163,9 @@ describe("OrchestratorConversation", () => {
 			/>,
 		);
 
-		const output = screen.getByLabelText("Output");
+		const output = screen.getByLabelText("Orbit response");
 		expect(screen.getByRole("button", { name: /Finished.*Reading the planning files/ })).toBeInTheDocument();
-		expect(within(output).getByText("● All four tasks are complete.")).toBeInTheDocument();
+		expect(within(output).getByText("All four tasks are complete.")).toBeInTheDocument();
 		expect(within(output).getByText("Changed six planning documents.")).toBeInTheDocument();
 		expect(within(output).getByText("Verification passed.")).toBeInTheDocument();
 		expect(screen.queryByText(/Baked for/)).not.toBeInTheDocument();
@@ -170,8 +191,40 @@ describe("OrchestratorConversation", () => {
 		);
 
 		expect(screen.getByRole("button", { name: /Thinking.*Checking branch status/ })).toBeInTheDocument();
-		expect(within(screen.getByLabelText("Output")).getByText("● First task complete.")).toBeInTheDocument();
-		expect(within(screen.getByLabelText("Output")).getByText("Saved the result.")).toBeInTheDocument();
+		expect(within(screen.getByLabelText("Orbit response")).getByText("First task complete.")).toBeInTheDocument();
+		expect(within(screen.getByLabelText("Orbit response")).getByText("Saved the result.")).toBeInTheDocument();
+	});
+
+	it("renders a completed response with headings, lists, links, and code", () => {
+		render(
+			<OrchestratorConversation
+				session={{ ...orchestrator, status: "idle", activity: { state: "idle", lastActivityAt: "2026-06-10" } }}
+				transcriptLines={[
+					"> Explain the update",
+					"",
+					"● Update complete.",
+					"",
+					"## What changed",
+					"- Added `Thinking` status",
+					"- Kept [chat history](https://example.com/history)",
+					"",
+					"```ts",
+					"const ready = true;",
+					"```",
+				]}
+			/>,
+		);
+
+		const response = screen.getByLabelText("Orbit response");
+		expect(within(response).getByRole("heading", { name: "What changed" })).toBeInTheDocument();
+		expect(within(response).getByRole("list")).toBeInTheDocument();
+		expect(within(response).getByText("Thinking", { selector: "code" })).toBeInTheDocument();
+		expect(within(response).getByRole("link", { name: "chat history" })).toHaveAttribute(
+			"href",
+			"https://example.com/history",
+		);
+		expect(within(response).getByText("const ready = true;", { selector: "code" })).toBeInTheDocument();
+		expect(within(response).queryByText(/●/)).not.toBeInTheDocument();
 	});
 
 	it("keeps prior turns and appends a new prompt below the previous output", async () => {

@@ -55,6 +55,14 @@ export type ConversationHistoryItem =
 	| { id: string; role: "assistant"; groups: ConversationGroup[] }
 	| { id: string; role: "user"; text: string };
 
+export type ResponseBlock =
+	| { kind: "code"; code: string; language?: string }
+	| { kind: "heading"; level: number; text: string }
+	| { kind: "ordered-list"; items: string[] }
+	| { kind: "paragraph"; text: string }
+	| { kind: "quote"; text: string }
+	| { kind: "unordered-list"; items: string[] };
+
 const DECORATION_ONLY = /^[\s─━│┃┄┅┈┉┌┐└┘├┤┬┴┼╭╮╰╯═║╔╗╚╝╠╣╦╩╬▀▄█░▒▓]+$/u;
 const LOW_VALUE_LINE = /^(esc to|ctrl\+|shift\+|press .* to|tokens? used|context left)/i;
 const APPROVAL_PROMPT =
@@ -114,6 +122,117 @@ export function formatThinkingDuration(milliseconds: number): string {
 	const minutes = Math.floor(totalSeconds / 60);
 	const seconds = totalSeconds % 60;
 	return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function normalizeResponseLine(line: string): string {
+	return line.replace(/^\s*[●◉]\s+/, "").replace(/\s+$/g, "");
+}
+
+/**
+ * Converts the final terminal transcript into a small, safe subset of the
+ * Markdown structure people expect from the Codex app. Thinking remains raw
+ * and expandable; completed responses become readable semantic content.
+ */
+export function parseResponseBlocks(groups: ConversationGroup[]): ResponseBlock[] {
+	const blocks: ResponseBlock[] = [];
+	let paragraph: string[] = [];
+	let listKind: "ordered" | "unordered" | null = null;
+	let listItems: string[] = [];
+	let codeLanguage = "";
+	let codeLines: string[] | null = null;
+
+	const flushParagraph = () => {
+		const text = paragraph.join(" ").trim();
+		paragraph = [];
+		if (text) blocks.push({ kind: "paragraph", text });
+	};
+	const flushList = () => {
+		if (listItems.length > 0) {
+			blocks.push({ kind: listKind === "ordered" ? "ordered-list" : "unordered-list", items: listItems });
+		}
+		listKind = null;
+		listItems = [];
+	};
+	const flushCode = () => {
+		if (codeLines === null) return;
+		blocks.push({
+			kind: "code",
+			code: codeLines.join("\n"),
+			...(codeLanguage ? { language: codeLanguage } : {}),
+		});
+		codeLanguage = "";
+		codeLines = null;
+	};
+
+	const lines = groups.flatMap((group) => [...group.lines, ""]);
+	for (const rawLine of lines) {
+		const line = normalizeResponseLine(rawLine);
+		const trimmed = line.trim();
+
+		if (codeLines !== null) {
+			if (trimmed.startsWith("```")) flushCode();
+			else codeLines.push(line);
+			continue;
+		}
+		if (trimmed.startsWith("```")) {
+			flushParagraph();
+			flushList();
+			codeLanguage = trimmed.slice(3).trim();
+			codeLines = [];
+			continue;
+		}
+		if (!trimmed) {
+			flushParagraph();
+			flushList();
+			continue;
+		}
+
+		const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+		const boldHeading = trimmed.match(/^\*\*(.+?)\*\*:?$/);
+		if (heading || boldHeading) {
+			flushParagraph();
+			flushList();
+			blocks.push({
+				kind: "heading",
+				level: heading?.[1]?.length ?? 2,
+				text: (heading?.[2] ?? boldHeading?.[1] ?? "").trim(),
+			});
+			continue;
+		}
+
+		const unordered = trimmed.match(/^[-*•]\s+(.+)$/);
+		const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
+		if (unordered || ordered) {
+			flushParagraph();
+			const nextKind = ordered ? "ordered" : "unordered";
+			if (listKind && listKind !== nextKind) flushList();
+			listKind = nextKind;
+			listItems.push((ordered?.[1] ?? unordered?.[1] ?? "").trim());
+			continue;
+		}
+
+		const quote = trimmed.match(/^>\s+(.+)$/);
+		if (quote) {
+			flushParagraph();
+			flushList();
+			blocks.push({ kind: "quote", text: quote[1].trim() });
+			continue;
+		}
+
+		if (/^\$\s+\S/.test(trimmed)) {
+			flushParagraph();
+			flushList();
+			blocks.push({ kind: "code", code: trimmed, language: "shell" });
+			continue;
+		}
+
+		flushList();
+		paragraph.push(trimmed);
+	}
+	flushParagraph();
+	flushList();
+	flushCode();
+	return blocks;
 }
 
 function cleanTranscriptLine(line: string): string {
@@ -642,7 +761,7 @@ export function OrchestratorConversation({
 						item.role === "user" ? (
 							<UserMessage key={item.id} text={item.text} />
 						) : (
-							<OutputCard groups={item.groups} key={item.id} />
+							<OutputCard agentName={agentName} groups={item.groups} key={item.id} />
 						),
 					)}
 
@@ -792,20 +911,137 @@ function UserMessage({ text }: { text: string }) {
 	);
 }
 
-function OutputCard({ groups }: { groups: ConversationGroup[] }) {
-	if (groups.length === 0) return null;
+function OutputCard({ agentName, groups }: { agentName: string; groups: ConversationGroup[] }) {
+	const blocks = parseResponseBlocks(groups);
+	if (blocks.length === 0) return null;
 	return (
-		<section aria-label="Output" aria-live="polite" className="rounded-xl border border-border bg-surface p-4">
+		<section
+			aria-label={`${agentName} response`}
+			aria-live="polite"
+			className="rounded-xl border border-border bg-surface p-4"
+		>
 			<div className="mb-3 flex items-center gap-3">
-				<span className="text-xs font-semibold text-foreground">Output</span>
+				<span className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground">
+					<Sparkles className="size-3.5 text-accent" aria-hidden="true" />
+					{agentName}
+				</span>
 				<span className="h-px min-w-8 flex-1 bg-border" aria-hidden="true" />
 			</div>
-			<div className="space-y-3 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
-				{groups.map((group) => (
-					<div key={group.id}>{group.lines.join("\n")}</div>
+			<div className="space-y-3 break-words text-sm leading-6 text-foreground">
+				{blocks.map((block, index) => (
+					<ResponseBlockView block={block} key={`${block.kind}:${index}`} />
 				))}
 			</div>
 		</section>
+	);
+}
+
+function ResponseBlockView({ block }: { block: ResponseBlock }) {
+	switch (block.kind) {
+		case "heading":
+			return block.level <= 2 ? (
+				<h3 className="pt-1 text-base font-semibold leading-6 text-foreground">
+					<InlineResponseText text={block.text} />
+				</h3>
+			) : (
+				<h4 className="pt-1 text-sm font-semibold leading-6 text-foreground">
+					<InlineResponseText text={block.text} />
+				</h4>
+			);
+		case "unordered-list":
+			return (
+				<ul className="list-disc space-y-1 pl-5 marker:text-muted-foreground">
+					{block.items.map((item, index) => (
+						<li key={`${item}:${index}`}>
+							<InlineResponseText text={item} />
+						</li>
+					))}
+				</ul>
+			);
+		case "ordered-list":
+			return (
+				<ol className="list-decimal space-y-1 pl-5 marker:text-muted-foreground">
+					{block.items.map((item, index) => (
+						<li key={`${item}:${index}`}>
+							<InlineResponseText text={item} />
+						</li>
+					))}
+				</ol>
+			);
+		case "code":
+			return (
+				<div className="overflow-hidden rounded-lg border border-border bg-terminal">
+					{block.language ? (
+						<div className="border-b border-border px-3 py-1.5 font-mono text-caption text-terminal-dim">
+							{block.language}
+						</div>
+					) : null}
+					<pre className="overflow-x-auto p-3 font-mono text-xs leading-5 text-terminal">
+						<code>{block.code}</code>
+					</pre>
+				</div>
+			);
+		case "quote":
+			return (
+				<blockquote className="border-l-2 border-accent/50 pl-3 text-muted-foreground">
+					<InlineResponseText text={block.text} />
+				</blockquote>
+			);
+		case "paragraph":
+			return (
+				<p className="whitespace-pre-wrap">
+					<InlineResponseText text={block.text} />
+				</p>
+			);
+	}
+}
+
+function InlineResponseText({ text }: { text: string }) {
+	const tokenPattern = /(\[[^\]]+\]\(https?:\/\/[^)\s]+\)|`[^`]+`|\*\*[^*]+\*\*|https?:\/\/[^\s]+)/g;
+	return (
+		<>
+			{text.split(tokenPattern).map((part, index) => {
+				if (!part) return null;
+				const markdownLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+				if (markdownLink) {
+					return (
+						<a
+							className="font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+							href={markdownLink[2]}
+							key={`${part}:${index}`}
+							rel="noreferrer"
+							target="_blank"
+						>
+							{markdownLink[1]}
+						</a>
+					);
+				}
+				if (part.startsWith("`") && part.endsWith("`")) {
+					return (
+						<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.9em]" key={`${part}:${index}`}>
+							{part.slice(1, -1)}
+						</code>
+					);
+				}
+				if (part.startsWith("**") && part.endsWith("**")) {
+					return <strong key={`${part}:${index}`}>{part.slice(2, -2)}</strong>;
+				}
+				if (/^https?:\/\//.test(part)) {
+					return (
+						<a
+							className="font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+							href={part}
+							key={`${part}:${index}`}
+							rel="noreferrer"
+							target="_blank"
+						>
+							{part}
+						</a>
+					);
+				}
+				return part;
+			})}
+		</>
 	);
 }
 
