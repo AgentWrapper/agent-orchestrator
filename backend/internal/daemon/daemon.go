@@ -133,6 +133,12 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+
+	// Pipelines v1 (spec §4b T5): one actor-loop engine per project, driving the
+	// pure reducer + executors + store. Single wiring seam so T11 can gate the
+	// whole subsystem behind AO_PIPELINES here.
+	pipelineStk := startPipelineEngine(ctx, store, sessionSvc, log)
+
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 	agentSvc := agentsvc.New()
 	go func() {
@@ -170,6 +176,7 @@ func Run() error {
 	if err != nil {
 		stop()
 		<-previewDone
+		pipelineStk.Stop(context.Background())
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
@@ -229,6 +236,10 @@ func Run() error {
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
+	// Stop pipeline engines before the lifecycle stack: cancelling in-flight runs
+	// kills their stage sessions (reclaiming worktrees) through the still-live
+	// session manager.
+	pipelineStk.Stop(context.Background())
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
