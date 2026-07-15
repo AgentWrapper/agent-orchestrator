@@ -234,11 +234,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
-			{/* Maximized browser: a fixed overlay across the whole app window,
+			{/* Maximized browser: a fixed overlay across the app workspace,
           portaled to <body> so it escapes the shell layout (covering the
           sidebar + topbar, not just the session area) and sits outside any
           `[data-panel]` column, so the native WebContentsView is not clamped
-          and fills the entire window. */}
+          and fills the window below any native titlebar overlay. */}
 			{browserPoppedOut && session
 				? createPortal(
 						<div className="browser-popout-overlay">
