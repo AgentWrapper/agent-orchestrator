@@ -27,6 +27,7 @@ type fakeStore struct {
 	workspaceRepo map[string][]domain.WorkspaceRepoRecord
 	num           int
 	deleteErr     error
+	deleteCtxErrs []error
 	upsertWTErr   error
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
@@ -81,7 +82,8 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	}
 	return out, nil
 }
-func (f *fakeStore) DeleteSession(_ context.Context, id domain.SessionID) (bool, error) {
+func (f *fakeStore) DeleteSession(ctx context.Context, id domain.SessionID) (bool, error) {
+	f.deleteCtxErrs = append(f.deleteCtxErrs, ctx.Err())
 	if f.deleteErr != nil {
 		return false, f.deleteErr
 	}
@@ -388,6 +390,9 @@ type fakeWorkspace struct {
 	stashCalls int
 	// calls records the sequence of workspace method calls for ordering assertions.
 	calls []string
+	// destroyCtxErrs records ctx.Err() for spawn cleanup tests.
+	destroyCtxErrs        []error
+	projectDestroyCtxErrs []error
 	// sharedLog, when non-nil, receives entries alongside calls so ordering
 	// tests can compare workspace calls against store calls in one sequence.
 	sharedLog *[]string
@@ -444,7 +449,8 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 	}
 	return out, nil
 }
-func (w *fakeWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) error {
+func (w *fakeWorkspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	w.destroyCtxErrs = append(w.destroyCtxErrs, ctx.Err())
 	if info.RepoPath != "" {
 		entry := "Destroy:" + fakeWorkspaceRepoName(info)
 		w.calls = append(w.calls, entry)
@@ -455,7 +461,8 @@ func (w *fakeWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) err
 	w.destroyed++
 	return w.destroyErr
 }
-func (w *fakeWorkspace) DestroyWorkspaceProject(context.Context, ports.WorkspaceProjectInfo) error {
+func (w *fakeWorkspace) DestroyWorkspaceProject(ctx context.Context, _ ports.WorkspaceProjectInfo) error {
+	w.projectDestroyCtxErrs = append(w.projectDestroyCtxErrs, ctx.Err())
 	w.projectDestroyed++
 	return w.destroyErr
 }
@@ -1169,6 +1176,30 @@ func TestSpawn_AgentRuntimeEnvAugmenterReachesRuntime(t *testing.T) {
 	}
 	if got, want := rt.lastCfg.Env["AGENT_DATA_DIR"], filepath.Join("/ao/data", "agent"); got != want {
 		t.Fatalf("runtime env AGENT_DATA_DIR = %q, want %q", got, want)
+	}
+}
+
+func TestSpawn_RuntimeDeadlineCleansUpWithFreshContext(t *testing.T) {
+	m, st, _, ws := newManager()
+	m.runtime = &fakeRuntime{createErr: context.DeadlineExceeded}
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := m.Spawn(canceledCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrRuntimeStartTimeout) {
+		t.Fatalf("err = %v, want ErrRuntimeStartTimeout", err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroyed=%d, want 1", ws.destroyed)
+	}
+	if len(ws.destroyCtxErrs) != 1 || ws.destroyCtxErrs[0] != nil {
+		t.Fatalf("workspace destroy ctx errs = %#v, want fresh non-canceled cleanup context", ws.destroyCtxErrs)
+	}
+	if len(st.deleteCtxErrs) != 1 || st.deleteCtxErrs[0] != nil {
+		t.Fatalf("seed delete ctx errs = %#v, want fresh non-canceled cleanup context", st.deleteCtxErrs)
+	}
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("seed row must be deleted after runtime timeout, got %+v", rec)
 	}
 }
 

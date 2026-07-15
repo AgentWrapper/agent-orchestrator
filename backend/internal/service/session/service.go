@@ -581,6 +581,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
 		return apierr.Invalid("RUNTIME_PREREQUISITE_MISSING", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrRuntimeStartTimeout):
+		return apierr.Internal("TERMINAL_RUNTIME_START_TIMEOUT", "Terminal runtime was slow to create a session. Retry the spawn, run `ao doctor`, and check for stale tmux sessions if this keeps happening.")
 	default:
 		return err
 	}

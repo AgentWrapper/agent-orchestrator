@@ -698,6 +698,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
 		{"runtime prerequisite missing", fmt.Errorf("spawn: %w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite), apierr.KindInvalid, "RUNTIME_PREREQUISITE_MISSING"},
+		{"terminal runtime start timeout", fmt.Errorf("spawn mer-1: runtime: %w", sessionmanager.ErrRuntimeStartTimeout), apierr.KindInternal, "TERMINAL_RUNTIME_START_TIMEOUT"},
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
@@ -710,6 +711,22 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 				t.Fatalf("mapped = %v, want %s %s", mapped, tc.wantCode, e)
 			}
 		})
+	}
+}
+
+func TestToAPIErrorRuntimeStartTimeoutMessageIsActionable(t *testing.T) {
+	mapped := toAPIError(fmt.Errorf("spawn mer-1: runtime: %w", sessionmanager.ErrRuntimeStartTimeout))
+	var e *apierr.Error
+	if !errors.As(mapped, &e) {
+		t.Fatalf("mapped = %v, want apierr.Error", mapped)
+	}
+	if e.Code != "TERMINAL_RUNTIME_START_TIMEOUT" {
+		t.Fatalf("code = %s, want TERMINAL_RUNTIME_START_TIMEOUT", e.Code)
+	}
+	for _, want := range []string{"Terminal runtime was slow", "Retry", "ao doctor", "stale tmux"} {
+		if !strings.Contains(e.Message, want) {
+			t.Fatalf("message = %q, want %q", e.Message, want)
+		}
 	}
 }
 
