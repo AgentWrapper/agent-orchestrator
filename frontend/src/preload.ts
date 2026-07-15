@@ -79,7 +79,7 @@ const api = {
 	},
 	remoteServer: {
 		isRemoteClient: () => ipcRenderer.invoke("remoteServer:isRemoteClient") as Promise<boolean>,
-		get: () => ipcRenderer.invoke("remoteServer:get") as Promise<{ host: string; port: number } | null>,
+		get: () => ipcRenderer.invoke("remoteServer:get") as Promise<RemoteServerConfigInput | null>,
 		save: (input: RemoteServerConfigInput) => ipcRenderer.invoke("remoteServer:save", input) as Promise<DaemonStatus>,
 	},
 	telemetry: {

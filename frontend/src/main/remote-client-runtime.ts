@@ -31,6 +31,12 @@ export class RemoteClientRuntime {
 		return this.config ? { host: this.config.host, port: this.config.port } : null;
 	}
 
+	getEditableConfig(): RemoteServerConfigInput | null {
+		return this.config
+			? { host: this.config.host, port: this.config.port, password: this.config.password }
+			: null;
+	}
+
 	async start(): Promise<DaemonStatus> {
 		if (this.forwarder) return this.status;
 		const config = await this.deps.readConfig();

@@ -1,12 +1,14 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { CheckCircle2, ChevronRight, Folder, FolderPlus, Server, X, XCircle } from "lucide-react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
 
@@ -38,6 +40,20 @@ export function CreateProjectFlow({
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
+	const [remoteClient, setRemoteClient] = useState<boolean | null>(null);
+	const [remotePathDialogOpen, setRemotePathDialogOpen] = useState(false);
+	const [remotePath, setRemotePath] = useState("");
+
+	useEffect(() => {
+		let active = true;
+		const detect = aoBridge.remoteServer?.isRemoteClient?.() ?? Promise.resolve(false);
+		void detect.then((remote) => {
+			if (active) setRemoteClient(remote);
+		});
+		return () => {
+			active = false;
+		};
+	}, []);
 
 	const hasModePicker = mode === "choose";
 	const isBusy = isChoosingPath || isCreating || isInitializing;
@@ -53,6 +69,15 @@ export function CreateProjectFlow({
 		setValidationScan(null);
 		setRepositorySetup(null);
 		setSelectedKind(kind);
+		const isRemote = remoteClient ?? (await (aoBridge.remoteServer?.isRemoteClient?.() ?? Promise.resolve(false)));
+		if (remoteClient === null) setRemoteClient(isRemote);
+		if (isRemote) {
+			setModePickerOpen(false);
+			setFolderPickerOpen(false);
+			setRemotePath("");
+			setRemotePathDialogOpen(true);
+			return;
+		}
 		setIsChoosingPath(true);
 		try {
 			const path = await aoBridge.app.chooseDirectory(
@@ -103,7 +128,7 @@ export function CreateProjectFlow({
 			const message = err instanceof Error ? err.message : "Could not add project";
 			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) setRepositorySetup(code);
 			setError(message);
-			if (hasModePicker) {
+			if (hasModePicker && !remoteClient) {
 				if (shouldScanCreateFailure(message)) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
@@ -177,6 +202,18 @@ export function CreateProjectFlow({
 					/>
 				</>
 			)}
+			<RemoteProjectPathDialog
+				kind={selectedKind}
+				open={remotePathDialogOpen}
+				path={remotePath}
+				disabled={isBusy}
+				onOpenChange={(open) => !isBusy && setRemotePathDialogOpen(open)}
+				onPathChange={setRemotePath}
+				onSubmit={(path) => {
+					setRemotePathDialogOpen(false);
+					setSelectedPath(path);
+				}}
+			/>
 			<CreateProjectAgentSheet
 				error={error}
 				isCreating={isCreating}
@@ -201,6 +238,79 @@ export function CreateProjectFlow({
 				</span>
 			)}
 		</>
+	);
+}
+
+function RemoteProjectPathDialog({
+	disabled,
+	kind,
+	onOpenChange,
+	onPathChange,
+	onSubmit,
+	open,
+	path,
+}: {
+	disabled: boolean;
+	kind: ProjectKind;
+	onOpenChange: (open: boolean) => void;
+	onPathChange: (path: string) => void;
+	onSubmit: (path: string) => void;
+	open: boolean;
+	path: string;
+}) {
+	const isWorkspace = kind === "workspace";
+	const submit = (event: FormEvent) => {
+		event.preventDefault();
+		const normalized = path.trim();
+		if (normalized) onSubmit(normalized);
+	};
+	return (
+		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in sm:p-6">
+					<div className="mb-5 flex items-start justify-between gap-4">
+						<div className="min-w-0">
+							<Dialog.Title className="text-[18px] font-semibold text-foreground">
+								Server {isWorkspace ? "workspace" : "project"} path
+							</Dialog.Title>
+						</div>
+						<Dialog.Close asChild>
+							<Button type="button" variant="ghost" size="icon-sm" aria-label="Close server path dialog">
+								<X className="size-4" />
+							</Button>
+						</Dialog.Close>
+					</div>
+					<form className="flex flex-col gap-4" onSubmit={submit}>
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="remote-project-path" className="text-xs text-muted-foreground">
+								Server path
+							</Label>
+							<div className="relative">
+								<Server className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+								<Input
+									id="remote-project-path"
+									className="pl-9 font-mono"
+									value={path}
+									onChange={(event) => onPathChange(event.target.value)}
+									placeholder="/home/claude/code/project"
+									autoFocus
+									required
+								/>
+							</div>
+						</div>
+						<div className="flex justify-end gap-2">
+							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" variant="primary" disabled={disabled || !path.trim()}>
+								Continue
+							</Button>
+						</div>
+					</form>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }
 

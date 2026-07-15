@@ -50,13 +50,19 @@ describe("RemoteServerSettings", () => {
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 	});
 
-	it("loads the saved address in global settings without exposing the password", async () => {
-		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011 }));
+	it("loads the saved password masked and reveals it on request", async () => {
+		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011, password: "saved-secret" }));
+		const user = userEvent.setup();
 		render(<RemoteServerSettingsSection />);
 
 		expect(await screen.findByDisplayValue("claude.local")).toBeInTheDocument();
 		expect(screen.getByDisplayValue("3011")).toBeInTheDocument();
-		expect(screen.getByLabelText("Connection password")).toHaveValue("");
+		const password = screen.getByLabelText("Connection password");
+		expect(password).toHaveValue("saved-secret");
+		expect(password).toHaveAttribute("type", "password");
+		await user.click(screen.getByRole("button", { name: "Show password" }));
+		expect(password).toHaveAttribute("type", "text");
+		expect(screen.getByRole("button", { name: "Hide password" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Save connection" })).toBeInTheDocument();
 	});
 

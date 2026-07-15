@@ -135,8 +135,10 @@ For HTTP and SSE requests, it:
 For WebSocket upgrades, it forwards the original upgrade request and injects the same
 bearer header before piping both sockets. It does not inspect WebSocket frames.
 
-The password is held only in the Electron main process. It is not exposed to the
-renderer, query parameters, telemetry, access logs, or error messages.
+The password is held in the Electron main process except while the trusted settings
+form is open. The form receives it through IPC, renders it as a masked password, and
+offers an explicit reveal control. It is never exposed to query parameters,
+telemetry, access logs, local storage, or error messages.
 
 Changing configuration starts and validates a replacement proxy before stopping the
 current proxy. App shutdown closes only the proxy and its sockets.
@@ -148,6 +150,11 @@ desktop and daemon shared a filesystem or network namespace. Existing requests a
 responses continue unchanged. Features work when their existing server-side paths and
 preview addresses are valid from the deployed topology; no new compatibility layer is
 added in this task.
+
+Project and workspace creation are the required exception: a remote-client build
+replaces the native client folder picker with a server-side absolute-path input. The
+submitted path still uses the existing project API and existing server validation; no
+filesystem browsing route is added.
 
 The mobile app continues connecting directly to the existing authenticated LAN
 listener and is not routed through the desktop proxy.
@@ -161,8 +168,10 @@ Focused automated tests cover:
 - HTTP method/body/header forwarding and bearer injection;
 - SSE response streaming without buffering;
 - WebSocket upgrade forwarding and bidirectional frames;
-- upstream connection failure mapping to the local unavailable state; and
-- proxy replacement and shutdown behavior.
+- upstream connection failure mapping to the local unavailable state;
+- proxy replacement and shutdown behavior;
+- masked saved-password display and explicit reveal behavior; and
+- remote project creation using a server path without invoking the native folder picker.
 
 Existing frontend typecheck, unit tests, and build must pass. Backend code is unchanged,
 but the backend Go test suite is run before deployment because the deployed binary is

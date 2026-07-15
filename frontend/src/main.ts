@@ -1011,7 +1011,7 @@ ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("remoteServer:isRemoteClient", () => isRemoteClientBuild);
-ipcMain.handle("remoteServer:get", () => remoteClientRuntime?.getConfig() ?? null);
+ipcMain.handle("remoteServer:get", () => remoteClientRuntime?.getEditableConfig() ?? null);
 ipcMain.handle("remoteServer:save", (_event, input: RemoteServerConfigInput) => {
 	if (!remoteClientRuntime) {
 		return { state: "error", code: "not_configured", message: "Remote client runtime is not ready." } satisfies DaemonStatus;

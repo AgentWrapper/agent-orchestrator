@@ -136,3 +136,5 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 ## Project learnings
 
 - For remote-client deployments, preserve the daemon wire protocol and business services; prefer an Electron-local authenticated forwarding proxy over changing REST, SSE, WebSocket, or terminal transports.
+- In remote-client builds, project creation must accept a server-side absolute path and must never open the client's native folder picker.
+- Persisted credentials shown in editable settings must render masked with an explicit reveal control rather than as an empty field.

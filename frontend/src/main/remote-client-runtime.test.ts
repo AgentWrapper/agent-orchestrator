@@ -54,6 +54,7 @@ describe("RemoteClientRuntime", () => {
 		expect(deps.probe).toHaveBeenCalledWith(4100);
 		expect(runtime.getConfig()).toEqual({ host: "server", port: 3011 });
 		expect(runtime.getConfig()).not.toHaveProperty("password");
+		expect(runtime.getEditableConfig()).toEqual({ host: "server", port: 3011, password: "secret" });
 	});
 
 	it("rejects an unreachable candidate and keeps the working proxy active", async () => {

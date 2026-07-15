@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import type { DaemonStatus } from "../../shared/daemon-status";
 import { aoBridge } from "../lib/bridge";
 import { Button } from "./ui/button";
@@ -18,6 +18,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 	const [host, setHost] = useState("");
 	const [port, setPort] = useState("3011");
 	const [password, setPassword] = useState("");
+	const [showPassword, setShowPassword] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -31,6 +32,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 				if (!active || !config) return;
 				setHost(config.host);
 				setPort(String(config.port));
+				setPassword(config.password);
 			})
 			.catch((cause) => {
 				if (active) setError(cause instanceof Error ? cause.message : "Could not load server settings.");
@@ -54,7 +56,6 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 				setError(status.message || "Could not connect to the AO server.");
 				return;
 			}
-			setPassword("");
 			setSaved(true);
 			onConnected?.(status);
 		} catch (cause) {
@@ -96,14 +97,28 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 				<Label htmlFor={`${id}-password`} className="text-xs text-muted-foreground">
 					Connection password
 				</Label>
-				<Input
-					id={`${id}-password`}
-					type="password"
-					value={password}
-					onChange={(event) => setPassword(event.target.value)}
-					autoComplete="new-password"
-					required
-				/>
+				<div className="relative">
+					<Input
+						id={`${id}-password`}
+						className="pr-10"
+						type={showPassword ? "text" : "password"}
+						value={password}
+						onChange={(event) => setPassword(event.target.value)}
+						autoComplete="new-password"
+						required
+					/>
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-sm"
+						className="absolute right-1 top-1/2 -translate-y-1/2"
+						aria-label={showPassword ? "Hide password" : "Show password"}
+						title={showPassword ? "Hide password" : "Show password"}
+						onClick={() => setShowPassword((visible) => !visible)}
+					>
+						{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+					</Button>
+				</div>
 			</div>
 			<div className="flex min-h-8 items-center gap-3">
 				<Button type="submit" variant="primary" disabled={saving}>
