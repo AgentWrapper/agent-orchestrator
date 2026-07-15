@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	suggestionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/suggestion"
 )
 
 // Build reflects the Go contract types and the operation registry below into
@@ -59,6 +60,8 @@ func Build() ([]byte, error) {
 			"Supported and locally runnable agent adapters"),
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
+		*(&openapi31.Tag{Name: "suggestions"}).WithDescription(
+			"Deferred project and grand-workflow ideas"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
 			"Agent session lifecycle and messaging"),
 		*(&openapi31.Tag{Name: "prs"}).WithDescription(
@@ -136,12 +139,21 @@ var schemaNames = map[string]string{
 	"DomainTrackerIntakeConfig": "TrackerIntakeConfig",
 	"DomainAgentConfig":         "AgentConfig",
 	"DomainRoleOverride":        "RoleOverride",
+	"DomainSuggestionPriority":  "SuggestionPriority",
+	"DomainSuggestionStatus":    "SuggestionStatus",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
 	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
+	"ControllersSuggestionPathParams":             "SuggestionPathParams",
+	"ControllersSuggestionProjectParam":           "SuggestionProjectParam",
+	"ControllersListSuggestionsResponse":          "ListSuggestionsResponse",
+	"ControllersSuggestionResponse":               "SuggestionResponse",
+	"ControllersStartSuggestionResponse":          "StartSuggestionResponse",
+	"ControllersRepositoryStewardProjectParam":    "RepositoryStewardProjectParam",
+	"ControllersRepositoryStewardStatusResponse":  "RepositoryStewardStatusResponse",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
@@ -218,6 +230,13 @@ var schemaNames = map[string]string{
 	"ProjectRemoveResult":               "RemoveProjectResult",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
+	// service/suggestion entities + DTOs
+	"SuggestionSuggestion":  "Suggestion",
+	"SuggestionCreateInput": "CreateSuggestionInput",
+	"SuggestionUpdateInput": "UpdateSuggestionInput",
+	// service/reposteward entities
+	"RepostewardStatus":           "RepositoryStewardStatus",
+	"RepostewardRepositoryStatus": "RepositoryCheckpointStatus",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -294,6 +313,8 @@ func operations() []operation {
 	ops := append([]operation{}, eventOperations()...)
 	ops = append(ops, agentOperations()...)
 	ops = append(ops, projectOperations()...)
+	ops = append(ops, suggestionOperations()...)
+	ops = append(ops, repositoryStewardOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
@@ -301,6 +322,88 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, mobileOperations()...)
 	return ops
+}
+
+func repositoryStewardOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{projectId}/repository-steward", id: "getRepositorySteward", tag: "repository-steward",
+			summary:    "Get the always-on repository recovery steward status",
+			pathParams: []any{controllers.RepositoryStewardProjectParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RepositoryStewardStatusResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{projectId}/repository-steward/checkpoint", id: "checkpointRepository", tag: "repository-steward",
+			summary:    "Create and sync a recovery checkpoint now",
+			pathParams: []any{controllers.RepositoryStewardProjectParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RepositoryStewardStatusResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+func suggestionOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{projectId}/suggestions", id: "listSuggestions", tag: "suggestions",
+			summary:    "List a project's deferred workflow suggestions",
+			pathParams: []any{controllers.SuggestionProjectParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListSuggestionsResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{projectId}/suggestions", id: "createSuggestion", tag: "suggestions",
+			summary:    "Add a deferred workflow suggestion",
+			pathParams: []any{controllers.SuggestionProjectParam{}},
+			reqBody:    suggestionsvc.CreateInput{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.SuggestionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/projects/{projectId}/suggestions/{suggestionId}", id: "updateSuggestion", tag: "suggestions",
+			summary:    "Update, complete, or dismiss a suggestion",
+			pathParams: []any{controllers.SuggestionPathParams{}},
+			reqBody:    suggestionsvc.UpdateInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SuggestionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{projectId}/suggestions/{suggestionId}/start", id: "startSuggestion", tag: "suggestions",
+			summary:    "Start a dedicated worker for a backlog suggestion",
+			pathParams: []any{controllers.SuggestionPathParams{}},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.StartSuggestionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func agentOperations() []operation {

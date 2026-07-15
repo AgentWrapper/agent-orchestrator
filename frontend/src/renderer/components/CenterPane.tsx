@@ -1,10 +1,15 @@
-import { ChevronLeft, Maximize2, Minimize2, Shield } from "lucide-react";
+import { ChevronLeft, Maximize2, MessageSquareText, Minimize2, Shield, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
-import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
-import { TerminalPane } from "./TerminalPane";
+import {
+	isOrchestratorSession,
+	isSuggestionDiscussionSession,
+	type WorkspaceSession,
+} from "../types/workspace";
+import { TerminalPane, type OrchestratorViewMode } from "./TerminalPane";
+import { OrchestratorAvatar } from "./OrchestratorAvatar";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
@@ -36,13 +41,24 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [orchestratorView, setOrchestratorView] = useState<OrchestratorViewMode>("conversation");
 	const target = terminalTarget ?? { kind: "worker" };
+	const isOrchestrator = Boolean(session && isOrchestratorSession(session) && target.kind !== "reviewer");
+	const isSuggestionDiscussion = Boolean(
+		session && isSuggestionDiscussionSession(session) && target.kind !== "reviewer",
+	);
+	const isConversationSession = isOrchestrator || isSuggestionDiscussion;
+	const showTerminalControls = !isConversationSession || orchestratorView === "terminal";
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
 		document.addEventListener("fullscreenchange", handleFullscreenChange);
 		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
 	}, []);
+
+	useEffect(() => {
+		if (isConversationSession) setOrchestratorView("conversation");
+	}, [isConversationSession, session?.id]);
 
 	const updateFontSize = useCallback((delta: number) => {
 		setFontSize((current) => {
@@ -96,37 +112,85 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 		>
 			<div className="flex h-toolbar shrink-0 items-center border-b border-border bg-background px-5">
 				<div className="flex min-w-0 items-center gap-3">
-					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-						TERMINAL
-					</span>
-					<span className="min-w-0 truncate font-mono text-control font-semibold text-passive">
-						{!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
-					</span>
+					{isOrchestrator && session ? (
+						<>
+							<OrchestratorAvatar provider={session.provider} size="sm" />
+							<div className="min-w-0 leading-tight">
+								<div className="truncate text-xs font-semibold text-foreground">Orbit</div>
+								<div className="truncate text-caption text-muted-foreground">Orchestrator</div>
+							</div>
+						</>
+					) : isSuggestionDiscussion && session ? (
+						<>
+							<OrchestratorAvatar provider={session.provider} size="sm" />
+							<div className="min-w-0 leading-tight">
+								<div className="truncate text-xs font-semibold text-foreground">Suggestion discussion</div>
+								<div className="truncate text-caption text-muted-foreground">{session.provider}</div>
+							</div>
+						</>
+					) : (
+						<>
+							<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
+								TERMINAL
+							</span>
+							<span className="min-w-0 truncate font-mono text-control font-semibold text-passive">
+								{!session ? "No session" : session.title}
+							</span>
+						</>
+					)}
 				</div>
 				<div className="ml-auto flex items-center gap-3 font-mono text-passive">
-					<button
-						aria-label="Decrease terminal font size"
-						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
-						disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-						onClick={() => updateFontSize(-1)}
-						title="Decrease terminal font size"
-						type="button"
-					>
-						-
-					</button>
-					<span className="w-font-size-label text-center text-xs font-semibold text-muted-foreground">
-						{fontSize}px
-					</span>
-					<button
-						aria-label="Increase terminal font size"
-						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
-						disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-						onClick={() => updateFontSize(1)}
-						title="Increase terminal font size"
-						type="button"
-					>
-						+
-					</button>
+					{isConversationSession && (
+						<div className="flex items-center rounded-lg border border-border bg-surface p-0.5">
+							<button
+								aria-label="Show conversation"
+								aria-pressed={orchestratorView === "conversation"}
+								className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-caption font-semibold transition ${orchestratorView === "conversation" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+								onClick={() => setOrchestratorView("conversation")}
+								type="button"
+							>
+								<MessageSquareText className="size-3.5" aria-hidden="true" />
+								Conversation
+							</button>
+							<button
+								aria-label="Show terminal"
+								aria-pressed={orchestratorView === "terminal"}
+								className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-caption font-semibold transition ${orchestratorView === "terminal" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+								onClick={() => setOrchestratorView("terminal")}
+								type="button"
+							>
+								<SquareTerminal className="size-3.5" aria-hidden="true" />
+								Terminal
+							</button>
+						</div>
+					)}
+					{showTerminalControls && (
+						<>
+							<button
+								aria-label="Decrease terminal font size"
+								className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+								disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+								onClick={() => updateFontSize(-1)}
+								title="Decrease terminal font size"
+								type="button"
+							>
+								-
+							</button>
+							<span className="w-font-size-label text-center text-xs font-semibold text-muted-foreground">
+								{fontSize}px
+							</span>
+							<button
+								aria-label="Increase terminal font size"
+								className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+								disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+								onClick={() => updateFontSize(1)}
+								title="Increase terminal font size"
+								type="button"
+							>
+								+
+							</button>
+						</>
+					)}
 					<button
 						aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}
 						aria-pressed={isFullscreen}
@@ -168,6 +232,8 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 					session={session}
 					terminalTarget={target}
 					theme={theme}
+					viewMode={isConversationSession ? orchestratorView : "terminal"}
+					onViewModeChange={setOrchestratorView}
 				/>
 			</div>
 		</div>

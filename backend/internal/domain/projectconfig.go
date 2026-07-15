@@ -42,6 +42,11 @@ type ProjectConfig struct {
 
 	// AgentConfig is the default agent config for the project.
 	AgentConfig AgentConfig `json:"agentConfig,omitempty"`
+	// AutoBypassWorkerPermissions gives every spawned or restored worker
+	// (the orchestrator's AO subagents) complete native access after project,
+	// role, and per-spawn overrides are merged. Orchestrator permissions are
+	// intentionally unaffected.
+	AutoBypassWorkerPermissions bool `json:"autoBypassWorkerPermissions,omitempty"`
 	// Worker and Orchestrator are role-specific harness/agent-config overrides.
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`

@@ -72,6 +72,23 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "NotificationStatus"
+          - column: "suggestions.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "suggestions.priority"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SuggestionPriority"
+          - column: "suggestions.status"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SuggestionStatus"
+          - column: "suggestions.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
+              pointer: true
           - column: "projects.id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

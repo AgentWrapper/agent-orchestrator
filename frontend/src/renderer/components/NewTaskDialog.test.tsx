@@ -8,6 +8,7 @@ const { getMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 }));
+let projectConfig: Record<string, unknown>;
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
@@ -27,12 +28,12 @@ vi.mock("../lib/api-client", () => ({
 function renderDialog() {
 	const onCreated = vi.fn();
 	const onOpenChange = vi.fn();
-	render(
+	const view = render(
 		<QueryClientProvider client={new QueryClient()}>
 			<NewTaskDialog open projectId="proj-1" onCreated={onCreated} onOpenChange={onOpenChange} />
 		</QueryClientProvider>,
 	);
-	return { onCreated, onOpenChange };
+	return { ...view, onCreated, onOpenChange };
 }
 
 function spawnBody() {
@@ -44,6 +45,8 @@ async function waitForAgentCatalog() {
 }
 
 beforeEach(() => {
+	window.localStorage.clear();
+	projectConfig = { worker: { agent: "claude-code" } };
 	getMock.mockReset().mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") {
 			return {
@@ -67,7 +70,7 @@ beforeEach(() => {
 			};
 		}
 		return {
-			data: { status: "ok", project: { id: "proj-1", config: { worker: { agent: "claude-code" } } } },
+			data: { status: "ok", project: { id: "proj-1", config: projectConfig } },
 			error: undefined,
 		};
 	});
@@ -87,6 +90,9 @@ describe("NewTaskDialog", () => {
 		expect(branchLabel).toHaveAttribute("data-slot", "label");
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute("data-size", "sm");
 		expect(screen.getByLabelText("Branch")).toHaveClass("h-control-form");
+		expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Effort" })).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Permission" })).toBeInTheDocument();
 	});
 
 	it("preselects the project's default agent and omits harness so the daemon applies it", async () => {
@@ -108,6 +114,7 @@ describe("NewTaskDialog", () => {
 				issueId: "Fix fallback renderer",
 				prompt: "Restore the fallback renderer after WebGL init fails.",
 				branch: undefined,
+				agentConfig: undefined,
 			},
 		});
 		expect(onCreated).toHaveBeenCalledWith("task-1");
@@ -129,6 +136,75 @@ describe("NewTaskDialog", () => {
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(spawnBody().harness).toBe("cursor");
+	});
+
+	it("sends per-task model, effort, and permission overrides", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Tune worker runtime");
+		await user.type(screen.getByLabelText("Brief"), "Use the selected runtime profile.");
+
+		await user.click(screen.getByRole("combobox", { name: "Model" }));
+		await user.click(await screen.findByRole("option", { name: "Claude Opus (latest)" }));
+		await user.click(screen.getByRole("combobox", { name: "Effort" }));
+		await user.click(await screen.findByRole("option", { name: "High" }));
+		await user.click(screen.getByRole("combobox", { name: "Permission" }));
+		await user.click(await screen.findByRole("option", { name: "Automatic" }));
+
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(spawnBody().agentConfig).toEqual({
+			model: "opus",
+			reasoningEffort: "high",
+			permissions: "auto",
+		});
+	});
+
+	it("remembers the last model, effort, and permission choices for the next task", async () => {
+		const first = renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.click(screen.getByRole("combobox", { name: "Model" }));
+		await user.click(await screen.findByRole("option", { name: "Claude Opus (latest)" }));
+		await user.click(screen.getByRole("combobox", { name: "Effort" }));
+		await user.click(await screen.findByRole("option", { name: "High" }));
+		await user.click(screen.getByRole("combobox", { name: "Permission" }));
+		await user.click(await screen.findByRole("option", { name: "Automatic" }));
+		first.unmount();
+
+		renderDialog();
+		await waitForAgentCatalog();
+		await waitFor(() => {
+			expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Claude Opus (latest)");
+			expect(screen.getByRole("combobox", { name: "Effort" })).toHaveTextContent("High");
+			expect(screen.getByRole("combobox", { name: "Permission" })).toHaveTextContent("Automatic");
+		});
+	});
+
+	it("locks every new subagent to complete access while bypass mode is enabled", async () => {
+		projectConfig = {
+			autoBypassWorkerPermissions: true,
+			worker: { agent: "claude-code" },
+		};
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		expect(screen.getByRole("combobox", { name: "Permission" })).toBeDisabled();
+		expect(screen.getByText("All subagents have complete access.")).toBeInTheDocument();
+		await user.type(screen.getByLabelText("Title"), "Run without prompts");
+		await user.type(screen.getByLabelText("Brief"), "Keep all work in the orchestrator conversation.");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(spawnBody().agentConfig).toEqual({
+			model: undefined,
+			reasoningEffort: undefined,
+			permissions: "bypass-permissions",
+		});
 	});
 
 	it("allows selecting an installed agent with unknown auth", async () => {

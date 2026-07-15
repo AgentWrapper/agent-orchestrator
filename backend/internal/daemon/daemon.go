@@ -28,6 +28,8 @@ import (
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	repostewardsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/reposteward"
+	suggestionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/suggestion"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -140,6 +142,8 @@ func Run() error {
 			log.Warn("initial agent catalog refresh failed", "err", err)
 		}
 	}()
+	repositorySteward := repostewardsvc.New(repostewardsvc.Deps{Store: store, Logger: log, GitHubToken: newGitHubTokenSource()})
+	repositoryStewardDone := repositorySteward.Start(ctx)
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
@@ -158,6 +162,8 @@ func Run() error {
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
+		Suggestions:        suggestionsvc.New(suggestionsvc.Deps{Store: store, Sessions: sessionSvc}),
+		RepositorySteward:  repositorySteward,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
@@ -169,6 +175,7 @@ func Run() error {
 	})
 	if err != nil {
 		stop()
+		<-repositoryStewardDone
 		<-previewDone
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
@@ -228,6 +235,7 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	<-repositoryStewardDone
 	<-previewDone
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)

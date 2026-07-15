@@ -193,6 +193,18 @@ type SessionWorktree struct {
 	State        string
 }
 
+type Suggestion struct {
+	ID        string
+	ProjectID domain.ProjectID
+	Title     string
+	Note      string
+	Priority  domain.SuggestionPriority
+	Status    domain.SuggestionStatus
+	SessionID *domain.SessionID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type TelemetryEvent struct {
 	ID          string
 	OccurredAt  time.Time

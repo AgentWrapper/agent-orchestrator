@@ -34,6 +34,8 @@ export type AttachableTerminal = {
 	 */
 	clear: () => void;
 	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
+	/** Emit an explicit user action from UI chrome into the attached PTY. */
+	sendUserInput: (data: string, source?: TerminalUserInputSource) => void;
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 

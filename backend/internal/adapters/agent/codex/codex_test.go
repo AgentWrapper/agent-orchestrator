@@ -56,6 +56,8 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 		"codex",
 		"-c", "check_for_update_on_startup=false",
 		"-c", "notice.hide_rate_limit_model_nudge=true",
+		"-c", `service_tier="fast"`,
+		"-c", "features.fast_mode=true",
 		"--dangerously-bypass-hook-trust",
 		"--dangerously-bypass-approvals-and-sandbox",
 	}
@@ -87,6 +89,30 @@ func TestGetLaunchCommandWithoutWorkspaceOmitsTrustFlag(t *testing.T) {
 	}
 	if !containsSubsequence(cmd, sessionHookFlags()) {
 		t.Fatalf("command %#v missing session hook flags", cmd)
+	}
+}
+
+func TestGetLaunchCommandAppliesModelAndReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "gpt-5.5", ReasoningEffort: "high"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "gpt-5.5", "-c", `model_reasoning_effort='high'`}) {
+		t.Fatalf("command %#v missing model and reasoning-effort overrides", cmd)
+	}
+}
+
+func TestGetLaunchCommandDefaultsToFastMode(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"-c", `service_tier="fast"`, "-c", "features.fast_mode=true"}) {
+		t.Fatalf("command %#v missing Fast mode defaults", cmd)
 	}
 }
 
@@ -487,6 +513,8 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		"resume",
 		"-c", "check_for_update_on_startup=false",
 		"-c", "notice.hide_rate_limit_model_nudge=true",
+		"-c", `service_tier="fast"`,
+		"-c", "features.fast_mode=true",
 		"--dangerously-bypass-hook-trust",
 		"--ask-for-approval", "on-request",
 		"-c", `approvals_reviewer="auto_review"`,
@@ -647,6 +675,8 @@ func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {
 	for _, want := range []string{
 		"hooks.SessionStart=", "hooks.UserPromptSubmit=", "hooks.PermissionRequest=", "hooks.Stop=",
 		"notice.hide_rate_limit_model_nudge=true",
+		`service_tier="fast"`,
+		"features.fast_mode=true",
 		`projects={`,
 	} {
 		if !strings.Contains(joined, want) {

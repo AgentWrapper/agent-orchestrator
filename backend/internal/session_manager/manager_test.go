@@ -628,6 +628,36 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
+func TestSpawn_AppliesPerSpawnAgentConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "base-model", ReasoningEffort: "low", Permissions: domain.PermissionModeDefault},
+		Worker:      domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker-model"}},
+	}}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		AgentConfig: domain.AgentConfig{
+			Model:           "gpt-5.5",
+			ReasoningEffort: "xhigh",
+			Permissions:     domain.PermissionModeAuto,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := agent.lastLaunch.Config; got.Model != "gpt-5.5" || got.ReasoningEffort != "xhigh" || got.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("launch config = %#v, want per-spawn model, effort, and permissions", got)
+	}
+	if agent.lastLaunch.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("launch permissions = %q, want auto", agent.lastLaunch.Permissions)
+	}
+}
+
 func TestSpawn_RejectsMissingRoleHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
@@ -1598,20 +1628,52 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 }
 
+func TestResolvedAgentConfig_BypassPolicyWinsForEverySubagent(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		AgentConfig:                 domain.AgentConfig{Permissions: domain.PermissionModeDefault},
+		AutoBypassWorkerPermissions: true,
+		Worker: domain.RoleOverride{
+			AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeAcceptEdits},
+		},
+	}
+	for _, requested := range []domain.PermissionMode{
+		domain.PermissionModeDefault,
+		domain.PermissionModeAcceptEdits,
+		domain.PermissionModeAuto,
+		domain.PermissionModeBypassPermissions,
+	} {
+		t.Run(string(requested), func(t *testing.T) {
+			got := resolvedAgentConfig(
+				domain.KindWorker,
+				cfg,
+				ports.AgentConfig{Permissions: requested},
+			)
+			if got.Permissions != domain.PermissionModeBypassPermissions {
+				t.Fatalf("resolved subagent permissions = %q, want bypass", got.Permissions)
+			}
+		})
+	}
+}
+
 func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
-		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeAuto},
+		AgentConfig:                 domain.AgentConfig{Permissions: domain.PermissionModeAuto},
+		AutoBypassWorkerPermissions: true,
 		Worker: domain.RoleOverride{
 			Harness:     domain.HarnessClaudeCode,
-			AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+			AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeAcceptEdits},
 		},
 	}}
 	agent := &recordingAgent{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeAuto},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1627,7 +1689,8 @@ func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
-		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+		AgentConfig:                 domain.AgentConfig{Permissions: domain.PermissionModeAcceptEdits},
+		AutoBypassWorkerPermissions: true,
 	}}
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID:           "mer-1",
@@ -1664,7 +1727,7 @@ func TestSpawnWorker_IssueWithoutPromptGetsFallbackTaskPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "Work on issue 2272.\n\nIssue details were not pre-fetched. Start by reading the issue from the tracker, then inspect the relevant code and tests. Implement the smallest appropriate fix and run focused verification. When complete, push the branch. If this issue comes from GitHub, GitLab, or another provider, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue."
+	want := "Work on issue 2272. Issue details were not pre-fetched: read the issue, inspect relevant code/tests, implement the smallest appropriate fix, run focused verification, and push when ready. For provider-backed work, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue."
 	if agent.lastLaunch.Prompt != want {
 		t.Fatalf("launch prompt = %q, want %q", agent.lastLaunch.Prompt, want)
 	}

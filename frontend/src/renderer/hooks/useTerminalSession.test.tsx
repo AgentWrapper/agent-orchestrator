@@ -114,6 +114,7 @@ function createFakeTerminal(): FakeTerminal {
 			inputListeners.add(listener);
 			return { dispose: () => inputListeners.delete(listener) };
 		},
+		sendUserInput: (data, source = "shortcut") => inputListeners.forEach((listener) => listener(data, source)),
 		onResize: (listener) => {
 			resizeListeners.add(listener);
 			return { dispose: () => resizeListeners.delete(listener) };

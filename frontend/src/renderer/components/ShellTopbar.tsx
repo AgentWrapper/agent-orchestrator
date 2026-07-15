@@ -1,8 +1,18 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import {
+	GitBranch,
+	LayoutDashboard,
+	Lightbulb,
+	PanelRightClose,
+	PanelRightOpen,
+	Plus,
+	Square,
+	Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
+import { AutoBypassToggle } from "./AutoBypassToggle";
 import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
@@ -100,6 +110,11 @@ export function ShellTopbar() {
 		setIsNewTaskOpen(true);
 	};
 
+	const openSuggestions = () => {
+		if (!projectId) return;
+		void navigate({ to: "/projects/$projectId/suggestions", params: { projectId } });
+	};
+
 	const handleTaskCreated = async (sessionId: string) => {
 		if (!projectId || isProjectRestarting) return;
 		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -195,6 +210,16 @@ export function ShellTopbar() {
 									<Plus className="size-icon-md" aria-hidden="true" />
 									New task
 								</TopbarButton>
+								<AutoBypassToggle disabled={isProjectRestarting} projectId={projectId as string} style={noDragStyle} />
+								<TopbarButton
+									aria-label="Open Suggestions"
+									onClick={openSuggestions}
+									style={noDragStyle}
+									variant="accent"
+								>
+									<Lightbulb className="size-icon-md" aria-hidden="true" />
+									Suggestions
+								</TopbarButton>
 								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="accent">
 									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
 									Kanban
@@ -249,6 +274,11 @@ export function ShellTopbar() {
 							</TopbarButton>
 						)}
 					</>
+				) : projectId ? (
+					<TopbarButton aria-label="Open Suggestions" onClick={openSuggestions} style={noDragStyle} variant="accent">
+						<Lightbulb className="size-icon-md" aria-hidden="true" />
+						Suggestions
+					</TopbarButton>
 				) : null}
 			</div>
 			<NewTaskDialog

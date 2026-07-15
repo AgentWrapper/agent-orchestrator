@@ -47,6 +47,9 @@ vi.mock("../lib/telemetry", () => ({
 	captureRendererException: vi.fn(),
 }));
 vi.mock("./NewTaskDialog", () => ({ NewTaskDialog: () => null }));
+vi.mock("./AutoBypassToggle", () => ({
+	AutoBypassToggle: () => <button type="button">Auto bypass</button>,
+}));
 vi.mock("./NotificationCenter", () => ({ NotificationCenter: () => null }));
 
 const worker: WorkspaceSession = {
@@ -129,6 +132,14 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
+	it("places Auto bypass beside New task on the orchestrator page", () => {
+		renderTopbar(orchestrator);
+
+		const newTask = screen.getByRole("button", { name: "New task" });
+		const autoBypass = screen.getByRole("button", { name: "Auto bypass" });
+		expect(newTask.nextElementSibling).toBe(autoBypass);
+	});
+
 	it.each([
 		["active", "Working"],
 		["idle", "Idle"],

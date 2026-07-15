@@ -15,6 +15,8 @@ import (
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	repostewardsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/reposteward"
+	suggestionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/suggestion"
 )
 
 // APIDeps bundles every service the API layer's controllers depend on.
@@ -25,6 +27,8 @@ type APIDeps struct {
 	Activity           controllers.ActivityRecorder
 	PRs                prsvc.ActionManager
 	Reviews            reviewsvc.Manager
+	Suggestions        *suggestionsvc.Manager
+	RepositorySteward  *repostewardsvc.Manager
 	Notifications      controllers.NotificationService
 	NotificationStream controllers.NotificationStream
 	Import             controllers.ImportService
@@ -43,6 +47,8 @@ type API struct {
 	sessions      *controllers.SessionsController
 	prs           *controllers.PRsController
 	reviews       *controllers.ReviewsController
+	suggestions   *controllers.SuggestionsController
+	repoSteward   *controllers.RepositoryStewardController
 	notifications *controllers.NotificationsController
 	imports       *controllers.ImportController
 	events        *EventsController
@@ -66,6 +72,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
+		suggestions:   &controllers.SuggestionsController{Svc: deps.Suggestions},
+		repoSteward:   &controllers.RepositoryStewardController{Svc: deps.RepositorySteward},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
@@ -91,6 +99,8 @@ func (a *API) Register(root chi.Router) {
 			a.sessions.Register(r)
 			a.prs.Register(r)
 			a.reviews.Register(r)
+			a.suggestions.Register(r)
+			a.repoSteward.Register(r)
 			a.notifications.Register(r)
 			a.imports.Register(r)
 			// Sibling REST controllers plug in here.

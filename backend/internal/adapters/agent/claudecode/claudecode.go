@@ -115,6 +115,12 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 				Description: "Model override passed to `claude --model` (e.g. claude-opus-4-5).",
 			},
 			{
+				Key:         "reasoningEffort",
+				Type:        ports.ConfigFieldEnum,
+				Description: "Reasoning effort passed to `claude --effort`.",
+				Enum:        []string{"low", "medium", "high", "xhigh", "max"},
+			},
+			{
 				Key:         "permissions",
 				Type:        ports.ConfigFieldEnum,
 				Description: "Starting permission mode.",
@@ -171,6 +177,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
+	}
+	if effort := strings.TrimSpace(cfg.Config.ReasoningEffort); effort != "" {
+		cmd = append(cmd, "--effort", effort)
 	}
 
 	systemPrompt, err := resolveSystemPrompt(cfg)
@@ -246,6 +255,12 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
+		cmd = append(cmd, "--model", model)
+	}
+	if effort := strings.TrimSpace(cfg.Config.ReasoningEffort); effort != "" {
+		cmd = append(cmd, "--effort", effort)
+	}
 	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
 	if err != nil {
 		return nil, false, err

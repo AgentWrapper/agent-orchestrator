@@ -122,6 +122,10 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
 	}
+	if err := in.AgentConfig.Validate(); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_AGENT_CONFIG", err.Error(), nil)
+		return
+	}
 	// displayName is optional at the API (the desktop new-task dialog omits it
 	// and the read model falls back to the session id). `ao spawn` makes it
 	// required CLI-side. When present, it is held to the same length cap here so
@@ -134,7 +138,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
+	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, AgentConfig: in.AgentConfig, DisplayName: displayName})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

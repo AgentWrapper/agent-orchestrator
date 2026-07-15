@@ -114,6 +114,27 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 	}
 }
 
+func TestSystemPromptTokenBudget(t *testing.T) {
+	project := promptProject{
+		ID:            "mer",
+		Name:          "Mercury",
+		Repo:          "https://github.com/acme/mercury",
+		DefaultBranch: "main",
+		Path:          "/repo/mercury",
+	}
+	worker := buildSystemPromptText(systemPromptConfig{
+		Role:                  sessionPromptRoleWorker,
+		Project:               project,
+		OrchestratorSessionID: "mer-orchestrator",
+	})
+	orchestrator := buildSystemPromptText(systemPromptConfig{Role: sessionPromptRoleOrchestrator, Project: project})
+	t.Logf("worker prompt: %d chars (~%d tokens)", len(worker), len(worker)/4)
+	t.Logf("orchestrator prompt: %d chars (~%d tokens)", len(orchestrator), len(orchestrator)/4)
+	if len(worker) > 3_500 || len(orchestrator) > 3_500 {
+		t.Fatalf("standing prompt exceeded token budget: worker=%d orchestrator=%d", len(worker), len(orchestrator))
+	}
+}
+
 func TestBuildProjectRules_ReadsInlineAndFileRules(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte("File rule.\n"), 0o644); err != nil {

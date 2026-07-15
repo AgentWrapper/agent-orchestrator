@@ -261,6 +261,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if _, ok := m.agents.Agent(cfg.Harness); !ok {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
+	if err := cfg.AgentConfig.Validate(); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: agent config: %w", err)
+	}
 
 	if err := m.validateRuntimePrerequisites(); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
@@ -309,7 +312,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	agentConfig := resolvedAgentConfig(cfg.Kind, project.Config, cfg.AgentConfig)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig); err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -491,13 +494,34 @@ func roleConfigName(kind domain.SessionKind) string {
 func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
 	merged := cfg.AgentConfig
 	override := roleOverride(kind, cfg).AgentConfig
-	if override.Model != "" {
-		merged.Model = override.Model
-	}
-	if override.Permissions != "" {
-		merged.Permissions = override.Permissions
+	return mergeAgentConfig(merged, override)
+}
+
+// resolvedAgentConfig applies the per-spawn override, then enforces project
+// policies that must win over every individual task choice. Worker sessions
+// are the orchestrator's AO subagents, so bypass mode always gives every one
+// of them complete native access, including restored sessions.
+func resolvedAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spawnOverride ports.AgentConfig) ports.AgentConfig {
+	merged := mergeAgentConfig(effectiveAgentConfig(kind, cfg), spawnOverride)
+	if kind == domain.KindWorker && cfg.AutoBypassWorkerPermissions {
+		merged.Permissions = domain.PermissionModeBypassPermissions
 	}
 	return merged
+}
+
+// mergeAgentConfig overlays only explicitly set fields so per-role and
+// per-spawn choices inherit everything the project already configured.
+func mergeAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
+	if override.Model != "" {
+		base.Model = override.Model
+	}
+	if override.ReasoningEffort != "" {
+		base.ReasoningEffort = override.ReasoningEffort
+	}
+	if override.Permissions != "" {
+		base.Permissions = override.Permissions
+	}
+	return base
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
@@ -815,7 +839,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	agentConfig := resolvedAgentConfig(rec.Kind, project.Config, ports.AgentConfig{})
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}

@@ -158,6 +158,18 @@ export type WorkspaceSession = {
 	displayStatus?: WorkerDisplayStatus;
 };
 
+/**
+ * Draft suggestion discussions are ordinary isolated workers, but this marker
+ * lets the desktop present them as a conversation instead of dropping the user
+ * into the raw terminal. The suggestion itself is not created until the user
+ * returns to the draft and explicitly submits it.
+ */
+export const SUGGESTION_DISCUSSION_ISSUE_PREFIX = "ao-suggestion-discussion:";
+
+export function isSuggestionDiscussionSession(session?: WorkspaceSession): boolean {
+	return Boolean(session?.issueId?.startsWith(SUGGESTION_DISCUSSION_ISSUE_PREFIX));
+}
+
 // Tracker providers whose ids the intake daemon stamps sessions with, in
 // "<provider>:<native>" form. Adding a provider (Linear, Jira, ...) later is
 // just another prefix in this list — no caller of canonicalTrackerIssueId

@@ -5,14 +5,45 @@ import { type FormEvent, useEffect, useId, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
+import { readRuntimePreferences, writeRuntimePreferences } from "../lib/runtime-preferences";
 import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 
 type Project = components["schemas"]["Project"];
+
+const PROJECT_DEFAULT = "__project_default__";
+const CUSTOM_MODEL = "__custom_model__";
+
+const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
+	codex: [
+		{ value: "gpt-5.5", label: "GPT-5.5" },
+		{ value: "gpt-5.4", label: "GPT-5.4" },
+	],
+	"claude-code": [
+		{ value: "opus", label: "Claude Opus (latest)" },
+		{ value: "sonnet", label: "Claude Sonnet (latest)" },
+		{ value: "fable", label: "Claude Fable (latest)" },
+	],
+};
+
+const EFFORT_OPTIONS = [
+	{ value: "low", label: "Low" },
+	{ value: "medium", label: "Medium" },
+	{ value: "high", label: "High" },
+	{ value: "xhigh", label: "Extra high" },
+] as const;
+
+const PERMISSION_OPTIONS = [
+	{ value: "default", label: "Agent default" },
+	{ value: "accept-edits", label: "Accept edits" },
+	{ value: "auto", label: "Automatic" },
+	{ value: "bypass-permissions", label: "Bypass permissions" },
+] as const;
 
 type NewTaskDialogProps = {
 	open: boolean;
@@ -27,11 +58,18 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const promptId = useId();
 	const branchId = useId();
 	const agentId = useId();
+	const modelId = useId();
+	const effortId = useId();
+	const permissionId = useId();
 	const [title, setTitle] = useState("");
 	const [prompt, setPrompt] = useState("");
 	const [branch, setBranch] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
+	const [modelChoice, setModelChoice] = useState(PROJECT_DEFAULT);
+	const [customModel, setCustomModel] = useState("");
+	const [reasoningEffort, setReasoningEffort] = useState(PROJECT_DEFAULT);
+	const [permissions, setPermissions] = useState(PROJECT_DEFAULT);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 
@@ -57,6 +95,14 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	});
 	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
 	const agentCatalog = agentsQuery.data;
+	const baseAgentConfig = projectQuery.data?.config?.agentConfig;
+	const workerAgentConfig = projectQuery.data?.config?.worker?.agentConfig;
+	const projectModel = workerAgentConfig?.model || baseAgentConfig?.model || "";
+	const projectEffort = workerAgentConfig?.reasoningEffort || baseAgentConfig?.reasoningEffort || "";
+	const projectPermissions = workerAgentConfig?.permissions || baseAgentConfig?.permissions || "";
+	const autoBypassWorkerPermissions = projectQuery.data?.config?.autoBypassWorkerPermissions ?? false;
+	const selectedHarness = agent || defaultWorkerAgent;
+	const modelOptions = MODEL_OPTIONS[selectedHarness] ?? [];
 
 	useEffect(() => {
 		if (!open) {
@@ -65,6 +111,10 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			setBranch("");
 			setAgent("");
 			setAgentTouched(false);
+			setModelChoice(PROJECT_DEFAULT);
+			setCustomModel("");
+			setReasoningEffort(PROJECT_DEFAULT);
+			setPermissions(PROJECT_DEFAULT);
 			setError(undefined);
 			setIsSubmitting(false);
 		}
@@ -76,6 +126,40 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		}
 	}, [open, agentTouched, defaultWorkerAgent]);
 
+	useEffect(() => {
+		if (!open || !projectId || !selectedHarness) return;
+		const saved = readRuntimePreferences(projectId, selectedHarness, "new-task");
+		setModelChoice(saved.modelChoice ?? PROJECT_DEFAULT);
+		setCustomModel(saved.customModel ?? "");
+		setReasoningEffort(saved.effortChoice ?? PROJECT_DEFAULT);
+		setPermissions(saved.permissionChoice ?? PROJECT_DEFAULT);
+	}, [open, projectId, selectedHarness]);
+
+	const rememberModelChoice = (value: string) => {
+		setModelChoice(value);
+		if (projectId && selectedHarness) {
+			writeRuntimePreferences(projectId, selectedHarness, "new-task", { modelChoice: value });
+		}
+	};
+	const rememberCustomModel = (value: string) => {
+		setCustomModel(value);
+		if (projectId && selectedHarness) {
+			writeRuntimePreferences(projectId, selectedHarness, "new-task", { customModel: value });
+		}
+	};
+	const rememberEffortChoice = (value: string) => {
+		setReasoningEffort(value);
+		if (projectId && selectedHarness) {
+			writeRuntimePreferences(projectId, selectedHarness, "new-task", { effortChoice: value });
+		}
+	};
+	const rememberPermissionChoice = (value: string) => {
+		setPermissions(value);
+		if (projectId && selectedHarness) {
+			writeRuntimePreferences(projectId, selectedHarness, "new-task", { permissionChoice: value });
+		}
+	};
+
 	const submit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!projectId || isSubmitting) return;
@@ -83,6 +167,22 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		const cleanTitle = title.trim();
 		const cleanPrompt = prompt.trim();
 		const cleanBranch = branch.trim();
+		const selectedModel =
+			modelChoice === CUSTOM_MODEL ? customModel.trim() : modelChoice === PROJECT_DEFAULT ? "" : modelChoice;
+		const selectedEffort = reasoningEffort === PROJECT_DEFAULT ? "" : reasoningEffort;
+		const selectedPermissions = autoBypassWorkerPermissions
+			? "bypass-permissions"
+			: permissions === PROJECT_DEFAULT
+				? ""
+				: permissions;
+		const agentConfig =
+			selectedModel || selectedEffort || selectedPermissions
+				? {
+						model: selectedModel || undefined,
+						reasoningEffort: selectedEffort || undefined,
+						permissions: selectedPermissions || undefined,
+					}
+				: undefined;
 		if (!cleanTitle || !cleanPrompt) {
 			setError("Title and brief are required.");
 			return;
@@ -100,6 +200,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 					issueId: cleanTitle,
 					prompt: cleanPrompt,
 					branch: cleanBranch || undefined,
+					agentConfig,
 				},
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));
@@ -201,6 +302,95 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 									value={branch}
 									onChange={(event) => setBranch(event.target.value)}
 								/>
+							</div>
+						</div>
+
+						<div className="space-y-3 rounded-lg border border-border bg-surface/40 p-3">
+							<div>
+								<p className="text-xs font-semibold text-foreground">Task runtime</p>
+								<p className="mt-0.5 text-caption text-muted-foreground">Override this worker's project defaults.</p>
+							</div>
+							<div className="grid gap-3 sm:grid-cols-3">
+								<div className="space-y-1.5">
+									<Label className="text-xs font-medium text-muted-foreground" htmlFor={modelId}>
+										Model
+									</Label>
+									<Select value={modelChoice} onValueChange={rememberModelChoice}>
+										<SelectTrigger id={modelId} size="sm" className="w-full text-control">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent position="popper" side="bottom" align="start" sideOffset={4}>
+											<SelectItem value={PROJECT_DEFAULT}>
+												{projectModel ? `Project default · ${projectModel}` : "Agent default"}
+											</SelectItem>
+											{modelOptions.map((option) => (
+												<SelectItem key={option.value} value={option.value}>
+													{option.label}
+												</SelectItem>
+											))}
+											<SelectItem value={CUSTOM_MODEL}>Custom model…</SelectItem>
+										</SelectContent>
+									</Select>
+									{modelChoice === CUSTOM_MODEL && (
+										<Input
+											aria-label="Custom model"
+											className="mt-2"
+											placeholder="Model ID or alias"
+											value={customModel}
+											onChange={(event) => rememberCustomModel(event.target.value)}
+										/>
+									)}
+								</div>
+
+								<div className="space-y-1.5">
+									<Label className="text-xs font-medium text-muted-foreground" htmlFor={effortId}>
+										Effort
+									</Label>
+									<Select value={reasoningEffort} onValueChange={rememberEffortChoice}>
+										<SelectTrigger id={effortId} size="sm" className="w-full text-control">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent position="popper" side="bottom" align="start" sideOffset={4}>
+											<SelectItem value={PROJECT_DEFAULT}>
+												{projectEffort ? `Project default · ${projectEffort}` : "Model default"}
+											</SelectItem>
+											{EFFORT_OPTIONS.map((option) => (
+												<SelectItem key={option.value} value={option.value}>
+													{option.label}
+												</SelectItem>
+											))}
+											{selectedHarness === "claude-code" && <SelectItem value="max">Maximum</SelectItem>}
+										</SelectContent>
+									</Select>
+								</div>
+
+								<div className="space-y-1.5">
+									<Label className="text-xs font-medium text-muted-foreground" htmlFor={permissionId}>
+										Permission
+									</Label>
+									<Select
+										disabled={autoBypassWorkerPermissions}
+										onValueChange={rememberPermissionChoice}
+										value={autoBypassWorkerPermissions ? "bypass-permissions" : permissions}
+									>
+										<SelectTrigger id={permissionId} size="sm" className="w-full text-control">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent position="popper" side="bottom" align="start" sideOffset={4}>
+											<SelectItem value={PROJECT_DEFAULT}>
+												{projectPermissions ? `Project default · ${projectPermissions}` : "Project default"}
+											</SelectItem>
+											{PERMISSION_OPTIONS.map((option) => (
+												<SelectItem key={option.value} value={option.value}>
+													{option.label}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+									{autoBypassWorkerPermissions && (
+										<p className="text-caption text-warning">All subagents have complete access.</p>
+									)}
+								</div>
 							</div>
 						</div>
 

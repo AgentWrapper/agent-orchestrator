@@ -21,6 +21,9 @@ type SpawnConfig struct {
 	Harness      domain.AgentHarness
 	Branch       string
 	Prompt       string
+	// AgentConfig carries per-spawn model, effort, and permission overrides.
+	// Empty fields inherit the project's effective worker/orchestrator config.
+	AgentConfig AgentConfig
 
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).

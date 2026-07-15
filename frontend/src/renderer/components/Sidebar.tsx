@@ -4,6 +4,7 @@ import {
 	ChevronRight,
 	GitPullRequest,
 	LayoutDashboard,
+	Lightbulb,
 	MessageSquare,
 	Moon,
 	MoreVertical,
@@ -115,6 +116,8 @@ function useSelection() {
 		goGlobalSettings: () => void navigate({ to: "/settings" }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
+		goSuggestions: (projectId: string) =>
+			void navigate({ to: "/projects/$projectId/suggestions", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
 			void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
 	};
@@ -670,6 +673,10 @@ function ProjectItem({
 						</button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent side="right" align="start" className="min-w-44">
+						<DropdownMenuItem onSelect={() => selection.goSuggestions(workspace.id)}>
+							<Lightbulb aria-hidden="true" />
+							Suggestions
+						</DropdownMenuItem>
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 							<Settings aria-hidden="true" />
 							Project settings

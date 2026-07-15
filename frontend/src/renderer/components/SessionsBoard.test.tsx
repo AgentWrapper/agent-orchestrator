@@ -15,6 +15,14 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: workspaceQueryMock,
 }));
 
+vi.mock("./AutoBypassToggle", () => ({
+	AutoBypassToggle: () => <button type="button">Auto bypass</button>,
+}));
+
+vi.mock("./RepositoryStewardCard", () => ({
+	RepositoryStewardCard: () => <section aria-label="Repository steward">Repository steward</section>,
+}));
+
 import { SessionsBoard } from "./SessionsBoard";
 
 function renderBoard(projectId?: string) {
@@ -67,5 +75,9 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		expect(screen.getByText("Idle")).toBeInTheDocument();
+		expect(screen.getByRole("region", { name: "Board overview" })).toBeInTheDocument();
+		expect(screen.getByRole("region", { name: "Working: 1 session" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Auto bypass" })).toBeInTheDocument();
+		expect(screen.getByRole("region", { name: "Repository steward" })).toBeInTheDocument();
 	});
 });

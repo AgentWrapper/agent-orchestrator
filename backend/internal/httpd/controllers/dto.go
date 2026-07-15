@@ -10,6 +10,8 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	repostewardsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/reposteward"
+	suggestionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/suggestion"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -25,6 +27,39 @@ import (
 // as the path parameter.
 type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
+}
+
+// SuggestionPathParams identifies one suggestion within a project.
+type SuggestionPathParams struct {
+	ProjectID    string `path:"projectId" description:"Project identifier (registry key)."`
+	SuggestionID string `path:"suggestionId" description:"Suggestion identifier."`
+}
+
+// SuggestionProjectParam identifies a project's suggestion backlog.
+type SuggestionProjectParam struct {
+	ProjectID string `path:"projectId" description:"Project identifier (registry key)."`
+}
+
+// RepositoryStewardProjectParam identifies a project's recovery steward.
+type RepositoryStewardProjectParam struct {
+	ProjectID string `path:"projectId" description:"Project identifier (registry key)."`
+}
+
+type RepositoryStewardStatusResponse struct {
+	RepositorySteward repostewardsvc.Status `json:"repositorySteward"`
+}
+
+type ListSuggestionsResponse struct {
+	Suggestions []suggestionsvc.Suggestion `json:"suggestions"`
+}
+
+type SuggestionResponse struct {
+	Suggestion suggestionsvc.Suggestion `json:"suggestion"`
+}
+
+type StartSuggestionResponse struct {
+	Suggestion suggestionsvc.Suggestion `json:"suggestion"`
+	SessionID  domain.SessionID         `json:"sessionId"`
 }
 
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.
@@ -152,6 +187,9 @@ type SpawnSessionRequest struct {
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
+	// AgentConfig overrides the project's model, reasoning effort, and
+	// permission mode for this task only.
+	AgentConfig domain.AgentConfig `json:"agentConfig,omitempty"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.

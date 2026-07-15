@@ -47,6 +47,12 @@ export type XtermTerminalProps = {
 	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
+	/**
+	 * Plain rendered transcript lines, debounced from xterm's active buffer.
+	 * Used by the orchestrator's desktop conversation view while the real PTY
+	 * remains mounted underneath as the source of truth.
+	 */
+	onTranscriptChange?: (lines: string[]) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
 	onLinkOpen?: (uri: string) => void;
 	/**
@@ -77,6 +83,8 @@ function loadRenderer(term: Terminal): void {
 
 // xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
 const SUPPRESS_NATIVE_PASTE_MS = 100;
+const TRANSCRIPT_DEBOUNCE_MS = 120;
+const TRANSCRIPT_LINE_LIMIT = 1200;
 
 // Erase scrollback (3J) + display (2J) and home the cursor. Deliberately NOT
 // term.reset(): every pane PTY is a fresh per-client attach whose handshake
@@ -478,6 +486,36 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (++stableFrames >= STABLE_FRAMES_TARGET) stabilizer.dispose();
 		});
 
+		let transcriptTimer: number | null = null;
+		let lastTranscript = "";
+		const emitTranscript = () => {
+			transcriptTimer = null;
+			if (!callbacksRef.current.onTranscriptChange) return;
+			const buffer = term.buffer.active;
+			const lines: string[] = [];
+			for (let index = 0; index < buffer.length; index += 1) {
+				const line = buffer.getLine(index);
+				if (!line) continue;
+				const text = line.translateToString(true).replace(/\s+$/g, "");
+				if (line.isWrapped && lines.length > 0) {
+					lines[lines.length - 1] += text;
+				} else {
+					lines.push(text);
+				}
+			}
+			while (lines.at(-1)?.trim() === "") lines.pop();
+			const bounded = lines.slice(-TRANSCRIPT_LINE_LIMIT);
+			const serialized = bounded.join("\n");
+			if (serialized === lastTranscript) return;
+			lastTranscript = serialized;
+			callbacksRef.current.onTranscriptChange(bounded);
+		};
+		const transcriptRender = term.onRender(() => {
+			if (!callbacksRef.current.onTranscriptChange) return;
+			if (transcriptTimer !== null) window.clearTimeout(transcriptTimer);
+			transcriptTimer = window.setTimeout(emitTranscript, TRANSCRIPT_DEBOUNCE_MS);
+		});
+
 		// OS window resize and monitor/DPR changes also alter the true cell box
 		// without touching the host's height:100% box, so the ResizeObserver above
 		// misses them. Listen on window directly as a session-long recovery path.
@@ -608,9 +646,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				userInputListeners.add(listener);
 				return { dispose: () => userInputListeners.delete(listener) };
 			},
+			sendUserInput: (data, source = "shortcut") => emitUserInput(data, source),
 			onResize: (listener) => term.onResize(listener),
 		};
 		callbacksRef.current.onReady?.(handle);
+		transcriptTimer = window.setTimeout(emitTranscript, TRANSCRIPT_DEBOUNCE_MS);
 
 		return () => {
 			termRef.current = null;
@@ -619,6 +659,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			observer.disconnect();
 			stabilizer.dispose();
+			transcriptRender.dispose();
+			if (transcriptTimer !== null) window.clearTimeout(transcriptTimer);
 			window.removeEventListener("resize", fitTerminal);
 			host.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);

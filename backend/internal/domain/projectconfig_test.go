@@ -9,8 +9,9 @@ func TestProjectConfigValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{"empty ok", ProjectConfig{}, false},
-		{"good agent config", ProjectConfig{AgentConfig: AgentConfig{Model: "m", Permissions: PermissionModeAuto}}, false},
+		{"good agent config", ProjectConfig{AgentConfig: AgentConfig{Model: "m", ReasoningEffort: "xhigh", Permissions: PermissionModeAuto}}, false},
 		{"bad permission", ProjectConfig{AgentConfig: AgentConfig{Permissions: "yolo"}}, true},
+		{"bad reasoning effort", ProjectConfig{AgentConfig: AgentConfig{ReasoningEffort: "extreme"}}, true},
 		{"good session prefix", ProjectConfig{SessionPrefix: "ao"}, false},
 		{"session prefix with slash", ProjectConfig{SessionPrefix: "ao/project"}, true},
 		{"session prefix with backslash", ProjectConfig{SessionPrefix: `ao\project`}, true},

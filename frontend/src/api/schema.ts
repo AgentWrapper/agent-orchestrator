@@ -314,6 +314,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{projectId}/repository-steward": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the always-on repository recovery steward status */
+        get: operations["getRepositorySteward"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/repository-steward/checkpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create and sync a recovery checkpoint now */
+        post: operations["checkpointRepository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a project's deferred workflow suggestions */
+        get: operations["listSuggestions"];
+        put?: never;
+        /** Add a deferred workflow suggestion */
+        post: operations["createSuggestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/suggestions/{suggestionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update, complete, or dismiss a suggestion */
+        patch: operations["updateSuggestion"];
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/suggestions/{suggestionId}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a dedicated worker for a backlog suggestion */
+        post: operations["startSuggestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/initialize": {
         parameters: {
             query?: never;
@@ -664,6 +750,7 @@ export interface components {
         AgentConfig: {
             model?: string;
             permissions?: string;
+            reasoningEffort?: string;
         };
         AgentInfo: {
             /**
@@ -719,6 +806,12 @@ export interface components {
             terminalHandleId?: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        CreateSuggestionInput: {
+            note?: string;
+            /** @enum {string} */
+            priority?: "later" | "normal" | "important";
+            title: string;
         };
         DegradedProject: {
             id: string;
@@ -783,6 +876,9 @@ export interface components {
         };
         ListSessionsResponse: {
             sessions: components["schemas"]["ControllersSessionView"][];
+        };
+        ListSuggestionsResponse: {
+            suggestions: components["schemas"]["Suggestion"][];
         };
         MarkAllNotificationsReadResponse: {
             notifications: components["schemas"]["NotificationResponse"][];
@@ -864,6 +960,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            autoBypassWorkerPermissions?: boolean;
             defaultBranch?: string;
             env?: {
                 [key: string]: string;
@@ -906,6 +1003,34 @@ export interface components {
             displayName: string;
             ok: boolean;
             sessionId: string;
+        };
+        RepositoryCheckpointStatus: {
+            branch?: string;
+            dirty: boolean;
+            error?: string;
+            /** Format: date-time */
+            lastCheckpointAt?: string;
+            localRef?: string;
+            localSha?: string;
+            name: string;
+            remoteRef?: string;
+            /** @enum {string} */
+            remoteState: "synced" | "pending" | "not_configured" | "not_github";
+        };
+        RepositoryStewardStatus: {
+            agent: string;
+            enabled: boolean;
+            intervalSeconds: number;
+            /** Format: date-time */
+            lastRunAt?: string;
+            /** Format: date-time */
+            nextRunAt?: string;
+            repositories: components["schemas"]["RepositoryCheckpointStatus"][];
+            /** @enum {string} */
+            state: "protected" | "local_only" | "attention" | "checking";
+        };
+        RepositoryStewardStatusResponse: {
+            repositorySteward: components["schemas"]["RepositoryStewardStatus"];
         };
         ResolveCommentsResponse: {
             ok: boolean;
@@ -1082,6 +1207,7 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
+            agentConfig?: components["schemas"]["AgentConfig"];
             branch?: string;
             displayName?: string;
             /** @enum {string} */
@@ -1091,6 +1217,10 @@ export interface components {
             kind?: "worker" | "orchestrator";
             projectId: string;
             prompt?: string;
+        };
+        StartSuggestionResponse: {
+            sessionId: string;
+            suggestion: components["schemas"]["Suggestion"];
         };
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
@@ -1114,6 +1244,24 @@ export interface components {
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
         };
+        Suggestion: {
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            note?: string;
+            /** @enum {string} */
+            priority: "later" | "normal" | "important";
+            projectId: string;
+            sessionId?: string;
+            /** @enum {string} */
+            status: "backlog" | "in_progress" | "done" | "dismissed";
+            title: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SuggestionResponse: {
+            suggestion: components["schemas"]["Suggestion"];
+        };
         TrackerIntakeConfig: {
             assignee?: string;
             enabled?: boolean;
@@ -1124,6 +1272,14 @@ export interface components {
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        UpdateSuggestionInput: {
+            note?: null | string;
+            /** @enum {null|string} */
+            priority?: "later" | "normal" | "important" | null;
+            /** @enum {null|string} */
+            status?: "backlog" | "in_progress" | "done" | "dismissed" | null;
+            title?: null | string;
         };
         WorkspaceRepo: {
             name: string;
@@ -2092,6 +2248,354 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getRepositorySteward: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryStewardStatusResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    checkpointRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryStewardStatusResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSuggestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSuggestionsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    createSuggestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSuggestionInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    updateSuggestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                projectId: string;
+                /** @description Suggestion identifier. */
+                suggestionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSuggestionInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startSuggestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                projectId: string;
+                /** @description Suggestion identifier. */
+                suggestionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartSuggestionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

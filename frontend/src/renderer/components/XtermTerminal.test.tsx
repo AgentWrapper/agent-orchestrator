@@ -10,7 +10,13 @@ const state = vi.hoisted(() => ({
 		selection: string;
 		options: Record<string, unknown>;
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
-		buffer: { active: { type: string } };
+		buffer: {
+			active: {
+				type: string;
+				length: number;
+				getLine: (index: number) => { isWrapped: boolean; translateToString: (trimRight?: boolean) => string } | undefined;
+			};
+		};
 		scrollLines: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
 		keyListeners: Set<(event: { key: string }) => void>;
@@ -34,7 +40,13 @@ vi.mock("@xterm/xterm", () => ({
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
-		buffer = { active: { type: "normal" } };
+		buffer = {
+			active: {
+				type: "normal",
+				length: 0,
+				getLine: () => undefined,
+			},
+		};
 		scrollLines = vi.fn();
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
@@ -617,6 +629,21 @@ describe("XtermTerminal", () => {
 		expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
 		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com");
 		open.mockRestore();
+	});
+
+	it("forwards explicit UI approval choices as user terminal input", () => {
+		const onInput = vi.fn();
+		render(
+			<XtermTerminal
+				onReady={(terminal) => {
+					terminal.onUserInput(onInput);
+					terminal.sendUserInput("1");
+				}}
+				theme="dark"
+			/>,
+		);
+
+		expect(onInput).toHaveBeenCalledWith("1", "shortcut");
 	});
 
 	it("opens OSC 8 links externally and reports the clicked URL", () => {

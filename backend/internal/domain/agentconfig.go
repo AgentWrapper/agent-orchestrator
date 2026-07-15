@@ -25,6 +25,9 @@ const (
 type AgentConfig struct {
 	// Model overrides the agent's default model (e.g. claude-opus-4-5).
 	Model string `json:"model,omitempty"`
+	// ReasoningEffort controls how much reasoning the selected model applies.
+	// Adapters translate the shared vocabulary onto their native CLI flags.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`
@@ -41,8 +44,13 @@ func (c AgentConfig) IsZero() bool {
 func (c AgentConfig) Validate() error {
 	switch c.Permissions {
 	case "", PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto, PermissionModeBypassPermissions:
-		return nil
 	default:
 		return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
+	}
+	switch c.ReasoningEffort {
+	case "", "low", "medium", "high", "xhigh", "max":
+		return nil
+	default:
+		return fmt.Errorf("invalid reasoning effort %q: want one of low, medium, high, xhigh, max", c.ReasoningEffort)
 	}
 }

@@ -70,6 +70,9 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // instructions, and the initial prompt (passed after `--` so a leading "-" is
 // not read as a flag).
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
+	if err := cfg.Config.Validate(); err != nil {
+		return nil, fmt.Errorf("codex: %w", err)
+	}
 	binary, err := p.codexBinary(ctx)
 	if err != nil {
 		return nil, err
@@ -78,11 +81,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = []string{binary}
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
+	appendFastModeFlags(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
+	appendModelAndEffortFlags(&cmd, cfg.Config)
 
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
@@ -105,6 +110,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
+	if err := cfg.Config.Validate(); err != nil {
+		return nil, false, fmt.Errorf("codex: %w", err)
+	}
 	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
 	if agentSessionID == "" {
 		return nil, false, nil
@@ -119,11 +127,13 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = append(cmd, binary, "resume")
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
+	appendFastModeFlags(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
+	appendModelAndEffortFlags(&cmd, cfg.Config)
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	} else if cfg.SystemPromptFile != "" {
@@ -312,6 +322,7 @@ func DoctorLaunchProbes() [][]string {
 	overrideProbe := []string{"features", "list"}
 	appendNoUpdateCheckFlag(&overrideProbe)
 	appendHideRateLimitNudgeFlag(&overrideProbe)
+	appendFastModeFlags(&overrideProbe)
 	appendSessionHookFlags(&overrideProbe)
 	appendWorkspaceTrustFlag(&overrideProbe, os.TempDir())
 	return [][]string{flagProbe, overrideProbe}
@@ -356,6 +367,22 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 		*cmd = append(*cmd, "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`)
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
+	}
+}
+
+func appendFastModeFlags(cmd *[]string) {
+	// AO defaults Codex sessions to the catalog-provided Fast service tier.
+	// These flags keep supported ChatGPT-backed sessions consistently opted in;
+	// Codex remains responsible for model and account availability.
+	*cmd = append(*cmd, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
+}
+
+func appendModelAndEffortFlags(cmd *[]string, config ports.AgentConfig) {
+	if model := strings.TrimSpace(config.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
+	if effort := strings.TrimSpace(config.ReasoningEffort); effort != "" {
+		*cmd = append(*cmd, "-c", "model_reasoning_effort="+codexTOMLConfigString(effort))
 	}
 }
 

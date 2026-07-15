@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSession } from "../types/workspace";
+import { SUGGESTION_DISCUSSION_ISSUE_PREFIX, type WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
 const postMock = vi.fn();
 let terminalLinkHandler: ((uri: string) => void) | undefined;
+let terminalReadyHandler: ((terminal: unknown) => void) | undefined;
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
@@ -13,8 +14,9 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("./XtermTerminal", () => ({
-	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void }) => {
+	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void; onReady?: (terminal: unknown) => void }) => {
 		terminalLinkHandler = props.onLinkOpen;
+		terminalReadyHandler = props.onReady;
 		return <div data-testid="xterm" />;
 	},
 }));
@@ -51,15 +53,16 @@ beforeEach(() => {
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: {} });
 	terminalLinkHandler = undefined;
+	terminalReadyHandler = undefined;
 });
 
-function renderPane(session?: WorkspaceSession) {
+function renderPane(session?: WorkspaceSession, viewMode?: "conversation" | "terminal") {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const previousAO = window.ao;
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" viewMode={viewMode} />
 		</QueryClientProvider>,
 	);
 	return {
@@ -107,6 +110,54 @@ describe("TerminalPane empty states", () => {
 				),
 			).toBeInTheDocument();
 			expect(screen.queryByText(/worker terminal/i)).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+});
+
+describe("orchestrator conversation history", () => {
+	it("clears the local terminal scrollback only after confirmation", () => {
+		const clear = vi.fn();
+		const view = renderPane(
+			{ ...orchestrator, terminalHandleId: "term-orchestrator" },
+			"conversation",
+		);
+		try {
+			act(() =>
+				terminalReadyHandler?.({
+					clear,
+					cols: 120,
+					rows: 40,
+					onResize: vi.fn(),
+					onUserInput: vi.fn(),
+					sendUserInput: vi.fn(),
+					write: vi.fn(),
+					writeln: vi.fn(),
+				}),
+			);
+
+			fireEvent.click(screen.getByRole("button", { name: "Clear chat history" }));
+			expect(clear).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByRole("button", { name: "Clear history now" }));
+			expect(clear).toHaveBeenCalledOnce();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("uses the chronological chat surface for a marked suggestion discussion worker", () => {
+		const view = renderPane(
+			{
+				...worker,
+				issueId: `${SUGGESTION_DISCUSSION_ISSUE_PREFIX}Refine cache`,
+				terminalHandleId: "term-discussion",
+			},
+			"conversation",
+		);
+		try {
+			expect(screen.getByLabelText("Message discussion agent")).toBeInTheDocument();
+			expect(screen.queryByLabelText("Message orchestrator")).not.toBeInTheDocument();
 		} finally {
 			view.restore();
 		}

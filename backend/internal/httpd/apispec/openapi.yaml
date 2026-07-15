@@ -717,6 +717,289 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{projectId}/repository-steward:
+    get:
+      operationId: getRepositorySteward
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryStewardStatusResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the always-on repository recovery steward status
+      tags:
+      - repository-steward
+  /api/v1/projects/{projectId}/repository-steward/checkpoint:
+    post:
+      operationId: checkpointRepository
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryStewardStatusResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Create and sync a recovery checkpoint now
+      tags:
+      - repository-steward
+  /api/v1/projects/{projectId}/suggestions:
+    get:
+      operationId: listSuggestions
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSuggestionsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List a project's deferred workflow suggestions
+      tags:
+      - suggestions
+    post:
+      operationId: createSuggestion
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSuggestionInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Add a deferred workflow suggestion
+      tags:
+      - suggestions
+  /api/v1/projects/{projectId}/suggestions/{suggestionId}:
+    patch:
+      operationId: updateSuggestion
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      - description: Suggestion identifier.
+        in: path
+        name: suggestionId
+        required: true
+        schema:
+          description: Suggestion identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSuggestionInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Update, complete, or dismiss a suggestion
+      tags:
+      - suggestions
+  /api/v1/projects/{projectId}/suggestions/{suggestionId}/start:
+    post:
+      operationId: startSuggestion
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      - description: Suggestion identifier.
+        in: path
+        name: suggestionId
+        required: true
+        schema:
+          description: Suggestion identifier.
+          type: string
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartSuggestionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start a dedicated worker for a backlog suggestion
+      tags:
+      - suggestions
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -1750,6 +2033,8 @@ components:
           type: string
         permissions:
           type: string
+        reasoningEffort:
+          type: string
       type: object
     AgentInfo:
       properties:
@@ -1906,6 +2191,24 @@ components:
       - updatedAt
       - status
       - prs
+      type: object
+    CreateSuggestionInput:
+      properties:
+        note:
+          maxLength: 4000
+          type: string
+        priority:
+          enum:
+          - later
+          - normal
+          - important
+          type: string
+        title:
+          maxLength: 120
+          minLength: 1
+          type: string
+      required:
+      - title
       type: object
     DegradedProject:
       properties:
@@ -2079,6 +2382,15 @@ components:
           type: array
       required:
       - sessions
+      type: object
+    ListSuggestionsResponse:
+      properties:
+        suggestions:
+          items:
+            $ref: '#/components/schemas/Suggestion'
+          type: array
+      required:
+      - suggestions
       type: object
     MarkAllNotificationsReadResponse:
       properties:
@@ -2286,6 +2598,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        autoBypassWorkerPermissions:
+          type: boolean
         defaultBranch:
           type: string
         env:
@@ -2393,6 +2707,76 @@ components:
       - ok
       - sessionId
       - displayName
+      type: object
+    RepositoryCheckpointStatus:
+      properties:
+        branch:
+          type: string
+        dirty:
+          type: boolean
+        error:
+          type: string
+        lastCheckpointAt:
+          format: date-time
+          type: string
+        localRef:
+          type: string
+        localSha:
+          type: string
+        name:
+          type: string
+        remoteRef:
+          type: string
+        remoteState:
+          enum:
+          - synced
+          - pending
+          - not_configured
+          - not_github
+          type: string
+      required:
+      - name
+      - dirty
+      - remoteState
+      type: object
+    RepositoryStewardStatus:
+      properties:
+        agent:
+          type: string
+        enabled:
+          type: boolean
+        intervalSeconds:
+          type: integer
+        lastRunAt:
+          format: date-time
+          type: string
+        nextRunAt:
+          format: date-time
+          type: string
+        repositories:
+          items:
+            $ref: '#/components/schemas/RepositoryCheckpointStatus'
+          type: array
+        state:
+          enum:
+          - protected
+          - local_only
+          - attention
+          - checking
+          type: string
+      required:
+      - agent
+      - enabled
+      - state
+      - intervalSeconds
+      - repositories
+      type: object
+    RepositoryStewardStatusResponse:
+      properties:
+        repositorySteward:
+          $ref: '#/components/schemas/RepositoryStewardStatus'
+      required:
+      - repositorySteward
       type: object
     ResolveCommentsResponse:
       properties:
@@ -2848,6 +3232,8 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         branch:
           type: string
         displayName:
@@ -2894,6 +3280,16 @@ components:
       required:
       - projectId
       type: object
+    StartSuggestionResponse:
+      properties:
+        sessionId:
+          type: string
+        suggestion:
+          $ref: '#/components/schemas/Suggestion'
+      required:
+      - suggestion
+      - sessionId
+      type: object
     SubmitReviewInput:
       properties:
         body:
@@ -2932,6 +3328,55 @@ components:
       - runId
       - verdict
       type: object
+    Suggestion:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        note:
+          maxLength: 4000
+          type: string
+        priority:
+          enum:
+          - later
+          - normal
+          - important
+          type: string
+        projectId:
+          type: string
+        sessionId:
+          type: string
+        status:
+          enum:
+          - backlog
+          - in_progress
+          - done
+          - dismissed
+          type: string
+        title:
+          maxLength: 120
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - projectId
+      - title
+      - priority
+      - status
+      - createdAt
+      - updatedAt
+      type: object
+    SuggestionResponse:
+      properties:
+        suggestion:
+          $ref: '#/components/schemas/Suggestion'
+      required:
+      - suggestion
+      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -2957,6 +3402,37 @@ components:
       - reviewerHandleId
       - reviews
       type: object
+    UpdateSuggestionInput:
+      properties:
+        note:
+          maxLength: 4000
+          type:
+          - "null"
+          - string
+        priority:
+          enum:
+          - later
+          - normal
+          - important
+          type:
+          - "null"
+          - string
+        status:
+          enum:
+          - backlog
+          - in_progress
+          - done
+          - dismissed
+          type:
+          - "null"
+          - string
+        title:
+          maxLength: 120
+          minLength: 1
+          type:
+          - "null"
+          - string
+      type: object
     WorkspaceRepo:
       properties:
         name:
@@ -2975,6 +3451,8 @@ tags:
   name: agents
 - description: Project registry, configuration, and lifecycle administration
   name: projects
+- description: Deferred project and grand-workflow ideas
+  name: suggestions
 - description: Agent session lifecycle and messaging
   name: sessions
 - description: Pull-request actions (SCM lane)

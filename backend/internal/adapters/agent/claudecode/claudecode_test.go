@@ -477,8 +477,9 @@ func TestGetLaunchCommandAppliesAgentConfig(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Config: ports.AgentConfig{
-			Model:       "claude-opus-4-5",
-			Permissions: ports.PermissionModeAcceptEdits,
+			Model:           "claude-opus-4-5",
+			ReasoningEffort: "high",
+			Permissions:     ports.PermissionModeAcceptEdits,
 		},
 	})
 	if err != nil {
@@ -486,6 +487,9 @@ func TestGetLaunchCommandAppliesAgentConfig(t *testing.T) {
 	}
 	if !containsSubsequence(cmd, []string{"--model", "claude-opus-4-5"}) {
 		t.Fatalf("command %#v missing --model flag", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--effort", "high"}) {
+		t.Fatalf("command %#v missing --effort flag", cmd)
 	}
 	if !containsSubsequence(cmd, []string{"--permission-mode", "acceptEdits"}) {
 		t.Fatalf("command %#v missing config-driven permission mode", cmd)

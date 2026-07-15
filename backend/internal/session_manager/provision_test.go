@@ -101,8 +101,8 @@ func TestHookPATH(t *testing.T) {
 
 func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		AgentConfig:  domain.AgentConfig{Model: "base", Permissions: domain.PermissionModeAuto},
-		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker"}},
+		AgentConfig:  domain.AgentConfig{Model: "base", ReasoningEffort: "medium", Permissions: domain.PermissionModeAuto},
+		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker", ReasoningEffort: "high"}},
 		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 	}
 
@@ -120,12 +120,29 @@ func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 
 	// Role override merges over the base agent config (set fields win; unset keep base).
 	got := effectiveAgentConfig(domain.KindWorker, cfg)
-	if got.Model != "worker" || got.Permissions != domain.PermissionModeAuto {
-		t.Fatalf("merged worker config = %#v, want model=worker permissions=auto", got)
+	if got.Model != "worker" || got.ReasoningEffort != "high" || got.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("merged worker config = %#v, want model=worker effort=high permissions=auto", got)
 	}
 	// Orchestrator has no agent-config override, so the base config is used as-is.
 	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg); got.Model != "base" {
 		t.Fatalf("orchestrator config = %#v, want base", got)
+	}
+}
+
+func TestResolvedAgentConfigAutoBypassOnlyAffectsWorkers(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		AgentConfig:                 domain.AgentConfig{Permissions: domain.PermissionModeAcceptEdits},
+		AutoBypassWorkerPermissions: true,
+	}
+	spawnOverride := domain.AgentConfig{Permissions: domain.PermissionModeAuto}
+
+	worker := resolvedAgentConfig(domain.KindWorker, cfg, spawnOverride)
+	if worker.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("worker permissions = %q, want bypass", worker.Permissions)
+	}
+	orchestrator := resolvedAgentConfig(domain.KindOrchestrator, cfg, spawnOverride)
+	if orchestrator.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("orchestrator permissions = %q, want per-spawn auto", orchestrator.Permissions)
 	}
 }
 

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
-import type { WorkspaceSession } from "../types/workspace";
+import { isSuggestionDiscussionSession, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -9,6 +9,9 @@ import { isLoopbackHostname } from "../lib/loopback";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
+import { OrchestratorConversation } from "./OrchestratorConversation";
+
+export type OrchestratorViewMode = "conversation" | "terminal";
 
 type TerminalPaneProps = {
 	session?: WorkspaceSession;
@@ -16,9 +19,19 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	viewMode?: OrchestratorViewMode;
+	onViewModeChange?: (mode: OrchestratorViewMode) => void;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+export function TerminalPane({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	fontSize,
+	viewMode = "terminal",
+	onViewModeChange,
+}: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
 
@@ -63,6 +76,8 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			daemonReady={daemonReady}
 			fontSize={fontSize}
 			terminalTarget={terminalTarget}
+			viewMode={viewMode}
+			onViewModeChange={onViewModeChange}
 		/>
 	);
 }
@@ -136,7 +151,15 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	fontSize,
+	viewMode = "terminal",
+	onViewModeChange,
+}: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -149,16 +172,27 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [isRestoring, setIsRestoring] = useState(false);
 	const [restoreError, setRestoreError] = useState<string | undefined>();
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
+	const [transcriptLines, setTranscriptLines] = useState<string[]>([]);
 	const queryClient = useQueryClient();
 	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
 	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
+	const supportsConversation = session?.kind === "orchestrator" || isSuggestionDiscussionSession(session);
+	const conversationMode = terminalTarget?.kind !== "reviewer" && supportsConversation && viewMode === "conversation";
+
+	useEffect(() => {
+		setTranscriptLines([]);
+	}, [session?.id]);
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
 	}, []);
+	const clearConversationHistory = useCallback(() => {
+		terminal?.clear();
+		setTranscriptLines([]);
+	}, [terminal]);
 	const handleInitError = useCallback((err: unknown) => {
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
@@ -261,16 +295,31 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				/>
 			)}
 			<div className="relative min-h-0 flex-1">
-				<XtermTerminal
-					ariaLabel="Session terminal"
-					fontSize={fontSize}
-					onError={handleInitError}
-					onLinkOpen={handleLinkOpen}
-					onReady={handleReady}
-					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
-					theme={theme}
-				/>
-				{showEmptyState && (
+				<div
+					aria-hidden={conversationMode || undefined}
+					className={`absolute inset-0 transition-opacity ${conversationMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
+				>
+					<XtermTerminal
+						ariaLabel="Session terminal"
+						fontSize={fontSize}
+						onError={handleInitError}
+						onLinkOpen={handleLinkOpen}
+						onReady={handleReady}
+						onTranscriptChange={supportsConversation ? setTranscriptLines : undefined}
+						paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
+						theme={theme}
+					/>
+				</div>
+				{conversationMode && session && (
+					<OrchestratorConversation
+						session={session}
+						transcriptLines={transcriptLines}
+						onClearHistory={clearConversationHistory}
+						onOpenTerminal={() => onViewModeChange?.("terminal")}
+						onTerminalInput={terminal ? (input) => terminal.sendUserInput(input, "shortcut") : undefined}
+					/>
+				)}
+				{showEmptyState && !conversationMode && (
 					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
 						<div className="text-center">
 							<div className="text-terminal">{emptyStateTitle}</div>
@@ -279,7 +328,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					</div>
 				)}
 				{banner && (
-					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
+					<div className="absolute inset-x-3 top-2 z-20 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
 					</div>
 				)}
