@@ -116,17 +116,16 @@ func (a *commandSessionsAdapter) Get(ctx context.Context, sessionID string) (exe
 		return executors.CommandSession{}, false, nil
 	}
 
-	// Fork provenance is not persisted anywhere in the store: only the SCM
-	// observer sees a PR's head-repo, transiently, and it never survives to the
-	// pr table (see the base-repo-only Repo column). So we cannot classify a
-	// real PR as fork/no-fork after the fact. Fail safe (spec §4b): a session
-	// with an attributed PR is treated as ForkUnknown, which the command
-	// executor gates behind allowForkPRs. A session with no PR is ForkNo and
-	// runs normally.
+	// Fork provenance rides the pr.is_from_fork tri-state (migration 0025),
+	// populated from the SCM observer's head-repo vs base-repo comparison. A
+	// session with no PR is ForkNo and runs normally. An attributed PR maps its
+	// stored tri-state: known-fork -> ForkYes, known-same-repo -> ForkNo, and
+	// unknown (nil, e.g. a legacy row observed before this column) stays
+	// ForkUnknown, which the command executor gates behind allowForkPRs.
 	fork := executors.ForkNo
 	prNumber := 0
 	if prf, prok, perr := a.reader.GetDisplayPRFactsForSession(ctx, domain.SessionID(sessionID)); perr == nil && prok && prf.Number > 0 {
-		fork = executors.ForkUnknown
+		fork = forkStatusFromFlag(prf.IsFromFork)
 		prNumber = prf.Number
 	}
 
@@ -135,6 +134,19 @@ func (a *commandSessionsAdapter) Get(ctx context.Context, sessionID string) (exe
 		Fork:          fork,
 		PRNumber:      prNumber,
 	}, true, nil
+}
+
+// forkStatusFromFlag maps the stored is_from_fork tri-state onto the command
+// executor's ForkStatus. nil (unknown) stays fail-safe ForkUnknown.
+func forkStatusFromFlag(isFromFork *bool) executors.ForkStatus {
+	switch {
+	case isFromFork == nil:
+		return executors.ForkUnknown
+	case *isFromFork:
+		return executors.ForkYes
+	default:
+		return executors.ForkNo
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -138,7 +138,7 @@ func Run() error {
 	// Pipelines v1 (spec §4b T5): one actor-loop engine per project, driving the
 	// pure reducer + executors + store. Single wiring seam so T11 can gate the
 	// whole subsystem behind AO_PIPELINES here.
-	pipelineStk := startPipelineEngine(ctx, store, sessionSvc, log)
+	pipelineStk := startPipelineEngine(ctx, store, sessionSvc, cdcPipe.Broadcaster, log)
 
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 	agentSvc := agentsvc.New()

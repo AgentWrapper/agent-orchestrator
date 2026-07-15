@@ -18,7 +18,12 @@ type PRFacts struct {
 	ReviewComments bool // has unresolved review comments (any author) to address
 	SourceBranch   string
 	TargetBranch   string
-	UpdatedAt      time.Time
+	HeadSHA        string
+	// IsFromFork is fork provenance: nil = unknown, false = same-repo PR (or no
+	// PR), true = the PR head lives in a fork. Populated only by the queries that
+	// select it (display facts + by-url); other PRFacts producers leave it nil.
+	IsFromFork *bool
+	UpdatedAt  time.Time
 }
 
 // PullRequest is the app-level representation of one tracked pull request as
@@ -40,9 +45,12 @@ type PullRequest struct {
 	Host     string
 	Repo     string
 
-	SourceBranch   string
-	TargetBranch   string
-	HeadSHA        string
+	SourceBranch string
+	TargetBranch string
+	HeadSHA      string
+	// IsFromFork is fork provenance derived from the head repo vs base repo: nil
+	// = unknown, false = same-repo, true = fork. Persisted to pr.is_from_fork.
+	IsFromFork     *bool
 	Title          string
 	Additions      int
 	Deletions      int

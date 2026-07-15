@@ -64,6 +64,36 @@ func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
 		Review:         r.ReviewDecision,
 		Mergeability:   r.Mergeability,
 		ReviewComments: r.ReviewComments,
+		HeadSHA:        r.HeadSha,
+		IsFromFork:     boolPtrFromNullInt(r.IsFromFork),
 		UpdatedAt:      r.UpdatedAt,
 	}
+}
+
+// GetPRFactsByURL returns the facts for one exact PR url, including head_sha and
+// fork provenance. It backs the pipeline trigger bridge (T6), which needs the
+// changed PR named in a CDC payload, not the session's display PR. ok=false when
+// no PR with that url exists.
+func (s *Store) GetPRFactsByURL(ctx context.Context, url string) (domain.PRFacts, bool, error) {
+	r, err := s.qr.GetPRFactsByURL(ctx, url)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.PRFacts{}, false, nil
+	}
+	if err != nil {
+		return domain.PRFacts{}, false, fmt.Errorf("pr facts for %s: %w", url, err)
+	}
+	state := r.PRState
+	return domain.PRFacts{
+		URL:          r.URL,
+		Number:       int(r.Number),
+		Draft:        state == domain.PRStateDraft,
+		Merged:       state == domain.PRStateMerged,
+		Closed:       state == domain.PRStateClosed,
+		CI:           r.CIState,
+		Review:       r.ReviewDecision,
+		Mergeability: r.Mergeability,
+		HeadSHA:      r.HeadSha,
+		IsFromFork:   boolPtrFromNullInt(r.IsFromFork),
+		UpdatedAt:    r.UpdatedAt,
+	}, true, nil
 }

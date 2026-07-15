@@ -361,7 +361,27 @@ func genPRParams(r domain.PullRequest) gen.UpsertPRParams {
 		ObservedAt:               nullTime(r.ObservedAt),
 		CIObservedAt:             nullTime(r.CIObservedAt),
 		ReviewObservedAt:         nullTime(r.ReviewObservedAt),
+		IsFromFork:               nullBoolInt(r.IsFromFork),
 	}
+}
+
+// nullBoolInt encodes a tri-state fork flag for the nullable is_from_fork
+// column: nil -> NULL (unknown), false -> 0, true -> 1.
+func nullBoolInt(v *bool) sql.NullInt64 {
+	if v == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: boolInt(*v), Valid: true}
+}
+
+// boolPtrFromNullInt decodes the tri-state is_from_fork column back to a
+// *bool: NULL -> nil (unknown), 0 -> false, non-zero -> true.
+func boolPtrFromNullInt(v sql.NullInt64) *bool {
+	if !v.Valid {
+		return nil
+	}
+	b := v.Int64 != 0
+	return &b
 }
 
 func genLegacyPRParams(r domain.PullRequest) gen.UpsertLegacyPRParams {

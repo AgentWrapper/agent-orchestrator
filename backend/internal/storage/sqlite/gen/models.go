@@ -73,6 +73,7 @@ type PR struct {
 	CIObservedAt             sql.NullTime
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
+	IsFromFork               sql.NullInt64
 }
 
 type PRCheck struct {

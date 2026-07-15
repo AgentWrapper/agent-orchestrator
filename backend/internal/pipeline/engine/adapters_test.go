@@ -113,13 +113,18 @@ func TestSessionSpawnerAdapterGetAndKill(t *testing.T) {
 }
 
 func TestCommandSessionsAdapterForkGate(t *testing.T) {
+	forkYes, forkNo := true, false
 	reader := &fakeReader{
 		sessions: map[domain.SessionID]domain.SessionRecord{
-			"nopr": {Metadata: domain.SessionMetadata{WorkspacePath: "/ws/nopr"}},
-			"pr":   {Metadata: domain.SessionMetadata{WorkspacePath: "/ws/pr"}},
+			"nopr":     {Metadata: domain.SessionMetadata{WorkspacePath: "/ws/nopr"}},
+			"unknown":  {Metadata: domain.SessionMetadata{WorkspacePath: "/ws/unknown"}},
+			"fork":     {Metadata: domain.SessionMetadata{WorkspacePath: "/ws/fork"}},
+			"samerepo": {Metadata: domain.SessionMetadata{WorkspacePath: "/ws/samerepo"}},
 		},
 		prs: map[domain.SessionID]domain.PRFacts{
-			"pr": {Number: 42},
+			"unknown":  {Number: 42},                       // is_from_fork unpopulated (legacy row)
+			"fork":     {Number: 43, IsFromFork: &forkYes}, // observed fork
+			"samerepo": {Number: 44, IsFromFork: &forkNo},  // observed same-repo
 		},
 	}
 	a := &commandSessionsAdapter{reader: reader}
@@ -133,14 +138,32 @@ func TestCommandSessionsAdapterForkGate(t *testing.T) {
 		t.Fatalf("no-PR session = %+v, want ForkNo/0", got)
 	}
 
-	// PR present but fork provenance unknowable from the store: fail safe to
-	// ForkUnknown so the command executor gates it behind allowForkPRs.
-	got, ok, err = a.Get(context.Background(), "pr")
+	// PR with unpopulated provenance (nil): fail safe to ForkUnknown so the
+	// command executor gates it behind allowForkPRs.
+	got, ok, err = a.Get(context.Background(), "unknown")
 	if err != nil || !ok {
-		t.Fatalf("get pr: ok=%v err=%v", ok, err)
+		t.Fatalf("get unknown: ok=%v err=%v", ok, err)
 	}
 	if got.Fork != executors.ForkUnknown || got.PRNumber != 42 {
-		t.Fatalf("PR session = %+v, want ForkUnknown/42", got)
+		t.Fatalf("unknown-provenance session = %+v, want ForkUnknown/42", got)
+	}
+
+	// PR observed to be from a fork: ForkYes.
+	got, ok, err = a.Get(context.Background(), "fork")
+	if err != nil || !ok {
+		t.Fatalf("get fork: ok=%v err=%v", ok, err)
+	}
+	if got.Fork != executors.ForkYes || got.PRNumber != 43 {
+		t.Fatalf("fork session = %+v, want ForkYes/43", got)
+	}
+
+	// PR observed to be same-repo: ForkNo, runs normally.
+	got, ok, err = a.Get(context.Background(), "samerepo")
+	if err != nil || !ok {
+		t.Fatalf("get samerepo: ok=%v err=%v", ok, err)
+	}
+	if got.Fork != executors.ForkNo || got.PRNumber != 44 {
+		t.Fatalf("same-repo session = %+v, want ForkNo/44", got)
 	}
 
 	if _, ok, _ := a.Get(context.Background(), "missing"); ok {
