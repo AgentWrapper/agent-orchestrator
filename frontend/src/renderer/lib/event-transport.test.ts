@@ -40,12 +40,17 @@ class EventSourceStub {
 	onerror: (() => void) | null = null;
 	onmessage: (() => void) | null = null;
 	listeners: string[] = [];
+	handlers: Record<string, () => void> = {};
 	constructor(url: string) {
 		this.url = url;
 		EventSourceStub.instances.push(this);
 	}
-	addEventListener(type: string) {
+	addEventListener(type: string, handler: () => void) {
 		this.listeners.push(type);
+		this.handlers[type] = handler;
+	}
+	emit(type: string) {
+		this.handlers[type]?.();
 	}
 	close() {
 		this.closed = true;
@@ -131,6 +136,35 @@ describe("createEventTransport", () => {
 			vi.advanceTimersByTime(200);
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates the pipeline query family on a pipeline_* event, debounced", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			const source = EventSourceStub.instances[0];
+			// All four pipeline event types are subscribed alongside the CDC ones.
+			expect(source.listeners).toContain("pipeline_run_updated");
+			expect(source.listeners).toContain("pipeline_stage_run_updated");
+			expect(source.listeners).toContain("pipeline_artifact_updated");
+			expect(source.listeners).toContain("pipeline_definition_changed");
+
+			source.emit("pipeline_run_updated");
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(200);
+
+			const call = (queryClient.invalidateQueries as ReturnType<typeof vi.fn>).mock.calls.find(
+				(args) => typeof (args[0] as { predicate?: unknown })?.predicate === "function",
+			);
+			expect(call).toBeTruthy();
+			const predicate = (call![0] as { predicate: (q: { queryKey: readonly unknown[] }) => boolean }).predicate;
+			expect(predicate({ queryKey: ["pipeline-runs", "proj-1"] })).toBe(true);
+			expect(predicate({ queryKey: ["pipeline-run", "run-1"] })).toBe(true);
+			expect(predicate({ queryKey: ["workspaces"] })).toBe(false);
 		} finally {
 			vi.useRealTimers();
 		}
