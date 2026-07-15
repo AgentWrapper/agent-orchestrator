@@ -8,8 +8,11 @@ import (
 // TrackerProvider identifies an issue-tracker provider implementation.
 type TrackerProvider string
 
-// TrackerProviderGitHub is the only supported issue-tracker provider.
-const TrackerProviderGitHub TrackerProvider = "github"
+// Supported issue-tracker providers.
+const (
+	TrackerProviderGitHub TrackerProvider = "github"
+	TrackerProviderLinear TrackerProvider = "linear"
+)
 
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub) and is parsed by the adapter.
@@ -52,6 +55,25 @@ type TrackerRepo struct {
 	Native   string          `json:"native"`
 }
 
+// TrackerUser identifies the account currently authenticated with a tracker.
+type TrackerUser struct {
+	Login string `json:"login"`
+}
+
+// TrackerTeam is provider-owned team metadata used to configure scoped intake.
+type TrackerTeam struct {
+	ID   string `json:"id"`
+	Key  string `json:"key,omitempty"`
+	Name string `json:"name"`
+}
+
+// TrackerLabel is repository-owned label metadata used by intake filters.
+type TrackerLabel struct {
+	Name        string `json:"name"`
+	Color       string `json:"color"`
+	Description string `json:"description,omitempty"`
+}
+
 // ListStateFilter narrows Tracker.List results by the provider's coarse
 // state (open vs closed). It is intentionally NOT the 5-value normalized
 // enum — finer filtering (e.g. "only in-review issues") goes through the
@@ -79,18 +101,17 @@ type ListFilter struct {
 }
 
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
-// Enabled requires an explicit assignee eligibility rule so turning intake on
-// cannot accidentally drain an entire issue backlog.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
-	Provider TrackerProvider `json:"provider,omitempty" enum:"github"`
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github,linear"`
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
-	// Assignee narrows eligible issues to one assignee. Provider-specific values
-	// such as "*" are passed through unchanged.
-	Assignee string `json:"assignee,omitempty"`
+	// TeamID is the Linear team UUID selected for issue intake. Linear only.
+	TeamID string `json:"teamId,omitempty"`
+	// Labels narrows intake to issues carrying every selected repository label.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // WithDefaults fills the provider only when intake is enabled. Disabled intake
@@ -102,23 +123,44 @@ func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
 	return c
 }
 
-// Validate rejects accidental broad intake and unknown providers.
+// Validate rejects unknown providers and malformed repository scopes.
 func (c TrackerIntakeConfig) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
 	c = c.WithDefaults()
-	if c.Enabled && c.Provider != TrackerProviderGitHub {
+	if c.Provider != TrackerProviderGitHub && c.Provider != TrackerProviderLinear {
 		return fmt.Errorf("trackerIntake.provider: unsupported provider %q", c.Provider)
 	}
 	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
 		return err
 	}
-	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
+	if err := validateNoWhitespaceField("trackerIntake.teamId", c.TeamID); err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.Assignee) == "" {
-		return fmt.Errorf("trackerIntake: assignee is required when enabled")
+	switch c.Provider {
+	case TrackerProviderGitHub:
+		if c.TeamID != "" {
+			return fmt.Errorf("trackerIntake.teamId: only valid for linear intake")
+		}
+	case TrackerProviderLinear:
+		if c.TeamID == "" {
+			return fmt.Errorf("trackerIntake.teamId: required for linear intake")
+		}
+		if c.Repo != "" {
+			return fmt.Errorf("trackerIntake.repo: only valid for github intake")
+		}
+		if len(c.Labels) > 0 {
+			return fmt.Errorf("trackerIntake.labels: only valid for github intake")
+		}
+	}
+	for index, label := range c.Labels {
+		if strings.TrimSpace(label) == "" {
+			return fmt.Errorf("trackerIntake.labels: label names must not be empty")
+		}
+		if err := validateNoWhitespaceField(fmt.Sprintf("trackerIntake.labels[%d]", index), label); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -9,7 +9,14 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import {
+	buildIntake,
+	deriveGitHubRepo,
+	IntakeFields,
+	intakeValidationMessage,
+	type IntakeForm,
+	type IntakeProvider,
+} from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -85,8 +92,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
+		intakeProvider: (intake.provider === "linear" ? "linear" : "github") as IntakeProvider,
 		intakeRepo: intake.repo ?? "",
-		intakeAssignee: intake.assignee ?? "",
+		intakeTeamId: intake.teamId ?? "",
+		intakeLabels: intake.labels ?? [],
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -106,18 +115,21 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	// same derivation client-side purely for display (a link to the repo being polled).
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
+		provider: form.intakeProvider,
 		repo: form.intakeRepo,
-		assignee: form.intakeAssignee,
+		teamId: form.intakeTeamId,
+		labels: form.intakeLabels,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
+			intakeProvider: patch.provider ?? f.intakeProvider,
 			intakeRepo: patch.repo ?? f.intakeRepo,
-			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+			intakeTeamId: patch.teamId ?? f.intakeTeamId,
+			intakeLabels: patch.labels ?? f.intakeLabels,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
-	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -181,8 +193,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					setValidationError("Worker and orchestrator agents are required.");
 					return;
 				}
-				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
+				const intakeError = intakeValidationMessage(intakeForm);
+				if (intakeError) {
+					setValidationError(intakeError);
 					return;
 				}
 				setValidationError(null);
@@ -342,7 +355,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-control">Tracker intake</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
+					<IntakeFields
+						form={intakeForm}
+						onChange={patchIntake}
+						repoPreview={{ value: effectiveIntakeRepo }}
+						projectId={projectId}
+					/>
 				</CardContent>
 			</Card>
 

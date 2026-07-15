@@ -5,15 +5,16 @@ package trackerintake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	intakescope "github.com/aoagents/agent-orchestrator/backend/internal/trackerintake"
 )
 
 const (
@@ -150,8 +151,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 			o.logger.Debug("tracker intake: project in failure backoff", "project", project.ID, "until", until)
 			continue
 		}
-		if failed := o.pollProject(ctx, project, seen); failed {
-			o.backoffUntil[project.ID] = now.Add(o.failureBackoff)
+		if backoff, failed := o.pollProject(ctx, project, seen, now); failed {
+			if backoff <= 0 {
+				backoff = o.failureBackoff
+			}
+			o.backoffUntil[project.ID] = now.Add(backoff)
 		} else {
 			delete(o.backoffUntil, project.ID)
 		}
@@ -161,42 +165,47 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, now time.Time) (time.Duration, bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled {
-		return false
+		return 0, false
 	}
 	if err := cfg.Validate(); err != nil {
 		o.logger.Warn("tracker intake: skipping project with invalid config", "project", project.ID, "err", err)
-		return true
+		return o.failureBackoff, true
 	}
-	repo, ok := trackerRepo(project, cfg)
+	repo, ok := intakescope.Scope(project, cfg)
 	if !ok {
 		o.logger.Warn("tracker intake: skipping project without tracker scope", "project", project.ID, "provider", cfg.Provider, "origin", project.RepoOriginURL)
-		return true
+		return o.failureBackoff, true
 	}
 	tracker, err := o.resolver.Resolve(cfg.Provider)
 	if err != nil {
 		o.logger.Warn("tracker intake: no adapter for provider", "project", project.ID, "provider", cfg.Provider, "err", err)
-		return true
+		return o.failureBackoff, true
+	}
+	user, err := tracker.AuthenticatedUser(ctx)
+	if err != nil {
+		o.logger.Error("tracker intake: resolve authenticated user failed", "project", project.ID, "err", err)
+		return o.failureBackoffFor(err, now), true
 	}
 	issues, err := tracker.List(ctx, repo, domain.ListFilter{
 		State:    domain.ListOpen,
-		Assignee: cfg.Assignee,
+		Assignee: user.Login,
 	})
 	if err != nil {
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
-		return true
+		return o.failureBackoffFor(err, now), true
 	}
 	var spawnFailed bool
 	for _, issue := range issues {
 		if ctx.Err() != nil {
-			return true
+			return o.failureBackoff, true
 		}
 		if issue.State != domain.IssueOpen {
 			continue
 		}
-		if !issueMatchesConfig(issue, cfg) {
+		if !intakescope.MatchesAssignee(issue.Assignees, user.Login) || !intakescope.MatchesAnyLabel(issue.Labels, cfg.Labels) {
 			continue
 		}
 		issueID := CanonicalIssueID(issue.ID)
@@ -215,30 +224,35 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		}
 		seen[issueID] = true
 	}
-	return spawnFailed
-}
-
-func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
-	assignee := strings.TrimSpace(cfg.Assignee)
-	switch {
-	case assignee == "":
-		return true
-	case assignee == "*":
-		return len(issue.Assignees) > 0
-	case strings.EqualFold(assignee, "none"):
-		return len(issue.Assignees) == 0
-	default:
-		return containsFold(issue.Assignees, assignee)
+	if spawnFailed {
+		return o.failureBackoff, true
 	}
+	return 0, false
 }
 
-func containsFold(values []string, needle string) bool {
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), needle) {
-			return true
+type retryAfterError interface {
+	RetryAfterDuration() time.Duration
+}
+
+type rateLimitResetError interface {
+	RateLimitResetAt() time.Time
+}
+
+func (o *Observer) failureBackoffFor(err error, now time.Time) time.Duration {
+	backoff := o.failureBackoff
+	var retryAfter retryAfterError
+	if errors.As(err, &retryAfter) {
+		if d := retryAfter.RetryAfterDuration(); d > backoff {
+			backoff = d
 		}
 	}
-	return false
+	var reset rateLimitResetError
+	if errors.As(err, &reset) {
+		if d := reset.RateLimitResetAt().Sub(now); d > backoff {
+			backoff = d
+		}
+	}
+	return backoff
 }
 
 func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
@@ -313,57 +327,4 @@ func truncateUTF8(s string, maxBytes int) string {
 		cut = i
 	}
 	return s[:cut]
-}
-
-func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (domain.TrackerRepo, bool) {
-	provider := cfg.Provider
-	if provider == "" {
-		provider = domain.TrackerProviderGitHub
-	}
-	if provider != domain.TrackerProviderGitHub {
-		return domain.TrackerRepo{}, false
-	}
-	native := strings.TrimSpace(cfg.Repo)
-	if native == "" {
-		native = parseGitHubRepoNative(project.RepoOriginURL)
-	}
-	if native == "" {
-		return domain.TrackerRepo{}, false
-	}
-	return domain.TrackerRepo{Provider: provider, Native: native}, true
-}
-
-func parseGitHubRepoNative(remote string) string {
-	remote = strings.TrimSpace(remote)
-	if remote == "" {
-		return ""
-	}
-	if strings.HasPrefix(remote, "git@") {
-		if _, rest, ok := strings.Cut(remote, ":"); ok {
-			return cleanRepoPath(rest)
-		}
-	}
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
-		if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
-			return cleanRepoPath(u.Path)
-		}
-		return ""
-	}
-	return cleanRepoPath(remote)
-}
-
-func cleanRepoPath(path string) string {
-	path = strings.Trim(strings.TrimSpace(path), "/")
-	path = strings.TrimSuffix(path, ".git")
-	parts := strings.Split(path, "/")
-	if len(parts) < 2 {
-		return ""
-	}
-	owner := strings.TrimSpace(parts[len(parts)-2])
-	repo := strings.TrimSpace(parts[len(parts)-1])
-	if owner == "" || repo == "" {
-		return ""
-	}
-	return owner + "/" + repo
 }

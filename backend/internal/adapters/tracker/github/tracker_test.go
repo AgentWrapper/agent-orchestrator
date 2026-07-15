@@ -360,6 +360,37 @@ func TestPreflight_HappyPath(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedUser_ReturnsAndCachesLogin(t *testing.T) {
+	f := newFakeGH(t)
+	f.on("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"login":"octocat","id":1}`))
+	})
+	tr := newTrackerForTest(t, f)
+	for i := 0; i < 2; i++ {
+		user, err := tr.AuthenticatedUser(ctx())
+		if err != nil {
+			t.Fatalf("AuthenticatedUser #%d: %v", i, err)
+		}
+		if user.Login != "octocat" {
+			t.Fatalf("AuthenticatedUser #%d login = %q, want octocat", i, user.Login)
+		}
+	}
+	if got := len(f.calls()); got != 1 {
+		t.Fatalf("HTTP calls = %d, want 1 (identity should be cached)", got)
+	}
+}
+
+func TestAuthenticatedUser_RejectsEmptyLogin(t *testing.T) {
+	f := newFakeGH(t)
+	f.on("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	tr := newTrackerForTest(t, f)
+	if _, err := tr.AuthenticatedUser(ctx()); err == nil {
+		t.Fatal("AuthenticatedUser expected empty-login response to fail")
+	}
+}
+
 func TestPreflight_InvalidToken(t *testing.T) {
 	f := newFakeGH(t)
 	f.on("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
@@ -539,6 +570,46 @@ func TestList_PaginatesAcrossLinkNext(t *testing.T) {
 	}
 	if len(issues) != 2 || issues[0].ID.Native != "o/r#1" || issues[1].ID.Native != "o/r#2" {
 		t.Fatalf("issues = %#v, want both pages in order", issues)
+	}
+}
+
+func TestListLabels_PaginatesAndRevalidatesWithETag(t *testing.T) {
+	f := newFakeGH(t)
+	f.on("GET", "/repos/o/r/labels", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("per_page"); got != "100" {
+			t.Fatalf("per_page = %q, want 100", got)
+		}
+		page := r.URL.Query().Get("page")
+		etag := `"labels-` + page + `"`
+		if r.Header.Get("If-None-Match") == etag {
+			w.Header().Set("ETag", etag)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		switch page {
+		case "":
+			w.Header().Set("Link", `<`+f.server.URL+`/repos/o/r/labels?per_page=100&page=2>; rel="next"`)
+			_, _ = w.Write([]byte(`[{"name":"bug","color":"d73a4a","description":"Something is broken"}]`))
+		case "2":
+			_, _ = w.Write([]byte(`[{"name":"ready","color":"4d8dff","description":"Ready for an agent"}]`))
+		default:
+			t.Fatalf("unexpected page %q", page)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+	for i := 0; i < 2; i++ {
+		labels, err := tr.ListLabels(ctx(), repo)
+		if err != nil {
+			t.Fatalf("ListLabels #%d: %v", i, err)
+		}
+		if len(labels) != 2 || labels[0].Name != "bug" || labels[1].Description != "Ready for an agent" {
+			t.Fatalf("labels #%d = %#v", i, labels)
+		}
+	}
+	if got := len(f.calls()); got != 4 {
+		t.Fatalf("HTTP calls = %d, want 4", got)
 	}
 }
 

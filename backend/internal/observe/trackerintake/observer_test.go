@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	intakescope "github.com/aoagents/agent-orchestrator/backend/internal/trackerintake"
 )
 
 func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
@@ -18,10 +19,7 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-				Enabled:  true,
-				Assignee: "alice",
-			}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
 		}},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
@@ -59,12 +57,49 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	}
 }
 
+func TestPollSpawnsLinearIssueFromSelectedTeam(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID: "demo",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled:  true,
+				Provider: domain.TrackerProviderLinear,
+				TeamID:   "team-1",
+			}},
+		}},
+	}
+	tracker := &fakeTracker{
+		user: domain.TrackerUser{Login: "linear-user-1"},
+		issues: []domain.Issue{{
+			ID:        domain.TrackerID{Provider: domain.TrackerProviderLinear, Native: "ENG-12"},
+			Title:     "Fix intake",
+			State:     domain.IssueOpen,
+			Assignees: []string{"linear-user-1"},
+		}},
+	}
+	spawner := &fakeSpawner{}
+
+	resolver := SingleTrackerResolver{Provider: domain.TrackerProviderLinear, Adapter: tracker}
+	if err := New(resolver, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "linear:ENG-12" {
+		t.Fatalf("spawn calls = %+v, want linear issue", spawner.calls)
+	}
+	if len(tracker.repos) != 1 || tracker.repos[0].Provider != domain.TrackerProviderLinear || tracker.repos[0].Native != "team-1" {
+		t.Fatalf("repos = %+v", tracker.repos)
+	}
+	if tracker.filters[0].Assignee != "linear-user-1" || tracker.filters[0].State != domain.ListOpen {
+		t.Fatalf("filter = %+v", tracker.filters[0])
+	}
+}
+
 func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
 		}},
 		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12"}},
 	}
@@ -99,8 +134,7 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{
 			{ID: "off", RepoOriginURL: "https://github.com/acme/off.git"},
-			{ID: "broad", RepoOriginURL: "https://github.com/acme/broad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}}},
-			{ID: "missing-origin", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
+			{ID: "missing-origin", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}}},
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
@@ -123,8 +157,8 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 
 func TestPollContinuesAfterTrackerAndSpawnFailures(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{
-		{ID: "bad", RepoOriginURL: "https://github.com/acme/bad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
-		{ID: "good", RepoOriginURL: "https://github.com/acme/good.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
+		{ID: "bad", RepoOriginURL: "https://github.com/acme/bad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}}},
+		{ID: "good", RepoOriginURL: "https://github.com/acme/good.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}}},
 	}}
 	tracker := &fakeTracker{
 		failRepos: map[string]error{"acme/bad": errors.New("rate limited")},
@@ -153,7 +187,7 @@ func TestPollBacksOffProjectAfterFailure(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
 	}}}
 	tracker := &fakeTracker{failRepos: map[string]error{"acme/demo": errors.New("rate limited")}}
 	observer := New(singleResolver(tracker), store, &fakeSpawner{}, Config{
@@ -185,11 +219,45 @@ func TestPollBacksOffProjectAfterFailure(t *testing.T) {
 	}
 }
 
+func TestPollUsesTrackerRateLimitBackoff(t *testing.T) {
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(10 * time.Minute)
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
+	}}}
+	tracker := &fakeTracker{failRepos: map[string]error{"acme/demo": fakeRateLimitError{resetAt: resetAt}}}
+	observer := New(singleResolver(tracker), store, &fakeSpawner{}, Config{
+		Clock:          func() time.Time { return now },
+		FailureBackoff: time.Minute,
+		Logger:         discardLogger(),
+	})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if got := observer.backoffUntil["demo"]; !got.Equal(resetAt) {
+		t.Fatalf("backoffUntil = %v, want %v", got, resetAt)
+	}
+	if len(tracker.repos) != 1 {
+		t.Fatalf("tracker calls after first poll = %d, want 1", len(tracker.repos))
+	}
+
+	now = now.Add(2 * time.Minute)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() during rate backoff error = %v", err)
+	}
+	if len(tracker.repos) != 1 {
+		t.Fatalf("tracker calls during rate backoff = %d, want still 1", len(tracker.repos))
+	}
+}
+
 func TestPollSkipsNonOpenIssueStates(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "already active", State: domain.IssueInProgress, Assignees: []string{"alice"}},
@@ -205,41 +273,29 @@ func TestPollSkipsNonOpenIssueStates(t *testing.T) {
 	}
 }
 
-func TestPollAppliesLocalEligibilityFilter(t *testing.T) {
+func TestPollAppliesAuthenticatedUserAndLabelFilters(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready", "help wanted"}}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "unassigned", State: domain.IssueOpen},
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "wrong assignee", State: domain.IssueOpen, Assignees: []string{"bob"}},
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "eligible", State: domain.IssueOpen, Labels: []string{"Agent-Ready"}, Assignees: []string{"Alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#4"}, Title: "also eligible", State: domain.IssueOpen, Labels: []string{"help wanted"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#5"}, Title: "wrong label", State: domain.IssueOpen, Labels: []string{"needs-design"}, Assignees: []string{"alice"}},
 	}}
 	spawner := &fakeSpawner{}
 
 	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
-	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#3" {
-		t.Fatalf("spawn calls = %+v, want only eligible issue #3", spawner.calls)
+	if len(spawner.calls) != 2 || spawner.calls[0].IssueID != "github:acme/demo#3" || spawner.calls[1].IssueID != "github:acme/demo#4" {
+		t.Fatalf("spawn calls = %+v, want eligible issues #3 and #4", spawner.calls)
 	}
-}
-
-func TestIssueMatchesConfigAssigneeSpecialValues(t *testing.T) {
-	assigned := domain.Issue{Assignees: []string{"alice"}}
-	unassigned := domain.Issue{}
-	if !issueMatchesConfig(assigned, domain.TrackerIntakeConfig{Assignee: "*"}) {
-		t.Fatal("assigned issue should match assignee=*")
-	}
-	if issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "*"}) {
-		t.Fatal("unassigned issue should not match assignee=*")
-	}
-	if !issueMatchesConfig(unassigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
-		t.Fatal("unassigned issue should match assignee=none")
-	}
-	if issueMatchesConfig(assigned, domain.TrackerIntakeConfig{Assignee: "none"}) {
-		t.Fatal("assigned issue should not match assignee=none")
+	if got := tracker.filters[0].Labels; len(got) != 0 {
+		t.Fatalf("tracker labels = %#v", got)
 	}
 }
 
@@ -269,12 +325,11 @@ func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/wrong/repo.git",
 		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-			Enabled:  true,
-			Repo:     "acme/demo",
-			Assignee: "alice",
+			Enabled: true,
+			Repo:    "acme/demo",
 		}},
 	}
-	repo, ok := trackerRepo(project, project.Config.TrackerIntake.WithDefaults())
+	repo, ok := intakescope.Scope(project, project.Config.TrackerIntake.WithDefaults())
 	if !ok {
 		t.Fatal("trackerRepo ok = false")
 	}
@@ -302,6 +357,8 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 }
 
 type fakeTracker struct {
+	user         domain.TrackerUser
+	userErr      error
 	issues       []domain.Issue
 	issuesByRepo map[string][]domain.Issue
 	failRepos    map[string]error
@@ -311,6 +368,21 @@ type fakeTracker struct {
 
 func (f *fakeTracker) Get(context.Context, domain.TrackerID) (domain.Issue, error) {
 	return domain.Issue{}, nil
+}
+
+func (f *fakeTracker) AuthenticatedUser(context.Context) (domain.TrackerUser, error) {
+	if f.user.Login == "" {
+		f.user.Login = "alice"
+	}
+	return f.user, f.userErr
+}
+
+func (f *fakeTracker) ListLabels(context.Context, domain.TrackerRepo) ([]domain.TrackerLabel, error) {
+	return nil, nil
+}
+
+func (f *fakeTracker) ListTeams(context.Context) ([]domain.TrackerTeam, error) {
+	return nil, nil
 }
 
 func (f *fakeTracker) List(_ context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
@@ -343,3 +415,13 @@ func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Se
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
+
+type fakeRateLimitError struct {
+	resetAt time.Time
+}
+
+func (e fakeRateLimitError) Error() string { return "rate limited" }
+
+func (e fakeRateLimitError) RetryAfterDuration() time.Duration { return 0 }
+
+func (e fakeRateLimitError) RateLimitResetAt() time.Time { return e.resetAt }

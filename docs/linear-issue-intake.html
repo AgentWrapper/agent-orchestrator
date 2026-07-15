@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Linear issue intake</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--bg: #fff;
+				--surface: #f6f8fa;
+				--text: #1f2328;
+				--muted: #59636e;
+				--border: #d0d7de;
+				--accent: #0969da;
+				--ok: #1a7f37;
+				--warn: #9a6700;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				background: var(--bg);
+				color: var(--text);
+				font:
+					15px/1.55 -apple-system,
+					BlinkMacSystemFont,
+					"Segoe UI",
+					sans-serif;
+			}
+			main {
+				width: min(980px, calc(100% - 36px));
+				margin: auto;
+				padding: 38px 0 54px;
+			}
+			h1 {
+				margin: 0 0 8px;
+				font-size: 28px;
+				line-height: 1.2;
+			}
+			h2 {
+				margin: 0 0 12px;
+				font-size: 20px;
+			}
+			h3 {
+				margin: 18px 0 7px;
+				font-size: 15px;
+			}
+			p {
+				max-width: 78ch;
+				margin: 0 0 12px;
+			}
+			ul,
+			ol {
+				margin: 8px 0 14px;
+				padding-left: 22px;
+			}
+			li {
+				margin: 5px 0;
+			}
+			section {
+				padding: 24px 0;
+				border-bottom: 1px solid var(--border);
+			}
+			section:last-child {
+				border-bottom: 0;
+			}
+			a {
+				color: var(--accent);
+				text-decoration: none;
+			}
+			a:hover {
+				text-decoration: underline;
+			}
+			.summary {
+				color: var(--muted);
+				font-size: 16px;
+			}
+			code,
+			pre {
+				font:
+					13px/1.5 ui-monospace,
+					SFMono-Regular,
+					Menlo,
+					Consolas,
+					monospace;
+			}
+			code {
+				padding: 1px 4px;
+				background: var(--surface);
+				border-radius: 3px;
+			}
+			pre {
+				overflow-x: auto;
+				margin: 14px 0;
+				padding: 16px;
+				border: 1px solid var(--border);
+				border-radius: 5px;
+				background: var(--surface);
+				color: var(--text);
+			}
+			table {
+				width: 100%;
+				margin: 14px 0;
+				border-collapse: collapse;
+				font-size: 14px;
+			}
+			th,
+			td {
+				padding: 9px 11px;
+				border: 1px solid var(--border);
+				text-align: left;
+				vertical-align: top;
+			}
+			th {
+				background: var(--surface);
+			}
+			td:first-child {
+				width: 24%;
+				font-weight: 600;
+			}
+			.note {
+				margin-top: 14px;
+				padding-left: 12px;
+				border-left: 3px solid var(--border);
+				color: var(--muted);
+			}
+			.callout {
+				margin: 14px 0;
+				padding: 12px 14px;
+				border: 1px solid var(--border);
+				border-radius: 5px;
+				background: var(--surface);
+				color: var(--muted);
+			}
+			.callout strong {
+				color: var(--text);
+			}
+			.tag {
+				display: inline-block;
+				margin-right: 6px;
+				padding: 1px 6px;
+				border-radius: 999px;
+				background: var(--surface);
+				border: 1px solid var(--border);
+				color: var(--muted);
+				font-size: 12px;
+			}
+			.tag.ok {
+				color: var(--ok);
+				border-color: #8cce9b;
+				background: #dafbe1;
+			}
+			.tag.warn {
+				color: var(--warn);
+				border-color: #d4a72c;
+				background: #fff8c5;
+			}
+			.diagram {
+				margin: 16px 0;
+				padding: 14px;
+				border: 1px solid var(--border);
+				border-radius: 5px;
+				background: var(--surface);
+				overflow-x: auto;
+			}
+			.diagram svg {
+				display: block;
+				min-width: 820px;
+				width: 100%;
+				height: auto;
+			}
+			.ui-figure {
+				margin: 16px 0;
+				padding: 14px;
+				border: 1px solid var(--border);
+				border-radius: 5px;
+				background: var(--surface);
+				overflow-x: auto;
+			}
+			.ui-figure svg {
+				display: block;
+				min-width: 760px;
+				width: 100%;
+				height: auto;
+			}
+			.caption {
+				margin-top: 8px;
+				color: var(--muted);
+				font-size: 12px;
+			}
+			details {
+				margin-top: 10px;
+			}
+			summary {
+				cursor: pointer;
+				color: var(--accent);
+			}
+			@media (max-width: 680px) {
+				table,
+				tbody,
+				tr,
+				td {
+					display: block;
+				}
+				thead {
+					display: none;
+				}
+				tr {
+					border: 1px solid var(--border);
+					border-bottom: 0;
+				}
+				tr:last-child {
+					border-bottom: 1px solid var(--border);
+				}
+				td {
+					width: auto !important;
+					border: 0;
+					border-bottom: 1px solid var(--border);
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<header>
+				<h1>Linear issue intake</h1>
+				<p class="summary">
+					Phase 1 plan for the first working Linear intake path on top of <code>feat/github-issue-intake-v2</code>.
+				</p>
+			</header>
+
+			<section>
+				<h2>Summary</h2>
+				<table>
+					<thead>
+						<tr>
+							<th>Area</th>
+							<th>Decision</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Working scope</td>
+							<td>
+								Ship the full Linear intake workflow with minimal UI: a project can select Linear, choose one accessible
+								Linear team, save config, and let the daemon spawn workers from assigned open issues.
+							</td>
+						</tr>
+						<tr>
+							<td>Provider rule</td>
+							<td>
+								Each project connects exactly one tracker provider at a time: either GitHub or Linear. The config and UI
+								switch provider modes; they do not merge filters across providers.
+							</td>
+						</tr>
+						<tr>
+							<td>Scope rule</td>
+							<td>
+								Linear stores the selected team's <code>teamId</code>, not git-origin repo inference. GitHub keeps
+								<code>repo</code>; Linear ignores it.
+							</td>
+						</tr>
+						<tr>
+							<td>Credential</td>
+							<td>Linear intake uses one Linear API key available to the daemon via <code>LINEAR_API_KEY</code>.</td>
+						</tr>
+					</tbody>
+				</table>
+			</section>
+
+			<section>
+				<h2>Architecture design</h2>
+				<p>
+					Phase 1 is end-to-end but minimal. Electron only exposes the controls needed to enable Linear intake,
+					including a team dropdown populated from Linear's official <code>teams</code> query for the authenticated
+					account. The daemon reads project config, resolves exactly one tracker adapter for the selected provider, asks
+					Linear for assigned spawnable work, and spawns sessions through the existing session service. Label filters,
+					previews, and richer picker flows are follow-up work.
+				</p>
+
+				<div class="diagram" aria-label="Phase 1 Linear intake architecture diagram">
+					<svg viewBox="0 0 980 280" role="img">
+						<defs>
+							<marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+								<path d="M0,0 L0,6 L8,3 z" fill="currentColor" />
+							</marker>
+						</defs>
+						<g fill="none" stroke="currentColor">
+							<rect x="30" y="104" width="145" height="72" rx="5" />
+							<rect x="220" y="104" width="145" height="72" rx="5" />
+							<rect x="410" y="104" width="160" height="72" rx="5" />
+							<rect x="625" y="38" width="150" height="72" rx="5" />
+							<rect x="625" y="170" width="150" height="72" rx="5" />
+							<rect x="830" y="38" width="120" height="72" rx="5" />
+							<rect x="830" y="170" width="120" height="72" rx="5" />
+							<path d="M175 140 H210" marker-end="url(#arrow)" />
+							<path d="M365 140 H400" marker-end="url(#arrow)" />
+							<path d="M570 128 C598 128 598 74 615 74" marker-end="url(#arrow)" />
+							<path d="M570 152 C598 152 598 206 615 206" marker-end="url(#arrow)" />
+							<path d="M775 74 H820" marker-end="url(#arrow)" />
+							<path d="M775 206 H820" marker-end="url(#arrow)" />
+						</g>
+						<g
+							fill="currentColor"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							text-anchor="middle"
+						>
+							<text x="102" y="132" font-size="14" font-weight="600">Settings UI</text>
+							<text x="102" y="154" font-size="11">provider + team dropdown</text>
+							<text x="292" y="132" font-size="14" font-weight="600">Project config</text>
+							<text x="292" y="154" font-size="11">one provider saved</text>
+							<text x="490" y="132" font-size="14" font-weight="600">Intake observer</text>
+							<text x="490" y="154" font-size="11">one provider resolver</text>
+							<text x="700" y="66" font-size="14" font-weight="600">Linear adapter</text>
+							<text x="700" y="88" font-size="11">viewer · issues</text>
+							<text x="700" y="198" font-size="14" font-weight="600">Session service</text>
+							<text x="700" y="220" font-size="11">spawn once</text>
+							<text x="890" y="66" font-size="14" font-weight="600">Linear API</text>
+							<text x="890" y="88" font-size="11">filtered · updatedAt</text>
+							<text x="890" y="198" font-size="14" font-weight="600">Worker</text>
+							<text x="890" y="220" font-size="11">issue prompt</text>
+						</g>
+					</svg>
+				</div>
+
+				<details>
+					<summary>Mermaid source</summary>
+					<pre>
+flowchart LR
+  UI["Settings UI\nprovider + team dropdown"] --> CFG["Project config\none provider saved"]
+  CFG --> OBS["Tracker intake observer\none provider resolver"]
+  OBS --> LIN["Linear adapter\nviewer · issues query"]
+  OBS --> SVC["Session service\nspawn worker once"]
+  LIN --> API["Linear GraphQL API\nteam + assignee + spawnable state filters"]
+  SVC --> WORKER["Worker session\nprompt includes Linear issue"]</pre>
+				</details>
+			</section>
+
+			<section>
+				<h2>Minimal UI</h2>
+				<p>
+					The phase-1 tracker intake card should expose only the controls required to enable the workflow: enable
+					intake, choose a provider from the standard select, choose a Linear team from the standard select, and save
+					through the existing settings form action. No labels, preview count, team search, or advanced filters.
+				</p>
+
+				<figure class="ui-figure" aria-label="Minimal tracker intake card UI mockup">
+					<svg viewBox="0 0 900 420" role="img">
+						<rect width="900" height="420" rx="8" fill="#f6f8fa" />
+						<rect x="225" y="40" width="450" height="300" rx="12" fill="#fff" stroke="#d0d7de" />
+						<text
+							x="253"
+							y="80"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="13"
+							font-weight="600"
+							fill="#1f2328"
+						>
+							Tracker intake
+						</text>
+
+						<text
+							x="253"
+							y="120"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="12"
+							fill="#59636e"
+						>
+							Auto-spawn worker sessions from matching tracker issues.
+						</text>
+
+						<rect x="253" y="144" width="14" height="14" rx="3" fill="#0969da" />
+						<path
+							d="M256 151l3 3 6-7"
+							fill="none"
+							stroke="#fff"
+							stroke-width="1.7"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+						<text
+							x="278"
+							y="156"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="13"
+							fill="#1f2328"
+						>
+							Enable issue intake
+						</text>
+
+						<text
+							x="253"
+							y="196"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="12"
+							fill="#59636e"
+						>
+							Provider
+						</text>
+						<rect x="253" y="208" width="394" height="34" rx="6" fill="#fff" stroke="#d0d7de" />
+						<text
+							x="267"
+							y="230"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="13"
+							fill="#1f2328"
+						>
+							Linear
+						</text>
+						<path
+							d="M620 221l5 5 5-5"
+							fill="none"
+							stroke="#59636e"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+
+						<text
+							x="253"
+							y="275"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="12"
+							fill="#59636e"
+						>
+							Team
+						</text>
+						<rect x="253" y="287" width="394" height="34" rx="6" fill="#fff" stroke="#d0d7de" />
+						<text
+							x="267"
+							y="309"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="13"
+							fill="#1f2328"
+						>
+							ENG · Engineering
+						</text>
+						<path
+							d="M620 300l5 5 5-5"
+							fill="none"
+							stroke="#59636e"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+
+						<rect x="225" y="360" width="112" height="34" rx="6" fill="#0969da" />
+						<text
+							x="281"
+							y="382"
+							text-anchor="middle"
+							font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+							font-size="13"
+							font-weight="600"
+							fill="#fff"
+						>
+							Save changes
+						</text>
+					</svg>
+					<figcaption class="caption">
+						Phase-1 shape: one card, the current select-control provider picker, one Linear team chosen, and the
+						existing settings save action. The selected team's id is stored behind the visible team label.
+					</figcaption>
+				</figure>
+			</section>
+
+			<section>
+				<h2>Work plan</h2>
+				<p>
+					<span class="tag ok">Goal</span> A project can opt into <code>provider=linear</code>, choose an accessible
+					Linear team from the UI, save the config, and have the daemon poll Linear for spawnable issues assigned to the
+					authenticated Linear user. A project uses one provider mode at a time; enabling Linear intake replaces GitHub
+					intake for that project.
+				</p>
+
+				<h3>What changes</h3>
+				<ul>
+					<li>Add Linear as the second tracker provider while keeping one active provider per project.</li>
+					<li>Add a minimal settings path: select Linear, choose an accessible team from a dropdown, and save.</li>
+					<li>Use Linear GraphQL for authenticated user, teams, issue fetch, and assigned spawnable issue listing.</li>
+					<li>
+						Reuse the existing intake loop for polling, duplicate suppression, prompts, worker spawning, and backoff.
+					</li>
+				</ul>
+
+				<h3>Why</h3>
+				<p>
+					This keeps the daemon as the tracker boundary, preserves the one-provider-per-project model, and proves Linear
+					intake with the smallest useful end-to-end slice before label filters, preview, and richer provider polish.
+				</p>
+
+				<h3>Adapter minimum</h3>
+				<table>
+					<thead>
+						<tr>
+							<th>Linear</th>
+							<th>AO</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td><code>triage</code>, <code>backlog</code>, <code>unstarted</code></td>
+							<td><code>IssueOpen</code></td>
+						</tr>
+						<tr>
+							<td><code>started</code></td>
+							<td><code>IssueInProgress</code></td>
+						</tr>
+						<tr>
+							<td><code>completed</code></td>
+							<td><code>IssueDone</code></td>
+						</tr>
+						<tr>
+							<td><code>canceled</code></td>
+							<td><code>IssueCancelled</code></td>
+						</tr>
+					</tbody>
+				</table>
+				<p>
+					Use <code>viewer</code> to identify the authenticated user, <code>teams</code> to populate the team dropdown,
+					an <code>issues</code> query with filter variables for team, assignee, and spawnable workflow state types,
+					<code>orderBy: updatedAt</code>, and Relay cursor pagination for result sets. Store
+					<code>linear:&lt;identifier&gt;</code> when Linear returns an identifier such as <code>ENG-142</code>.
+				</p>
+				<p class="callout">
+					<strong>Rate-limit rule:</strong> push team, assignee, and spawnable-state filtering into GraphQL. Linear
+					GraphQL does not provide a GitHub-style ETag flow for this use case, so AO uses Linear rate-limit reset
+					headers to extend per-project backoff when Linear returns <code>429</code>. Keep AO's observer cadence; do not
+					add webhooks yet.
+				</p>
+			</section>
+
+			<section>
+				<h2>Future scope</h2>
+				<ul>
+					<li>Label filters and matching preview counts.</li>
+					<li>Webhooks or Linear issue updates once AO needs realtime tracker sync.</li>
+				</ul>
+			</section>
+		</main>
+	</body>
+</html>
