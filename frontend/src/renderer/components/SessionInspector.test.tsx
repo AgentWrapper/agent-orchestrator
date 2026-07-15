@@ -298,6 +298,33 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
+	it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(7, "open")], {
+					status: "working",
+					createdAt: "2026-06-15T09:00:00Z",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const worktreeRow = activitySection()
+			.getByText(/Created worktree/)
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const worktreeMarker = worktreeRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
+		expect(worktreeMarker.parentElement).toHaveClass("relative", "flex", "items-center");
+		expect(worktreeMarker).toHaveClass("top-1.5");
+		expect(worktreeMarker).not.toHaveClass("top-1/2", "-translate-y-1/2");
+
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const activityMarker = activityRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
+		expect(activityMarker.parentElement).toHaveClass("relative", "flex", "items-center");
+		expect(activityMarker).toHaveClass("top-1/2", "-translate-y-1/2");
+	});
+
 	it("keeps worktree, PR, and SCM context rows in the Activity timeline", () => {
 		renderWithQuery(
 			<SessionInspector
