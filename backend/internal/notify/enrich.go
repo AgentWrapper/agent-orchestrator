@@ -48,22 +48,31 @@ func titleForIntent(intent Intent) string {
 func bodyForIntent(intent Intent) string {
 	switch intent.Type {
 	case domain.NotificationNeedsInput:
-		return "Paused and waiting for your response."
+		return "Your agent paused and needs a decision to continue. Open the session to respond."
 	case domain.NotificationReadyToMerge:
+		lead := "This PR"
 		if s := sessionLabel(intent); s != "session" {
-			return fmt.Sprintf("%s has no known blocking CI or review feedback.", s)
+			lead = s
 		}
-		return "The pull request has no known blocking CI or review feedback."
+		if target := strings.TrimSpace(intent.PRTargetBranch); target != "" {
+			return fmt.Sprintf("%s passed CI with no blocking review feedback. Ready to merge into %s.", lead, target)
+		}
+		return fmt.Sprintf("%s passed CI with no blocking review feedback and is ready to merge.", lead)
 	case domain.NotificationPRMerged:
+		subject := "The pull request"
 		if title := strings.TrimSpace(intent.PRTitle); title != "" {
-			return fmt.Sprintf("%s was merged.", title)
+			subject = title
 		}
-		return "The pull request was merged."
+		if target := strings.TrimSpace(intent.PRTargetBranch); target != "" {
+			return fmt.Sprintf("%s was merged into %s.", subject, target)
+		}
+		return fmt.Sprintf("%s was merged.", subject)
 	case domain.NotificationPRClosedUnmerged:
+		subject := "The pull request"
 		if title := strings.TrimSpace(intent.PRTitle); title != "" {
-			return fmt.Sprintf("%s was closed without merging.", title)
+			subject = title
 		}
-		return "The pull request was closed without merging."
+		return fmt.Sprintf("%s was closed without merging. Reopen it if that wasn't intended.", subject)
 	default:
 		return ""
 	}
