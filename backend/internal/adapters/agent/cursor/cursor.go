@@ -39,10 +39,10 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 
-// CursorDataDir returns the isolated Cursor profile AO uses for managed Cursor
+// cursorDataDir returns the isolated Cursor profile AO uses for managed Cursor
 // sessions. This keeps Cursor's trust/cache state under AO_DATA_DIR instead of
 // the user's normal ~/.cursor profile.
-func CursorDataDir(dataDir string) string {
+func cursorDataDir(dataDir string) string {
 	return filepath.Join(dataDir, "cursor")
 }
 
@@ -53,7 +53,7 @@ func (p *Plugin) AugmentRuntimeEnv(env map[string]string, dataDir string) {
 	if strings.TrimSpace(dataDir) == "" {
 		return
 	}
-	env[cursorDataDirEnv] = CursorDataDir(dataDir)
+	env[cursorDataDirEnv] = cursorDataDir(dataDir)
 }
 
 // Manifest returns the adapter's static self-description.

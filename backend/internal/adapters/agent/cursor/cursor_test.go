@@ -329,7 +329,7 @@ func TestGetAgentHooksInstallsCursorHooks(t *testing.T) {
 	if !strings.Contains(string(data), "keep me") {
 		t.Fatalf("unmanaged field 'customField' was dropped: %s", data)
 	}
-	trustPath := cursorWorkspaceTrustPath(CursorDataDir(cfg.DataDir), workspace)
+	trustPath := cursorWorkspaceTrustPath(cursorDataDir(cfg.DataDir), workspace)
 	trustData, err := os.ReadFile(trustPath)
 	if err != nil {
 		t.Fatalf("read trust marker: %v", err)
@@ -366,7 +366,7 @@ func TestAugmentRuntimeEnvUsesAODataDir(t *testing.T) {
 
 	plugin.AugmentRuntimeEnv(env, dataDir)
 
-	if got, want := env[cursorDataDirEnv], CursorDataDir(dataDir); got != want {
+	if got, want := env[cursorDataDirEnv], cursorDataDir(dataDir); got != want {
 		t.Fatalf("%s = %q, want %q", cursorDataDirEnv, got, want)
 	}
 }
@@ -374,7 +374,7 @@ func TestAugmentRuntimeEnvUsesAODataDir(t *testing.T) {
 func TestGetAgentHooksUsesCursorDataDirOverride(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	workspace := t.TempDir()
-	cursorDataDir := CursorDataDir(t.TempDir())
+	cursorDataDir := cursorDataDir(t.TempDir())
 	aoDataDir := t.TempDir()
 
 	cfg := ports.WorkspaceHookConfig{
@@ -400,8 +400,8 @@ func TestGetAgentHooksUsesCursorDataDirOverride(t *testing.T) {
 func TestCleanupWorkspaceUsesRecordedTrustPathWhenEnvChanges(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	workspace := t.TempDir()
-	originalCursorDataDir := CursorDataDir(t.TempDir())
-	newCursorDataDir := CursorDataDir(t.TempDir())
+	originalCursorDataDir := cursorDataDir(t.TempDir())
+	newCursorDataDir := cursorDataDir(t.TempDir())
 	aoDataDir := t.TempDir()
 
 	installCfg := ports.WorkspaceHookConfig{
@@ -435,7 +435,7 @@ func TestCleanupWorkspaceRemovesOnlyAOManagedTrustMarker(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	workspace := t.TempDir()
 	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
-	trustPath := cursorWorkspaceTrustPath(CursorDataDir(cfg.DataDir), workspace)
+	trustPath := cursorWorkspaceTrustPath(cursorDataDir(cfg.DataDir), workspace)
 
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)

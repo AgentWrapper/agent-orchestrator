@@ -363,7 +363,7 @@ func cursorWorkspaceTrustBase(cfg ports.WorkspaceHookConfig) (string, error) {
 		return override, nil
 	}
 	if strings.TrimSpace(cfg.DataDir) != "" {
-		return CursorDataDir(cfg.DataDir), nil
+		return cursorDataDir(cfg.DataDir), nil
 	}
 	return "", errors.New("AO data dir is required for Cursor workspace trust")
 }
