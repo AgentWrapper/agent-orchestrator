@@ -7,6 +7,9 @@ type UpdateSettings = {
 	nightlyAck: boolean;
 };
 
+type UpdateSettingsReader = ReturnType<typeof vi.fn<() => Promise<UpdateSettings>>>;
+type UpdaterEventHandler = (...args: any[]) => void;
+
 type AutoUpdaterMock = {
 	on: ReturnType<typeof vi.fn>;
 	checkForUpdates: ReturnType<typeof vi.fn>;
@@ -33,9 +36,16 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
 	};
 }
 
-async function importAutoUpdater(settings: UpdateSettings = { enabled: true, channel: "latest", nightlyAck: false }) {
+async function importAutoUpdater(
+	settings: UpdateSettings | UpdateSettingsReader = { enabled: true, channel: "latest", nightlyAck: false },
+) {
 	vi.resetModules();
+	const updaterEvents = new Map<string, UpdaterEventHandler>();
 	const autoUpdater = createAutoUpdaterMock();
+	autoUpdater.on.mockImplementation((event: string, handler: UpdaterEventHandler) => {
+		updaterEvents.set(event, handler);
+		return autoUpdater;
+	});
 	const dialog = {
 		showMessageBox: vi.fn(),
 	};
@@ -51,13 +61,14 @@ async function importAutoUpdater(settings: UpdateSettings = { enabled: true, cha
 		BrowserWindow,
 		dialog,
 	}));
+	const readUpdateSettings = typeof settings === "function" ? settings : vi.fn(() => Promise.resolve(settings));
 	vi.doMock("./update-settings", () => ({
-		readUpdateSettings: vi.fn(() => Promise.resolve(settings)),
+		readUpdateSettings,
 		writeUpdateSettings: vi.fn(() => Promise.resolve()),
 		UPDATE_SETTINGS_FILE_NAME: "update-settings.json",
 	}));
 	const module = await import("./auto-updater");
-	return { module, autoUpdater, dialog, BrowserWindow };
+	return { module, autoUpdater, dialog, BrowserWindow, updaterEvents, readUpdateSettings };
 }
 
 function latestInterval(setIntervalSpy: ReturnType<typeof vi.spyOn>): {
@@ -73,6 +84,14 @@ function latestInterval(setIntervalSpy: ReturnType<typeof vi.spyOn>): {
 	const results = setIntervalSpy.mock.results;
 	const timer = results.at(-1)?.value as ReturnType<typeof setInterval>;
 	return { callback: callback as () => void, delay: delay as number, timer };
+}
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	const promise = new Promise<T>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
 }
 
 describe("startAutoUpdates", () => {
@@ -161,6 +180,54 @@ describe("startAutoUpdates", () => {
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
 	});
 
+	it("logs updater error events during automatic checks without broadcasting renderer errors", async () => {
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater, BrowserWindow, updaterEvents } = await importAutoUpdater();
+		const err = new Error("feed failed");
+		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+			updaterEvents.get("error")?.(err);
+			return Promise.resolve();
+		});
+
+		await module.startAutoUpdates(stateDir);
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
+		expect(BrowserWindow.getAllWindows).not.toHaveBeenCalled();
+		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+	});
+
+	it("keeps manual updater error events visible to the renderer", async () => {
+		const { module, BrowserWindow, updaterEvents } = await importAutoUpdater();
+		const err = new Error("manual feed failed");
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("error")?.(err);
+
+		expect(BrowserWindow.getAllWindows).toHaveBeenCalled();
+		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual feed failed" });
+	});
+
+	it("logs settings failures during automatic checks and retries on later ticks", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const readUpdateSettings = vi
+			.fn<() => Promise<UpdateSettings>>()
+			.mockRejectedValueOnce(new Error("settings locked"))
+			.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false });
+		const { module, autoUpdater } = await importAutoUpdater(readUpdateSettings);
+
+		await expect(module.startAutoUpdates(stateDir)).resolves.toBeUndefined();
+		expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", expect.any(Error));
+		const { delay } = latestInterval(setIntervalSpy);
+
+		await vi.advanceTimersByTimeAsync(delay);
+
+		expect(readUpdateSettings).toHaveBeenCalledTimes(2);
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+	});
+
 	it("restores automatic download behavior on every automatic retry after a manual check", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
@@ -172,6 +239,37 @@ describe("startAutoUpdates", () => {
 		expect(autoUpdater.autoDownload).toBe(false);
 
 		await vi.advanceTimersByTimeAsync(delay);
+
+		expect(autoUpdater.autoDownload).toBe(true);
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
+	});
+
+	it("waits for an in-flight manual check before a periodic automatic check restores autoDownload", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const manualCheck = deferred();
+		const { module, autoUpdater } = await importAutoUpdater();
+		autoUpdater.checkForUpdates
+			.mockResolvedValueOnce(undefined)
+			.mockReturnValueOnce(manualCheck.promise)
+			.mockResolvedValueOnce(undefined);
+
+		await module.startAutoUpdates(stateDir);
+		const { delay } = latestInterval(setIntervalSpy);
+		const manualPromise = module.checkForUpdatesNow(stateDir);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(autoUpdater.autoDownload).toBe(false);
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+		await vi.advanceTimersByTimeAsync(delay);
+		expect(autoUpdater.autoDownload).toBe(false);
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+		manualCheck.resolve();
+		await manualPromise;
+		await Promise.resolve();
+		await Promise.resolve();
 
 		expect(autoUpdater.autoDownload).toBe(true);
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);

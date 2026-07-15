@@ -40,6 +40,8 @@ let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
+let activeUpdateCheckMode: "automatic" | "manual" | undefined;
+let updateCheckQueue: Promise<void> = Promise.resolve();
 
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
@@ -155,6 +157,20 @@ function stopEscalationTimer(): void {
 	}
 }
 
+async function runSerializedUpdateCheck(mode: "automatic" | "manual", check: () => Promise<void>): Promise<void> {
+	const run = async () => {
+		activeUpdateCheckMode = mode;
+		try {
+			await check();
+		} finally {
+			activeUpdateCheckMode = undefined;
+		}
+	};
+	const queued = updateCheckQueue.then(run, run);
+	updateCheckQueue = queued.catch(() => undefined);
+	await queued;
+}
+
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
@@ -199,6 +215,10 @@ function wireUpdaterEvents(): void {
 	});
 	autoUpdater.on("error", (err) => {
 		// Never crash on update failure (offline, unsigned macOS, etc.).
+		if (activeUpdateCheckMode === "automatic") {
+			console.error("auto-update check failed:", err);
+			return;
+		}
 		broadcast({ state: "error", message: err?.message ?? String(err) });
 	});
 }
@@ -207,26 +227,32 @@ export function getUpdateStatus(): UpdateStatus {
 	return lastStatus;
 }
 
-async function runAutomaticUpdateCheck(stateDir: string): Promise<void> {
-	const settings = await readUpdateSettings(stateDir);
-	if (!settings.enabled) return;
-
-	escalationStateDir = stateDir;
-	wireUpdaterEvents();
-	configureFeed(settings.channel);
-	autoUpdater.autoDownload = true;
-	autoUpdater.autoInstallOnAppQuit = true;
-
+async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
+	let shouldSchedule = true;
 	try {
-		await autoUpdater.checkForUpdates();
+		await runSerializedUpdateCheck("automatic", async () => {
+			const settings = await readUpdateSettings(stateDir);
+			if (!settings.enabled) {
+				shouldSchedule = false;
+				return;
+			}
+
+			escalationStateDir = stateDir;
+			wireUpdaterEvents();
+			configureFeed(settings.channel);
+			autoUpdater.autoDownload = true;
+			autoUpdater.autoInstallOnAppQuit = true;
+			await autoUpdater.checkForUpdates();
+		});
 	} catch (err) {
 		console.error("auto-update check failed:", err);
 	}
+	return shouldSchedule;
 }
 
 function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
 	if (automaticUpdateTimer !== undefined) return;
-	automaticUpdateTimer = setInterval(() => runAutomaticUpdateCheck(stateDir), AUTOMATIC_UPDATE_CHECK_INTERVAL_MS);
+	automaticUpdateTimer = setInterval(() => void runAutomaticUpdateCheck(stateDir), AUTOMATIC_UPDATE_CHECK_INTERVAL_MS);
 	automaticUpdateTimer.unref?.();
 }
 
@@ -234,11 +260,7 @@ function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
 // It is a thin shell: all policy (channel, opt-in) comes from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
-	const settings = await readUpdateSettings(stateDir);
-	if (!settings.enabled) return;
-
-	await runAutomaticUpdateCheck(stateDir);
-	schedulePeriodicAutomaticUpdateCheck(stateDir);
+	if (await runAutomaticUpdateCheck(stateDir)) schedulePeriodicAutomaticUpdateCheck(stateDir);
 }
 
 // checkForUpdatesNow runs a manual update check regardless of the auto-update
@@ -253,13 +275,15 @@ export async function checkForUpdatesNow(stateDir: string): Promise<void> {
 		broadcast({ state: "unsupported", message: "Updates are only available in the installed app." });
 		return;
 	}
-	const settings = await readUpdateSettings(stateDir);
-	configureFeed(settings.channel);
-	autoUpdater.autoDownload = false;
-	autoUpdater.autoInstallOnAppQuit = true;
 	broadcast({ state: "checking" });
 	try {
-		await autoUpdater.checkForUpdates();
+		await runSerializedUpdateCheck("manual", async () => {
+			const settings = await readUpdateSettings(stateDir);
+			configureFeed(settings.channel);
+			autoUpdater.autoDownload = false;
+			autoUpdater.autoInstallOnAppQuit = true;
+			await autoUpdater.checkForUpdates();
+		});
 	} catch (err) {
 		broadcast({ state: "error", message: (err as Error)?.message ?? "Update check failed" });
 	}
