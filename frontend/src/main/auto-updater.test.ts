@@ -196,6 +196,31 @@ describe("startAutoUpdates", () => {
 		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
 	});
 
+	it("keeps automatic download errors silent after checkForUpdates resolves", async () => {
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const lateDownload = deferred();
+		const { module, autoUpdater, BrowserWindow, updaterEvents } = await importAutoUpdater();
+		const err = new Error("download failed");
+		autoUpdater.checkForUpdates.mockResolvedValueOnce({ downloadPromise: lateDownload.promise });
+
+		const startPromise = module.startAutoUpdates(stateDir);
+		await Promise.resolve();
+		await Promise.resolve();
+		let startSettled = false;
+		void startPromise.then(() => {
+			startSettled = true;
+		});
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(startSettled).toBe(false);
+		updaterEvents.get("error")?.(err);
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
+		expect(BrowserWindow.getAllWindows).not.toHaveBeenCalled();
+		lateDownload.resolve();
+		await startPromise;
+	});
+
 	it("keeps manual updater error events visible to the renderer", async () => {
 		const { module, BrowserWindow, updaterEvents } = await importAutoUpdater();
 		const err = new Error("manual feed failed");

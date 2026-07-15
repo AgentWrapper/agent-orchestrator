@@ -242,7 +242,8 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
 			configureFeed(settings.channel);
 			autoUpdater.autoDownload = true;
 			autoUpdater.autoInstallOnAppQuit = true;
-			await autoUpdater.checkForUpdates();
+			const result = await autoUpdater.checkForUpdates();
+			if (result?.downloadPromise) await result.downloadPromise;
 		});
 	} catch (err) {
 		console.error("auto-update check failed:", err);
