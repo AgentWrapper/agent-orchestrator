@@ -2,20 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Package a persistent remote-only Electron client that reaches the unchanged AO daemon on `claude` through an authenticated loopback forwarding proxy, then deploy the daemon as a user systemd service and install the client locally.
+**Goal:** Package a persistent remote-only Electron client that reaches the AO daemon on `claude` through an authenticated loopback forwarding proxy, browses server-side project directories through one read-only API, then deploy the daemon as a user systemd service and install the client locally.
 
-**Architecture:** The existing daemon runs unchanged under systemd and restores its authenticated `0.0.0.0:3011` LAN listener. A remote-client Electron build stores one server configuration and runs a main-process loopback proxy that injects the existing bearer password while forwarding HTTP, SSE, and WebSocket traffic unchanged; the renderer continues using its existing loopback daemon protocol.
+**Architecture:** The daemon runs under systemd and restores its authenticated `0.0.0.0:3011` LAN listener. A remote-client Electron build stores one server configuration and runs a main-process loopback proxy that injects the existing bearer password while forwarding HTTP, SSE, and WebSocket traffic unchanged. One additive app route lists directories using the daemon process user's operating-system permissions; the remote create-project flow uses that route while local builds retain the native folder picker.
 
 **Tech Stack:** Go 1.25+ cross-compilation, systemd user services, Electron 33, Node HTTP/TCP primitives, React 19, TypeScript 5.6, Vitest 4, Electron Forge 7.
 
 ## Global Constraints
 
-- Do not change daemon routes, DTOs, SSE events, WebSocket frames, terminal framing, or backend business services.
+- Do not change existing daemon routes, SSE events, WebSocket frames, terminal framing, or backend business services; add only `GET /api/v1/filesystem/directories` and its DTOs.
 - Keep the primary listener on `127.0.0.1`; use only the existing authenticated LAN listener on `0.0.0.0:3011`.
 - Keep the default desktop build unchanged; add a separate remote-client build target.
 - Store all desktop state beneath `~/.ao/electron` and never persist an unencrypted desktop connection password.
 - The remote client must never spawn, supervise, or shut down the remote daemon.
 - Use Node built-ins for proxying; add no proxy dependency.
+- Directory browsing is read-only, may start at `/`, and is limited only by the daemon process user's operating-system permissions.
 
 ---
 
@@ -36,6 +37,17 @@
 - Modify `frontend/src/renderer/components/GlobalSettingsForm.tsx`: render the connection settings section in remote builds.
 - Modify `frontend/forge.config.ts`: omit daemon resource and add a remote build marker.
 - Modify `frontend/package.json`: add `package:remote` and `make:remote` scripts.
+- Create `backend/internal/httpd/controllers/filesystem.go`: read-only directory listing controller.
+- Create `backend/internal/httpd/controllers/filesystem_test.go`: route behavior and error-envelope tests.
+- Modify `backend/internal/httpd/controllers/dto.go`: directory query and response DTOs.
+- Modify `backend/internal/httpd/api.go`: mount the filesystem controller in the bounded app API.
+- Modify `backend/internal/httpd/apispec/specgen/build.go`: register the route and named schemas.
+- Regenerate `backend/internal/httpd/apispec/openapi.yaml` and `frontend/src/api/schema.ts` together.
+- Create `frontend/src/renderer/components/RemoteDirectoryPickerDialog.tsx`: remote path navigation and selection UI.
+- Create `frontend/src/renderer/components/RemoteDirectoryPickerDialog.test.tsx`: loading, navigation, errors, and selection tests.
+- Modify `frontend/src/renderer/components/CreateProjectFlow.tsx`: use the remote picker only in remote builds.
+- Modify `frontend/src/renderer/components/Sidebar.test.tsx`: verify the selected server path reaches project creation without opening Finder.
+- Modify `frontend/src/renderer/lib/api-client.ts`: include the generated filesystem route in telemetry normalization.
 
 ---
 
@@ -49,7 +61,7 @@
 - Produces: `RemoteServerConfig`, `RemoteServerConfigInput`, `readRemoteServerConfig`, `writeRemoteServerConfig`, `validateRemoteServerConfigInput`.
 - Consumes: an injected encrypt/decrypt pair backed by Electron `safeStorage` in production.
 
-- [ ] **Step 1: Write failing validation and persistence tests**
+- [x] **Step 1: Write failing validation and persistence tests**
 
 Cover missing host, non-integer/out-of-range port, empty password, encrypted round trip, missing file, corrupt file, and atomic replacement retention. The test encryptor must visibly transform bytes:
 
@@ -62,13 +74,13 @@ const crypto = {
 
 Assert the stored JSON contains `sealed:` in base64 form and does not contain the plaintext password.
 
-- [ ] **Step 2: Run the focused test and verify failure**
+- [x] **Step 2: Run the focused test and verify failure**
 
 Run: `cd frontend && npm test -- --run src/main/remote-server-config.test.ts`
 
 Expected: FAIL because `remote-server-config.ts` does not exist.
 
-- [ ] **Step 3: Implement validated encrypted storage**
+- [x] **Step 3: Implement validated encrypted storage**
 
 Define:
 
@@ -91,13 +103,13 @@ export async function writeRemoteServerConfig(
 
 Normalize `host.trim()`, require port `1..65535`, require a non-empty password, serialize `encryptedPassword` as base64, create the directory with mode `0700`, write a mode `0600` temporary file, and atomically rename it to `remote-server.json`.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `cd frontend && npm test -- --run src/main/remote-server-config.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the configuration unit**
+- [x] **Step 5: Commit the configuration unit**
 
 ```bash
 git add frontend/src/main/remote-server-config.ts frontend/src/main/remote-server-config.test.ts
@@ -114,7 +126,7 @@ git commit -m "feat: persist encrypted remote server config"
 - Consumes: `RemoteServerConfigInput` from Task 1.
 - Produces: `startRemoteForwarder(config): Promise<RemoteForwarder>` where `RemoteForwarder` exposes `port` and `close()`.
 
-- [ ] **Step 1: Write failing HTTP and SSE tests**
+- [x] **Step 1: Write failing HTTP and SSE tests**
 
 Start a real loopback upstream server. Assert a forwarded POST preserves path, query, body, and `Origin`, rewrites `Host`, and sets:
 
@@ -124,17 +136,17 @@ expect(request.headers.authorization).toBe("Bearer test-password");
 
 For SSE, write one event, wait for the client to receive it before ending the upstream response, and prove the proxy did not buffer the stream.
 
-- [ ] **Step 2: Write a failing WebSocket upgrade test**
+- [x] **Step 2: Write a failing WebSocket upgrade test**
 
 Use a raw `net.Socket` client and upstream `http.Server` `upgrade` handler. Assert the upstream receives `Authorization: Bearer test-password`, returns `101 Switching Protocols`, and bytes flow in both directions after upgrade.
 
-- [ ] **Step 3: Run tests and verify failure**
+- [x] **Step 3: Run tests and verify failure**
 
 Run: `cd frontend && npm test -- --run src/main/remote-forwarder.test.ts`
 
 Expected: FAIL because `remote-forwarder.ts` does not exist.
 
-- [ ] **Step 4: Implement the forwarder with Node built-ins**
+- [x] **Step 4: Implement the forwarder with Node built-ins**
 
 Define:
 
@@ -145,13 +157,13 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 
 Use `http.createServer` and `http.request` for HTTP/SSE. Copy incoming headers, replace `host`, set `authorization`, pipe both bodies, and return JSON `502` on upstream connection failure before headers are sent. Handle `server.on("upgrade")` with an upstream `net.connect`, write the original upgrade request with replaced `Host` and injected `Authorization`, forward `head`, and pipe sockets bidirectionally. Bind with `server.listen(0, "127.0.0.1")`.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `cd frontend && npm test -- --run src/main/remote-forwarder.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the proxy unit**
+- [x] **Step 6: Commit the proxy unit**
 
 ```bash
 git add frontend/src/main/remote-forwarder.ts frontend/src/main/remote-forwarder.test.ts
@@ -170,7 +182,7 @@ git commit -m "feat: add authenticated remote daemon forwarder"
 - Consumes: configuration storage from Task 1 and `startRemoteForwarder` from Task 2.
 - Produces: `RemoteClientRuntime.start`, `getStatus`, `saveConfig`, `getConfig`, and `stop` plus preload `remoteServer.get/save/isRemoteClient`.
 
-- [ ] **Step 1: Write failing runtime lifecycle tests**
+- [x] **Step 1: Write failing runtime lifecycle tests**
 
 Inject fake read/write, proxy start, and probe functions. Cover:
 
@@ -181,34 +193,38 @@ await runtime.saveConfig(badCandidate); // probe fails -> old proxy/config remai
 await runtime.stop(); // closes local proxy only
 ```
 
-Assert status listeners receive the ready proxy port and no method exposes the stored password.
+Assert status listeners receive the ready proxy port. `getConfig` omits the password
+for non-settings callers, while `getEditableConfig` returns it only to the trusted
+settings IPC so the saved credential can render masked and be edited.
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run: `cd frontend && npm test -- --run src/main/remote-client-runtime.test.ts`
 
 Expected: FAIL because the runtime module does not exist.
 
-- [ ] **Step 3: Implement the runtime**
+- [x] **Step 3: Implement the runtime**
 
 The candidate probe calls `http://127.0.0.1:<candidate-proxy-port>/healthz` with a five-second timeout and validates the existing AO `service` identity. Start and validate a replacement before closing the old proxy. Map missing config to `not_configured`, connection/probe errors to `daemon_unreachable`, and successful validation to `{ state: "ready", port: proxy.port }`.
 
-- [ ] **Step 4: Add preload IPC types**
+- [x] **Step 4: Add preload IPC types**
 
 Expose:
 
 ```ts
 remoteServer: {
 	isRemoteClient: () => ipcRenderer.invoke("remoteServer:isRemoteClient") as Promise<boolean>,
-	get: () => ipcRenderer.invoke("remoteServer:get") as Promise<{ host: string; port: number } | null>,
+	get: () => ipcRenderer.invoke("remoteServer:get") as Promise<RemoteServerConfigInput | null>,
 	save: (input: RemoteServerConfigInput) =>
 		ipcRenderer.invoke("remoteServer:save", input) as Promise<DaemonStatus>,
 }
 ```
 
-Do not return the saved password from `get`.
+Return the saved password only through this trusted Electron IPC. The renderer keeps it
+in component state, uses `type="password"` by default, and never writes it to local
+storage, telemetry, query strings, or logs.
 
-- [ ] **Step 5: Wire remote mode in Electron main**
+- [x] **Step 5: Wire remote mode in Electron main**
 
 When the packaged remote marker exists or `AO_REMOTE_CLIENT=1` is set in development:
 
@@ -220,13 +236,13 @@ When the packaged remote marker exists or `AO_REMOTE_CLIENT=1` is set in develop
 
 Keep the existing local daemon branch byte-for-byte operational for normal builds.
 
-- [ ] **Step 6: Run focused and main-process tests**
+- [x] **Step 6: Run focused and main-process tests**
 
 Run: `cd frontend && npm test -- --run src/main/remote-client-runtime.test.ts src/main/daemon-owner.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit runtime wiring**
+- [x] **Step 7: Commit runtime wiring**
 
 ```bash
 git add frontend/src/main/remote-client-runtime.ts frontend/src/main/remote-client-runtime.test.ts frontend/src/preload.ts frontend/src/main.ts
@@ -246,31 +262,31 @@ git commit -m "feat: wire remote client daemon runtime"
 - Consumes: preload `remoteServer` API from Task 3 and existing daemon status notifications.
 - Produces: a blocking first-run dialog and an editable global-settings section.
 
-- [ ] **Step 1: Write failing component tests**
+- [x] **Step 1: Write failing component tests**
 
-Test that remote mode with no config opens a non-dismissible dialog, validates host/port/password, submits all three fields, displays a rejected save error, and closes after a ready result. Test that the settings variant loads saved host/port, leaves password blank, and requires password only when saving a changed configuration.
+Test that remote mode with no config opens a non-dismissible dialog, validates host/port/password, submits all three fields, displays a rejected save error, and closes after a ready result. Test that the settings variant loads the saved password masked, toggles explicit reveal/hide controls, and preserves the value after a successful save.
 
-- [ ] **Step 2: Run focused component tests and verify failure**
+- [x] **Step 2: Run focused component tests and verify failure**
 
 Run: `cd frontend && npm test -- --run src/renderer/components/RemoteServerSettings.test.tsx`
 
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement the connection form**
+- [x] **Step 3: Implement the connection form**
 
-Use existing `Dialog`, `Input`, `Label`, and `Button` primitives. Fields are `Server IP or hostname`, `Port`, and `Connection password`. The submit handler calls `aoBridge.remoteServer.save`; it renders `status.message` for non-ready responses and clears the password field after success.
+Use existing `Dialog`, `Input`, `Label`, and `Button` primitives. Fields are `Server IP or hostname`, `Port`, and `Connection password`. The submit handler calls `aoBridge.remoteServer.save` and renders `status.message` for non-ready responses. Keep the password field masked by default, add `Eye`/`EyeOff` reveal controls, and retain the saved value after success.
 
-- [ ] **Step 4: Mount first-run and settings surfaces**
+- [x] **Step 4: Mount first-run and settings surfaces**
 
 In `_shell.tsx`, make the loader call `refreshDaemonStatus()` and fetch workspace data only when status is ready. Mount the blocking form when remote mode is true and status code is `not_configured`. In `GlobalSettingsForm`, render the settings variant only for remote builds. Add the browser-preview fallback methods in `bridge.ts` so tests remain typed.
 
-- [ ] **Step 5: Run focused renderer tests**
+- [x] **Step 5: Run focused renderer tests**
 
 Run: `cd frontend && npm test -- --run src/renderer/components/RemoteServerSettings.test.tsx src/renderer/hooks/useDaemonStatus.test.tsx`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the UI**
+- [x] **Step 6: Commit the UI**
 
 ```bash
 git add frontend/src/renderer/components/RemoteServerSettings.tsx frontend/src/renderer/components/RemoteServerSettings.test.tsx frontend/src/renderer/lib/bridge.ts frontend/src/renderer/routes/_shell.tsx frontend/src/renderer/components/GlobalSettingsForm.tsx
@@ -288,7 +304,7 @@ git commit -m "feat: add persistent remote server settings"
 - Consumes: `AO_REMOTE_CLIENT=1` at package time.
 - Produces: an app bundle containing `remote-client.json` and no `Resources/daemon` directory.
 
-- [ ] **Step 1: Add remote package scripts**
+- [x] **Step 1: Add remote package scripts**
 
 Add:
 
@@ -299,11 +315,11 @@ Add:
 
 These scripts deliberately bypass the existing `prepackage`/`premake` daemon build lifecycle because their names have distinct npm pre-hooks.
 
-- [ ] **Step 2: Make Forge resources conditional**
+- [x] **Step 2: Make Forge resources conditional**
 
 When `AO_REMOTE_CLIENT === "1"`, generate `remote-client.json` in `prePackage`, omit `daemon` from `extraResource`, and include the marker. For normal builds, remove any stale marker before packaging and retain the current resource list unchanged.
 
-- [ ] **Step 3: Run typecheck and package the remote app**
+- [x] **Step 3: Run typecheck and package the remote app**
 
 Run:
 
@@ -315,7 +331,7 @@ npm run package:remote
 
 Expected: typecheck passes and Forge creates `out/Agent Orchestrator-darwin-arm64/Agent Orchestrator.app`.
 
-- [ ] **Step 4: Verify package contents**
+- [x] **Step 4: Verify package contents**
 
 Run:
 
@@ -326,20 +342,224 @@ test ! -e "frontend/out/Agent Orchestrator-darwin-arm64/Agent Orchestrator.app/C
 
 Expected: both commands exit 0.
 
-- [ ] **Step 5: Commit package flavor**
+- [x] **Step 5: Commit package flavor**
 
 ```bash
 git add frontend/forge.config.ts frontend/package.json
 git commit -m "build: add remote-only desktop package"
 ```
 
-### Task 6: Full Verification, Remote Deployment, and Local Installation
+### Task 6: Read-only Remote Directory API
+
+**Files:**
+- Create: `backend/internal/httpd/controllers/filesystem.go`
+- Create: `backend/internal/httpd/controllers/filesystem_test.go`
+- Modify: `backend/internal/httpd/controllers/dto.go`
+- Modify: `backend/internal/httpd/api.go`
+- Modify: `backend/internal/httpd/apispec/specgen/build.go`
+- Modify: `frontend/src/renderer/lib/api-client.ts`
+- Regenerate: `backend/internal/httpd/apispec/openapi.yaml`
+- Regenerate: `frontend/src/api/schema.ts`
+
+**Interfaces:**
+- Consumes: the daemon process user's filesystem permissions and the existing LAN `authMiddleware`.
+- Produces: `GET /api/v1/filesystem/directories?path=<absolute-path>` returning `ListDirectoriesResponse`.
+
+- [ ] **Step 1: Write failing controller tests**
+
+Create temporary directories containing a regular file, a hidden directory, mixed-case
+directory names, and a symbolic link to a directory. Assert the route omits files,
+includes hidden and linked directories, sorts names case-insensitively, returns a
+parent, and accepts `/`. Cover omitted `path` using `t.Setenv("HOME", home)` plus the
+standard error envelope for a relative path, missing path, and regular-file path.
+Add an internal table test that passes `fs.ErrPermission` and an unexpected error to
+the controller's error mapper and locks `403 DIRECTORY_PERMISSION_DENIED` and
+`500 DIRECTORY_READ_FAILED`.
+
+The successful response shape is:
+
+```json
+{
+  "path": "/home/claude",
+  "parent": "/home",
+  "directories": [{ "name": "code", "path": "/home/claude/code" }]
+}
+```
+
+- [ ] **Step 2: Run the focused test and verify failure**
+
+Run: `cd backend && go test ./internal/httpd/controllers -run Filesystem -count=1`
+
+Expected: FAIL because `/api/v1/filesystem/directories` is not mounted.
+
+- [ ] **Step 3: Define the DTOs and controller**
+
+Add these DTOs to `controllers/dto.go`:
+
+```go
+type ListDirectoriesQuery struct {
+	Path string `query:"path,omitempty" description:"Absolute server directory path. Defaults to the daemon user's home directory."`
+}
+
+type DirectoryEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type ListDirectoriesResponse struct {
+	Path        string           `json:"path"`
+	Parent      *string          `json:"parent"`
+	Directories []DirectoryEntry `json:"directories"`
+}
+```
+
+Implement `FilesystemController.Register` and `listDirectories` in
+`controllers/filesystem.go`. Resolve an omitted path with `os.UserHomeDir`, reject
+relative paths, clean absolute paths, use `os.ReadDir`, follow symlinks with `os.Stat`,
+return only directory entries, normalize empty slices to `[]`, and sort by
+`strings.ToLower(name)` with the original name as the tie-breaker. Map errors exactly
+as defined in the design spec.
+
+- [ ] **Step 4: Mount and describe the route**
+
+Add `filesystem *controllers.FilesystemController` to `httpd.API`, construct it in
+`NewAPI`, and register it inside the bounded REST group. Add a `filesystem` tag,
+schema-name entries, and a `filesystemOperations()` operation to `specgen/build.go`:
+
+```go
+{
+	method: http.MethodGet,
+	path: "/api/v1/filesystem/directories",
+	id: "listDirectories",
+	tag: "filesystem",
+	pathParams: []any{controllers.ListDirectoriesQuery{}},
+	resps: []respUnit{
+		{http.StatusOK, controllers.ListDirectoriesResponse{}},
+		{http.StatusBadRequest, envelope.APIError{}},
+		{http.StatusForbidden, envelope.APIError{}},
+		{http.StatusNotFound, envelope.APIError{}},
+		{http.StatusUnprocessableEntity, envelope.APIError{}},
+		{http.StatusInternalServerError, envelope.APIError{}},
+	},
+}
+```
+
+Add `/api/v1/filesystem/directories` to `ROUTE_TEMPLATES` in `api-client.ts`.
+
+- [ ] **Step 5: Regenerate and verify the API contract**
+
+Run:
+
+```bash
+npm run api
+cd backend && go test ./internal/httpd/... -count=1
+```
+
+Expected: controller tests, route/spec parity, and spec drift tests pass; both generated
+artifacts include `listDirectories` and `ListDirectoriesResponse`.
+
+- [ ] **Step 6: Commit the API unit**
+
+```bash
+git add backend/internal/httpd/controllers/filesystem.go backend/internal/httpd/controllers/filesystem_test.go backend/internal/httpd/controllers/dto.go backend/internal/httpd/api.go backend/internal/httpd/apispec/specgen/build.go backend/internal/httpd/apispec/openapi.yaml frontend/src/api/schema.ts frontend/src/renderer/lib/api-client.ts
+git commit -m "feat: add remote directory listing API"
+```
+
+### Task 7: Remote Directory Picker
+
+**Files:**
+- Create: `frontend/src/renderer/components/RemoteDirectoryPickerDialog.tsx`
+- Create: `frontend/src/renderer/components/RemoteDirectoryPickerDialog.test.tsx`
+- Modify: `frontend/src/renderer/components/CreateProjectFlow.tsx`
+- Modify: `frontend/src/renderer/components/Sidebar.test.tsx`
+
+**Interfaces:**
+- Consumes: generated `ListDirectoriesResponse` through `apiClient.GET`.
+- Produces: `RemoteDirectoryPickerDialog` with `open`, `kind`, `disabled`, `onOpenChange`, and `onSelect(path)` props.
+
+- [ ] **Step 1: Write failing component and flow tests**
+
+Mock `apiClient.GET` with home and child responses. Assert opening the dialog requests
+the path without a query, child activation requests that child's absolute path, the up
+action requests `parent`, typed absolute paths can be opened, breadcrumbs can return to
+an ancestor, API errors remain visible without closing the dialog, and `Select this
+folder` calls `onSelect(current.path)`. Update the Sidebar remote-flow test to prove
+the selected path reaches `onCreateProject` and `window.ao.app.chooseDirectory` is never
+called.
+
+- [ ] **Step 2: Run the focused tests and verify failure**
+
+Run:
+
+```bash
+cd frontend
+npm test -- --run src/renderer/components/RemoteDirectoryPickerDialog.test.tsx src/renderer/components/Sidebar.test.tsx
+```
+
+Expected: FAIL because `RemoteDirectoryPickerDialog` does not exist and the current
+remote flow has no directory API navigation.
+
+- [ ] **Step 3: Implement the picker**
+
+Define:
+
+```ts
+export type RemoteDirectoryPickerDialogProps = {
+	disabled: boolean;
+	kind: ProjectKind;
+	onOpenChange: (open: boolean) => void;
+	onSelect: (path: string) => void;
+	open: boolean;
+};
+```
+
+On open, call:
+
+```ts
+apiClient.GET("/api/v1/filesystem/directories", {
+	params: path ? { query: { path } } : undefined,
+});
+```
+
+Render an editable monospaced path field with an icon-only `Go` action, root-aware
+breadcrumbs, an `Up` icon button, a stable-height scrollable directory list, loading
+and error states, and `Cancel` plus `Select this folder` commands. Use existing UI
+primitives and Lucide icons. Directory activation navigates; it never invokes Electron's
+native picker.
+
+- [ ] **Step 4: Integrate the remote create-project flow**
+
+Replace the inline `RemoteProjectPathDialog` in `CreateProjectFlow.tsx` with the new
+component. Preserve local `chooseDirectory` and scan behavior unchanged. Selecting the
+current remote directory sets `selectedPath` and opens the existing agent sheet; project
+creation continues through the existing `onCreateProject` callback.
+
+- [ ] **Step 5: Run focused frontend verification**
+
+Run:
+
+```bash
+cd frontend
+npm test -- --run src/renderer/components/RemoteDirectoryPickerDialog.test.tsx src/renderer/components/Sidebar.test.tsx src/renderer/__tests__/integration/board-empty-states.test.tsx
+npm run typecheck
+```
+
+Expected: all focused tests and TypeScript checks pass.
+
+- [ ] **Step 6: Commit the picker unit**
+
+```bash
+git add frontend/src/renderer/components/RemoteDirectoryPickerDialog.tsx frontend/src/renderer/components/RemoteDirectoryPickerDialog.test.tsx frontend/src/renderer/components/CreateProjectFlow.tsx frontend/src/renderer/components/Sidebar.test.tsx
+git commit -m "feat: browse remote project directories"
+```
+
+### Task 8: Full Verification, Remote Deployment, and Local Installation
 
 **Files:**
 - No repository files. Deployment artifacts and secrets remain outside Git.
 
 **Interfaces:**
-- Consumes: tested source tree and remote package from Tasks 1-5.
+- Consumes: tested source tree and remote package from Tasks 1-7.
 - Produces: persistent service on `claude` and installed remote client on the local Mac.
 
 - [ ] **Step 1: Run repository verification**
@@ -349,6 +569,7 @@ Run:
 ```bash
 npm run lint
 npm run frontend:typecheck
+npm run api
 cd frontend && npm test && npm run package:remote
 ```
 
@@ -405,7 +626,7 @@ Quit the current app, move the current `/Applications/Agent Orchestrator.app` to
 
 - [ ] **Step 6: Configure and verify end to end**
 
-Enter `192.168.2.29`, port `3011`, and the generated password. Verify project/session REST data loads, the SSE connection reports connected, and a session terminal attaches over `/mux`. Quit and reopen the app; verify it reconnects without asking for configuration.
+Enter `192.168.2.29`, port `3011`, and the generated password. Verify project/session REST data loads, the authenticated directory API browses `/`, `/home/claude`, and a nested directory, the desktop directory picker navigates and selects a server path without opening Finder, the SSE connection reports connected, and a session terminal attaches over `/mux`. Quit and reopen the app; verify it reconnects without asking for configuration.
 
 - [ ] **Step 7: Prove daemon persistence**
 
