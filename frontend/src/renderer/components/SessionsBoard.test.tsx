@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { navigateMock, workspaceQueryMock } = vi.hoisted(() => ({
@@ -101,5 +101,49 @@ describe("SessionsBoard", () => {
 		const badge = screen.getByText("Idle").closest("span");
 		expect(badge).toHaveClass("text-passive");
 		expect(badge).not.toHaveClass("text-working");
+	});
+
+	it("shows session ids on duplicate-titled board cards and terminated chips", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "radic-3",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "Verify the nav fix",
+							provider: "claude-code",
+							branch: "ao/verify-nav",
+							status: "terminated",
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "radic-4",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "Verify the nav fix",
+							provider: "claude-code",
+							branch: "ao/verify-nav",
+							status: "needs_input",
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("radic-4")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		expect(screen.getByText("radic-3")).toBeInTheDocument();
+		expect(screen.getAllByText("Verify the nav fix")).toHaveLength(2);
 	});
 });

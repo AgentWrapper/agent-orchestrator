@@ -316,7 +316,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									onClick={() => openSession(s)}
 									type="button"
 								>
-									<span className="text-xs text-muted-foreground">{s.title}</span>
+									<span className="block max-w-56 truncate text-xs text-muted-foreground">{s.title}</span>
+									{!sameLabel(s.title, s.id) ? (
+										<span className="mt-1 block max-w-56 truncate font-mono text-2xs text-passive">{s.id}</span>
+									) : null}
 								</button>
 							))}
 						</div>
@@ -377,6 +380,8 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const showSessionId = !sameLabel(session.title, session.id);
+	const metaLines = [showSessionId ? session.id : "", showBranch ? branch : ""].filter(Boolean);
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (event.currentTarget !== event.target) return;
 		if (event.key !== "Enter" && event.key !== " ") return;
@@ -406,13 +411,21 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 				<div
 					className={cn(
 						"px-3.25 text-control font-medium leading-snug tracking-tight text-foreground",
-						showBranch ? "pb-2" : "pb-3",
+						metaLines.length > 0 ? "pb-2" : "pb-3",
 						"line-clamp-2 overflow-hidden",
 					)}
 				>
 					{session.title}
 				</div>
-				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
+				{metaLines.length > 0 && (
+					<div className="flex flex-col gap-1 px-3.25 pb-2.5 font-mono text-2xs leading-tight text-passive">
+						{metaLines.map((line) => (
+							<span key={line} className="truncate">
+								{line}
+							</span>
+						))}
+					</div>
+				)}
 			</div>
 			<div
 				className="border-t border-border px-3.25 py-2 font-mono text-2xs text-passive"
