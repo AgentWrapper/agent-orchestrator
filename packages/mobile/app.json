@@ -22,6 +22,7 @@
     },
     "android": {
       "package": "aoagents.ao",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#0a0b0d",
         "foregroundImage": "./assets/android-icon-foreground.png"
