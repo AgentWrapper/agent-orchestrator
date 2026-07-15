@@ -6,7 +6,7 @@ import { queryClient as defaultQueryClient } from "../lib/query-client";
 import { createEventTransport } from "../lib/event-transport";
 
 const STATUS_REFRESH_MS = 2_000;
-const READY_STATUS_REFRESH_MS = 10_000;
+const READY_STATUS_REFRESH_MS = 500;
 
 export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 	const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });

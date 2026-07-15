@@ -114,7 +114,7 @@ describe("useDaemonStatus", () => {
 		expect(setApiBaseUrlMock).toHaveBeenCalledWith("http://127.0.0.1:4777");
 	});
 
-	it("refreshes ready status so adopted daemon liveness is rechecked", async () => {
+	it("refreshes ready status quickly so adopted daemon crashes are detected promptly", async () => {
 		vi.useFakeTimers();
 		getStatusMock.mockResolvedValueOnce({ state: "ready", port: 4777 }).mockResolvedValueOnce({ state: "stopped" });
 		const queryClient = fakeQueryClient();
@@ -126,7 +126,7 @@ describe("useDaemonStatus", () => {
 		});
 		expect(result.current).toEqual({ state: "ready", port: 4777 });
 		await act(async () => {
-			await vi.advanceTimersByTimeAsync(10_000);
+			await vi.advanceTimersByTimeAsync(500);
 		});
 
 		expect(result.current).toEqual({ state: "stopped" });

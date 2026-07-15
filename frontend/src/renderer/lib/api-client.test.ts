@@ -208,6 +208,7 @@ describe("api error telemetry", () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
+		window.ao!.daemon.getStatus = async () => ({ state: "stopped" });
 		setApiBaseUrl("http://127.0.0.1:3001");
 	});
 
@@ -240,6 +241,8 @@ describe("api error telemetry", () => {
 	});
 
 	it("reports network_error and rethrows", async () => {
+		const getStatusMock = vi.fn().mockResolvedValue({ state: "stopped" });
+		window.ao!.daemon.getStatus = getStatusMock;
 		vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
@@ -250,6 +253,7 @@ describe("api error telemetry", () => {
 			error_category: "network_error",
 			status: undefined,
 		});
+		expect(getStatusMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not report caller-initiated aborts", async () => {

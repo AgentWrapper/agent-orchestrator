@@ -54,6 +54,7 @@ import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { openDaemonLog, type DaemonLogSink } from "./main/daemon-log";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -797,6 +798,12 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	}
 
 	setDaemonStatus({ state: "starting" });
+	let daemonLogSink: DaemonLogSink | null = null;
+	try {
+		daemonLogSink = await openDaemonLog(runFilePath(), os.homedir());
+	} catch (error) {
+		console.error(`AO: could not open daemon log: ${error instanceof Error ? error.message : String(error)}`);
+	}
 
 	// Capture the spawned handle locally so the async lifecycle listeners act only
 	// on THIS process. Without this, a stale exit from an already-stopped daemon
@@ -815,6 +822,9 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		windowsHide: true,
 	});
 	daemonProcess = child;
+	daemonLogSink?.writeMeta(
+		`spawned pid=${child.pid ?? "unknown"} cwd=${launch.cwd} command=${launch.command} args=${launch.args.join(" ")}`,
+	);
 
 	// Discover the port the daemon ACTUALLY bound rather than trusting AO_PORT:
 	// the daemon may fall back to a different port than the one requested. Two
@@ -854,12 +864,14 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 	child.stdout.on("data", (chunk: Buffer) => {
 		const text = chunk.toString("utf8");
+		daemonLogSink?.writeOutput("stdout", text);
 		console.log(text.trimEnd());
 		scanStdout(text);
 	});
 
 	child.stderr.on("data", (chunk: Buffer) => {
 		const text = chunk.toString("utf8");
+		daemonLogSink?.writeOutput("stderr", text);
 		console.error(text.trimEnd());
 		scanStderr(text);
 	});
@@ -895,14 +907,24 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 	child.once("error", (error) => {
 		stopDiscovery();
+		daemonLogSink?.writeMeta(`spawn error: ${error.message}`);
+		const logPath = daemonLogSink?.path;
+		void daemonLogSink?.close();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
+		setDaemonStatus({
+			state: "error",
+			message: logPath ? `${error.message}. Daemon log: ${logPath}` : error.message,
+			code: "spawn_failed",
+		});
 	});
 
 	child.once("exit", (code, signal) => {
 		stopDiscovery();
+		daemonLogSink?.writeMeta(signal ? `daemon exited with signal ${signal}` : `daemon exited with code ${code ?? "unknown"}`);
+		const logPath = daemonLogSink?.path;
+		void daemonLogSink?.close();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		// An explicit stopDaemon() already set a clean `{ state: "stopped" }`.
@@ -915,9 +937,10 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			setDaemonStatus({ state: "stopped" });
 			return;
 		}
+		const exitMessage = signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`;
 		setDaemonStatus({
 			state: "stopped",
-			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			message: logPath ? `${exitMessage}. Daemon log: ${logPath}` : exitMessage,
 			code: "exited",
 			exitCode: code,
 			signal,

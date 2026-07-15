@@ -1,5 +1,6 @@
 import createClient from "openapi-fetch";
 import type { paths } from "../../api/schema";
+import { aoBridge } from "./bridge";
 import { captureRendererEvent } from "./telemetry";
 
 function devApiBaseUrl(): string {
@@ -143,6 +144,7 @@ type ApiErrorCategory = "daemon_unavailable" | "network_error" | "http_4xx" | "h
 // signal matters, the storm does not.
 const API_ERROR_DEDUPE_MS = 30_000;
 const lastApiErrorAt = new Map<string, number>();
+let daemonStatusRefreshAfterNetworkError: Promise<void> | null = null;
 
 function reportApiError(operation: string, category: ApiErrorCategory, status?: number): void {
 	const key = `${operation}|${category}|${status ?? ""}`;
@@ -155,6 +157,17 @@ function reportApiError(operation: string, category: ApiErrorCategory, status?: 
 		error_category: category,
 		status,
 	});
+}
+
+function refreshDaemonStatusAfterNetworkError(): void {
+	if (daemonStatusRefreshAfterNetworkError) return;
+	daemonStatusRefreshAfterNetworkError = aoBridge.daemon
+		.getStatus()
+		.catch(() => undefined)
+		.then(() => undefined)
+		.finally(() => {
+			daemonStatusRefreshAfterNetworkError = null;
+		});
 }
 
 async function runtimeFetch(input: Request): Promise<Response> {
@@ -207,6 +220,7 @@ async function runtimeFetch(input: Request): Promise<Response> {
 		// Caller-initiated aborts (unmounted components cancelling queries) are not failures.
 		if (!(error instanceof DOMException && error.name === "AbortError")) {
 			reportApiError(operation, "network_error");
+			refreshDaemonStatusAfterNetworkError();
 		}
 		throw error;
 	}
