@@ -72,6 +72,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/filesystem/directories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDirectories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import": {
         parameters: {
             query?: never;
@@ -727,6 +743,10 @@ export interface components {
             path: string;
             resolveError: string;
         };
+        DirectoryEntry: {
+            name: string;
+            path: string;
+        };
         DomainActivity: {
             /** Format: date-time */
             lastActivityAt: string;
@@ -766,6 +786,11 @@ export interface components {
             installed: components["schemas"]["AgentInfo"][];
             /** @description Agents supported by this daemon build. */
             supported: components["schemas"]["AgentInfo"][];
+        };
+        ListDirectoriesResponse: {
+            directories: components["schemas"]["DirectoryEntry"][];
+            parent: null | string;
+            path: string;
         };
         ListNotificationsResponse: {
             notifications: components["schemas"]["NotificationResponse"][];
@@ -1306,6 +1331,74 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listDirectories: {
+        parameters: {
+            query?: {
+                /** @description Absolute server directory path. Defaults to the daemon user's home directory. */
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListDirectoriesResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -57,6 +57,8 @@ func Build() ([]byte, error) {
 	r.Spec.Tags = []openapi31.Tag{
 		*(&openapi31.Tag{Name: "agents"}).WithDescription(
 			"Supported and locally runnable agent adapters"),
+		*(&openapi31.Tag{Name: "filesystem"}).WithDescription(
+			"Read-only server filesystem directory browsing"),
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
@@ -140,6 +142,9 @@ var schemaNames = map[string]string{
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
 	"ControllersAgentIDParam":                     "AgentIDParam",
+	"ControllersListDirectoriesQuery":             "ListDirectoriesQuery",
+	"ControllersDirectoryEntry":                   "DirectoryEntry",
+	"ControllersListDirectoriesResponse":          "ListDirectoriesResponse",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
@@ -293,6 +298,7 @@ type operation struct {
 func operations() []operation {
 	ops := append([]operation{}, eventOperations()...)
 	ops = append(ops, agentOperations()...)
+	ops = append(ops, filesystemOperations()...)
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
@@ -301,6 +307,26 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, mobileOperations()...)
 	return ops
+}
+
+func filesystemOperations() []operation {
+	return []operation{
+		{
+			method:     http.MethodGet,
+			path:       "/api/v1/filesystem/directories",
+			id:         "listDirectories",
+			tag:        "filesystem",
+			pathParams: []any{controllers.ListDirectoriesQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListDirectoriesResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func agentOperations() []operation {

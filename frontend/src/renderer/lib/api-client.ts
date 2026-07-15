@@ -50,6 +50,7 @@ export function setApiBaseUrl(nextBaseUrl: string | null): void {
 // would miss (orchestrators/{id}). Keep in sync with schema.ts.
 const ROUTE_TEMPLATES = [
 	"/api/v1/events",
+	"/api/v1/filesystem/directories",
 	"/api/v1/import",
 	"/api/v1/notifications",
 	"/api/v1/notifications/{id}",
