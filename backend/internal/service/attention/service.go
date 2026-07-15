@@ -285,7 +285,7 @@ func operatorAttentionNotificationMetadataFor(t domain.NotificationType) (operat
 	switch t {
 	case domain.NotificationWorkerDiedUnfinished:
 		return operatorAttentionNotificationMetadata{
-			action:        "Diagnose the terminal failure, then restart a worker for the issue explicitly; ao never respawns it automatically.",
+			action:        "Diagnose the recovery incident before cleanup, apply a new fix or scoped remediation, then respawn only to verify it.",
 			defaultReason: "A worker died before its issue landed.",
 		}, true
 	case domain.NotificationMainCIRed:

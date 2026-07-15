@@ -131,6 +131,12 @@ type SessionIDParam struct {
 	SessionID string `path:"sessionId" description:"Session identifier, e.g. project-1."`
 }
 
+// RecoveryIncidentIDParam is the {incidentId} path parameter for recovery
+// incident routes.
+type RecoveryIncidentIDParam struct {
+	IncidentID string `path:"incidentId" description:"Recovery incident identifier."`
+}
+
 // ListSessionsQuery is the query string accepted by GET /api/v1/sessions.
 type ListSessionsQuery struct {
 	Project          string `query:"project,omitempty" description:"Project id filter."`
@@ -213,6 +219,12 @@ type SpawnSessionRequest struct {
 // SessionResponse is the { session } body shared by session create/get.
 type SessionResponse struct {
 	Session SessionView `json:"session"`
+}
+
+// VerifyRecoveryIncidentRequest is the body of POST
+// /api/v1/recovery/incidents/{incidentId}/verify.
+type VerifyRecoveryIncidentRequest struct {
+	FixReference string `json:"fixReference" minLength:"1" description:"New fix PR, config change, or scoped remediation to verify by respawning the worker."`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.

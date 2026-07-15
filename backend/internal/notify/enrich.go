@@ -124,10 +124,11 @@ func bodyForIntent(intent Intent) string {
 		if reason := strings.TrimSpace(intent.TerminalFailureReason); reason != "" {
 			failurePoint = fmt.Sprintf(" Failure point: %s.", reason)
 		}
+		recovery := recoverySuffix(intent)
 		if pr := strings.TrimSpace(intent.PRURL); pr != "" {
-			return fmt.Sprintf("%s terminated before issue %s landed, leaving the open PR %s orphaned; restart a worker explicitly to resume it.%s", sessionLabel(intent), issueLabel(intent), pr, failurePoint)
+			return fmt.Sprintf("%s terminated before issue %s landed, leaving the open PR %s orphaned; diagnose the recovery incident before cleanup, apply a new fix or scoped remediation, then respawn only to verify it.%s%s", sessionLabel(intent), issueLabel(intent), pr, recovery, failurePoint)
 		}
-		return fmt.Sprintf("%s terminated before issue %s landed; restart a worker explicitly to resume it.%s", sessionLabel(intent), issueLabel(intent), failurePoint)
+		return fmt.Sprintf("%s terminated before issue %s landed; diagnose the recovery incident before cleanup, apply a new fix or scoped remediation, then respawn only to verify it.%s%s", sessionLabel(intent), issueLabel(intent), recovery, failurePoint)
 	case domain.NotificationModelUnreachable:
 		return fmt.Sprintf("Configured pin %s is unreachable%s.", modelDetail(intent), reasonSuffix(intent.Reason))
 	case domain.NotificationModelRecovered:
@@ -141,6 +142,23 @@ func bodyForIntent(intent Intent) string {
 	default:
 		return ""
 	}
+}
+
+func recoverySuffix(intent Intent) string {
+	parts := []string{}
+	if intent.RecoveryIncidentID != "" {
+		parts = append(parts, "incident "+intent.RecoveryIncidentID)
+	}
+	if intent.RecoveryAttempt > 0 {
+		parts = append(parts, fmt.Sprintf("attempt %d", intent.RecoveryAttempt))
+	}
+	if intent.RecoveryRung != "" {
+		parts = append(parts, string(intent.RecoveryRung)+" rung")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " Recovery: " + strings.Join(parts, ", ") + "."
 }
 
 // duplicatePRBody explains which two PRs collided on one issue. The existing PR

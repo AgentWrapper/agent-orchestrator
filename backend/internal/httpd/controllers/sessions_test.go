@@ -43,6 +43,8 @@ type fakeSessionService struct {
 	cleanupResult   []domain.SessionID
 	cleanupSkipped  []sessionsvc.CleanupSkipped
 	spawnErr        error
+	verifyIncident  string
+	verifyFix       string
 	claimErr        error
 	listPRErr       error
 }
@@ -96,6 +98,12 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, DisplayName: cfg.DisplayName, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
 	f.sessions[s.ID] = s
 	return s, nil
+}
+
+func (f *fakeSessionService) VerifyRecoveryIncident(_ context.Context, incidentID, fixReference string) (domain.Session, error) {
+	f.verifyIncident = incidentID
+	f.verifyFix = fixReference
+	return f.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ao", IssueID: "github:acme/demo#12", Kind: domain.KindWorker})
 }
 
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
@@ -442,6 +450,25 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_VerifyRecoveryIncident(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/recovery/incidents/recovery_abc/verify", `{"fixReference":"PR #400"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("verify recovery = %d, want 201; body=%s", status, body)
+	}
+	var got struct {
+		Session sessionBody `json:"session"`
+	}
+	mustJSON(t, body, &got)
+	if got.Session.ID == "" || got.Session.IssueID != "github:acme/demo#12" || got.Session.Kind != string(domain.KindWorker) {
+		t.Fatalf("session = %#v", got.Session)
+	}
+	if svc.verifyIncident != "recovery_abc" || svc.verifyFix != "PR #400" {
+		t.Fatalf("verify call = incident %q fix %q", svc.verifyIncident, svc.verifyFix)
 	}
 }
 

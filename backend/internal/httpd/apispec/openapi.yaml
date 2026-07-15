@@ -1082,6 +1082,63 @@ paths:
       summary: Initialize a selected folder as a Git repository with an initial commit
       tags:
       - projects
+  /api/v1/recovery/incidents/{incidentId}/verify:
+    post:
+      operationId: verifyRecoveryIncident
+      parameters:
+      - description: Recovery incident identifier.
+        in: path
+        name: incidentId
+        required: true
+        schema:
+          description: Recovery incident identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersVerifyRecoveryIncidentRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Record a recovery fix/remediation and respawn a worker to verify it
+      tags:
+      - sessions
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -2451,6 +2508,16 @@ components:
       - updatedAt
       - status
       - prs
+      type: object
+    ControllersVerifyRecoveryIncidentRequest:
+      properties:
+        fixReference:
+          description: New fix PR, config change, or scoped remediation to verify
+            by respawning the worker.
+          minLength: 1
+          type: string
+      required:
+      - fixReference
       type: object
     DegradedProject:
       properties:

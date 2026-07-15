@@ -157,7 +157,7 @@ func TestManagerNotifyWorkerDiedUnfinished(t *testing.T) {
 	if got.Title != "worker died with unfinished work: issue #12" {
 		t.Fatalf("title = %q", got.Title)
 	}
-	if got.Body != "demo #12 fix-login terminated before issue #12 landed; restart a worker explicitly to resume it." {
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed; diagnose the recovery incident before cleanup, apply a new fix or scoped remediation, then respawn only to verify it." {
 		t.Fatalf("body = %q", got.Body)
 	}
 	if got.SubjectKind != domain.NotificationSubjectSession || got.SubjectID != "demo-1" {
@@ -166,8 +166,9 @@ func TestManagerNotifyWorkerDiedUnfinished(t *testing.T) {
 }
 
 // The removed respawn subsystem (#313) used to promise a replacement here. The
-// terminal notification now names the orphaned PR as a fact and demands an
-// explicit operator restart — no adoption, no retry language.
+// terminal notification now names the orphaned PR as a fact and demands
+// diagnosis plus a new fix before verification respawn — no adoption, no retry
+// language.
 func TestManagerNotifyWorkerDiedUnfinishedNamesOrphanedPR(t *testing.T) {
 	st := &fakeStore{}
 	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC) }, NewID: func() string { return "ntf_1" }})
@@ -184,7 +185,7 @@ func TestManagerNotifyWorkerDiedUnfinishedNamesOrphanedPR(t *testing.T) {
 		t.Fatalf("Notify: %v", err)
 	}
 	got := st.rows[0]
-	if got.Body != "demo #12 fix-login terminated before issue #12 landed, leaving the open PR https://github.com/acme/demo/pull/99 orphaned; restart a worker explicitly to resume it." {
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed, leaving the open PR https://github.com/acme/demo/pull/99 orphaned; diagnose the recovery incident before cleanup, apply a new fix or scoped remediation, then respawn only to verify it." {
 		t.Fatalf("body = %q", got.Body)
 	}
 }
@@ -205,7 +206,7 @@ func TestManagerNotifyWorkerDiedUnfinishedIncludesFailurePoint(t *testing.T) {
 		t.Fatalf("Notify: %v", err)
 	}
 	got := st.rows[0]
-	if got.Body != "demo #12 fix-login terminated before issue #12 landed; restart a worker explicitly to resume it. Failure point: CI / backend test." {
+	if got.Body != "demo #12 fix-login terminated before issue #12 landed; diagnose the recovery incident before cleanup, apply a new fix or scoped remediation, then respawn only to verify it. Failure point: CI / backend test." {
 		t.Fatalf("body = %q", got.Body)
 	}
 }

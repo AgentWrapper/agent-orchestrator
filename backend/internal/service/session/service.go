@@ -35,6 +35,9 @@ type Store interface {
 	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
+	GetRecoveryIncident(ctx context.Context, id string) (domain.RecoveryIncident, bool, error)
+	UpdateRecoveryIncident(ctx context.Context, rec domain.RecoveryIncident) (domain.RecoveryIncident, bool, error)
+	UpdateRecoveryIncidentIfUnchanged(ctx context.Context, rec, expected domain.RecoveryIncident) (domain.RecoveryIncident, bool, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	GetFleetPaused(ctx context.Context) (bool, error)
 }
@@ -106,6 +109,9 @@ type issueTitles interface {
 // creation.
 const issueTitleLookupTimeout = 5 * time.Second
 
+const recoveryVerificationSpawnTimeout = 2 * time.Minute
+const recoveryVerificationCompensationTimeout = 5 * time.Second
+
 // Service is the controller-facing session service. It delegates command-side
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
@@ -174,6 +180,155 @@ func NewWithDeps(d Deps) *Service {
 // Spawn creates a session and returns the API-facing read model.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	return s.spawn(ctx, cfg, false)
+}
+
+// VerifyRecoveryIncident records the new fix/remediation being verified and
+// respawns a normal worker to prove it past the original failure point.
+func (s *Service) VerifyRecoveryIncident(ctx context.Context, incidentID, fixReference string) (domain.Session, error) {
+	if s == nil || s.store == nil || s.manager == nil {
+		return domain.Session{}, apierr.Internal("SESSION_SERVICE_UNAVAILABLE", "Session service is not fully configured")
+	}
+	fixReference = strings.TrimSpace(fixReference)
+	if fixReference == "" {
+		return domain.Session{}, apierr.Invalid("RECOVERY_FIX_REFERENCE_REQUIRED", "fixReference is required before verification respawn", nil)
+	}
+	incident, ok, err := s.store.GetRecoveryIncident(ctx, strings.TrimSpace(incidentID))
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("get recovery incident: %w", err)
+	}
+	if !ok {
+		return domain.Session{}, apierr.NotFound("RECOVERY_INCIDENT_NOT_FOUND", "Recovery incident not found")
+	}
+	if incident.Status == domain.RecoveryIncidentResolved {
+		return domain.Session{}, apierr.Conflict("RECOVERY_INCIDENT_RESOLVED", "Recovery incident is already resolved", nil)
+	}
+	if incident.Status == domain.RecoveryIncidentVerifying && strings.TrimSpace(incident.FixReference) == fixReference {
+		return domain.Session{}, apierr.Conflict("RECOVERY_FIX_ALREADY_VERIFYING", "This fix/remediation is already being verified for the incident", nil)
+	}
+	if strings.TrimSpace(incident.LastFailedFixReference) == fixReference {
+		return domain.Session{}, apierr.Conflict("RECOVERY_FIX_PREVIOUSLY_FAILED", "This fix/remediation already failed verification for the incident; record a new fix before respawn", nil)
+	}
+	expected := incident
+	claimed := incident
+	claimed.Status = domain.RecoveryIncidentVerifying
+	claimed.FixReference = fixReference
+	claimed.VerificationSessionID = ""
+	claimed.UpdatedAt = s.now()
+	if _, ok, err := s.store.UpdateRecoveryIncidentIfUnchanged(ctx, claimed, expected); err != nil {
+		return domain.Session{}, fmt.Errorf("claim recovery incident verification: %w", err)
+	} else if !ok {
+		return domain.Session{}, s.recoveryIncidentCASConflict(ctx, incident.ID, fixReference)
+	}
+	spawnCtx, cancelSpawn := context.WithTimeout(context.Background(), recoveryVerificationSpawnTimeout)
+	rec, err := s.spawnRecoveryVerification(spawnCtx, incident)
+	cancelSpawn()
+	if err != nil {
+		if revertErr := s.revertRecoveryVerificationClaim(incident.ID, expected, claimed); revertErr != nil {
+			return domain.Session{}, errors.Join(
+				fmt.Errorf("spawn recovery verification: %w", err),
+				fmt.Errorf("revert verification claim: %w", revertErr),
+			)
+		}
+		return domain.Session{}, err
+	}
+	verified := claimed
+	verified.VerificationSessionID = rec.ID
+	verified.UpdatedAt = s.now()
+	compensateCtx, cancelCompensation := context.WithTimeout(context.Background(), recoveryVerificationCompensationTimeout)
+	defer cancelCompensation()
+	if _, ok, err := s.store.UpdateRecoveryIncidentIfUnchanged(compensateCtx, verified, claimed); err != nil {
+		if _, _, rollbackErr := s.manager.RollbackSpawn(compensateCtx, rec.ID); rollbackErr != nil {
+			return domain.Session{}, errors.Join(
+				fmt.Errorf("update recovery incident: %w", err),
+				fmt.Errorf("rollback verification worker %s: %w", rec.ID, rollbackErr),
+			)
+		}
+		return domain.Session{}, fmt.Errorf("update recovery incident: %w", err)
+	} else if !ok {
+		if _, _, rollbackErr := s.manager.RollbackSpawn(compensateCtx, rec.ID); rollbackErr != nil {
+			return domain.Session{}, fmt.Errorf("rollback stale verification worker %s: %w", rec.ID, rollbackErr)
+		}
+		return domain.Session{}, s.recoveryIncidentCASConflict(compensateCtx, incident.ID, fixReference)
+	}
+	return s.toSession(compensateCtx, rec)
+}
+
+func (s *Service) spawnRecoveryVerification(ctx context.Context, incident domain.RecoveryIncident) (domain.SessionRecord, error) {
+	cfg := ports.SpawnConfig{
+		ProjectID: incident.ProjectID,
+		IssueID:   incident.IssueID,
+		Kind:      domain.KindWorker,
+		Prompt:    recoveryVerificationPrompt(incident.IssueID),
+	}
+	project, err := s.requireProject(ctx, cfg.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, err
+	}
+	if err := s.guardPaused(ctx, project, cfg); err != nil {
+		return domain.SessionRecord{}, err
+	}
+	if issueID, ok := trackerintake.CanonicalIssueIDFromRef(project, cfg.IssueID); ok {
+		cfg.IssueID = issueID
+	}
+	start := s.now()
+	firstSession, err := s.isFirstSession(ctx)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("count sessions: %w", err)
+	}
+	cfg.IssueTitle = s.resolveIssueTitle(ctx, project, cfg)
+	rec, err := s.manager.Spawn(ctx, cfg)
+	if err != nil {
+		s.emitSpawnFailed(cfg, err, s.now().Sub(start).Milliseconds())
+		return domain.SessionRecord{}, toAPIError(err)
+	}
+	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
+	if firstSession {
+		s.emitFirstSessionSpawned(rec, project)
+	}
+	return rec, nil
+}
+
+func (s *Service) revertRecoveryVerificationClaim(incidentID string, expected, claimed domain.RecoveryIncident) error {
+	revertCtx, cancel := context.WithTimeout(context.Background(), recoveryVerificationCompensationTimeout)
+	defer cancel()
+	if _, ok, err := s.store.UpdateRecoveryIncidentIfUnchanged(revertCtx, expected, claimed); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("recovery incident %s changed before claim revert", incidentID)
+	}
+	return nil
+}
+
+func (s *Service) recoveryIncidentCASConflict(ctx context.Context, incidentID, fixReference string) error {
+	latest, ok, err := s.store.GetRecoveryIncident(ctx, incidentID)
+	if err != nil {
+		return fmt.Errorf("get recovery incident after stale update: %w", err)
+	}
+	if !ok {
+		return apierr.NotFound("RECOVERY_INCIDENT_NOT_FOUND", "Recovery incident not found")
+	}
+	if latest.Status == domain.RecoveryIncidentResolved {
+		return apierr.Conflict("RECOVERY_INCIDENT_RESOLVED", "Recovery incident is already resolved", nil)
+	}
+	if latest.Status == domain.RecoveryIncidentVerifying && strings.TrimSpace(latest.FixReference) == fixReference {
+		return apierr.Conflict("RECOVERY_FIX_ALREADY_VERIFYING", "This fix/remediation is already being verified for the incident", nil)
+	}
+	if strings.TrimSpace(latest.LastFailedFixReference) == fixReference {
+		return apierr.Conflict("RECOVERY_FIX_PREVIOUSLY_FAILED", "This fix/remediation already failed verification for the incident; record a new fix before respawn", nil)
+	}
+	return apierr.Conflict("RECOVERY_INCIDENT_STALE", "Recovery incident changed before verification could be recorded; reload and try again", nil)
+}
+
+func recoveryVerificationPrompt(issueID domain.IssueID) string {
+	raw := strings.TrimSpace(string(issueID))
+	if i := strings.LastIndexByte(raw, '#'); i >= 0 && i+1 < len(raw) {
+		return "/address-issue " + raw[i+1:]
+	}
+	raw = strings.TrimPrefix(raw, "github:")
+	if raw == "" {
+		return "/address-issue"
+	}
+	return "/address-issue " + raw
 }
 
 func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime bool) (domain.Session, error) {

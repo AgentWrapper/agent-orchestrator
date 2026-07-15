@@ -53,6 +53,7 @@ type fakeStore struct {
 	pr                 map[domain.SessionID]domain.PRFacts
 	projects           map[string]domain.ProjectRecord
 	workspaceRepo      map[string][]domain.WorkspaceRepoRecord
+	recoveryIncidents  []domain.RecoveryIncident
 	num                int
 	deleteErr          error
 	upsertWTErr        error
@@ -165,6 +166,15 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		out = append(out, r)
+	}
+	return out, nil
+}
+func (f *fakeStore) ListUnresolvedRecoveryIncidentsBySession(_ context.Context, sessionID domain.SessionID) ([]domain.RecoveryIncident, error) {
+	out := make([]domain.RecoveryIncident, 0)
+	for _, rec := range f.recoveryIncidents {
+		if (rec.DeadSessionID == sessionID || rec.VerificationSessionID == sessionID) && rec.Status != domain.RecoveryIncidentResolved {
+			out = append(out, rec)
+		}
 	}
 	return out, nil
 }
@@ -2711,6 +2721,74 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+func TestCleanup_SkipsUnresolvedRecoveryIncident(t *testing.T) {
+	m, st, rt, ws := newManager()
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", RuntimeHandleID: "runtime-1"})
+	st.recoveryIncidents = []domain.RecoveryIncident{{
+		ID:            "recovery_abc",
+		ProjectID:     "mer",
+		IssueID:       "github:acme/demo#12",
+		Fingerprint:   "sha256:abc",
+		Status:        domain.RecoveryIncidentOpen,
+		Rung:          domain.RecoveryRungWorker,
+		Attempt:       1,
+		DeadSessionID: "mer-1",
+		LastSessionID: "mer-1",
+	}}
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" || res.Skipped[0].Reason != "unresolved recovery incident" {
+		t.Fatalf("skipped = %+v, want mer-1 unresolved recovery incident", res.Skipped)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("workspace destroyed = %d, want 0", ws.destroyed)
+	}
+	if rt.destroyed != 1 || len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "runtime-1" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want recovery-preserved session runtime torn down", rt.destroyed, rt.destroyedIDs)
+	}
+}
+
+func TestCleanup_SkipsUnresolvedRecoveryVerificationSession(t *testing.T) {
+	m, st, rt, ws := newManager()
+	seedTerminal(st, "mer-2", domain.SessionMetadata{WorkspacePath: "/ws/mer-2", RuntimeHandleID: "runtime-2"})
+	st.recoveryIncidents = []domain.RecoveryIncident{{
+		ID:                    "recovery_abc",
+		ProjectID:             "mer",
+		IssueID:               "github:acme/demo#12",
+		Fingerprint:           "sha256:abc",
+		Status:                domain.RecoveryIncidentVerifying,
+		Rung:                  domain.RecoveryRungWorker,
+		Attempt:               1,
+		DeadSessionID:         "mer-1",
+		LastSessionID:         "mer-1",
+		FixReference:          "PR #400",
+		VerificationSessionID: "mer-2",
+	}}
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-2" || res.Skipped[0].Reason != "unresolved recovery incident" {
+		t.Fatalf("skipped = %+v, want mer-2 unresolved recovery incident", res.Skipped)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("workspace destroyed = %d, want 0", ws.destroyed)
+	}
+	if rt.destroyed != 1 || len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "runtime-2" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want recovery verification runtime torn down", rt.destroyed, rt.destroyedIDs)
 	}
 }
 

@@ -63,6 +63,10 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	}, nil
 }
 
+func (f *fakeSessionService) VerifyRecoveryIncident(context.Context, string, string) (domain.Session, error) {
+	return domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-verify", ProjectID: "ao", Kind: domain.KindWorker}, Status: domain.StatusIdle}, nil
+}
+
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
 	return f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 }

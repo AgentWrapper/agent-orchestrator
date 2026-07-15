@@ -191,6 +191,16 @@ func TestPollDeadWorkerEscalatesWithoutReplacement(t *testing.T) {
 	if got.TerminalFailureReason != "CI / backend test" {
 		t.Fatalf("TerminalFailureReason = %q, want the dead session's failure provenance", got.TerminalFailureReason)
 	}
+	if got.RecoveryAttempt != 1 || got.RecoveryRung != domain.RecoveryRungWorker || got.RecoveryIncidentID == "" {
+		t.Fatalf("recovery metadata = id=%q attempt=%d rung=%q, want incident attempt 1 worker", got.RecoveryIncidentID, got.RecoveryAttempt, got.RecoveryRung)
+	}
+	if len(store.recoveryIncidents) != 1 {
+		t.Fatalf("recovery incidents = %+v, want one", store.recoveryIncidents)
+	}
+	incident := store.recoveryIncidents[0]
+	if incident.Attempt != 1 || incident.Rung != domain.RecoveryRungWorker || incident.LastSessionID != "demo-1" {
+		t.Fatalf("incident = %+v, want attempt 1 worker for demo-1", incident)
+	}
 }
 
 // A live NON-worker session bound to the issue (an orchestrator) marks the
@@ -328,8 +338,8 @@ func TestPollDeadWorkerNotificationDedupesAcrossPolls(t *testing.T) {
 	if got.Type != domain.NotificationWorkerDiedUnfinished || got.SessionID != worker.ID || got.PRURL != "https://github.com/acme/demo/pull/99" {
 		t.Fatalf("notification = %+v", got)
 	}
-	if !strings.Contains(got.Body, "restart a worker explicitly") {
-		t.Fatalf("body = %q, want explicit-restart terminal copy", got.Body)
+	if !strings.Contains(got.Body, "respawn only to verify it") {
+		t.Fatalf("body = %q, want terminal recovery copy", got.Body)
 	}
 
 	// The dedupe survives read: acknowledging the escalation must not resurrect
@@ -400,16 +410,141 @@ func TestPollDoesNotRespawnWhenLiveWorkerAlreadyReplacedDeadWorker(t *testing.T)
 	}
 }
 
-func TestWorkerDiedIntentCarriesTerminalFailureReason(t *testing.T) {
+func TestWorkerDiedIntentCarriesTerminalFailureReasonAndRecoveryMetadata(t *testing.T) {
 	intent := workerDiedIntent(domain.SessionRecord{
 		ID:                    "demo-3",
 		ProjectID:             "demo",
 		DisplayName:           "demo #12 fix-login",
 		TerminalFailureReason: "CI / backend test",
-	}, "github:acme/demo#12")
+	}, "github:acme/demo#12", domain.RecoveryIncident{ID: "recovery_abc", Attempt: 2, Rung: domain.RecoveryRungOrc})
 
 	if intent.TerminalFailureReason != "CI / backend test" {
 		t.Fatalf("TerminalFailureReason = %q, want failure point", intent.TerminalFailureReason)
+	}
+	if intent.RecoveryIncidentID != "recovery_abc" || intent.RecoveryAttempt != 2 || intent.RecoveryRung != domain.RecoveryRungOrc {
+		t.Fatalf("recovery metadata = id=%q attempt=%d rung=%q", intent.RecoveryIncidentID, intent.RecoveryAttempt, intent.RecoveryRung)
+	}
+}
+
+func TestPollRepeatDeadWorkerAdvancesRecoveryRungWithoutRespawn(t *testing.T) {
+	issueID := domain.IssueID("github:acme/demo#12")
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "*", MaxConcurrent: 32}},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:                    "demo-1",
+			ProjectID:             "demo",
+			IssueID:               issueID,
+			Kind:                  domain.KindWorker,
+			DisplayName:           "demo #12 fix-login",
+			IsTerminated:          true,
+			TerminalFailureReason: "runtime probe reported dead",
+			Activity:              domain.Activity{State: domain.ActivityExited},
+			UpdatedAt:             time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC),
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+	notifications := &fakeNotificationSink{}
+	observer := New(singleResolver(tracker), store, spawner, Config{
+		Logger:        discardLogger(),
+		Notifications: notifications,
+		Clock:         func() time.Time { return time.Date(2026, 7, 10, 10, 5, 0, 0, time.UTC) },
+	})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll() error = %v", err)
+	}
+	if len(store.recoveryIncidents) != 1 || store.recoveryIncidents[0].Attempt != 1 {
+		t.Fatalf("after first poll incidents = %+v", store.recoveryIncidents)
+	}
+	// A second poll over the same dead session is not a repeat death and must
+	// not advance the incident.
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("same-session Poll() error = %v", err)
+	}
+	if store.recoveryIncidents[0].Attempt != 1 {
+		t.Fatalf("same dead session advanced attempt to %d", store.recoveryIncidents[0].Attempt)
+	}
+
+	store.recoveryIncidents[0].Status = domain.RecoveryIncidentVerifying
+	store.recoveryIncidents[0].FixReference = "PR #400"
+	store.recoveryIncidents[0].VerificationSessionID = "demo-verify"
+	store.sessions = append(store.sessions, domain.SessionRecord{
+		ID:                    "demo-2",
+		ProjectID:             "demo",
+		IssueID:               issueID,
+		Kind:                  domain.KindWorker,
+		DisplayName:           "demo #12 fix-login",
+		IsTerminated:          true,
+		TerminalFailureReason: "runtime probe reported dead",
+		Activity:              domain.Activity{State: domain.ActivityExited},
+		UpdatedAt:             time.Date(2026, 7, 10, 11, 0, 0, 0, time.UTC),
+	})
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("repeat Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %+v, want none for repeat death", spawner.calls)
+	}
+	got := store.recoveryIncidents[0]
+	if got.Attempt != 2 || got.Rung != domain.RecoveryRungOrc || got.LastSessionID != "demo-2" || got.Status != domain.RecoveryIncidentOpen || got.FixReference != "" || got.LastFailedFixReference != "PR #400" || got.VerificationSessionID != "" {
+		t.Fatalf("repeat incident = %+v, want attempt 2 open orc on demo-2 with failed fix retained and verification cleared", got)
+	}
+	if last := notifications.intents[len(notifications.intents)-1]; last.RecoveryAttempt != 2 || last.RecoveryRung != domain.RecoveryRungOrc {
+		t.Fatalf("repeat notification = %+v, want attempt 2 orc", last)
+	}
+
+	store.sessions = append(store.sessions, domain.SessionRecord{
+		ID:                    "demo-3",
+		ProjectID:             "demo",
+		IssueID:               issueID,
+		Kind:                  domain.KindWorker,
+		DisplayName:           "demo #12 fix-login",
+		IsTerminated:          true,
+		TerminalFailureReason: "runtime probe reported dead",
+		Activity:              domain.Activity{State: domain.ActivityExited},
+		UpdatedAt:             time.Date(2026, 7, 10, 11, 15, 0, 0, time.UTC),
+	})
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("second repeat Poll() error = %v", err)
+	}
+	got = store.recoveryIncidents[0]
+	if got.Attempt != 3 || got.Rung != domain.RecoveryRungPrime || got.LastSessionID != "demo-3" || got.LastFailedFixReference != "PR #400" {
+		t.Fatalf("second repeat incident = %+v, want attempt 3 prime with prior failed fix retained", got)
+	}
+
+	store.recoveryIncidents[0].Status = domain.RecoveryIncidentResolved
+	store.recoveryIncidents[0].ResolvedAt = time.Date(2026, 7, 10, 11, 30, 0, 0, time.UTC)
+	store.recoveryIncidents[0].UpdatedAt = store.recoveryIncidents[0].ResolvedAt
+	store.sessions = append(store.sessions, domain.SessionRecord{
+		ID:                    "demo-4",
+		ProjectID:             "demo",
+		IssueID:               issueID,
+		Kind:                  domain.KindWorker,
+		DisplayName:           "demo #12 fix-login",
+		IsTerminated:          true,
+		TerminalFailureReason: "runtime probe reported dead",
+		Activity:              domain.Activity{State: domain.ActivityExited},
+		UpdatedAt:             time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
+	})
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("post-resolution Poll() error = %v", err)
+	}
+	if len(store.recoveryIncidents) != 2 {
+		t.Fatalf("post-resolution incidents = %+v, want a new generation", store.recoveryIncidents)
+	}
+	next := store.recoveryIncidents[1]
+	if next.ID == store.recoveryIncidents[0].ID || next.Attempt != 1 || next.Rung != domain.RecoveryRungWorker || next.LastSessionID != "demo-4" {
+		t.Fatalf("post-resolution incident = %+v, previous=%+v; want distinct attempt 1 generation for demo-4", next, store.recoveryIncidents[0])
 	}
 }
 
@@ -1079,13 +1214,14 @@ func singleResolver(tracker ports.Tracker) TrackerResolver {
 }
 
 type fakeStore struct {
-	projects     []domain.ProjectRecord
-	sessions     []domain.SessionRecord
-	sessionsErr  error
-	openPRs      []domain.PullRequest
-	openPRsErr   error
-	prsBySession map[domain.SessionID][]domain.PullRequest
-	fleetPaused  bool
+	projects          []domain.ProjectRecord
+	sessions          []domain.SessionRecord
+	sessionsErr       error
+	openPRs           []domain.PullRequest
+	openPRsErr        error
+	prsBySession      map[domain.SessionID][]domain.PullRequest
+	recoveryIncidents []domain.RecoveryIncident
+	fleetPaused       bool
 }
 
 func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
@@ -1102,6 +1238,38 @@ func (f *fakeStore) ListOpenPRs(context.Context) ([]domain.PullRequest, error) {
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error) {
 	return append([]domain.PullRequest(nil), f.prsBySession[sessionID]...), nil
+}
+
+func (f *fakeStore) GetUnresolvedRecoveryIncidentByFingerprint(_ context.Context, projectID domain.ProjectID, issueID domain.IssueID, fingerprint string) (domain.RecoveryIncident, bool, error) {
+	for _, rec := range f.recoveryIncidents {
+		if rec.ProjectID == projectID && rec.IssueID == issueID && rec.Fingerprint == fingerprint && rec.Status != domain.RecoveryIncidentResolved {
+			return rec, true, nil
+		}
+	}
+	return domain.RecoveryIncident{}, false, nil
+}
+
+func (f *fakeStore) CreateRecoveryIncident(_ context.Context, rec domain.RecoveryIncident) (domain.RecoveryIncident, error) {
+	for _, existing := range f.recoveryIncidents {
+		if existing.ID == rec.ID {
+			return domain.RecoveryIncident{}, fmt.Errorf("duplicate recovery incident id")
+		}
+		if existing.ProjectID == rec.ProjectID && existing.IssueID == rec.IssueID && existing.Fingerprint == rec.Fingerprint && existing.Status != domain.RecoveryIncidentResolved {
+			return domain.RecoveryIncident{}, fmt.Errorf("duplicate recovery incident")
+		}
+	}
+	f.recoveryIncidents = append(f.recoveryIncidents, rec)
+	return rec, nil
+}
+
+func (f *fakeStore) UpdateRecoveryIncident(_ context.Context, rec domain.RecoveryIncident) (domain.RecoveryIncident, bool, error) {
+	for i := range f.recoveryIncidents {
+		if f.recoveryIncidents[i].ID == rec.ID {
+			f.recoveryIncidents[i] = rec
+			return rec, true, nil
+		}
+	}
+	return domain.RecoveryIncident{}, false, nil
 }
 
 func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {

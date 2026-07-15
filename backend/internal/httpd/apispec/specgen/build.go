@@ -877,6 +877,20 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/recovery/incidents/{incidentId}/verify", id: "verifyRecoveryIncident", tag: "sessions",
+			summary:    "Record a recovery fix/remediation and respawn a worker to verify it",
+			pathParams: []any{controllers.RecoveryIncidentIDParam{}},
+			reqBody:    controllers.VerifyRecoveryIncidentRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.SessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/restore", id: "restoreSession", tag: "sessions",
 			summary:    "Restore a terminated session",
 			pathParams: []any{controllers.SessionIDParam{}},

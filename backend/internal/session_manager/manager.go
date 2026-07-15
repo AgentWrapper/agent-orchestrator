@@ -220,6 +220,7 @@ type Store interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+	ListUnresolvedRecoveryIncidentsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.RecoveryIncident, error)
 	// DeleteSession removes a session row only if it is still in seed state
 	// (no workspace, runtime handle, agent session id, or prompt; not
 	// terminated). Returns deleted=true when removal happened; deleted=false
@@ -2966,7 +2967,9 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		// Runtime teardown is keyed on the terminated session's own handle, not
 		// the workspace path, so it runs even when the workspace is shared with a
 		// live successor — otherwise a skipped session would leak its runtime
-		// (the lingering keep-alive shell) until cleanup reruns.
+		// (the lingering keep-alive shell) until cleanup reruns. It also runs
+		// before recovery-incident workspace preservation: recovery needs the
+		// workspace evidence, not a dead worker's runtime process.
 		//
 		// A teardown that FAILS is not "usually already gone": the runtime may
 		// still be up. Destroying the workspace under it (and reporting the
@@ -2978,6 +2981,14 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "runtime teardown failed"})
 				continue
 			}
+		}
+		if incidents, err := m.store.ListUnresolvedRecoveryIncidentsBySession(ctx, rec.ID); err != nil {
+			m.logger.Warn("cleanup: recovery incident lookup failed; workspace preserved", "sessionID", rec.ID, "error", err)
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "recovery state unavailable"})
+			continue
+		} else if len(incidents) > 0 {
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "unresolved recovery incident"})
+			continue
 		}
 		// An in-place workspace is the operator's shared repo root: it is never
 		// destroyed. It also bypasses the liveWorkspacePaths guard on purpose —

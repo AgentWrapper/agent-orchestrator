@@ -39,6 +39,9 @@ type Store interface {
 	// death escalation instead. See seenIssueIDs.
 	ListOpenPRs(ctx context.Context) ([]domain.PullRequest, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	GetUnresolvedRecoveryIncidentByFingerprint(ctx context.Context, projectID domain.ProjectID, issueID domain.IssueID, fingerprint string) (domain.RecoveryIncident, bool, error)
+	CreateRecoveryIncident(ctx context.Context, rec domain.RecoveryIncident) (domain.RecoveryIncident, error)
+	UpdateRecoveryIncident(ctx context.Context, rec domain.RecoveryIncident) (domain.RecoveryIncident, bool, error)
 	GetFleetPaused(ctx context.Context) (bool, error)
 }
 
@@ -350,12 +353,79 @@ func (o *Observer) dispatchDecision(ctx context.Context, issueID domain.IssueID,
 	if !hasDeadWorker {
 		return dispatchDecision{spawn: true}, nil
 	}
-	// A dead worker with unfinished work: escalate once (the notification store
-	// dedupes re-emissions) and wait for an explicit operator restart. An orphaned
-	// open PR is a fact the operator needs, so the notification names it.
-	intent := workerDiedIntent(latest, issueID)
+	// A dead worker with unfinished work: create/advance the durable recovery
+	// incident, escalate once per incident state (the notification store dedupes
+	// re-emissions), and wait for diagnosis plus a new fix before verification
+	// respawn. An orphaned open PR is a fact the operator needs, so the
+	// notification names it.
+	incident, err := o.ensureRecoveryIncident(ctx, issueID, latest, openPR)
+	if err != nil {
+		return dispatchDecision{}, err
+	}
+	intent := workerDiedIntent(latest, issueID, incident)
 	intent.PRURL = openPR.URL
 	return dispatchDecision{intent: &intent}, nil
+}
+
+func (o *Observer) ensureRecoveryIncident(ctx context.Context, issueID domain.IssueID, latest domain.SessionRecord, openPR domain.PullRequest) (domain.RecoveryIncident, error) {
+	failurePoint := domain.RecoveryFailurePoint(latest, openPR.URL)
+	fingerprint := domain.RecoveryFingerprint(latest.ProjectID, issueID, latest.TerminalFailureReason, failurePoint)
+	existing, ok, err := o.store.GetUnresolvedRecoveryIncidentByFingerprint(ctx, latest.ProjectID, issueID, fingerprint)
+	if err != nil {
+		return domain.RecoveryIncident{}, err
+	}
+	now := o.clock().UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if ok {
+		if existing.LastSessionID == latest.ID {
+			return existing, nil
+		}
+		existing.Attempt++
+		existing.Status = domain.RecoveryIncidentOpen
+		existing.Rung = domain.RecoveryRungForAttempt(existing.Attempt)
+		existing.DeadSessionID = latest.ID
+		existing.LastSessionID = latest.ID
+		existing.TerminalFailureReason = strings.TrimSpace(latest.TerminalFailureReason)
+		existing.FailurePoint = failurePoint
+		existing.OpenPRURL = openPR.URL
+		if failedFix := strings.TrimSpace(existing.FixReference); failedFix != "" {
+			existing.LastFailedFixReference = failedFix
+		}
+		existing.FixReference = ""
+		existing.VerificationSessionID = ""
+		existing.UpdatedAt = now
+		updated, found, err := o.store.UpdateRecoveryIncident(ctx, existing)
+		if err != nil {
+			return domain.RecoveryIncident{}, err
+		}
+		if !found {
+			return domain.RecoveryIncident{}, fmt.Errorf("recovery incident disappeared during update: %s", existing.ID)
+		}
+		return updated, nil
+	}
+	createdAt := sessionSortTime(latest)
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	rec := domain.RecoveryIncident{
+		ID:                    domain.RecoveryIncidentID(latest.ProjectID, issueID, fingerprint, latest.ID),
+		ProjectID:             latest.ProjectID,
+		IssueID:               issueID,
+		Fingerprint:           fingerprint,
+		Status:                domain.RecoveryIncidentOpen,
+		Rung:                  domain.RecoveryRungWorker,
+		Attempt:               1,
+		DeadSessionID:         latest.ID,
+		LastSessionID:         latest.ID,
+		TerminalFailureReason: strings.TrimSpace(latest.TerminalFailureReason),
+		FailurePoint:          failurePoint,
+		OpenPRURL:             openPR.URL,
+		CreatedAt:             createdAt,
+		UpdatedAt:             now,
+	}
+	return o.store.CreateRecoveryIncident(ctx, rec)
 }
 
 // inspectHandledPRs summarizes the PRs owned by an issue's worker sessions:
@@ -456,7 +526,7 @@ func sessionSortTime(sess domain.SessionRecord) time.Time {
 // terminated with unfinished work. It carries the session's terminal failure
 // reason so the operator sees where the worker died; resuming the issue
 // requires an explicit operator restart.
-func workerDiedIntent(sess domain.SessionRecord, issueID domain.IssueID) ports.NotificationIntent {
+func workerDiedIntent(sess domain.SessionRecord, issueID domain.IssueID, incident domain.RecoveryIncident) ports.NotificationIntent {
 	return ports.NotificationIntent{
 		Type:                  domain.NotificationWorkerDiedUnfinished,
 		SessionID:             sess.ID,
@@ -465,6 +535,9 @@ func workerDiedIntent(sess domain.SessionRecord, issueID domain.IssueID) ports.N
 		CreatedAt:             sessionSortTime(sess),
 		SessionDisplayName:    sess.DisplayName,
 		TerminalFailureReason: strings.TrimSpace(sess.TerminalFailureReason),
+		RecoveryIncidentID:    incident.ID,
+		RecoveryAttempt:       incident.Attempt,
+		RecoveryRung:          incident.Rung,
 	}
 }
 

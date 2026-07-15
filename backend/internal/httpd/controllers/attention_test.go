@@ -89,7 +89,7 @@ func TestAttentionAPI_ListOperatorWaitingDerivesHumanOnlyItems(t *testing.T) {
 			PRURL:     "https://github.com/aoagents/agent-orchestrator/pull/230",
 			Type:      domain.NotificationWorkerDiedUnfinished,
 			Title:     "worker died with unfinished work: issue #230",
-			Body:      "dead-worker terminated before issue #230 landed; restart a worker explicitly to resume it.",
+			Body:      "dead-worker terminated before issue #230 landed; diagnose the recovery incident before cleanup, apply a new fix or scoped remediation, then respawn only to verify it.",
 			Status:    domain.NotificationUnread,
 			CreatedAt: now.Add(2 * time.Minute),
 		}},

@@ -43,6 +43,11 @@ type NotificationIntent struct {
 	// provenance (worker_died_unfinished only): where the worker died, so the
 	// operator can diagnose before explicitly restarting the issue.
 	TerminalFailureReason string
+	// RecoveryIncidentID / RecoveryAttempt / RecoveryRung identify the durable
+	// recovery loop backing a worker_died_unfinished escalation.
+	RecoveryIncidentID string
+	RecoveryAttempt    int
+	RecoveryRung       domain.RecoveryRung
 
 	// Duplicate-PR enrichment (domain.NotificationDuplicatePR only). IssueRef is
 	// the tracker reference both PRs claim (e.g. "owner/repo#169"); PRURL is the

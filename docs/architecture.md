@@ -177,15 +177,22 @@ Tracker intake is an opt-in background observer:
 3. derive whether the issue has a live worker, a landed PR, or a dead worker
    with unfinished work;
 4. spawn through the session service for issues with no session history;
-5. emit one durable terminal escalation when a worker died with unfinished
-   work. Intake never launches replacement workers (#313 removed the automatic
-   respawn subsystem); resuming the issue requires an explicit operator
-   restart.
+5. create or advance a durable recovery incident when a worker died with
+   unfinished work, then emit one terminal escalation for the current incident
+   attempt. Intake never launches blind replacement workers (#313 removed the
+   automatic respawn subsystem); a respawn is allowed only after a new
+   fix/remediation reference is recorded and is then treated as verification.
 
 An open PR is not by itself a live driver. A terminated worker with an open PR
 must be escalated with the orphaned PR named; silently treating the PR as
 handled strands work. Conversely, an issue with a live worker or merged PR must
-not be dispatched again.
+not be dispatched again. Repeated same-fingerprint deaths increment the recovery
+attempt and escalate the investigation rung from worker to Orc to prime; the
+same dead session seen on later polls does not advance the incident.
+
+Unresolved recovery incidents preserve the dead worker's workspace during
+session cleanup. Cleanup fails toward preservation if recovery state cannot be
+read, so diagnosis does not lose evidence.
 
 The SCM observer independently detects two simultaneously open PRs for the same
 issue. Lifecycle owns the resulting comment and operator notification. This is

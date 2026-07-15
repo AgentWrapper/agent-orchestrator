@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,15 +23,20 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
-	sessions map[domain.SessionID]domain.SessionRecord
-	pr       map[domain.SessionID]domain.PRFacts
-	projects map[string]domain.ProjectRecord
-	checks   map[string][]domain.PullRequestCheck
-	reviews  map[string][]domain.PullRequestReview
-	runs     map[domain.SessionID][]domain.ReviewRun
-	threads  map[string][]domain.PullRequestReviewThread
-	comments map[string][]domain.PullRequestComment
-	num      int
+	mu                          sync.Mutex
+	sessions                    map[domain.SessionID]domain.SessionRecord
+	pr                          map[domain.SessionID]domain.PRFacts
+	projects                    map[string]domain.ProjectRecord
+	checks                      map[string][]domain.PullRequestCheck
+	reviews                     map[string][]domain.PullRequestReview
+	runs                        map[domain.SessionID][]domain.ReviewRun
+	threads                     map[string][]domain.PullRequestReviewThread
+	comments                    map[string][]domain.PullRequestComment
+	recovery                    map[string]domain.RecoveryIncident
+	num                         int
+	failCanceledRecoveryUpdates bool
+	failCanceledSessionReads    bool
+	recoveryUpdateHook          func(domain.RecoveryIncident)
 	// fleetPaused is the daemon-global pause flag GetFleetPaused reports.
 	fleetPaused bool
 }
@@ -45,6 +51,7 @@ func newFakeStore() *fakeStore {
 		runs:     map[domain.SessionID][]domain.ReviewRun{},
 		threads:  map[string][]domain.PullRequestReviewThread{},
 		comments: map[string][]domain.PullRequestComment{},
+		recovery: map[string]domain.RecoveryIncident{},
 	}
 }
 
@@ -113,7 +120,10 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 	return []domain.PullRequest{{URL: pr.URL, SessionID: id, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, UpdatedAt: pr.UpdatedAt}}, nil
 }
 
-func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+func (f *fakeStore) ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	if f.failCanceledSessionReads && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
@@ -139,6 +149,53 @@ func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.Pu
 
 func (f *fakeStore) ListReviewRunsBySession(_ context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
 	return append([]domain.ReviewRun(nil), f.runs[id]...), nil
+}
+
+func (f *fakeStore) GetRecoveryIncident(_ context.Context, id string) (domain.RecoveryIncident, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.recovery[id]
+	return rec, ok, nil
+}
+
+func (f *fakeStore) UpdateRecoveryIncident(_ context.Context, rec domain.RecoveryIncident) (domain.RecoveryIncident, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.recovery[rec.ID]; !ok {
+		return domain.RecoveryIncident{}, false, nil
+	}
+	f.recovery[rec.ID] = rec
+	return rec, true, nil
+}
+
+func (f *fakeStore) UpdateRecoveryIncidentIfUnchanged(ctx context.Context, rec, expected domain.RecoveryIncident) (domain.RecoveryIncident, bool, error) {
+	if f.failCanceledRecoveryUpdates && ctx.Err() != nil {
+		return domain.RecoveryIncident{}, false, ctx.Err()
+	}
+	f.mu.Lock()
+	current, ok := f.recovery[rec.ID]
+	if !ok {
+		f.mu.Unlock()
+		return domain.RecoveryIncident{}, false, nil
+	}
+	if current.Status != expected.Status ||
+		current.Rung != expected.Rung ||
+		current.Attempt != expected.Attempt ||
+		current.DeadSessionID != expected.DeadSessionID ||
+		current.LastSessionID != expected.LastSessionID ||
+		current.FixReference != expected.FixReference ||
+		current.VerificationSessionID != expected.VerificationSessionID ||
+		!current.UpdatedAt.Equal(expected.UpdatedAt) {
+		f.mu.Unlock()
+		return domain.RecoveryIncident{}, false, nil
+	}
+	f.recovery[rec.ID] = rec
+	hook := f.recoveryUpdateHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(rec)
+	}
+	return rec, true, nil
 }
 
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -200,6 +257,271 @@ func TestSessionSetPreviewUnknownSession(t *testing.T) {
 	}
 }
 
+func TestVerifyRecoveryIncidentRequiresFixReference(t *testing.T) {
+	st := newFakeStore()
+	svc := NewWithDeps(Deps{Manager: &fakeCommander{}, Store: st})
+
+	_, err := svc.VerifyRecoveryIncident(context.Background(), "recovery_abc", " ")
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "RECOVERY_FIX_REFERENCE_REQUIRED" {
+		t.Fatalf("err = %v, want RECOVERY_FIX_REFERENCE_REQUIRED", err)
+	}
+}
+
+func TestVerifyRecoveryIncidentSpawnsWorkerAndMarksVerifying(t *testing.T) {
+	st := newFakeStore()
+	st.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}
+	st.recovery["recovery_abc"] = domain.RecoveryIncident{
+		ID:            "recovery_abc",
+		ProjectID:     "demo",
+		IssueID:       "github:acme/demo#12",
+		Fingerprint:   "sha256:abc",
+		Status:        domain.RecoveryIncidentOpen,
+		Rung:          domain.RecoveryRungWorker,
+		Attempt:       1,
+		DeadSessionID: "demo-1",
+		LastSessionID: "demo-1",
+		CreatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+	}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Clock: func() time.Time {
+		return time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	}})
+
+	sess, err := svc.VerifyRecoveryIncident(context.Background(), "recovery_abc", "PR #400")
+	if err != nil {
+		t.Fatalf("VerifyRecoveryIncident: %v", err)
+	}
+	if sess.ID == "" || !fc.spawned {
+		t.Fatalf("spawned session = %+v, spawned=%v", sess, fc.spawned)
+	}
+	if fc.gotCfg.Kind != domain.KindWorker || fc.gotCfg.ProjectID != "demo" || fc.gotCfg.IssueID != "github:acme/demo#12" || fc.gotCfg.Prompt != "/address-issue 12" {
+		t.Fatalf("spawn config = %+v", fc.gotCfg)
+	}
+	got := st.recovery["recovery_abc"]
+	if got.Status != domain.RecoveryIncidentVerifying || got.FixReference != "PR #400" || got.VerificationSessionID != sess.ID {
+		t.Fatalf("incident after verify = %+v", got)
+	}
+}
+
+func TestVerifyRecoveryIncidentRejectsSameFixAlreadyVerifying(t *testing.T) {
+	st := newFakeStore()
+	st.recovery["recovery_abc"] = domain.RecoveryIncident{
+		ID:                    "recovery_abc",
+		ProjectID:             "demo",
+		IssueID:               "github:acme/demo#12",
+		Fingerprint:           "sha256:abc",
+		Status:                domain.RecoveryIncidentVerifying,
+		Rung:                  domain.RecoveryRungWorker,
+		Attempt:               1,
+		DeadSessionID:         "demo-1",
+		LastSessionID:         "demo-1",
+		FixReference:          "PR #400",
+		VerificationSessionID: "demo-2",
+		CreatedAt:             time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+		UpdatedAt:             time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC),
+	}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	_, err := svc.VerifyRecoveryIncident(context.Background(), "recovery_abc", "PR #400")
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "RECOVERY_FIX_ALREADY_VERIFYING" {
+		t.Fatalf("err = %v, want RECOVERY_FIX_ALREADY_VERIFYING", err)
+	}
+	if fc.spawned {
+		t.Fatal("same-fix verification must not spawn another worker")
+	}
+}
+
+func TestVerifyRecoveryIncidentRejectsPreviouslyFailedFix(t *testing.T) {
+	st := newFakeStore()
+	st.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}
+	st.recovery["recovery_abc"] = domain.RecoveryIncident{
+		ID:                     "recovery_abc",
+		ProjectID:              "demo",
+		IssueID:                "github:acme/demo#12",
+		Fingerprint:            "sha256:abc",
+		Status:                 domain.RecoveryIncidentOpen,
+		Rung:                   domain.RecoveryRungOrc,
+		Attempt:                2,
+		DeadSessionID:          "demo-2",
+		LastSessionID:          "demo-2",
+		LastFailedFixReference: "PR #400",
+		CreatedAt:              time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+		UpdatedAt:              time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC),
+	}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	_, err := svc.VerifyRecoveryIncident(context.Background(), "recovery_abc", "PR #400")
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "RECOVERY_FIX_PREVIOUSLY_FAILED" {
+		t.Fatalf("err = %v, want RECOVERY_FIX_PREVIOUSLY_FAILED", err)
+	}
+	if fc.spawned {
+		t.Fatal("previously failed fix must not spawn another verification worker")
+	}
+}
+
+func TestVerifyRecoveryIncidentReservesBeforeConcurrentSameFixSpawn(t *testing.T) {
+	st := newFakeStore()
+	st.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}
+	st.recovery["recovery_abc"] = domain.RecoveryIncident{
+		ID:            "recovery_abc",
+		ProjectID:     "demo",
+		IssueID:       "github:acme/demo#12",
+		Fingerprint:   "sha256:abc",
+		Status:        domain.RecoveryIncidentOpen,
+		Rung:          domain.RecoveryRungWorker,
+		Attempt:       1,
+		DeadSessionID: "demo-1",
+		LastSessionID: "demo-1",
+		CreatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+	}
+	fc := &fakeCommander{
+		spawnGate:    make(chan struct{}),
+		spawnStarted: make(chan struct{}, 2),
+	}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Clock: func() time.Time {
+		return time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	}})
+
+	type result struct {
+		sess domain.Session
+		err  error
+	}
+	results := make(chan result, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			sess, err := svc.VerifyRecoveryIncident(context.Background(), "recovery_abc", "PR #400")
+			results <- result{sess: sess, err: err}
+		}()
+	}
+	<-fc.spawnStarted
+	close(fc.spawnGate)
+
+	var success domain.Session
+	conflicts := 0
+	for i := 0; i < 2; i++ {
+		res := <-results
+		if res.err == nil {
+			success = res.sess
+			continue
+		}
+		var apiErr *apierr.Error
+		if !errors.As(res.err, &apiErr) || apiErr.Code != "RECOVERY_FIX_ALREADY_VERIFYING" {
+			t.Fatalf("err = %v, want RECOVERY_FIX_ALREADY_VERIFYING", res.err)
+		}
+		conflicts++
+	}
+	if success.ID == "" || conflicts != 1 {
+		t.Fatalf("success=%+v conflicts=%d, want one success and one conflict", success, conflicts)
+	}
+	got := st.recovery["recovery_abc"]
+	if got.VerificationSessionID != success.ID || got.FixReference != "PR #400" {
+		t.Fatalf("incident after race = %+v, want winning session %s", got, success.ID)
+	}
+	fc.mu.Lock()
+	spawnSeq := fc.spawnSeq
+	rollbackIDs := append([]domain.SessionID(nil), fc.rollbackIDs...)
+	fc.mu.Unlock()
+	if spawnSeq != 1 {
+		t.Fatalf("spawn count = %d, want exactly one worker spawned", spawnSeq)
+	}
+	if len(rollbackIDs) != 0 {
+		t.Fatalf("rollbackIDs = %+v, want none because duplicate never spawned", rollbackIDs)
+	}
+}
+
+func TestVerifyRecoveryIncidentSpawnFailureRevertsClaimAfterRequestCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	st := newFakeStore()
+	st.failCanceledRecoveryUpdates = true
+	st.failCanceledSessionReads = true
+	st.recoveryUpdateHook = func(rec domain.RecoveryIncident) {
+		if rec.Status == domain.RecoveryIncidentVerifying && rec.VerificationSessionID == "" {
+			cancel()
+		}
+	}
+	st.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}
+	st.recovery["recovery_abc"] = domain.RecoveryIncident{
+		ID:            "recovery_abc",
+		ProjectID:     "demo",
+		IssueID:       "github:acme/demo#12",
+		Fingerprint:   "sha256:abc",
+		Status:        domain.RecoveryIncidentOpen,
+		Rung:          domain.RecoveryRungWorker,
+		Attempt:       1,
+		DeadSessionID: "demo-1",
+		LastSessionID: "demo-1",
+		CreatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+	}
+	fc := &fakeCommander{
+		spawnErr: errors.New("spawn failed"),
+		spawnHook: func() {
+			cancel()
+		},
+	}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Clock: func() time.Time {
+		return time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	}})
+
+	_, err := svc.VerifyRecoveryIncident(ctx, "recovery_abc", "PR #400")
+	if err == nil || !strings.Contains(err.Error(), "spawn failed") {
+		t.Fatalf("err = %v, want spawn failure", err)
+	}
+	got := st.recovery["recovery_abc"]
+	if got.Status != domain.RecoveryIncidentOpen || got.FixReference != "" || got.VerificationSessionID != "" {
+		t.Fatalf("incident after canceled spawn failure = %+v, want original open claim reverted", got)
+	}
+}
+
+func TestVerifyRecoveryIncidentRecordsSpawnAfterRequestCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	st := newFakeStore()
+	st.failCanceledRecoveryUpdates = true
+	st.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}
+	st.recovery["recovery_abc"] = domain.RecoveryIncident{
+		ID:            "recovery_abc",
+		ProjectID:     "demo",
+		IssueID:       "github:acme/demo#12",
+		Fingerprint:   "sha256:abc",
+		Status:        domain.RecoveryIncidentOpen,
+		Rung:          domain.RecoveryRungWorker,
+		Attempt:       1,
+		DeadSessionID: "demo-1",
+		LastSessionID: "demo-1",
+		CreatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC),
+	}
+	fc := &fakeCommander{
+		failCanceledSpawn:       true,
+		requireLongSpawnTimeout: true,
+		spawnSuccessHook: func() {
+			cancel()
+		},
+	}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Clock: func() time.Time {
+		return time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	}})
+
+	sess, err := svc.VerifyRecoveryIncident(ctx, "recovery_abc", "PR #400")
+	if err != nil {
+		t.Fatalf("VerifyRecoveryIncident: %v", err)
+	}
+	got := st.recovery["recovery_abc"]
+	if got.Status != domain.RecoveryIncidentVerifying || got.FixReference != "PR #400" || got.VerificationSessionID != sess.ID {
+		t.Fatalf("incident after canceled request = %+v, want verification recorded for %s", got, sess.ID)
+	}
+	if len(fc.rollbackIDs) != 0 {
+		t.Fatalf("rollbackIDs = %+v, want none after durable verification update", fc.rollbackIDs)
+	}
+}
+
 func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 	st := newFakeStore()
 
@@ -213,6 +535,7 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 // fakeCommander records Kill/Spawn calls so a test can assert the
 // clean-orchestrator ordering without wiring a real session engine.
 type fakeCommander struct {
+	mu              sync.Mutex
 	killed          []domain.SessionID
 	retired         []domain.SessionID
 	sent            []domain.SessionID
@@ -221,32 +544,88 @@ type fakeCommander struct {
 	killErr         error
 	// killFailIDs makes Kill fail for specific sessions only (nil = none), so a
 	// test can exercise best-effort termination past a single failure.
-	killFailIDs  map[domain.SessionID]bool
-	retireErr    error
-	sendErr      error
-	cleanupErr   error
-	spawnErr     error
-	spawnRecord  domain.SessionRecord
-	spawned      bool
-	killsAtSpawn int
+	killFailIDs             map[domain.SessionID]bool
+	retireErr               error
+	sendErr                 error
+	cleanupErr              error
+	spawnErr                error
+	spawnRecord             domain.SessionRecord
+	failCanceledSpawn       bool
+	requireLongSpawnTimeout bool
+	spawned                 bool
+	killsAtSpawn            int
 	// gotCfg is the config the service handed down, where the semantic-name
 	// inputs (IssueID, IssueTitle, DisplayName) have to arrive.
 	gotCfg           ports.SpawnConfig
 	gotSetIssueID    domain.IssueID
 	gotSetIssueTitle string
+	spawnGate        chan struct{}
+	spawnStarted     chan struct{}
+	spawnHook        func()
+	spawnSuccessHook func()
+	spawnSeq         int
+	rollbackIDs      []domain.SessionID
 }
 
-func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+func (f *fakeCommander) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	f.mu.Lock()
 	f.gotCfg = cfg
+	spawnHook := f.spawnHook
+	if f.failCanceledSpawn && ctx.Err() != nil {
+		f.mu.Unlock()
+		return domain.SessionRecord{}, ctx.Err()
+	}
+	if f.requireLongSpawnTimeout {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) < 30*time.Second {
+			f.mu.Unlock()
+			return domain.SessionRecord{}, fmt.Errorf("spawn deadline too short")
+		}
+	}
 	if f.spawnErr != nil {
+		f.mu.Unlock()
+		if spawnHook != nil {
+			spawnHook()
+		}
 		return domain.SessionRecord{}, f.spawnErr
 	}
 	f.spawned = true
 	f.killsAtSpawn = len(f.retired)
+	spawnSuccessHook := f.spawnSuccessHook
 	if f.spawnRecord.ID != "" {
-		return f.spawnRecord, nil
+		rec := f.spawnRecord
+		started := f.spawnStarted
+		gate := f.spawnGate
+		f.mu.Unlock()
+		if spawnSuccessHook != nil {
+			spawnSuccessHook()
+		}
+		if started != nil {
+			started <- struct{}{}
+		}
+		if gate != nil {
+			<-gate
+		}
+		return rec, nil
 	}
-	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
+	f.spawnSeq++
+	started := f.spawnStarted
+	gate := f.spawnGate
+	id := domain.SessionID("mer-9")
+	if started != nil || gate != nil {
+		id = domain.SessionID(fmt.Sprintf("%s-%d", cfg.ProjectID, f.spawnSeq))
+	}
+	f.mu.Unlock()
+	if spawnSuccessHook != nil {
+		spawnSuccessHook()
+	}
+	if started != nil {
+		started <- struct{}{}
+	}
+	if gate != nil {
+		<-gate
+	}
+	return domain.SessionRecord{ID: id, ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
 	return domain.SessionRecord{}, nil
@@ -327,7 +706,10 @@ func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (se
 		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-2", Reason: "workspace has uncommitted changes"}},
 	}, nil
 }
-func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
+func (f *fakeCommander) RollbackSpawn(_ context.Context, id domain.SessionID) (bool, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rollbackIDs = append(f.rollbackIDs, id)
 	return false, false, nil
 }
 

@@ -116,6 +116,10 @@ func (s *raceStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	return out, nil
 }
 
+func (s *raceStore) ListUnresolvedRecoveryIncidentsBySession(context.Context, domain.SessionID) ([]domain.RecoveryIncident, error) {
+	return nil, nil
+}
+
 func (s *raceStore) DeleteSession(context.Context, domain.SessionID) (bool, error) {
 	return false, nil
 }

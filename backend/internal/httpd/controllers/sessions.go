@@ -39,6 +39,7 @@ var errPreviewFileNotFound = errors.New("preview file not found")
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
+	VerifyRecoveryIncident(ctx context.Context, incidentID, fixReference string) (domain.Session, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
@@ -77,6 +78,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions", c.list)
 	r.Post("/sessions", c.spawn)
 	r.Post("/sessions/cleanup", c.cleanup)
+	r.Post("/recovery/incidents/{incidentId}/verify", c.verifyRecoveryIncident)
 	r.Get("/sessions/{sessionId}", c.get)
 	r.Get("/sessions/{sessionId}/preview", c.preview)
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
@@ -156,6 +158,24 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, Model: in.Model, DisplayName: displayName, Force: in.Force})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) verifyRecoveryIncident(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/recovery/incidents/{incidentId}/verify")
+		return
+	}
+	var in VerifyRecoveryIncidentRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.VerifyRecoveryIncident(r.Context(), chi.URLParam(r, "incidentId"), in.FixReference)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
