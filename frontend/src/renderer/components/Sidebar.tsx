@@ -15,6 +15,7 @@ import {
 	Smartphone,
 	Sun,
 	Trash2,
+	Workflow,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
@@ -112,6 +113,7 @@ function useSelection() {
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
 		goPrs: () => void navigate({ to: "/prs" }),
+		goPipelines: () => void navigate({ to: "/pipelines" }),
 		goGlobalSettings: () => void navigate({ to: "/settings" }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
@@ -377,6 +379,10 @@ export function Sidebar({
 								<GitPullRequest aria-hidden="true" />
 								Pull requests
 							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={selection.goPipelines}>
+								<Workflow aria-hidden="true" />
+								Pipelines
+							</DropdownMenuItem>
 							<DropdownMenuItem disabled>
 								<Search aria-hidden="true" />
 								Search
@@ -446,6 +452,10 @@ export function Sidebar({
 							<DropdownMenuItem onSelect={selection.goPrs}>
 								<GitPullRequest aria-hidden="true" />
 								Pull requests
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={selection.goPipelines}>
+								<Workflow aria-hidden="true" />
+								Pipelines
 							</DropdownMenuItem>
 							<DropdownMenuItem disabled>
 								<Search aria-hidden="true" />
