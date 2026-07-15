@@ -551,7 +551,7 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(id domain.SessionID)
 	rec.Metadata.WorkspacePath = ""
 	rec.Metadata.RuntimeHandleID = ""
 	rec.Metadata.AgentSessionID = ""
-	_ = m.store.UpdateSession(ctx, rec)
+	_ = m.store.UpdateSession(context.Background(), rec)
 }
 
 // rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
