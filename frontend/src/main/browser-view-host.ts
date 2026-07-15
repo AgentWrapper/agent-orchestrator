@@ -277,6 +277,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		try {
 			await entry.view.webContents.loadURL(normalized.href);
 		} catch (err) {
+			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
 			entry.view.setVisible?.(false);
 			entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to load page") };
 			options.mainWindow.webContents.send("browser:navState", entry.state);
