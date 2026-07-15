@@ -1,7 +1,13 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RemoteServerDialog, RemoteServerSettingsSection } from "./RemoteServerSettings";
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+	let resolve: (value: T) => void = () => undefined;
+	const promise = new Promise<T>((done) => { resolve = done; });
+	return { promise, resolve };
+}
 
 describe("RemoteServerSettings", () => {
 	beforeEach(() => {
@@ -149,6 +155,63 @@ describe("RemoteServerSettings", () => {
 		expect(window.ao!.remoteServer.revealPassword).not.toHaveBeenCalled();
 		await user.click(screen.getByRole("button", { name: "Hide password" }));
 		expect(password).toHaveValue("replacement");
+	});
+
+	it("ignores a late saved-password reveal after typing a replacement", async () => {
+		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011, passwordConfigured: true }));
+		const reveal = deferred<string | null>();
+		window.ao!.remoteServer.revealPassword = vi.fn(() => reveal.promise);
+		const user = userEvent.setup();
+		render(<RemoteServerSettingsSection />);
+
+		const password = await screen.findByLabelText("Connection password");
+		await user.click(screen.getByRole("button", { name: "Show password" }));
+		await waitFor(() => expect(window.ao!.remoteServer.revealPassword).toHaveBeenCalledOnce());
+		await user.type(password, "replacement");
+		await act(async () => {
+			reveal.resolve("saved-secret");
+			await reveal.promise;
+		});
+
+		await waitFor(() => expect(password).toHaveValue("replacement"));
+	});
+
+	it("ignores a late saved-password reveal after hiding", async () => {
+		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011, passwordConfigured: true }));
+		const reveal = deferred<string | null>();
+		window.ao!.remoteServer.revealPassword = vi.fn(() => reveal.promise);
+		const user = userEvent.setup();
+		render(<RemoteServerSettingsSection />);
+
+		const password = await screen.findByLabelText("Connection password");
+		await user.click(screen.getByRole("button", { name: "Show password" }));
+		await user.click(await screen.findByRole("button", { name: "Hide password" }));
+		await act(async () => {
+			reveal.resolve("saved-secret");
+			await reveal.promise;
+		});
+
+		await waitFor(() => expect(password).toHaveValue(""));
+		expect(password).toHaveAttribute("type", "password");
+	});
+
+	it("ignores a late saved-password reveal after saving", async () => {
+		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011, passwordConfigured: true }));
+		const reveal = deferred<string | null>();
+		window.ao!.remoteServer.revealPassword = vi.fn(() => reveal.promise);
+		const user = userEvent.setup();
+		render(<RemoteServerSettingsSection />);
+
+		const password = await screen.findByLabelText("Connection password");
+		await user.click(screen.getByRole("button", { name: "Show password" }));
+		await user.click(screen.getByRole("button", { name: "Save connection" }));
+		await waitFor(() => expect(window.ao!.remoteServer.save).toHaveBeenCalledOnce());
+		await act(async () => {
+			reveal.resolve("saved-secret");
+			await reveal.promise;
+		});
+
+		await waitFor(() => expect(password).toHaveValue(""));
 	});
 
 	it("renders nothing in a normal local build", async () => {

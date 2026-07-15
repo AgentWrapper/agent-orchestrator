@@ -28,6 +28,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 	const [saved, setSaved] = useState(false);
 	const mounted = useRef(true);
 	const passwordRef = useRef("");
+	const revealGeneration = useRef(0);
 
 	const updatePassword = (value: string) => {
 		passwordRef.current = value;
@@ -54,22 +55,32 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 		return () => {
 			active = false;
 			mounted.current = false;
+			revealGeneration.current += 1;
 			passwordRef.current = "";
 		};
 	}, []);
 
 	const togglePasswordVisibility = async () => {
 		if (showPassword) {
+			revealGeneration.current += 1;
 			if (revealedSavedPassword && !passwordEdited) updatePassword("");
 			setRevealedSavedPassword(false);
 			setShowPassword(false);
 			return;
 		}
 		if (!password && passwordConfigured && !passwordEdited) {
+			const generation = revealGeneration.current + 1;
+			revealGeneration.current = generation;
+			setShowPassword(true);
 			const revealed = await aoBridge.remoteServer.revealPassword();
-			if (!mounted.current || revealed === null) return;
+			if (!mounted.current || generation !== revealGeneration.current) return;
+			if (revealed === null) {
+				setShowPassword(false);
+				return;
+			}
 			updatePassword(revealed);
 			setRevealedSavedPassword(true);
+			return;
 		}
 		setShowPassword(true);
 	};
@@ -79,6 +90,8 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 		setSaving(true);
 		setSaved(false);
 		setError(null);
+		revealGeneration.current += 1;
+		setShowPassword(false);
 		const input = {
 			host,
 			port: Number(port),
@@ -150,6 +163,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 						value={password}
 						placeholder={passwordConfigured && !password ? "********" : undefined}
 						onChange={(event) => {
+							revealGeneration.current += 1;
 							updatePassword(event.target.value);
 							setPasswordEdited(true);
 							setRevealedSavedPassword(false);
