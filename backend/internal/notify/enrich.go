@@ -35,11 +35,14 @@ func titleForIntent(intent Intent) string {
 	case domain.NotificationNeedsInput:
 		return fmt.Sprintf("%s needs your input", sessionLabel(intent))
 	case domain.NotificationReadyToMerge:
+		if s := sessionLabel(intent); s != "session" {
+			return fmt.Sprintf("%s is ready to merge", s)
+		}
 		return fmt.Sprintf("%s is ready to merge", prLabel(intent))
 	case domain.NotificationPRMerged:
-		return fmt.Sprintf("%s was merged", prLabel(intent))
+		return fmt.Sprintf("%s merged", prLabel(intent))
 	case domain.NotificationPRClosedUnmerged:
-		return fmt.Sprintf("%s was closed without merging", prLabel(intent))
+		return fmt.Sprintf("%s closed", prLabel(intent))
 	default:
 		return "Notification"
 	}
@@ -48,31 +51,23 @@ func titleForIntent(intent Intent) string {
 func bodyForIntent(intent Intent) string {
 	switch intent.Type {
 	case domain.NotificationNeedsInput:
-		return "Your agent paused and needs a decision to continue. Open the session to respond."
+		return "Your agent is waiting on you to continue."
 	case domain.NotificationReadyToMerge:
-		lead := "This PR"
-		if s := sessionLabel(intent); s != "session" {
-			lead = s
-		}
-		if target := strings.TrimSpace(intent.PRTargetBranch); target != "" {
-			return fmt.Sprintf("%s passed CI with no blocking review feedback. Ready to merge into %s.", lead, target)
-		}
-		return fmt.Sprintf("%s passed CI with no blocking review feedback and is ready to merge.", lead)
+		return "CI passed with no blocking review feedback."
 	case domain.NotificationPRMerged:
-		subject := "The pull request"
-		if title := strings.TrimSpace(intent.PRTitle); title != "" {
-			subject = title
+		title := strings.TrimSpace(intent.PRTitle)
+		if target := strings.TrimSpace(intent.PRTargetBranch); title != "" && target != "" {
+			return fmt.Sprintf("%s is now on %s.", title, target)
 		}
-		if target := strings.TrimSpace(intent.PRTargetBranch); target != "" {
-			return fmt.Sprintf("%s was merged into %s.", subject, target)
+		if title != "" {
+			return fmt.Sprintf("%s was merged.", title)
 		}
-		return fmt.Sprintf("%s was merged.", subject)
+		return "The pull request was merged."
 	case domain.NotificationPRClosedUnmerged:
-		subject := "The pull request"
 		if title := strings.TrimSpace(intent.PRTitle); title != "" {
-			subject = title
+			return fmt.Sprintf("%s was closed without merging. Reopen it if this wasn't intended.", title)
 		}
-		return fmt.Sprintf("%s was closed without merging. Reopen it if that wasn't intended.", subject)
+		return "Closed without merging. Reopen it if this wasn't intended."
 	default:
 		return ""
 	}
