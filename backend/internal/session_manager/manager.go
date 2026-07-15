@@ -278,7 +278,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	id := rec.ID
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
 	if err != nil {
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: system prompt file: %w", id, err)
 	}
 
@@ -291,7 +291,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
 		// row is deleted outright instead of accumulating as a terminated orphan
 		// in session lists (e.g. when gitworktree refuses the branch).
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
 	}
 
@@ -299,14 +299,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
@@ -314,7 +314,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	launchCfg := ports.LaunchConfig{
@@ -332,7 +332,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart {
@@ -341,7 +341,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -350,7 +350,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
@@ -361,7 +361,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSpawnSeedRow(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -559,7 +559,7 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(id domain.SessionID)
 // don't accumulate terminated rows in session lists. DeleteSession only removes
 // rows still in seed state; if the row has progressed or the delete itself
 // fails, fall back to parking it terminated so a phantom row never looks live.
-func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
+func (m *Manager) rollbackSpawnSeedRow(id domain.SessionID) {
 	if deleted, err := m.store.DeleteSession(context.Background(), id); err == nil && deleted {
 		m.cleanupSystemPromptDir(id)
 		return
