@@ -12,6 +12,12 @@ function forwarder(port: number): RemoteForwarder & { close: ReturnType<typeof v
 	return { port, close: vi.fn(async () => undefined) };
 }
 
+function deferred(): { promise: Promise<void>; resolve(): void } {
+	let resolve: () => void = () => undefined;
+	const promise = new Promise<void>((done) => { resolve = done; });
+	return { promise, resolve };
+}
+
 describe("RemoteClientRuntime", () => {
 	let current: RemoteServerConfig | null;
 	let created: Array<RemoteForwarder & { close: ReturnType<typeof vi.fn> }>;
@@ -120,6 +126,32 @@ describe("RemoteClientRuntime", () => {
 		expect(runtime.getConfig()).toEqual({ host: "second", port: 3012 });
 		expect(created[0].close).toHaveBeenCalledOnce();
 		expect(created[1].close).not.toHaveBeenCalled();
+		expect(statuses.at(-1)).toEqual({ state: "ready", port: 4101 });
+	});
+
+	it("serializes a settings save behind a slow startup probe", async () => {
+		current = saved({ host: "startup", port: 3011, password: "startup-secret" });
+		const startupProbe = deferred();
+		vi.mocked(deps.probe)
+			.mockImplementationOnce(() => startupProbe.promise)
+			.mockResolvedValueOnce(undefined);
+		const runtime = new RemoteClientRuntime(deps);
+
+		const starting = runtime.start();
+		await vi.waitFor(() => expect(deps.probe).toHaveBeenCalledWith(4100));
+		const saving = runtime.saveConfig({ host: "saved", port: 3012, password: "saved-secret" });
+		await Promise.resolve();
+		expect(deps.startForwarder).toHaveBeenCalledTimes(1);
+		expect(deps.writeConfig).not.toHaveBeenCalled();
+
+		startupProbe.resolve();
+		expect(await starting).toEqual({ state: "ready", port: 4100 });
+		expect(await saving).toEqual({ state: "ready", port: 4101 });
+		expect(created).toHaveLength(2);
+		expect(created[0].close).toHaveBeenCalledOnce();
+		expect(created[1].close).not.toHaveBeenCalled();
+		expect(runtime.getConfig()).toEqual({ host: "saved", port: 3012 });
+		expect(runtime.getStatus()).toEqual({ state: "ready", port: 4101 });
 		expect(statuses.at(-1)).toEqual({ state: "ready", port: 4101 });
 	});
 

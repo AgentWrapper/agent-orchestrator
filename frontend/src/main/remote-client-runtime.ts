@@ -22,6 +22,7 @@ export class RemoteClientRuntime {
 	private config: RemoteServerConfig | null = null;
 	private forwarder: RemoteForwarder | null = null;
 	private status: DaemonStatus = { state: "stopped" };
+	private lifecycleQueue: Promise<void> = Promise.resolve();
 
 	constructor(private readonly deps: RemoteClientRuntimeDeps) {}
 
@@ -43,7 +44,11 @@ export class RemoteClientRuntime {
 		return this.config?.password ?? null;
 	}
 
-	async start(): Promise<DaemonStatus> {
+	start(): Promise<DaemonStatus> {
+		return this.enqueueLifecycle(() => this.startNow());
+	}
+
+	private async startNow(): Promise<DaemonStatus> {
 		if (this.forwarder) return this.status;
 		const config = await this.deps.readConfig();
 		if (!config) {
@@ -68,7 +73,11 @@ export class RemoteClientRuntime {
 		}
 	}
 
-	async saveConfig(input: RemoteServerConfigUpdate): Promise<DaemonStatus> {
+	saveConfig(input: RemoteServerConfigUpdate): Promise<DaemonStatus> {
+		return this.enqueueLifecycle(() => this.saveConfigNow(input));
+	}
+
+	private async saveConfigNow(input: RemoteServerConfigUpdate): Promise<DaemonStatus> {
 		let candidate: RemoteForwarder | null = null;
 		try {
 			const normalized = validateRemoteServerConfigInput({
@@ -105,7 +114,11 @@ export class RemoteClientRuntime {
 		}
 	}
 
-	async stop(): Promise<DaemonStatus> {
+	stop(): Promise<DaemonStatus> {
+		return this.enqueueLifecycle(() => this.stopNow());
+	}
+
+	private async stopNow(): Promise<DaemonStatus> {
 		const active = this.forwarder;
 		this.forwarder = null;
 		await active?.close();
@@ -121,6 +134,15 @@ export class RemoteClientRuntime {
 			await forwarder.close();
 			throw error;
 		}
+	}
+
+	private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.lifecycleQueue.then(operation);
+		this.lifecycleQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
 	}
 
 	private setStatus(status: DaemonStatus): DaemonStatus {
