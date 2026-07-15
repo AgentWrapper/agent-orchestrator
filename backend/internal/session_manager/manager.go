@@ -1011,7 +1011,7 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	return nil
 }
 
-func (m *Manager) runtimeHasForegroundAgent(ctx context.Context, handle ports.RuntimeHandle) (agentAlive bool, checked bool, err error) {
+func (m *Manager) runtimeHasForegroundAgent(ctx context.Context, handle ports.RuntimeHandle) (agentAlive, checked bool, err error) {
 	observer, ok := m.runtime.(runtimeForegroundCommander)
 	if !ok {
 		return true, false, nil
