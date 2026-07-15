@@ -3,6 +3,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -46,6 +47,7 @@ func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 	fr := &fakeRunner{}
 	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh", ChunkSize: chunkSize})
 	r.runner = fr
+	r.waitEnvConsumed = func(_ context.Context, path string) error { return os.Remove(path) }
 	r.enterDelay = 0 // tests must not pay the real 300ms pre-Enter pause
 	return r, fr
 }
@@ -248,7 +250,7 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	}
 }
 
-func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
+func TestCreateLaunchCommandKeepsEnvValuesOutOfArgv(t *testing.T) {
 	oldGetenv := getenv
 	getenv = func(key string) string {
 		if key == "PATH" {
@@ -276,13 +278,13 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	}
 	args := fr.calls[0].args
 	launchCmd := args[len(args)-1]
-	for _, want := range []string{
-		"export AO_SESSION_ID='sess-1';",
-		"export ODD='can'\\''t';",
-		"export PATH='/custom/bin:/usr/bin';",
+	for _, forbidden := range []string{
+		"sess-1",
+		"can't",
+		"/custom/bin:/usr/bin",
 	} {
-		if !strings.Contains(launchCmd, want) {
-			t.Fatalf("launch command missing %q in: %q", want, launchCmd)
+		if strings.Contains(launchCmd, forbidden) {
+			t.Fatalf("launch command leaked env value %q in: %q", forbidden, launchCmd)
 		}
 	}
 }
