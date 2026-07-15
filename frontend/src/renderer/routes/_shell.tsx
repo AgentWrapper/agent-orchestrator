@@ -127,7 +127,11 @@ function ShellLayout() {
 					project_id: workspace.id,
 					source: "project_add",
 				});
-				const { data: spawnData, error: spawnError, response: spawnResponse } = await apiClient.POST("/api/v1/sessions", {
+				const {
+					data: spawnData,
+					error: spawnError,
+					response: spawnResponse,
+				} = await apiClient.POST("/api/v1/sessions", {
 					body: {
 						projectId: workspace.id,
 						kind: "orchestrator",
