@@ -890,6 +890,44 @@ func TestPoll_CIETagChangeRefreshesWhenRepoUnchanged(t *testing.T) {
 	}
 }
 
+func TestPoll_OpenTrackedPRRefreshesWhenRepoAndChecksUnchanged(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	store.prs["p-1"] = []domain.PullRequest{local}
+	merged := testObs(1)
+	merged.PR.State = string(domain.PRStateMerged)
+	merged.PR.Merged = true
+	merged.PR.MergeCommitSHA = "merge-sha"
+	merged.PR.MergedAtProvider = time.Unix(10, 0).UTC()
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}},
+		checkGuards:  map[string]ports.SCMGuardResult{commitKey(testRepo, "sha1"): {ETag: "ci", NotModified: true}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): merged},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(20, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo"
+	obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")] = "ci"
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 || provider.fetchBatches[0][0].Number != 1 {
+		t.Fatalf("open tracked PR should be fetched despite unchanged guards, got %#v", provider.fetchBatches)
+	}
+	if len(lc.observed) != 1 || !lc.observed[0].PR.Merged {
+		t.Fatalf("merged transition not delivered to lifecycle: %#v", lc.observed)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("merged transition was not persisted")
+	}
+	last := store.writes[len(store.writes)-1].pr
+	if !last.Merged || last.MergeCommitSHA != "merge-sha" {
+		t.Fatalf("persisted PR = %#v, want merged with merge commit", last)
+	}
+}
+
 func TestPoll_GraphQLBatchChunksAt25(t *testing.T) {
 	store := &fakeStore{projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/o/r.git"}}, prs: map[domain.SessionID][]domain.PullRequest{}, checks: map[string][]domain.PullRequestCheck{}}
 	provider := &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}}, observations: map[string]ports.SCMObservation{}}

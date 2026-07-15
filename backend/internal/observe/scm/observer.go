@@ -274,7 +274,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		return err
 	}
 
-	selection := o.selectRefreshCandidates(ctx, subjects, repoGuards, markRepoRefreshFailed)
+	selection := o.selectRefreshCandidates(ctx, subjects, markRepoRefreshFailed)
 	observations := map[string]ports.SCMObservation{}
 	prRefreshOK := map[string]bool{}
 	for key := range selection.candidateKeys {
@@ -817,7 +817,7 @@ func sessionBranchPrefixes(branch string) []string {
 	return prefixes
 }
 
-func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, markRepoFailed func(ports.SCMRepo)) refreshSelection {
+func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, markRepoFailed func(ports.SCMRepo)) refreshSelection {
 	selection := refreshSelection{
 		subjectsByPR:  map[string]*subject{},
 		commitETags:   map[string]pendingCacheString{},
@@ -829,11 +829,10 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		}
 		key := prKey(s.repo, s.known.Number)
 		selection.subjectsByPR[key] = s
-		candidate := missingLocalState(s.known)
-		g := guards[prKey(s.repo, 0)]
-		if g.err == nil && !g.result.NotModified {
-			candidate = true
-		}
+		// Locally open tracked PRs need a direct metadata refresh even when the
+		// repo open-list and commit check guards are unchanged: GitHub can merge
+		// or close a PR without changing the head commit checks, and a later
+		// repo-list 304 must not leave the local row permanently open.
 		if s.known.HeadSHA != "" {
 			commitKey := commitKey(s.repo, s.known.HeadSHA)
 			prev := o.Cache.CommitChecksETag[commitKey]
@@ -844,22 +843,15 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 					markRepoFailed(s.repo)
 				}
 			} else if !res.NotModified {
-				candidate = true
 				if res.ETag != "" {
 					selection.commitETags[key] = pendingCacheString{key: commitKey, value: res.ETag}
 				}
 			}
 		}
-		if candidate {
-			selection.refs = append(selection.refs, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
-			selection.candidateKeys[key] = true
-		}
+		selection.refs = append(selection.refs, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
+		selection.candidateKeys[key] = true
 	}
 	return selection
-}
-
-func missingLocalState(pr domain.PullRequest) bool {
-	return pr.URL == "" || pr.HeadSHA == "" || pr.MetadataHash == "" || pr.CIHash == ""
 }
 
 func (o *Observer) enrichFailureLogs(ctx context.Context, obs *ports.SCMObservation, local domain.PullRequest) {
