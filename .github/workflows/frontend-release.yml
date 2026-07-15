@@ -267,3 +267,61 @@ jobs:
           assets=(dist/latest*.yml dist/*.blockmap)
           if [ ${#assets[@]} -eq 0 ]; then echo "no feed assets generated" >&2; exit 1; fi
           gh release upload "$tag" "${assets[@]}" --clobber
+
+  # Mirror the just-published stable release into the Homebrew cask so
+  # `brew install --cask agentwrapper/homebrew-tap/agent-orchestrator` tracks
+  # every release with no manual step. Runs after the release + updater feed are
+  # fully published, and only on AgentWrapper (fork test releases skip it). It is
+  # a downstream mirror: `continue-on-error` keeps a tap hiccup from failing the
+  # product release. Requires the HOMEBREW_TAP_TOKEN secret (a token with
+  # contents:write on AgentWrapper/homebrew-tap); without it the job no-ops.
+  publish-cask:
+    needs: [publish-feed]
+    if: github.repository == 'AgentWrapper/agent-orchestrator'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Update Homebrew tap cask
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set; skipping cask update." >&2
+            exit 0
+          fi
+          # Forge publishes to v<package.json version> (not the git tag).
+          version="$(node -p "require('./package.json').version")"
+          tag="v$version"
+          work="$(mktemp -d)"
+          gh release download "$tag" --dir "$work" \
+            --pattern 'agent-orchestrator-darwin-arm64.zip' \
+            --pattern 'agent-orchestrator-darwin-x64.zip'
+          arm_sha="$(sha256sum "$work/agent-orchestrator-darwin-arm64.zip" | cut -d' ' -f1)"
+          x64_sha="$(sha256sum "$work/agent-orchestrator-darwin-x64.zip" | cut -d' ' -f1)"
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_TOKEN}@github.com/AgentWrapper/homebrew-tap.git" "$work/tap"
+          mkdir -p "$work/tap/Casks"
+          sed -e "s/__VERSION__/$version/" \
+              -e "s/__ARM_SHA__/$arm_sha/" \
+              -e "s/__X64_SHA__/$x64_sha/" \
+              packaging/homebrew/agent-orchestrator.rb.tmpl \
+              > "$work/tap/Casks/agent-orchestrator.rb"
+          cd "$work/tap"
+          git config user.name "ao-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add Casks/agent-orchestrator.rb
+          if git diff --cached --quiet; then
+            echo "Cask already at $version; nothing to push."
+            exit 0
+          fi
+          git commit -m "agent-orchestrator $version"
+          git push

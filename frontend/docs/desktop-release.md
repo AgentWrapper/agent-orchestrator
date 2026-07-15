@@ -161,6 +161,60 @@ gh api repos/AgentWrapper/agent-orchestrator/environments/release \
   --jq '.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login'
 ```
 
+## Homebrew cask (automated)
+
+The desktop app is also distributed as a Homebrew cask so macOS users can
+`brew install --cask agentwrapper/homebrew-tap/agent-orchestrator`. This is
+part of the same release run: after `publish-feed`, the `publish-cask` job in
+`frontend-release.yml` mirrors the release into the tap, so a normal
+`desktop-vX.Y.Z` cut updates the cask with no manual step.
+
+What the job does, on `AgentWrapper/agent-orchestrator` only (fork test
+releases skip it):
+
+1. Downloads the two stable macOS aliases from the release
+   (`agent-orchestrator-darwin-arm64.zip`, `agent-orchestrator-darwin-x64.zip`)
+   and computes their `sha256`.
+2. Renders `frontend/packaging/homebrew/agent-orchestrator.rb.tmpl` with the
+   version and both hashes.
+3. Commits the result to `AgentWrapper/homebrew-tap` as
+   `Casks/agent-orchestrator.rb` and pushes.
+
+The job is `continue-on-error: true`: it is a downstream mirror, so a tap
+failure never fails the product release. Check the "Desktop release" run's
+`publish-cask` job if a release ships but the cask does not move.
+
+### Prerequisites (one-time)
+
+- Secret **`HOMEBREW_TAP_TOKEN`** on `AgentWrapper/agent-orchestrator`: a
+  fine-grained PAT (or GitHub App token) with **contents: write** on
+  `AgentWrapper/homebrew-tap`. The default `GITHUB_TOKEN` cannot push to a
+  different repo, so without this secret the job no-ops with a log line.
+- The `AgentWrapper/homebrew-tap` repo exists with a `Casks/` directory.
+
+### Update strategy
+
+The cask sets `auto_updates true`. Homebrew installs the initial version; the
+app then self-updates via electron-updater from the Releases feed, exactly as a
+directly-downloaded build does. `brew upgrade` will not fight the in-app
+updater, and there is no "disable updates when brew-installed" logic to
+maintain.
+
+### Changing the cask format
+
+Edit `frontend/packaging/homebrew/agent-orchestrator.rb.tmpl` (the
+`__VERSION__` / `__ARM_SHA__` / `__X64_SHA__` placeholders are filled by the
+job). To hand-publish a cask for an existing release, run the same `sed`
+substitution locally against downloaded zips and push to the tap.
+
+### Not in Homebrew's official cask repo
+
+We ship our own tap, not `Homebrew/homebrew-cask`. Homebrew rejects casks
+whose repo is under **any one** of 90 forks / 90 watchers / 225 stars for
+self-submissions; AO is well over on stars and forks but under on watchers, so
+the official cask is not an option until watchers clear 90. The own tap has no
+such gate.
+
 ## Fork test releases (dev loop)
 
 Test releases go to the fork, never to AgentWrapper: push a `desktop-v*` tag
