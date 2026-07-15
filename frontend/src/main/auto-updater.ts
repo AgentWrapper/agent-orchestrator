@@ -38,6 +38,8 @@ let stagedAtMs: number | undefined;
 let stagedEscalated = false;
 let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
+const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
 
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
@@ -205,10 +207,7 @@ export function getUpdateStatus(): UpdateStatus {
 	return lastStatus;
 }
 
-// startAutoUpdates configures electron-updater from the user's ~/.ao settings.
-// It is a thin shell: all policy (channel, opt-in) comes from update-settings.
-// Caller guards on app.isPackaged.
-export async function startAutoUpdates(stateDir: string): Promise<void> {
+async function runAutomaticUpdateCheck(stateDir: string): Promise<void> {
 	const settings = await readUpdateSettings(stateDir);
 	if (!settings.enabled) return;
 
@@ -223,6 +222,23 @@ export async function startAutoUpdates(stateDir: string): Promise<void> {
 	} catch (err) {
 		console.error("auto-update check failed:", err);
 	}
+}
+
+function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
+	if (automaticUpdateTimer !== undefined) return;
+	automaticUpdateTimer = setInterval(() => runAutomaticUpdateCheck(stateDir), AUTOMATIC_UPDATE_CHECK_INTERVAL_MS);
+	automaticUpdateTimer.unref?.();
+}
+
+// startAutoUpdates configures electron-updater from the user's ~/.ao settings.
+// It is a thin shell: all policy (channel, opt-in) comes from update-settings.
+// Caller guards on app.isPackaged.
+export async function startAutoUpdates(stateDir: string): Promise<void> {
+	const settings = await readUpdateSettings(stateDir);
+	if (!settings.enabled) return;
+
+	await runAutomaticUpdateCheck(stateDir);
+	schedulePeriodicAutomaticUpdateCheck(stateDir);
 }
 
 // checkForUpdatesNow runs a manual update check regardless of the auto-update

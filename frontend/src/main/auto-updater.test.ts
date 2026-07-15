@@ -1,9 +1,11 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { writeUpdateSettings } from "./update-settings";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+type UpdateSettings = {
+	enabled: boolean;
+	channel: "latest" | "nightly";
+	nightlyAck: boolean;
+};
 
 type AutoUpdaterMock = {
 	on: ReturnType<typeof vi.fn>;
@@ -31,7 +33,7 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
 	};
 }
 
-async function importAutoUpdater() {
+async function importAutoUpdater(settings: UpdateSettings = { enabled: true, channel: "latest", nightlyAck: false }) {
 	vi.resetModules();
 	const autoUpdater = createAutoUpdaterMock();
 	const dialog = {
@@ -48,6 +50,11 @@ async function importAutoUpdater() {
 		},
 		BrowserWindow,
 		dialog,
+	}));
+	vi.doMock("./update-settings", () => ({
+		readUpdateSettings: vi.fn(() => Promise.resolve(settings)),
+		writeUpdateSettings: vi.fn(() => Promise.resolve()),
+		UPDATE_SETTINGS_FILE_NAME: "update-settings.json",
 	}));
 	const module = await import("./auto-updater");
 	return { module, autoUpdater, dialog, BrowserWindow };
@@ -69,25 +76,19 @@ function latestInterval(setIntervalSpy: ReturnType<typeof vi.spyOn>): {
 }
 
 describe("startAutoUpdates", () => {
-	let dir: string;
+	const stateDir = "/tmp/ao-state";
 
-	beforeEach(async () => {
-		dir = await mkdtemp(path.join(os.tmpdir(), "ao-auto-updater-"));
-	});
-
-	afterEach(async () => {
+	afterEach(() => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 		vi.resetModules();
-		await rm(dir, { recursive: true, force: true });
 	});
 
 	it("runs the automatic updater check immediately on launch", async () => {
-		await writeUpdateSettings(dir, { enabled: true, channel: "latest", nightlyAck: false });
 		const { module, autoUpdater } = await importAutoUpdater();
 
-		await module.startAutoUpdates(dir);
+		await module.startAutoUpdates(stateDir);
 
 		expect(autoUpdater.autoDownload).toBe(true);
 		expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
@@ -97,10 +98,9 @@ describe("startAutoUpdates", () => {
 	it("schedules the next automatic check only after the fixed 1-2 hour cadence", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-		await writeUpdateSettings(dir, { enabled: true, channel: "latest", nightlyAck: false });
 		const { module, autoUpdater } = await importAutoUpdater();
 
-		await module.startAutoUpdates(dir);
+		await module.startAutoUpdates(stateDir);
 		const { delay } = latestInterval(setIntervalSpy);
 
 		expect(delay).toBeGreaterThanOrEqual(60 * 60 * 1000);
@@ -115,10 +115,13 @@ describe("startAutoUpdates", () => {
 	it("schedules nothing when automatic updates are disabled", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-		await writeUpdateSettings(dir, { enabled: false, channel: "latest", nightlyAck: false });
-		const { module, autoUpdater } = await importAutoUpdater();
+		const { module, autoUpdater } = await importAutoUpdater({
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+		});
 
-		await module.startAutoUpdates(dir);
+		await module.startAutoUpdates(stateDir);
 
 		expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
 		expect(setIntervalSpy).not.toHaveBeenCalled();
@@ -127,11 +130,10 @@ describe("startAutoUpdates", () => {
 	it("does not stack periodic timers across repeated startAutoUpdates calls", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-		await writeUpdateSettings(dir, { enabled: true, channel: "latest", nightlyAck: false });
 		const { module } = await importAutoUpdater();
 
-		await module.startAutoUpdates(dir);
-		await module.startAutoUpdates(dir);
+		await module.startAutoUpdates(stateDir);
+		await module.startAutoUpdates(stateDir);
 
 		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
 	});
@@ -140,14 +142,13 @@ describe("startAutoUpdates", () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
 		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-		await writeUpdateSettings(dir, { enabled: true, channel: "latest", nightlyAck: false });
 		const { module, autoUpdater, dialog, BrowserWindow } = await importAutoUpdater();
 		autoUpdater.checkForUpdates
 			.mockResolvedValueOnce(undefined)
 			.mockRejectedValueOnce(new Error("offline"))
 			.mockResolvedValueOnce(undefined);
 
-		await module.startAutoUpdates(dir);
+		await module.startAutoUpdates(stateDir);
 		const { delay } = latestInterval(setIntervalSpy);
 
 		await vi.advanceTimersByTimeAsync(delay);
@@ -163,12 +164,11 @@ describe("startAutoUpdates", () => {
 	it("restores automatic download behavior on every automatic retry after a manual check", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-		await writeUpdateSettings(dir, { enabled: true, channel: "latest", nightlyAck: false });
 		const { module, autoUpdater } = await importAutoUpdater();
 
-		await module.startAutoUpdates(dir);
+		await module.startAutoUpdates(stateDir);
 		const { delay } = latestInterval(setIntervalSpy);
-		await module.checkForUpdatesNow(dir);
+		await module.checkForUpdatesNow(stateDir);
 		expect(autoUpdater.autoDownload).toBe(false);
 
 		await vi.advanceTimersByTimeAsync(delay);
@@ -181,10 +181,9 @@ describe("startAutoUpdates", () => {
 		const unref = vi.fn();
 		const setIntervalStub = vi.fn((_callback: () => void, _delay?: number) => ({ unref }));
 		vi.stubGlobal("setInterval", setIntervalStub);
-		await writeUpdateSettings(dir, { enabled: true, channel: "latest", nightlyAck: false });
 		const { module } = await importAutoUpdater();
 
-		await module.startAutoUpdates(dir);
+		await module.startAutoUpdates(stateDir);
 
 		expect(unref).toHaveBeenCalledTimes(1);
 	});
