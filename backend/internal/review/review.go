@@ -201,6 +201,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	if err != nil {
 		return TriggerResult{}, err
 	}
+	reviewRowForTeardown := reviewRow
 
 	harness, err := e.reviewerHarness(ctx, worker)
 	if err != nil {
@@ -218,6 +219,14 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	for _, reviewState := range reviews {
 		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
 			continue
+		}
+		if reviewRowForTeardown.ReviewerHandleID != "" && hasStaleRunningRun(runs, reviewState.PRURL, reviewState.TargetSHA) {
+			if stopped, err := e.stopReviewer(ctx, reviewRowForTeardown, "supersede stale review run"); err != nil {
+				return TriggerResult{}, err
+			} else if stopped {
+				reviewRow.ReviewerHandleID = ""
+				reviewRowForTeardown.ReviewerHandleID = ""
+			}
 		}
 		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
 			return TriggerResult{}, err
@@ -385,14 +394,8 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	if err != nil {
 		return CancelResult{}, err
 	}
-	if err := e.launcher.Cancel(ctx, review.ReviewerHandleID, review.Harness); err != nil {
-		alive, aliveErr := e.launcher.Alive(ctx, review.ReviewerHandleID)
-		if aliveErr != nil {
-			return CancelResult{}, err
-		}
-		if alive {
-			return CancelResult{}, err
-		}
+	if _, err := e.stopReviewer(ctx, review, "cancel review run"); err != nil {
+		return CancelResult{}, err
 	}
 	if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, "cancelled by user"); err != nil {
 		return CancelResult{}, err
@@ -414,6 +417,43 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 		return CancelResult{}, err
 	}
 	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
+}
+
+func hasStaleRunningRun(runs []domain.ReviewRun, prURL, targetSHA string) bool {
+	for _, run := range runs {
+		if run.PRURL == prURL && run.TargetSHA != targetSHA && run.Status == domain.ReviewRunRunning && run.Verdict == domain.VerdictNone {
+			return true
+		}
+	}
+	return false
+}
+
+// stopReviewer first asks the reviewer adapter to cancel cooperatively. If that
+// fails and the runtime handle still appears live (or cannot be probed), it
+// escalates to destroying the reviewer pane so stale agents do not keep running
+// after their review runs are marked terminal.
+func (e *Engine) stopReviewer(ctx stdctx.Context, review domain.Review, reason string) (destroyed bool, err error) {
+	if review.ReviewerHandleID == "" {
+		return false, nil
+	}
+	cancelErr := e.launcher.Cancel(ctx, review.ReviewerHandleID, review.Harness)
+	if cancelErr == nil {
+		return false, nil
+	}
+	alive, aliveErr := e.launcher.Alive(ctx, review.ReviewerHandleID)
+	if aliveErr == nil && !alive {
+		return false, nil
+	}
+	if destroyErr := e.launcher.Destroy(ctx, review.ReviewerHandleID); destroyErr != nil {
+		if errors.Is(destroyErr, ports.ErrRuntimeHandleStale) {
+			return true, nil
+		}
+		if aliveErr != nil {
+			return false, fmt.Errorf("%s: reviewer cancel failed: %v; reviewer probe failed: %v; reviewer destroy failed: %w", reason, cancelErr, aliveErr, destroyErr)
+		}
+		return false, fmt.Errorf("%s: reviewer cancel failed: %v; reviewer destroy failed: %w", reason, cancelErr, destroyErr)
+	}
+	return true, nil
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a configured

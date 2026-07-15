@@ -70,6 +70,7 @@ type fakeRuntime struct {
 	alive      bool
 	interrupt  string
 	interrupts int
+	destroyed  string
 }
 
 func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -82,6 +83,10 @@ func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, e
 func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
 	f.interrupt = handle.ID
 	f.interrupts++
+	return nil
+}
+func (f *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	f.destroyed = handle.ID
 	return nil
 }
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
@@ -187,6 +192,18 @@ func TestLauncherCancelRequiresReviewerSupport(t *testing.T) {
 
 	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerClaudeCode); err == nil || !strings.Contains(err.Error(), "does not support cancellation") {
 		t.Fatalf("err = %v, want unsupported cancellation", err)
+	}
+}
+
+func TestLauncherDestroyUsesRuntimeDestroy(t *testing.T) {
+	rt := &fakeRuntime{}
+	l := NewLauncher(fakeReviewerResolver{ok: true}, rt)
+
+	if err := l.Destroy(context.Background(), "review-mer-1"); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if rt.destroyed != "review-mer-1" {
+		t.Fatalf("destroyed handle = %q, want review-mer-1", rt.destroyed)
 	}
 }
 

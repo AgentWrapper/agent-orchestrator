@@ -184,6 +184,10 @@ var (
 	// ErrRuntimePrerequisite reports a missing host prerequisite for the selected
 	// runtime before a session can be created.
 	ErrRuntimePrerequisite = errors.New("runtime: prerequisite missing")
+	// ErrRuntimeHandleStale reports a persisted runtime handle that the selected
+	// runtime cannot resolve. Callers tearing down user-visible records may treat
+	// this as already gone while preserving probe failures as non-fatal signals.
+	ErrRuntimeHandleStale = errors.New("runtime: stale or unknown handle")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

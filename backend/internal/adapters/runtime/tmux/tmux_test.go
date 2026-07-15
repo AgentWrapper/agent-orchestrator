@@ -386,6 +386,15 @@ func TestDestroyReportsUnexpectedFailures(t *testing.T) {
 	}
 }
 
+func TestDestroyInvalidHandleIsStaleRuntimeHandle(t *testing.T) {
+	r, _ := newTestRuntime(0)
+
+	err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "legacy/terminal_0"})
+	if !errors.Is(err, ports.ErrRuntimeHandleStale) {
+		t.Fatalf("Destroy err = %v, want ErrRuntimeHandleStale", err)
+	}
+}
+
 func TestDestroyArgs(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{nil}

@@ -621,7 +621,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 
 	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
+			if errors.Is(err, ports.ErrRuntimeHandleStale) {
+				m.logger.Warn("kill: stale runtime handle; marking session terminated", "sessionID", id, "handleID", handle.ID, "error", err)
+			} else {
+				return false, fmt.Errorf("kill %s: runtime: %w", id, err)
+			}
 		}
 	}
 	freed := false

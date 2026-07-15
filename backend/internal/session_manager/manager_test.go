@@ -1377,6 +1377,26 @@ func TestKill_RuntimeDestroyFailureLeavesSessionActive(t *testing.T) {
 	}
 }
 
+func TestKill_StaleRuntimeHandleStillTerminatesSession(t *testing.T) {
+	m, st, rt, ws := newManager()
+	rt.destroyErr = fmt.Errorf("tmux: %w", ports.ErrRuntimeHandleStale)
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !freed {
+		t.Fatal("freed = false, want workspace removed after stale runtime handle")
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("destroy calls runtime=%d workspace=%d, want both", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be marked terminated after stale runtime handle")
+	}
+}
+
 func TestRestore_ReopensTerminal(t *testing.T) {
 	m, st, rt, _ := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})

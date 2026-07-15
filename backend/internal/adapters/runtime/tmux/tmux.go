@@ -398,7 +398,7 @@ func handleID(handle ports.RuntimeHandle) (string, error) {
 		return "", errors.New("tmux runtime: session id is required")
 	}
 	if !sessionIDPattern.MatchString(id) {
-		return "", fmt.Errorf("tmux runtime: invalid handle id %q", id)
+		return "", fmt.Errorf("%w: tmux runtime: invalid handle id %q", ports.ErrRuntimeHandleStale, id)
 	}
 	return id, nil
 }

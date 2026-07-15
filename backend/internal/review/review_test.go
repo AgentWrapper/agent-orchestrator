@@ -158,6 +158,9 @@ type fakeLauncher struct {
 	cancelled        bool
 	cancelErr        error
 	aliveErr         error
+	destroyed        bool
+	destroyErr       error
+	destroyedHandle  string
 	gotSpec          LaunchSpec
 	gotHandle        string
 	cancelledHandle  string
@@ -192,6 +195,11 @@ func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain
 	f.cancelledHandle = handleID
 	f.cancelledHarness = harness
 	return f.cancelErr
+}
+func (f *fakeLauncher) Destroy(_ context.Context, handleID string) error {
+	f.destroyed = true
+	f.destroyedHandle = handleID
+	return f.destroyErr
 }
 
 func liveWorker() domain.SessionRecord {
@@ -312,7 +320,7 @@ func TestCancelMarksRunsCancelledWhenReviewerHandleIsGone(t *testing.T) {
 	}
 }
 
-func TestCancelKeepsRunsRunningWhenReviewerCancelFailsAndHandleIsAlive(t *testing.T) {
+func TestCancelDestroysReviewerWhenCancelFailsAndHandleIsAlive(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
 		runs: []domain.ReviewRun{{
@@ -323,11 +331,37 @@ func TestCancelKeepsRunsRunningWhenReviewerCancelFailsAndHandleIsAlive(t *testin
 	launcher := &fakeLauncher{alive: true, cancelErr: errors.New("interrupt failed")}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	if _, err := eng.Cancel(context.Background(), "mer-1"); err == nil {
-		t.Fatal("Cancel err = nil, want interrupt failure")
+	res, err := eng.Cancel(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" {
+		t.Fatalf("expected destroy fallback for live reviewer: %+v", launcher)
+	}
+	if got := store.runs[0]; got.Status != domain.ReviewRunCancelled {
+		t.Fatalf("run should be cancelled after destroy fallback: %+v", got)
+	}
+	if len(res.CancelledRuns) != 1 || res.CancelledRuns[0].ID != "run-1" {
+		t.Fatalf("cancelled runs = %+v", res.CancelledRuns)
+	}
+}
+
+func TestCancelKeepsRunsRunningWhenCancelAndDestroyFail(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1",
+			PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning,
+		}},
+	}
+	launcher := &fakeLauncher{alive: true, cancelErr: errors.New("interrupt failed"), destroyErr: errors.New("destroy failed")}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Cancel(context.Background(), "mer-1"); err == nil || !strings.Contains(err.Error(), "destroy failed") {
+		t.Fatalf("Cancel err = %v, want destroy failure", err)
 	}
 	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
-		t.Fatalf("run should remain running when reviewer is still alive: %+v", got)
+		t.Fatalf("run should remain running when reviewer teardown fails: %+v", got)
 	}
 }
 
@@ -506,6 +540,54 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	}
 	if !launcher.notified || launcher.spawned {
 		t.Fatalf("expected live reviewer pane reused for new commit: %+v", launcher)
+	}
+}
+
+func TestTriggerSupersedeDestroysReviewerWhenCancelFails(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, cancelErr: errors.New("interrupt failed"), handle: "review-mer-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !launcher.cancelled || !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" {
+		t.Fatalf("expected cancel then destroy of stale reviewer: %+v", launcher)
+	}
+	if launcher.cancelledHarness != domain.ReviewerCodex {
+		t.Fatalf("cancel harness = %q, want existing reviewer harness codex", launcher.cancelledHarness)
+	}
+	if launcher.notified || !launcher.spawned {
+		t.Fatalf("expected fresh reviewer after destroying stale one: %+v", launcher)
+	}
+	if res.ReviewerHandleID != "review-mer-2" {
+		t.Fatalf("reviewer handle = %q, want review-mer-2", res.ReviewerHandleID)
+	}
+	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected older running run to be failed after teardown, got %+v", old)
+	}
+}
+
+func TestTriggerSupersedeDoesNotMarkRunWhenCancelAndDestroyFail(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, cancelErr: errors.New("interrupt failed"), destroyErr: errors.New("destroy failed")}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err == nil || !strings.Contains(err.Error(), "destroy failed") {
+		t.Fatalf("Trigger err = %v, want destroy failure", err)
+	}
+	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
+		t.Fatalf("old run should remain running when teardown fails: %+v", got)
+	}
+	if len(store.runs) != 1 {
+		t.Fatalf("new run should not be inserted after teardown failure: %+v", store.runs)
 	}
 }
 
