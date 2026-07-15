@@ -94,7 +94,7 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 			className="terminal-pane-frame flex h-full min-h-0 min-w-0 flex-col bg-background"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-toolbar shrink-0 items-center border-b border-border bg-background px-5">
+			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border bg-background px-5">
 				<div className="flex min-w-0 items-center gap-3">
 					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
 						TERMINAL
