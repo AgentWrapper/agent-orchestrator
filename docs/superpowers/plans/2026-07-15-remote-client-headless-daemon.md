@@ -365,7 +365,7 @@ git commit -m "build: add remote-only desktop package"
 - Consumes: the daemon process user's filesystem permissions and the existing LAN `authMiddleware`.
 - Produces: `GET /api/v1/filesystem/directories?path=<absolute-path>` returning `ListDirectoriesResponse`.
 
-- [ ] **Step 1: Write failing controller tests**
+- [x] **Step 1: Write failing controller tests**
 
 Create temporary directories containing a regular file, a hidden directory, mixed-case
 directory names, and a symbolic link to a directory. Assert the route omits files,
@@ -386,13 +386,13 @@ The successful response shape is:
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify failure**
+- [x] **Step 2: Run the focused test and verify failure**
 
 Run: `cd backend && go test ./internal/httpd/controllers -run Filesystem -count=1`
 
 Expected: FAIL because `/api/v1/filesystem/directories` is not mounted.
 
-- [ ] **Step 3: Define the DTOs and controller**
+- [x] **Step 3: Define the DTOs and controller**
 
 Add these DTOs to `controllers/dto.go`:
 
@@ -420,7 +420,7 @@ return only directory entries, normalize empty slices to `[]`, and sort by
 `strings.ToLower(name)` with the original name as the tie-breaker. Map errors exactly
 as defined in the design spec.
 
-- [ ] **Step 4: Mount and describe the route**
+- [x] **Step 4: Mount and describe the route**
 
 Add `filesystem *controllers.FilesystemController` to `httpd.API`, construct it in
 `NewAPI`, and register it inside the bounded REST group. Add a `filesystem` tag,
@@ -446,7 +446,7 @@ schema-name entries, and a `filesystemOperations()` operation to `specgen/build.
 
 Add `/api/v1/filesystem/directories` to `ROUTE_TEMPLATES` in `api-client.ts`.
 
-- [ ] **Step 5: Regenerate and verify the API contract**
+- [x] **Step 5: Regenerate and verify the API contract**
 
 Run:
 
@@ -458,7 +458,7 @@ cd backend && go test ./internal/httpd/... -count=1
 Expected: controller tests, route/spec parity, and spec drift tests pass; both generated
 artifacts include `listDirectories` and `ListDirectoriesResponse`.
 
-- [ ] **Step 6: Commit the API unit**
+- [x] **Step 6: Commit the API unit**
 
 ```bash
 git add backend/internal/httpd/controllers/filesystem.go backend/internal/httpd/controllers/filesystem_test.go backend/internal/httpd/controllers/dto.go backend/internal/httpd/api.go backend/internal/httpd/apispec/specgen/build.go backend/internal/httpd/apispec/openapi.yaml frontend/src/api/schema.ts frontend/src/renderer/lib/api-client.ts
@@ -477,7 +477,7 @@ git commit -m "feat: add remote directory listing API"
 - Consumes: generated `ListDirectoriesResponse` through `apiClient.GET`.
 - Produces: `RemoteDirectoryPickerDialog` with `open`, `kind`, `disabled`, `onOpenChange`, and `onSelect(path)` props.
 
-- [ ] **Step 1: Write failing component and flow tests**
+- [x] **Step 1: Write failing component and flow tests**
 
 Mock `apiClient.GET` with home and child responses. Assert opening the dialog requests
 the path without a query, child activation requests that child's absolute path, the up
@@ -487,7 +487,7 @@ folder` calls `onSelect(current.path)`. Update the Sidebar remote-flow test to p
 the selected path reaches `onCreateProject` and `window.ao.app.chooseDirectory` is never
 called.
 
-- [ ] **Step 2: Run the focused tests and verify failure**
+- [x] **Step 2: Run the focused tests and verify failure**
 
 Run:
 
@@ -499,7 +499,7 @@ npm test -- --run src/renderer/components/RemoteDirectoryPickerDialog.test.tsx s
 Expected: FAIL because `RemoteDirectoryPickerDialog` does not exist and the current
 remote flow has no directory API navigation.
 
-- [ ] **Step 3: Implement the picker**
+- [x] **Step 3: Implement the picker**
 
 Define:
 
@@ -527,14 +527,14 @@ and error states, and `Cancel` plus `Select this folder` commands. Use existing 
 primitives and Lucide icons. Directory activation navigates; it never invokes Electron's
 native picker.
 
-- [ ] **Step 4: Integrate the remote create-project flow**
+- [x] **Step 4: Integrate the remote create-project flow**
 
 Replace the inline `RemoteProjectPathDialog` in `CreateProjectFlow.tsx` with the new
 component. Preserve local `chooseDirectory` and scan behavior unchanged. Selecting the
 current remote directory sets `selectedPath` and opens the existing agent sheet; project
 creation continues through the existing `onCreateProject` callback.
 
-- [ ] **Step 5: Run focused frontend verification**
+- [x] **Step 5: Run focused frontend verification**
 
 Run:
 
@@ -546,7 +546,7 @@ npm run typecheck
 
 Expected: all focused tests and TypeScript checks pass.
 
-- [ ] **Step 6: Commit the picker unit**
+- [x] **Step 6: Commit the picker unit**
 
 ```bash
 git add frontend/src/renderer/components/RemoteDirectoryPickerDialog.tsx frontend/src/renderer/components/RemoteDirectoryPickerDialog.test.tsx frontend/src/renderer/components/CreateProjectFlow.tsx frontend/src/renderer/components/Sidebar.test.tsx
@@ -562,7 +562,7 @@ git commit -m "feat: browse remote project directories"
 - Consumes: tested source tree and remote package from Tasks 1-7.
 - Produces: persistent service on `claude` and installed remote client on the local Mac.
 
-- [ ] **Step 1: Run repository verification**
+- [x] **Step 1: Run repository verification**
 
 Run:
 
@@ -575,7 +575,7 @@ cd frontend && npm test && npm run package:remote
 
 Expected: all commands pass.
 
-- [ ] **Step 2: Cross-compile and upload the daemon**
+- [x] **Step 2: Cross-compile and upload the daemon**
 
 Run from `backend/`:
 
@@ -588,7 +588,7 @@ ssh claude 'chmod 0755 ~/.local/bin/ao.new && mv ~/.local/bin/ao.new ~/.local/bi
 
 Expected: `ssh claude '~/.local/bin/ao version'` runs the uploaded Linux binary.
 
-- [ ] **Step 3: Install and start the user systemd service**
+- [x] **Step 3: Install and start the user systemd service**
 
 Install `~/.config/systemd/user/ao-daemon.service` with:
 
@@ -610,7 +610,7 @@ WantedBy=default.target
 
 Then run `systemctl --user daemon-reload && systemctl --user enable --now ao-daemon.service`.
 
-- [ ] **Step 4: Enable and verify the existing LAN listener**
+- [x] **Step 4: Enable and verify the existing LAN listener**
 
 From the remote host, call:
 
@@ -620,15 +620,15 @@ curl -fsS -X POST http://127.0.0.1:3001/api/v1/mobile/enable
 
 Capture the returned connection password for local configuration without printing it in the final response. Verify `ss -ltn` shows `0.0.0.0:3011`, an unauthenticated `GET /api/v1/sessions` returns `401`, and the same request with the password returns `200`.
 
-- [ ] **Step 5: Install the verified Mac application**
+- [x] **Step 5: Install the verified Mac application**
 
 Quit the current app, move the current `/Applications/Agent Orchestrator.app` to a timestamped backup under `/Users/czg/.ao/staging`, copy the verified remote app into `/Applications`, and launch it with `open -a "Agent Orchestrator"`.
 
-- [ ] **Step 6: Configure and verify end to end**
+- [x] **Step 6: Configure and verify end to end**
 
 Enter `192.168.2.29`, port `3011`, and the generated password. Verify project/session REST data loads, the authenticated directory API browses `/`, `/home/claude`, and a nested directory, the desktop directory picker navigates and selects a server path without opening Finder, the SSE connection reports connected, and a session terminal attaches over `/mux`. Quit and reopen the app; verify it reconnects without asking for configuration.
 
-- [ ] **Step 7: Prove daemon persistence**
+- [x] **Step 7: Prove daemon persistence**
 
 Quit the desktop app, wait longer than the existing five-second supervisor grace, and run:
 

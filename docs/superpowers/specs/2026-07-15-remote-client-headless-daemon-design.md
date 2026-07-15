@@ -1,7 +1,7 @@
 # Remote Client and Headless Daemon Design
 
 Date: 2026-07-15
-Status: Approved for implementation
+Status: Implemented and deployed
 
 ## Goal
 
@@ -247,3 +247,12 @@ Deployment verification checks:
 The local Mac receives the packaged remote-client application in `/Applications`.
 The prior application is replaced only after the new package builds and passes local
 verification. The remote Linux service and its password remain outside the repository.
+
+The completed deployment runs `ao-daemon.service` as an enabled, active user service
+on `claude`, with the primary listener on `127.0.0.1:3001` and the authenticated LAN
+listener on `0.0.0.0:3011`. The remote-only application is installed at
+`/Applications/Agent Orchestrator.app`, contains no bundled daemon, reuses its encrypted
+saved connection after restart, and browses `/`, `/home/claude`, hidden directories,
+and nested server paths through the authenticated local forwarding proxy. Computer Use
+verification confirmed the directory picker selects `/home/claude/code` without opening
+Finder and passes that path to the existing project-agent flow.
