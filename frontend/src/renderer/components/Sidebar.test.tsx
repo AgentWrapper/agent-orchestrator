@@ -305,14 +305,37 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.remoteServer.isRemoteClient = vi.fn().mockResolvedValue(true);
 		window.ao!.app.chooseDirectory = vi.fn();
+		getMock.mockImplementation(
+			(path: string, options?: { params?: { query?: { path?: string } } }) => {
+				if (path === "/api/v1/filesystem/directories" && !options?.params?.query?.path) {
+					return Promise.resolve({
+						data: {
+							path: "/home/claude/code",
+							parent: "/home/claude",
+							directories: [{ name: "remote-project", path: "/home/claude/code/remote-project" }],
+						},
+						error: undefined,
+					});
+				}
+				return Promise.resolve({
+					data: {
+						path: "/home/claude/code/remote-project",
+						parent: "/home/claude/code",
+						directories: [],
+					},
+					error: undefined,
+				});
+			},
+		);
 		renderSidebar({ onCreateProject });
 		await waitFor(() => expect(window.ao!.remoteServer.isRemoteClient).toHaveBeenCalled());
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Project/i }));
-		expect(await screen.findByRole("dialog", { name: "Server project path" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Server path"), "/home/claude/code/remote-project");
-		await user.click(screen.getByRole("button", { name: "Continue" }));
+		expect(await screen.findByRole("dialog", { name: "Browse server project folders" })).toBeInTheDocument();
+		await user.click(await screen.findByRole("button", { name: "Open remote-project" }));
+		await waitFor(() => expect(screen.getByLabelText("Server path")).toHaveValue("/home/claude/code/remote-project"));
+		await user.click(await screen.findByRole("button", { name: "Select this folder" }));
 
 		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
 		expect(await screen.findByText("/home/claude/code/remote-project")).toBeInTheDocument();
