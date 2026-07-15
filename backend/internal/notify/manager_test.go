@@ -40,7 +40,7 @@ func TestManagerNotifyPersistsThenPublishes(t *testing.T) {
 	if len(st.rows) != 1 {
 		t.Fatalf("stored rows = %d, want 1", len(st.rows))
 	}
-	if got := st.rows[0]; got.ID != "ntf_1" || got.CreatedAt != now || got.Status != domain.NotificationUnread || got.Title != "checkout-flow needs input" {
+	if got := st.rows[0]; got.ID != "ntf_1" || got.CreatedAt != now || got.Status != domain.NotificationUnread || got.Title != "checkout-flow needs your input" {
 		t.Fatalf("stored notification = %+v", got)
 	}
 	select {

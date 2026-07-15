@@ -33,7 +33,7 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 func titleForIntent(intent Intent) string {
 	switch intent.Type {
 	case domain.NotificationNeedsInput:
-		return fmt.Sprintf("%s needs input", sessionLabel(intent))
+		return fmt.Sprintf("%s needs your input", sessionLabel(intent))
 	case domain.NotificationReadyToMerge:
 		return fmt.Sprintf("%s is ready to merge", prLabel(intent))
 	case domain.NotificationPRMerged:
@@ -48,7 +48,7 @@ func titleForIntent(intent Intent) string {
 func bodyForIntent(intent Intent) string {
 	switch intent.Type {
 	case domain.NotificationNeedsInput:
-		return "The agent is waiting for your response."
+		return "Paused and waiting for your response."
 	case domain.NotificationReadyToMerge:
 		if s := sessionLabel(intent); s != "session" {
 			return fmt.Sprintf("%s has no known blocking CI or review feedback.", s)

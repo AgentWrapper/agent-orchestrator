@@ -1271,7 +1271,12 @@ ipcMain.handle(
 		// OS toast: a native banner the user can click to jump straight back to the
 		// session. Works hand-in-hand with the dock/taskbar attention signal below.
 		if (notification.title && ElectronNotification.isSupported()) {
-			const toast = new ElectronNotification({ title: notification.title, body: notification.body });
+			const toast = new ElectronNotification({
+				title: notification.title,
+				body: notification.body,
+				// AO logo on Windows/Linux; macOS ignores this and uses the .app bundle icon.
+				icon: windowIconPath(),
+			});
 			toast.on("click", () => {
 				if (!mainWindow) return;
 				if (mainWindow.isMinimized()) mainWindow.restore();
