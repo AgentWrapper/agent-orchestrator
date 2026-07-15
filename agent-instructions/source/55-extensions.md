@@ -37,6 +37,93 @@
   above before reporting any frontend tooling or test blocker (see the
   verification contract: reviewer claims are evidence candidates, never facts).
 
+## Work selection — assignment is the sole admission signal
+
+**Selection rule:** assignment is the sole admission signal. Work assigned open
+issues; leave unassigned issues inert, and park work by unassigning it. Status,
+charter, and routing labels are informational or choose a harness only — they
+never grant or veto admission. Sensitive-path membership is never a reason to
+skip working an assigned ticket.
+
+## Final-review status contract
+
+The clean status is the only machine-readable final-review verdict the merge
+gate may consume.
+
+`/final-review` emits its verdict as a GitHub commit status on the reviewed head
+SHA, using context `final-review`. A clean review writes `state=success`; a
+non-clean, inconclusive, or timed-out review writes `state=failure`. The status
+description is the parseable contract: `verdict=<clean|parked>
+reviewer_family=<family> head=<full-head-sha>`. A clean review that is parked
+only because repo policy requires a human merge still writes
+`final-review=success`; the human gate is recorded separately as a current-head
+`merge-park` status with `reason=human-required`.
+
+Human merge gates check the `final-review` status on the **current** PR head
+SHA. Autonomous-merge paths check the same clean review status and additionally
+refuse to merge when a current-head `merge-park` signal exists. If the PR
+receives a new push, the old statuses are tied to the old SHA and no longer
+count. This replaces the interim PR-comment protocol; do not use comments or
+free-form summaries as the gate.
+
+ao's native review API (`GET /sessions/{id}/reviews`, with states such as
+`ineligible` or `needs_review`) is a separate ao reviewer system. It is useful
+for ao's own review UI, but it is **not** `/final-review` and must never be read
+as the final-review merge verdict.
+
+Repos that carry `ops/final-review-status.mjs` use it as the status helper:
+`node ops/final-review-status.mjs set --repo <owner/repo> --sha
+<full-head-sha> --verdict <clean|parked> --reviewer-family <family>` after the
+review loop; add `--human-merge-required` when a clean review must park for
+human merge authority. Use `node ops/final-review-status.mjs check --repo
+<owner/repo> --sha <current-head-sha>` for a human-authorized merge gate, and
+add `--mode autonomous` for autonomous merge eligibility.
+
+## The verification contract — reviewer claims are evidence, never facts
+
+A reviewer's or subagent's assertion about the environment — "the tests cannot
+run", "the toolchain is missing", "that dependency is unavailable" — is a
+**claim**, not a finding. The primary agent owns every claim it repeats, and a
+claim it did not verify is its own defect, not the subagent's. Before a
+tool/dependency/test blocker may enter a final report, a filed issue, a review
+verdict, or a merge-readiness statement, the primary MUST do all of the
+following **itself**:
+
+1. **Read the repo's own declarations** — the manifests, the lockfiles, and the
+   declared scripts for the package in question. The lockfile decides which
+   package manager a project uses; a settings or workspace file belonging to a
+   different manager decides nothing.
+2. **Check the executable actually named** — is that binary on `PATH`? Is the
+   repo-declared alternative (a different package manager, a vendored binary, a
+   container) present and usable?
+3. **Attempt the repo-declared safe install path** — including any install
+   overrides the repo documents — before declaring anything unavailable.
+4. **Record the exact failing command and its exact error output.** A blocker
+   with no recorded command and no recorded error is not a blocker; it is an
+   untested assumption.
+
+"Dependencies are not preinstalled" must **never be reported as** "dependencies
+are unavailable." Not-preinstalled is a step you have not taken yet.
+
+### Omitted tests: three distinct states, each signed off
+
+Final reports, PR bodies, and filed issues state, per suite, which of these three
+applies. They are never collapsed into a vague "tests not run":
+
+1. **FAILED** — the suite ran and actually failed. Give the suite, the command,
+   and the failures.
+2. **NOT RUN (evidenced blocker)** — the suite did not run because a blocker
+   survived all four checks above. Give the exact command attempted and its exact
+   error.
+3. **NOT PREINSTALLED** — dependencies or tooling were merely absent from a
+   fresh checkout and the declared install path was not attempted or not
+   completed. This is a gap in your verification, not a property of the repo,
+   and it is never evidence of a blocker.
+
+The primary agent **signs off** on every omission explicitly: for each suite it
+did not run, it names the state, the reason, and the evidence, in its own voice.
+Silence about an unrun suite is a defect in the report.
+
 - **Sensitive paths (autonomous merge PARKS):** `backend/internal/daemon/**`,
   `backend/internal/session_manager/**`, `backend/internal/lifecycle/**` —
   a bad change here takes down the whole fleet; a human reviews those merges.

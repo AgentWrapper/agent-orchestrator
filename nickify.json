@@ -1,0 +1,13 @@
+{
+	"schema": 1,
+	"repo": "polymath-ventures/agent-orchestrator",
+	"clients": ["claude-code", "codex"],
+	"subsystems": {
+		"beads": { "enabled": false, "reason": "user-opt-out" },
+		"openspec": { "enabled": true },
+		"sx": { "enabled": true },
+		"agent_instructions": { "enabled": true },
+		"tools": { "enabled": true },
+		"hooks": { "enabled": true }
+	}
+}

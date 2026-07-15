@@ -1,0 +1,12 @@
+{
+	"schema": 1,
+	"runs": [
+		{
+			"date": "2026-07-15",
+			"scope": "repo",
+			"nickify_version": "16",
+			"sx_version": "2.2.7",
+			"steps": { "R1": "ok", "R2": "ok", "R3": "skip:user-opt-out", "R4": "ok", "R5": "n/a:no-extra-tools", "R6": "ok" }
+		}
+	]
+}

@@ -12,7 +12,7 @@ const instructionFiles = [
 ];
 
 const contractFiles = [
-	"agent-instructions/source/30-polypowers.md",
+	"agent-instructions/source/55-extensions.md",
 	"AGENTS.md",
 	"AGENTS.shared.md",
 	"CLAUDE.md",
@@ -565,6 +565,29 @@ describe("agent instructions carry the reviewer-claim verification contract", ()
 			assert.match(body, /not run/i);
 			assert.match(body, /not preinstalled/i);
 			assert.match(body, /sign(s|ed)? off/i);
+		});
+
+		it(`${file} carries the SHA-pinned final-review status contract`, async () => {
+			const body = await readInstructionFile(file);
+
+			assert.match(body, /final-review/);
+			assert.match(body, /merge-park/);
+			assert.match(body, /verdict=<clean\|parked>|verdict=(clean|parked)/);
+			assert.match(body, /head SHA|head=<full-head-sha>|current-head/i);
+			assert.match(body, /only machine-readable final-review verdict/i);
+			assert.match(body, /state=success/);
+			assert.match(body, /ops\/final-review-status\.mjs/);
+			assert.match(body, /--mode autonomous/);
+			assert.match(body, /do not use comments/i);
+		});
+
+		it(`${file} carries the assignment-only selection rule`, async () => {
+			const body = await readInstructionFile(file);
+
+			assert.match(body, /sole admission signal/i);
+			assert.match(body, /park work by unassigning/i);
+			assert.match(body, /never grant or veto admission/i);
+			assert.match(body, /leave unassigned issues inert/i);
 		});
 	}
 });
