@@ -27,7 +27,6 @@ import {
 	readUpdateSettings,
 	writeUpdateSettings,
 	type UpdateSettings,
-	type UpdateStatus,
 } from "./main/update-settings";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -56,13 +55,15 @@ import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { RemoteClientRuntime, probeRemoteForwarder } from "./main/remote-client-runtime";
+import type { RemoteServerConfigUpdate } from "./main/remote-client-runtime";
 import { startRemoteForwarder } from "./main/remote-forwarder";
 import {
 	readRemoteServerConfig,
 	writeRemoteServerConfig,
 	type ConfigCrypto,
-	type RemoteServerConfigInput,
 } from "./main/remote-server-config";
+import { resolveRemoteClientBuild } from "./main/remote-client-build";
+import { createUpdateIpcHandlers } from "./main/update-ipc";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -145,9 +146,11 @@ const IMPORT_SCAN_SKIP_DIRS = new Set([
 ]);
 
 const isDev = !app.isPackaged;
-const isRemoteClientBuild =
-	process.env.AO_REMOTE_CLIENT === "1" ||
-	(app.isPackaged && existsSync(path.join(process.resourcesPath, "remote-client.json")));
+const isRemoteClientBuild = resolveRemoteClientBuild({
+	isPackaged: app.isPackaged,
+	envOverride: process.env.AO_REMOTE_CLIENT === "1",
+	markerExists: app.isPackaged && existsSync(path.join(process.resourcesPath, "remote-client.json")),
+});
 
 // Dev mode uses a separate port and state subdirectory so it never collides with
 // a concurrently running installed-app daemon. The subdir also isolates supervise.sock
@@ -1012,7 +1015,8 @@ ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("remoteServer:isRemoteClient", () => isRemoteClientBuild);
 ipcMain.handle("remoteServer:get", () => remoteClientRuntime?.getEditableConfig() ?? null);
-ipcMain.handle("remoteServer:save", (_event, input: RemoteServerConfigInput) => {
+ipcMain.handle("remoteServer:revealPassword", () => remoteClientRuntime?.revealPassword() ?? null);
+ipcMain.handle("remoteServer:save", (_event, input: RemoteServerConfigUpdate) => {
 	if (!remoteClientRuntime) {
 		return { state: "error", code: "not_configured", message: "Remote client runtime is not ready." } satisfies DaemonStatus;
 	}
@@ -1294,29 +1298,25 @@ ipcMain.handle("appState:setMigration", async (_event, migration: MigrationState
 	await updateMigration({ stateDir: path.dirname(runFile), migration, now: () => new Date() });
 });
 
-ipcMain.handle("updateSettings:get", async (): Promise<UpdateSettings> => {
-	const runFile = runFilePath();
-	if (!runFile) return { enabled: false, channel: "latest", nightlyAck: false };
-	return readUpdateSettings(path.dirname(runFile));
+const updateIpcHandlers = createUpdateIpcHandlers({
+	isRemoteClientBuild,
+	stateDir: () => {
+		const runFile = runFilePath();
+		return runFile ? path.dirname(runFile) : null;
+	},
+	readSettings: readUpdateSettings,
+	writeSettings: writeUpdateSettings,
+	getStatus: getUpdateStatus,
+	check: checkForUpdatesNow,
+	download: downloadUpdateNow,
+	install: quitAndInstallUpdate,
 });
-ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) => {
-	const runFile = runFilePath();
-	if (!runFile) return;
-	await writeUpdateSettings(path.dirname(runFile), settings);
-});
-
-ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
-ipcMain.handle("updates:check", async () => {
-	const runFile = runFilePath();
-	if (!runFile) return;
-	await checkForUpdatesNow(path.dirname(runFile));
-});
-ipcMain.handle("updates:download", async () => {
-	await downloadUpdateNow();
-});
-ipcMain.handle("updates:install", () => {
-	quitAndInstallUpdate();
-});
+ipcMain.handle("updateSettings:get", updateIpcHandlers.getSettings);
+ipcMain.handle("updateSettings:set", (_event, settings: UpdateSettings) => updateIpcHandlers.setSettings(settings));
+ipcMain.handle("updates:getStatus", updateIpcHandlers.getStatus);
+ipcMain.handle("updates:check", updateIpcHandlers.check);
+ipcMain.handle("updates:download", updateIpcHandlers.download);
+ipcMain.handle("updates:install", updateIpcHandlers.install);
 
 ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
 	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
@@ -1339,7 +1339,7 @@ ipcMain.handle("notifications:show", (_event, notification: { id: string; title:
 // A live updater additionally requires a signed + notarized build — see
 // frontend/docs/desktop-release.md.
 function initAutoUpdates(): void {
-	if (!app.isPackaged) return;
+	if (!app.isPackaged || isRemoteClientBuild) return;
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);

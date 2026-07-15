@@ -41,6 +41,7 @@ export const aoBridge: AoBridge =
 		remoteServer: {
 			isRemoteClient: async () => false,
 			get: async () => null,
+			revealPassword: async () => null,
 			save: async () => ({ state: "error", code: "not_configured", message: "Electron preload is not available." }),
 		},
 		telemetry: {

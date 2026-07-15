@@ -87,8 +87,11 @@ remain unchanged. The remote target:
 - never spawns a daemon process;
 - never opens a daemon supervisor link;
 - never calls the remote `/shutdown` route when the app exits; and
-- keeps local-only Electron features such as updates, notifications, clipboard,
-  external links, and BrowserView behavior.
+- keeps local-only Electron features such as notifications, clipboard, external links,
+  and BrowserView behavior; and
+- deliberately disables update initialization, settings, checks, downloads, and
+  installation until a separate remote-flavor update feed exists. The default local
+  desktop build and its canonical update feed remain unchanged.
 
 The remote mode is selected at build time, not by an end-user runtime toggle. The Mac
 installed for this task is built with remote mode enabled.
@@ -138,10 +141,12 @@ For HTTP and SSE requests, it:
 For WebSocket upgrades, it forwards the original upgrade request and injects the same
 bearer header before piping both sockets. It does not inspect WebSocket frames.
 
-The password is held in the Electron main process except while the trusted settings
-form is open. The form receives it through IPC, renders it as a masked password, and
-offers an explicit reveal control. It is never exposed to query parameters,
-telemetry, access logs, local storage, or error messages.
+The password is held in the Electron main process. Settings IPC returns only host,
+port, and whether a password is configured. The renderer displays a fixed masked
+placeholder and retrieves plaintext through a separate IPC call only when the user
+activates the explicit reveal control. Hiding, saving, or unmounting the form clears
+revealed saved plaintext from renderer state. The password is never exposed to query
+parameters, telemetry, access logs, local storage, or error messages.
 
 Changing configuration starts and validates a replacement proxy before stopping the
 current proxy. App shutdown closes only the proxy and its sockets.

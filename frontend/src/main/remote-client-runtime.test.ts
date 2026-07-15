@@ -54,7 +54,29 @@ describe("RemoteClientRuntime", () => {
 		expect(deps.probe).toHaveBeenCalledWith(4100);
 		expect(runtime.getConfig()).toEqual({ host: "server", port: 3011 });
 		expect(runtime.getConfig()).not.toHaveProperty("password");
-		expect(runtime.getEditableConfig()).toEqual({ host: "server", port: 3011, password: "secret" });
+		expect(runtime.getEditableConfig()).toEqual({ host: "server", port: 3011, passwordConfigured: true });
+		expect(runtime.getEditableConfig()).not.toHaveProperty("password");
+		expect(runtime.revealPassword()).toBe("secret");
+	});
+
+	it("retains persisted settings for recovery when the startup probe fails", async () => {
+		current = saved({ host: "offline-server", port: 4011, password: "rotated-secret" });
+		vi.mocked(deps.probe).mockRejectedValueOnce(new Error("connection refused"));
+		const runtime = new RemoteClientRuntime(deps);
+
+		expect(await runtime.start()).toMatchObject({ state: "error", code: "daemon_unreachable" });
+		expect(runtime.getEditableConfig()).toEqual({ host: "offline-server", port: 4011, passwordConfigured: true });
+		expect(runtime.revealPassword()).toBe("rotated-secret");
+	});
+
+	it("reuses the persisted password when a settings save omits it", async () => {
+		current = saved({ host: "first", port: 3011, password: "saved-secret" });
+		const runtime = new RemoteClientRuntime(deps);
+		await runtime.start();
+
+		await runtime.saveConfig({ host: "second", port: 3012 });
+
+		expect(deps.writeConfig).toHaveBeenCalledWith({ host: "second", port: 3012, password: "saved-secret" });
 	});
 
 	it("rejects an unreachable candidate and keeps the working proxy active", async () => {

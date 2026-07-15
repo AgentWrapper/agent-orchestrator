@@ -84,6 +84,7 @@ if (typeof window !== "undefined") {
 		remoteServer: {
 			isRemoteClient: async () => false,
 			get: async () => null,
+			revealPassword: async () => null,
 			save: async () => ({ state: "ready", port: 3001 }),
 		},
 		telemetry: {

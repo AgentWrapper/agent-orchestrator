@@ -7,6 +7,8 @@ import {
 } from "./remote-server-config";
 
 export type PublicRemoteServerConfig = Pick<RemoteServerConfigInput, "host" | "port">;
+export type EditableRemoteServerConfig = PublicRemoteServerConfig & { passwordConfigured: boolean };
+export type RemoteServerConfigUpdate = PublicRemoteServerConfig & { password?: string };
 
 export type RemoteClientRuntimeDeps = {
 	readConfig(): Promise<RemoteServerConfig | null>;
@@ -31,10 +33,14 @@ export class RemoteClientRuntime {
 		return this.config ? { host: this.config.host, port: this.config.port } : null;
 	}
 
-	getEditableConfig(): RemoteServerConfigInput | null {
+	getEditableConfig(): EditableRemoteServerConfig | null {
 		return this.config
-			? { host: this.config.host, port: this.config.port, password: this.config.password }
+			? { host: this.config.host, port: this.config.port, passwordConfigured: this.config.password.length > 0 }
 			: null;
+	}
+
+	revealPassword(): string | null {
+		return this.config?.password ?? null;
 	}
 
 	async start(): Promise<DaemonStatus> {
@@ -47,10 +53,10 @@ export class RemoteClientRuntime {
 				message: "Configure the remote AO server to continue.",
 			});
 		}
+		this.config = config;
 
 		try {
 			const next = await this.startValidatedForwarder(config);
-			this.config = config;
 			this.forwarder = next;
 			return this.setStatus({ state: "ready", port: next.port });
 		} catch (error) {
@@ -62,10 +68,14 @@ export class RemoteClientRuntime {
 		}
 	}
 
-	async saveConfig(input: RemoteServerConfigInput): Promise<DaemonStatus> {
+	async saveConfig(input: RemoteServerConfigUpdate): Promise<DaemonStatus> {
 		let candidate: RemoteForwarder | null = null;
 		try {
-			const normalized = validateRemoteServerConfigInput(input);
+			const normalized = validateRemoteServerConfigInput({
+				host: input.host,
+				port: input.port,
+				password: input.password ?? this.config?.password ?? "",
+			});
 			candidate = await this.startValidatedForwarder(normalized);
 			let saved: RemoteServerConfig;
 			try {

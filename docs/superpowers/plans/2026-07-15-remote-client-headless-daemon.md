@@ -13,6 +13,8 @@
 - Do not change existing daemon routes, SSE events, WebSocket frames, terminal framing, or backend business services; add only `GET /api/v1/filesystem/directories` and its DTOs.
 - Keep the primary listener on `127.0.0.1`; use only the existing authenticated LAN listener on `0.0.0.0:3011`.
 - Keep the default desktop build unchanged; add a separate remote-client build target.
+- Disable updates completely in remote-client builds until a separate remote-flavor
+  feed exists; keep the local/default build's update behavior unchanged.
 - Store all desktop state beneath `~/.ao/electron` and never persist an unencrypted desktop connection password.
 - The remote client must never spawn, supervise, or shut down the remote daemon.
 - Use Node built-ins for proxying; add no proxy dependency.
@@ -193,9 +195,9 @@ await runtime.saveConfig(badCandidate); // probe fails -> old proxy/config remai
 await runtime.stop(); // closes local proxy only
 ```
 
-Assert status listeners receive the ready proxy port. `getConfig` omits the password
-for non-settings callers, while `getEditableConfig` returns it only to the trusted
-settings IPC so the saved credential can render masked and be edited.
+Assert status listeners receive the ready proxy port. Both `getConfig` and
+`getEditableConfig` omit the password; the editable result includes only host, port,
+and `passwordConfigured`. A separate explicit `revealPassword` call returns plaintext.
 
 - [x] **Step 2: Run focused test and verify failure**
 
@@ -214,15 +216,18 @@ Expose:
 ```ts
 remoteServer: {
 	isRemoteClient: () => ipcRenderer.invoke("remoteServer:isRemoteClient") as Promise<boolean>,
-	get: () => ipcRenderer.invoke("remoteServer:get") as Promise<RemoteServerConfigInput | null>,
-	save: (input: RemoteServerConfigInput) =>
+	get: () => ipcRenderer.invoke("remoteServer:get") as Promise<EditableRemoteServerConfig | null>,
+	revealPassword: () => ipcRenderer.invoke("remoteServer:revealPassword") as Promise<string | null>,
+	save: (input: RemoteServerConfigUpdate) =>
 		ipcRenderer.invoke("remoteServer:save", input) as Promise<DaemonStatus>,
 }
 ```
 
-Return the saved password only through this trusted Electron IPC. The renderer keeps it
-in component state, uses `type="password"` by default, and never writes it to local
-storage, telemetry, query strings, or logs.
+Return saved plaintext only through the explicit reveal IPC. The normal get operation
+returns `passwordConfigured`; saving an unchanged configuration omits `password` and
+the main process resolves the existing saved value. The renderer clears revealed saved
+plaintext on hide, save, and unmount, and never writes it to local storage, telemetry,
+query strings, or logs.
 
 - [x] **Step 5: Wire remote mode in Electron main**
 
@@ -264,7 +269,7 @@ git commit -m "feat: wire remote client daemon runtime"
 
 - [x] **Step 1: Write failing component tests**
 
-Test that remote mode with no config opens a non-dismissible dialog, validates host/port/password, submits all three fields, displays a rejected save error, and closes after a ready result. Test that the settings variant loads the saved password masked, toggles explicit reveal/hide controls, and preserves the value after a successful save.
+Test that remote mode with no config opens a non-dismissible dialog, validates host/port/password, submits all three fields, displays a rejected save error, and closes after a ready result. Test that the settings variant displays a masked placeholder without retrieving plaintext, reveals only on the eye action, clears revealed saved plaintext, and omits an unchanged password when saving.
 
 - [x] **Step 2: Run focused component tests and verify failure**
 
@@ -274,7 +279,7 @@ Expected: FAIL because the component does not exist.
 
 - [x] **Step 3: Implement the connection form**
 
-Use existing `Dialog`, `Input`, `Label`, and `Button` primitives. Fields are `Server IP or hostname`, `Port`, and `Connection password`. The submit handler calls `aoBridge.remoteServer.save` and renders `status.message` for non-ready responses. Keep the password field masked by default, add `Eye`/`EyeOff` reveal controls, and retain the saved value after success.
+Use existing `Dialog`, `Input`, `Label`, and `Button` primitives. Fields are `Server IP or hostname`, `Port`, and `Connection password`. The submit handler calls `aoBridge.remoteServer.save` and renders `status.message` for non-ready responses. Keep a saved password as a fixed masked placeholder, retrieve it only from the `Eye` action, clear revealed saved plaintext on hide/save/unmount, and keep newly typed replacements editable while masked or shown locally.
 
 - [x] **Step 4: Mount first-run and settings surfaces**
 

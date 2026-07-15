@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import type { DaemonStatus } from "../../shared/daemon-status";
 import { aoBridge } from "../lib/bridge";
@@ -18,21 +18,32 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 	const [host, setHost] = useState("");
 	const [port, setPort] = useState("3011");
 	const [password, setPassword] = useState("");
+	const [passwordConfigured, setPasswordConfigured] = useState(false);
+	const [passwordEdited, setPasswordEdited] = useState(false);
+	const [revealedSavedPassword, setRevealedSavedPassword] = useState(false);
 	const [showPassword, setShowPassword] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [saved, setSaved] = useState(false);
+	const mounted = useRef(true);
+	const passwordRef = useRef("");
+
+	const updatePassword = (value: string) => {
+		passwordRef.current = value;
+		setPassword(value);
+	};
 
 	useEffect(() => {
 		let active = true;
+		mounted.current = true;
 		void aoBridge.remoteServer
 			.get()
 			.then((config) => {
 				if (!active || !config) return;
 				setHost(config.host);
 				setPort(String(config.port));
-				setPassword(config.password);
+				setPasswordConfigured(config.passwordConfigured);
 			})
 			.catch((cause) => {
 				if (active) setError(cause instanceof Error ? cause.message : "Could not load server settings.");
@@ -42,19 +53,53 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 			});
 		return () => {
 			active = false;
+			mounted.current = false;
+			passwordRef.current = "";
 		};
 	}, []);
+
+	const togglePasswordVisibility = async () => {
+		if (showPassword) {
+			if (revealedSavedPassword && !passwordEdited) updatePassword("");
+			setRevealedSavedPassword(false);
+			setShowPassword(false);
+			return;
+		}
+		if (!password && passwordConfigured && !passwordEdited) {
+			const revealed = await aoBridge.remoteServer.revealPassword();
+			if (!mounted.current || revealed === null) return;
+			updatePassword(revealed);
+			setRevealedSavedPassword(true);
+		}
+		setShowPassword(true);
+	};
 
 	const submit = async (event: FormEvent) => {
 		event.preventDefault();
 		setSaving(true);
 		setSaved(false);
 		setError(null);
+		const input = {
+			host,
+			port: Number(port),
+			...(passwordEdited ? { password } : {}),
+		};
+		if (revealedSavedPassword && !passwordEdited) {
+			updatePassword("");
+			setRevealedSavedPassword(false);
+			setShowPassword(false);
+		}
 		try {
-			const status = await aoBridge.remoteServer.save({ host, port: Number(port), password });
+			const status = await aoBridge.remoteServer.save(input);
 			if (status.state !== "ready") {
 				setError(status.message || "Could not connect to the AO server.");
 				return;
+			}
+			if (passwordEdited) {
+				updatePassword("");
+				setPasswordEdited(false);
+				setPasswordConfigured(true);
+				setShowPassword(false);
 			}
 			setSaved(true);
 			onConnected?.(status);
@@ -103,9 +148,14 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 						className="pr-10"
 						type={showPassword ? "text" : "password"}
 						value={password}
-						onChange={(event) => setPassword(event.target.value)}
+						placeholder={passwordConfigured && !password ? "********" : undefined}
+						onChange={(event) => {
+							updatePassword(event.target.value);
+							setPasswordEdited(true);
+							setRevealedSavedPassword(false);
+						}}
 						autoComplete="new-password"
-						required
+						required={!passwordConfigured}
 					/>
 					<Button
 						type="button"
@@ -114,7 +164,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 						className="absolute right-1 top-1/2 -translate-y-1/2"
 						aria-label={showPassword ? "Hide password" : "Show password"}
 						title={showPassword ? "Hide password" : "Show password"}
-						onClick={() => setShowPassword((visible) => !visible)}
+						onClick={() => void togglePasswordVisibility()}
 					>
 						{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
 					</Button>
