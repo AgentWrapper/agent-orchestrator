@@ -18,6 +18,13 @@ async function closeServer(server: net.Server): Promise<void> {
 	await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 }
 
+function socketEnded(socket: net.Socket): Promise<true> {
+	return new Promise((resolve) => {
+		socket.once("end", () => resolve(true));
+		socket.once("close", () => resolve(true));
+	});
+}
+
 describe("remote-forwarder", () => {
 	const servers: net.Server[] = [];
 	const forwarders: RemoteForwarder[] = [];
@@ -199,6 +206,7 @@ describe("remote-forwarder", () => {
 		const accepted = new Promise<void>((resolve) => { acceptUpstream = resolve; });
 		const blackhole = net.createServer((socket) => {
 			upstreamSocket = socket;
+			socket.resume();
 			acceptUpstream();
 		});
 		servers.push(blackhole);
@@ -208,7 +216,7 @@ describe("remote-forwarder", () => {
 		const request = http.get(`http://127.0.0.1:${forwarder.port}/healthz`);
 		request.on("error", () => undefined);
 		await accepted;
-		const upstreamClosed = once(upstreamSocket!, "close").then(() => true);
+		const upstreamClosed = socketEnded(upstreamSocket!);
 
 		await forwarder.close();
 		const closed = await Promise.race([upstreamClosed, new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))]);
@@ -237,6 +245,39 @@ describe("remote-forwarder", () => {
 		request.destroy();
 		const closed = await Promise.race([upstreamClosed, new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))]);
 		upstream.closeAllConnections();
+
+		expect(closed).toBe(true);
+	});
+
+	it("cancels a pending WebSocket upgrade when the client disconnects", async () => {
+		let upstreamSocket: net.Socket | undefined;
+		let acceptUpstream: () => void = () => undefined;
+		const accepted = new Promise<void>((resolve) => { acceptUpstream = resolve; });
+		const blackhole = net.createServer((socket) => {
+			upstreamSocket = socket;
+			socket.resume();
+			acceptUpstream();
+		});
+		servers.push(blackhole);
+		const upstreamPort = await listen(blackhole);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "test-password" });
+		forwarders.push(forwarder);
+		const client = net.connect(forwarder.port, "127.0.0.1");
+		await once(client, "connect");
+		client.write(
+			"GET /mux HTTP/1.1\r\n" +
+				`Host: 127.0.0.1:${forwarder.port}\r\n` +
+				"Connection: Upgrade\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Key: dGVzdC1rZXk=\r\n\r\n",
+		);
+		await accepted;
+		const upstreamClosed = socketEnded(upstreamSocket!);
+
+		client.destroy();
+		const closed = await Promise.race([upstreamClosed, new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))]);
+		upstreamSocket?.destroy();
 
 		expect(closed).toBe(true);
 	});

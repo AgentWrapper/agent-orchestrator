@@ -88,6 +88,12 @@ function rawResponseHead(response: http.IncomingMessage): string {
 export async function startRemoteForwarder(config: RemoteServerConfigInput): Promise<RemoteForwarder> {
 	const sockets = new Set<net.Socket>();
 	const outboundRequests = new Set<http.ClientRequest>();
+	const destroyOutboundRequest = (request: http.ClientRequest, message: string) => {
+		outboundRequests.delete(request);
+		const error = new Error(message);
+		request.destroy(error);
+		request.socket?.destroy(error);
+	};
 	const trackOutboundRequest = (request: http.ClientRequest): http.ClientRequest => {
 		outboundRequests.add(request);
 		let connectTimer: NodeJS.Timeout | undefined;
@@ -98,16 +104,22 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		request.once("socket", (socket) => {
 			if (!socket.connecting) return;
 			connectTimer = setTimeout(() => {
-				request.destroy(new Error("Remote AO daemon connection timed out."));
+				destroyOutboundRequest(request, "Remote AO daemon connection timed out.");
 			}, connectTimeoutMs);
 			socket.once("connect", clearConnectTimer);
 			socket.once("error", clearConnectTimer);
 			socket.once("close", clearConnectTimer);
 		});
-		request.once("error", clearConnectTimer);
-		request.once("close", () => {
+		request.once("response", (response) => {
+			response.once("close", () => outboundRequests.delete(request));
+		});
+		request.once("upgrade", () => outboundRequests.delete(request));
+		request.once("error", () => {
 			clearConnectTimer();
 			outboundRequests.delete(request);
+		});
+		request.once("close", () => {
+			clearConnectTimer();
 		});
 		return request;
 	};
@@ -119,7 +131,9 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			path: request.url,
 			headers: upstreamHeaders(request.headers, config),
 		}));
-		const cancelUpstream = () => upstream.destroy();
+		const cancelUpstream = () => {
+			destroyOutboundRequest(upstream, "Downstream request closed.");
+		};
 		request.once("aborted", cancelUpstream);
 		response.once("close", () => {
 			if (!response.writableFinished) cancelUpstream();
@@ -155,6 +169,12 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			path: request.url,
 			headers: upstreamHeaders(request.headers, config, true),
 		}));
+		const cancelPendingUpgrade = () => {
+			destroyOutboundRequest(upstream, "Downstream WebSocket closed before upgrade.");
+		};
+		clientSocket.once("close", cancelPendingUpgrade);
+		clientSocket.once("end", cancelPendingUpgrade);
+		clientSocket.once("error", cancelPendingUpgrade);
 		upstream.once("upgrade", (response, upstreamSocket, upstreamHead) => {
 			sockets.add(upstreamSocket);
 			upstreamSocket.once("close", () => sockets.delete(upstreamSocket));
@@ -176,6 +196,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			response.pipe(clientSocket);
 		});
 		upstream.once("error", () => {
+			if (clientSocket.destroyed) return;
 			clientSocket.end(
 				"HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\n" +
 					`Content-Length: ${Buffer.byteLength(unavailableBody)}\r\n\r\n${unavailableBody}`,
@@ -195,7 +216,8 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 	return {
 		port: address.port,
 		close: async () => {
-			for (const request of outboundRequests) request.destroy();
+			for (const request of outboundRequests) destroyOutboundRequest(request, "Remote forwarder closed.");
+			outboundRequests.clear();
 			for (const socket of sockets) socket.destroy();
 			if (!server.listening) return;
 			await new Promise<void>((resolve, reject) => {
