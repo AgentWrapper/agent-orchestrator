@@ -922,7 +922,9 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 	child.once("exit", (code, signal) => {
 		stopDiscovery();
-		daemonLogSink?.writeMeta(signal ? `daemon exited with signal ${signal}` : `daemon exited with code ${code ?? "unknown"}`);
+		daemonLogSink?.writeMeta(
+			signal ? `daemon exited with signal ${signal}` : `daemon exited with code ${code ?? "unknown"}`,
+		);
 		const logPath = daemonLogSink?.path;
 		void daemonLogSink?.close();
 		if (daemonProcess !== child) return;
