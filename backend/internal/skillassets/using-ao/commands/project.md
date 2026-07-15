@@ -126,7 +126,7 @@ ao project rm agent-orchestrator -y
 
 ### ao project set-config
 
-Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides). The config is resolved when a session spawns. Set fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
+Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides, worker rules, and orchestrator rules). The config is resolved when a session spawns. Set fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
 
 **Syntax:**
 ```
@@ -137,6 +137,8 @@ ao project set-config <id> [flags]
 
 | Flag | Meaning | Default / Required |
 |---|---|---|
+| `--agent-rules string` | Project-specific standing instructions appended to worker session prompts | - |
+| `--agent-rules-file string` | Repo-relative file containing project-specific worker standing instructions | - |
 | `--clear` | Clear all config | - |
 | `--config-json string` | Full config as a JSON object (overrides field flags) | - |
 | `--default-branch string` | Base branch new session worktrees are created from | - |
@@ -144,6 +146,7 @@ ao project set-config <id> [flags]
 | `--json` | Output the updated project as JSON | - |
 | `--model string` | Agent model override (e.g. `claude-opus-4-5`) | - |
 | `--orchestrator-agent string` | Harness override for orchestrator sessions | - |
+| `--orchestrator-rules string` | Project-specific standing instructions appended to orchestrator session prompts | - |
 | `--permission string` | Permission mode: `default`, `accept-edits`, `auto`, `bypass-permissions` | - |
 | `--post-create stringArray` | Command to run after workspace creation (repeatable) | - |
 | `--session-prefix string` | Displayed session-id prefix | - |
@@ -160,4 +163,14 @@ ao project set-config agent-orchestrator --default-branch main --model claude-op
 ```bash
 # Set an env var and a post-create command
 ao project set-config agent-orchestrator --env "NODE_ENV=development" --post-create "npm install"
+```
+
+```bash
+# Set worker and orchestrator standing rules
+ao project set-config agent-orchestrator --agent-rules "Run focused tests before reporting done." --orchestrator-rules "Delegate implementation work to worker sessions."
+```
+
+```bash
+# Load worker rules from a repo-relative file
+ao project set-config agent-orchestrator --agent-rules-file docs/ao-worker-rules.md
 ```

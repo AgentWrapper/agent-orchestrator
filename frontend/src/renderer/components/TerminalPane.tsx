@@ -5,6 +5,7 @@ import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { isLoopbackHostname } from "../lib/loopback";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
@@ -162,6 +163,33 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
 	}, []);
+	const handleLinkOpen = useCallback(
+		(uri: string) => {
+			if (!session?.id || session.kind !== "worker" || session.status === "terminated") return;
+			try {
+				const url = new URL(uri);
+				if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLoopbackHostname(url.hostname)) return;
+			} catch {
+				return;
+			}
+			void (async () => {
+				try {
+					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
+						params: { path: { sessionId: session.id } },
+						body: { url: uri },
+					});
+					if (previewError) {
+						console.warn("Unable to open terminal link in Browser preview", previewError);
+						return;
+					}
+					await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				} catch (error) {
+					console.warn("Unable to open terminal link in Browser preview", error);
+				}
+			})();
+		},
+		[queryClient, session?.id, session?.kind, session?.status],
+	);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
 		setIsRestoring(true);
@@ -237,6 +265,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					ariaLabel="Session terminal"
 					fontSize={fontSize}
 					onError={handleInitError}
+					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}

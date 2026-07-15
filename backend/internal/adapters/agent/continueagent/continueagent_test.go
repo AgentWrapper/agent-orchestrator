@@ -125,6 +125,37 @@ func TestGetLaunchCommandWorkerDefaultPermsIsInteractive(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandAppendsInlineRule(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:           "fix it",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: "/tmp/system.md",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"cn", "--rule", "follow AO rules", "--", "fix it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandAppendsRuleFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:           "fix it",
+		SystemPromptFile: "/tmp/system.md",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"cn", "--rule", "/tmp/system.md", "--", "fix it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
 func TestGetLaunchCommandAcceptEditsNoFlag(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cn"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -214,6 +245,28 @@ func TestGetRestoreCommandDefaultPerms(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 	want := []string{"cn", "--fork", "sess-xyz"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandAppendsRule(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPrompt: "restore rules",
+		Session: ports.SessionRef{
+			Metadata: map[string]string{
+				ports.MetadataKeyAgentSessionID: "sess-xyz",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+	want := []string{"cn", "--rule", "restore rules", "--fork", "sess-xyz"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

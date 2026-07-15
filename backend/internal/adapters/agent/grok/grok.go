@@ -6,8 +6,10 @@
 // hook commands). Grok will pick them up via its compat layer.
 //
 // Launch uses a positional prompt for the initial task (in-command delivery).
-// Permission handling uses `--permission-mode`. We also pass `--no-auto-update`
-// for headless/scripted use (parity with Codex no-update).
+// AO's standing instructions are appended with `--rules` so Grok's built-in
+// coding-agent system prompt is preserved. Permission handling uses
+// `--permission-mode`. We also pass `--no-auto-update` for headless/scripted use
+// (parity with Codex no-update).
 // Restore prefers the hook-captured native session id via `-r <id>`.
 //
 // SessionInfo and title/summary flow through the shared claude hook path
@@ -16,6 +18,8 @@ package grok
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -80,6 +84,14 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary, "--no-auto-update"}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+
+	systemPrompt, err := launchSystemPromptText(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--rules", systemPrompt)
+	}
 
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
@@ -149,6 +161,13 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 4)
 	cmd = append(cmd, binary, "--no-auto-update")
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	systemPrompt, err := restoreSystemPromptText(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--rules", systemPrompt)
+	}
 	cmd = append(cmd, "-r", agentSessionID)
 	return cmd, true, nil
 }
@@ -197,4 +216,29 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
 	}
+}
+
+// Grok's --rules flag accepts inline text only. AO usually supplies both inline
+// text and an AO-owned file; read the file only when inline instructions are not
+// available.
+func launchSystemPromptText(cfg ports.LaunchConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func restoreSystemPromptText(cfg ports.RestoreConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func systemPromptTextFrom(inline, file string) (string, error) {
+	if inline != "" {
+		return inline, nil
+	}
+	if file == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return "", fmt.Errorf("grok: read system prompt file: %w", err)
+	}
+	return strings.TrimRight(string(data), "\n"), nil
 }

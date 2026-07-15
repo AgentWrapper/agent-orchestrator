@@ -387,6 +387,48 @@ func TestServeOpenAppliesInitialSize(t *testing.T) {
 	})
 }
 
+// A primary and a secondary client share one PTY: the primary drives the grid,
+// the secondary is told the primary's grid (not its own) and its attach Stream is
+// sized to it, and when the primary leaves the grid falls back to the secondary.
+// This is the multi-client sizing that keeps a phone from stripping down the
+// desktop while keeping both clients' grids matched to the single PTY.
+func TestServePrimaryDrivesSharedGridSecondaryFollows(t *testing.T) {
+	p1, p2 := newFakePTY(), newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	defer mgr.Close()
+
+	primary, secondary := newFakeConn(), newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, primary)
+	go mgr.Serve(ctx, secondary)
+
+	// Primary opens at 120x40 and drives the shared grid.
+	primary.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen, Cols: 120, Rows: 40}
+	if r := recv(t, primary, chTerminal, msgResize, time.Second); r.Cols != 120 || r.Rows != 40 {
+		t.Fatalf("primary grid = %dx%d, want 120x40", r.Cols, r.Rows)
+	}
+
+	// Secondary opens smaller; it must be told the primary's grid, not its own,
+	// and its own attach Stream must start at the primary's grid (not 55x48).
+	secondary.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen, Cols: 55, Rows: 48, Role: roleSecondary}
+	if r := recv(t, secondary, chTerminal, msgResize, time.Second); r.Cols != 120 || r.Rows != 40 {
+		t.Fatalf("secondary follows grid = %dx%d, want the primary's 120x40", r.Cols, r.Rows)
+	}
+	eventually(t, time.Second, func() bool {
+		s := sp.spawnSizes()
+		return len(s) == 2 && s[1] == [2]uint16{40, 120}
+	})
+
+	// Primary leaves: the grid falls back to the secondary's own size.
+	primary.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgClose}
+	if r := recv(t, secondary, chTerminal, msgResize, 2*time.Second); r.Cols != 55 || r.Rows != 48 {
+		t.Fatalf("after primary left, grid = %dx%d, want the secondary's 55x48", r.Cols, r.Rows)
+	}
+}
+
 // Manager.Close must kill every live attach PTY: a PTY left open keeps its
 // attach process running and deadlocks daemon shutdown.
 func TestManagerCloseKillsLiveAttachments(t *testing.T) {

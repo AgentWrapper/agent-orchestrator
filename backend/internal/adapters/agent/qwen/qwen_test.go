@@ -38,6 +38,43 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandReadsSystemPromptFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "system.md")
+	if err := os.WriteFile(file, []byte("file instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: file,
+		Prompt:           "do it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"qwen",
+		"--append-system-prompt", "file instructions\n",
+		"-p", "do it",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandSystemPromptFileReadError(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	_, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing system prompt file")
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -382,7 +419,8 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "qwen"}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Permissions: ports.PermissionModeAuto,
+		Permissions:  ports.PermissionModeAuto,
+		SystemPrompt: "restore instructions",
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-123"},
 		},
@@ -396,6 +434,37 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	want := []string{
 		"qwen",
 		"--approval-mode", "auto",
+		"--append-system-prompt", "restore instructions",
+		"-r", "sess-123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandReadsSystemPromptFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "restore-system.md")
+	if err := os.WriteFile(file, []byte("restore file instructions"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPromptFile: file,
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"qwen",
+		"--append-system-prompt", "restore file instructions",
 		"-r", "sess-123",
 	}
 	if !reflect.DeepEqual(cmd, want) {

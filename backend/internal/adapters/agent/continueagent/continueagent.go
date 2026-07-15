@@ -14,8 +14,8 @@
 // callbacks through the existing "ao hooks claude-code <evt>" dispatcher — no
 // Continue-specific native hook config or activity deriver is needed.
 //
-// Launch is interactive via `cn [--auto|--readonly] [-- <prompt>]`. Restore
-// continues a specific native session by id with `cn --fork <sessionId>`
+// Launch is interactive via `cn [--auto|--readonly] [--rule <rule>] [-- <prompt>]`.
+// Restore continues a specific native session by id with `cn --fork <sessionId>`
 // (Continue's `--resume` only continues the *last* session, so it cannot target
 // a particular AO session).
 package continueagent
@@ -91,6 +91,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendSystemPromptRule(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile)
 
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
@@ -147,9 +148,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 4)
+	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendSystemPromptRule(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile)
 	cmd = append(cmd, "--fork", agentSessionID)
 	return cmd, true, nil
 }
@@ -204,5 +206,15 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 		*cmd = append(*cmd, "--auto")
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--auto")
+	}
+}
+
+func appendSystemPromptRule(cmd *[]string, inline, file string) {
+	if inline != "" {
+		*cmd = append(*cmd, "--rule", inline)
+		return
+	}
+	if file != "" {
+		*cmd = append(*cmd, "--rule", file)
 	}
 }

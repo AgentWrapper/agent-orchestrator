@@ -72,6 +72,13 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 	return p.ToolName, p.ToolUseID
 }
 
+type sessionStartHookOutput struct {
+	HookSpecificOutput struct {
+		HookEventName     string `json:"hookEventName"`
+		AdditionalContext string `json:"additionalContext"`
+	} `json:"hookSpecificOutput"`
+}
+
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
 // agent CLIs invoke from their workspace-local hook config. It reads the native
 // hook payload from stdin and the AO session id from AO_SESSION_ID, derives an
@@ -107,6 +114,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// agent. The deriver tolerates an empty payload.
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read stdin: %w", err))
 	}
+	if shouldEmitSessionStartContext(agent, event) {
+		c.emitSessionStartContext(agent, event, sessionID)
+	}
 
 	state, ok := activitydispatch.Derive(agent, event, payload)
 	if !ok {
@@ -122,6 +132,41 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		c.reportHookFailure(agent, event, sessionID, err)
 	}
 	return nil
+}
+
+func shouldEmitSessionStartContext(agent, event string) bool {
+	if event != "session-start" {
+		return false
+	}
+	switch agent {
+	case "agy", "devin":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *commandContext) emitSessionStartContext(agent, event, sessionID string) {
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir == "" {
+		return
+	}
+	path := filepath.Join(dataDir, "prompts", sessionID, "system.md")
+	data, err := os.ReadFile(path) //nolint:gosec // sessionID is bounded by sessionIDPattern.
+	if err != nil {
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read system prompt: %w", err))
+		return
+	}
+	prompt := strings.TrimSpace(string(data))
+	if prompt == "" {
+		return
+	}
+	var out sessionStartHookOutput
+	out.HookSpecificOutput.HookEventName = "SessionStart"
+	out.HookSpecificOutput.AdditionalContext = prompt
+	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write session-start context: %w", err))
+	}
 }
 
 // reportHookFailure surfaces a hook delivery failure without breaking the

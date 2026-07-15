@@ -47,6 +47,8 @@ export type XtermTerminalProps = {
 	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
+	/** Called after a terminal hyperlink is opened in the OS browser. */
+	onLinkOpen?: (uri: string) => void;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
 	 * handle stays valid until unmount; cols/rows are live getters.
@@ -233,6 +235,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
+		const activateLink = (_event: MouseEvent, uri: string) => {
+			window.open(uri, "_blank", "noopener");
+			callbacksRef.current.onLinkOpen?.(uri);
+		};
 
 		let term: Terminal;
 		try {
@@ -251,6 +257,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
 				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
+				linkHandler: { activate: activateLink },
 				// Agent TUIs leave SGR bold active while using ANSI black for
 				// separators; keep bold weight-only so black stays black.
 				drawBoldTextInBrightColors: false,
@@ -280,17 +287,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const unicode = new Unicode11Addon();
 		term.loadAddon(unicode);
 		term.unicode.activeVersion = "11";
-		// Open links in the OS browser. The default WebLinksAddon handler calls
+		// Open plain and OSC 8 links in the OS browser. The default handlers call
 		// window.open() with no URL and then assigns location.href, but the
 		// Electron main process denies every window.open and only forwards the URL
-		// passed to it (main.ts setWindowOpenHandler), so the default handler's
+		// passed to it (main.ts setWindowOpenHandler), so the default handlers'
 		// empty open is dropped and clicks silently no-op. Pass the matched URL to
 		// window.open directly so the main process routes it to shell.openExternal.
-		term.loadAddon(
-			new WebLinksAddon((_event, uri) => {
-				window.open(uri, "_blank", "noopener");
-			}),
-		);
+		term.loadAddon(new WebLinksAddon(activateLink));
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
@@ -556,6 +559,39 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		host.addEventListener("paste", pasteInput, true);
 		host.addEventListener("compositionend", compositionInput, true);
 
+		// A file dropped on the pane inserts its path, mirroring a native terminal
+		// so an agent (e.g. Claude Code) attaches it. The sandboxed renderer cannot
+		// read a dropped file's original path on macOS, so the bytes are stashed to
+		// a temp file by the main process and that path is inserted instead.
+		const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+		const dragOverInput = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+		};
+		const dropInput = (event: DragEvent) => {
+			const files = Array.from(event.dataTransfer?.files ?? []);
+			if (files.length === 0) return;
+			event.preventDefault();
+			event.stopPropagation();
+			void (async () => {
+				const paths: string[] = [];
+				for (const file of files) {
+					try {
+						const bytes = new Uint8Array(await file.arrayBuffer());
+						const saved = await aoBridge.terminal.saveDroppedFile({ name: file.name, bytes });
+						if (saved) paths.push(saved);
+					} catch (error) {
+						console.warn("Unable to attach dropped file", error);
+					}
+				}
+				if (paths.length === 0) return;
+				pasteText(`${paths.map((p) => (/\s/.test(p) ? `'${p}'` : p)).join(" ")} `);
+			})();
+		};
+		host.addEventListener("dragover", dragOverInput);
+		host.addEventListener("drop", dropInput);
+
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
 		const handle: AttachableTerminal = {
@@ -589,6 +625,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			selectionChange.dispose();
 			host.removeEventListener("paste", pasteInput, true);
 			host.removeEventListener("compositionend", compositionInput, true);
+			host.removeEventListener("dragover", dragOverInput);
+			host.removeEventListener("drop", dropInput);
 			clearSuppressNativePaste();
 			keyInput.dispose();
 			userInputListeners.clear();

@@ -4,10 +4,12 @@ import {
 	ChevronRight,
 	GitPullRequest,
 	LayoutDashboard,
+	MessageSquare,
 	Moon,
 	MoreVertical,
 	Pencil,
 	Plus,
+	RefreshCw,
 	Search,
 	Settings,
 	Smartphone,
@@ -15,6 +17,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { UpdateStatus } from "../../main/update-settings";
 import {
 	attentionZone,
 	newestActiveOrchestrator,
@@ -29,6 +32,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
+import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import {
 	DropdownMenu,
@@ -62,6 +66,7 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { ReportProblemDialog } from "./ReportProblemDialog";
 import { ResizeHandle } from "./ResizeHandle";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
@@ -124,7 +129,8 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 			aria-hidden="true"
 			className={cn(
 				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				zone === "working" && "animate-status-pulse bg-working",
+				zone === "working" && session.status === "idle" && "bg-passive",
+				zone === "working" && session.status !== "idle" && "animate-status-pulse bg-working",
 				zone === "action" && (session.status === "ci_failed" ? "bg-error" : "bg-warning"),
 				zone === "pending" && "bg-passive",
 				zone === "merge" && "bg-success",
@@ -154,6 +160,9 @@ export function Sidebar({
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	const theme = useUiStore((s) => s.theme);
 	const toggleTheme = useUiStore((s) => s.toggleTheme);
+	const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+	// One IPC subscription for both footer variants of the restart-to-update prompt.
+	const updateStatus = useUpdateStatus();
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -326,13 +335,23 @@ export function Sidebar({
 				</SidebarGroup>
 			</SidebarContent>
 
-			{/* Footer (project-sidebar__footer) — single Settings menu. Divergence
+			{/* Footer (project-sidebar__footer) — Feedback plus Settings menu. Divergence
           (user-requested 2026-06-10): the trigger stretches the full row width
           (flex-1) with a uniform 7px footer inset on all sides (reference uses
           12px top, 0 bottom, content-hugging button). The icon rail keeps the
           icon-only settings action plus expand toggle (off macOS). */}
-			<SidebarFooter className="relative mt-auto min-h-[51px] gap-0 overflow-hidden border-t border-border p-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				<div className="sidebar-expanded-chrome relative flex min-h-[37px] w-full min-w-[186px] items-center transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
+			<SidebarFooter className="relative mt-auto min-h-[95px] gap-0 overflow-hidden border-t border-border p-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[88px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				<div className="sidebar-expanded-chrome relative flex min-h-[81px] w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
+					<button
+						aria-label="Feedback"
+						className="flex w-full items-center justify-start gap-2.5 rounded-md p-2 text-control font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:text-passive"
+						onClick={() => setIsFeedbackOpen(true)}
+						type="button"
+					>
+						<MessageSquare aria-hidden="true" />
+						<span className="tracking-tight">Feedback</span>
+					</button>
+					<RestartToUpdateRow status={updateStatus} />
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<button
@@ -388,7 +407,21 @@ export function Sidebar({
 						</TooltipContent>
 					</Tooltip>
 				</div>
-				<div className="pointer-events-none absolute inset-x-1.5 top-[7px] flex min-h-[37px] flex-col items-center justify-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
+				<div className="pointer-events-none absolute inset-x-1.5 top-[7px] flex min-h-[74px] flex-col items-center justify-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
+					<RestartToUpdateRailButton status={updateStatus} />
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label="Feedback"
+								className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
+								onClick={() => setIsFeedbackOpen(true)}
+								type="button"
+							>
+								<MessageSquare aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right">Feedback</TooltipContent>
+					</Tooltip>
 					<DropdownMenu>
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -463,6 +496,7 @@ export function Sidebar({
 			/>
 
 			<ConnectMobileModal open={mobileOpen} onOpenChange={setMobileOpen} />
+			<ReportProblemDialog open={isFeedbackOpen} onOpenChange={setIsFeedbackOpen} />
 		</SidebarRoot>
 	);
 }
@@ -792,6 +826,72 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				<Pencil aria-hidden="true" />
 			</button>
 		</SidebarMenuSubItem>
+	);
+}
+
+// RestartToUpdateRow sits directly above the Settings row when an update is
+// downloaded and staged. Transparent while fresh; orange (working tokens) once
+// the main-process evaluator flags it escalated. Clicking installs immediately;
+// the row itself is the prompt, so no confirmation dialog. Renders nothing in
+// every other update state.
+function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
+	if (status.state !== "downloaded") return null;
+	const escalated = status.escalated === true;
+	return (
+		<button
+			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+			className={cn(
+				"flex w-full items-center gap-2.5 rounded-md p-2 text-left text-control font-medium transition-colors",
+				escalated
+					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
+					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
+			)}
+			onClick={() => void aoBridge.updates.install()}
+			type="button"
+		>
+			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
+			<span className="min-w-0 flex-1">
+				<span className="block truncate tracking-tight">Restart to update</span>
+				{status.version && (
+					<span className={cn("block truncate text-caption font-normal", escalated ? "text-working" : "text-passive")}>
+						v{status.version} ready
+					</span>
+				)}
+			</span>
+			<span
+				aria-hidden="true"
+				className={cn("h-1.5 w-1.5 shrink-0 rounded-full", escalated ? "bg-working" : "bg-passive")}
+			/>
+		</button>
+	);
+}
+
+// Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
+// with the two-line copy in the tooltip.
+function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
+	if (status.state !== "downloaded") return null;
+	const escalated = status.escalated === true;
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+					className={cn(
+						"grid size-9 place-items-center rounded-lg transition-colors [&_svg]:size-4",
+						escalated
+							? "bg-working/12 text-working hover:bg-working/18"
+							: "text-passive hover:bg-interactive-hover hover:text-foreground",
+					)}
+					onClick={() => void aoBridge.updates.install()}
+					type="button"
+				>
+					<RefreshCw aria-hidden="true" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="right">
+				Restart to update{status.version ? ` · v${status.version} ready` : ""}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

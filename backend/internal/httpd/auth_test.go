@@ -103,6 +103,113 @@ func TestAuthLockoutAfterFive(t *testing.T) {
 	}
 }
 
+// reqPathCookie builds a request to an arbitrary path, optionally carrying the
+// Bearer header and/or the preview auth cookie, for the preview-cookie tests.
+func reqPathCookie(method, path, auth, cookie string) *http.Request {
+	r := httptest.NewRequest(method, path, nil)
+	r.RemoteAddr = "192.168.1.50:5555"
+	if auth != "" {
+		r.Header.Set("Authorization", auth)
+	}
+	if cookie != "" {
+		r.AddCookie(&http.Cookie{Name: authCookieName, Value: cookie})
+	}
+	return r
+}
+
+// A preview subresource (image/CSS/JS) is fetched by the WebView WITHOUT our
+// Authorization header, carrying only the cookie the top-level load set. It must
+// authenticate on the preview-files path.
+func TestPreviewCookieAuthenticatesSubresource(t *testing.T) {
+	h, _ := newAuthUnderTest("secret12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqPathCookie(http.MethodGet, "/api/v1/sessions/abc/preview/files/logo.png", "", "secret12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview subresource with cookie: got %d want 200", w.Code)
+	}
+}
+
+// The top-level preview file load (Bearer header) must set the auth cookie,
+// scoped tightly to that session's preview-files directory and HttpOnly.
+func TestPreviewFileSetsScopedCookie(t *testing.T) {
+	h, _ := newAuthUnderTest("secret12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqPathCookie(http.MethodGet, "/api/v1/sessions/abc/preview/files/index.html", "Bearer secret12", ""))
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview index with bearer: got %d want 200", w.Code)
+	}
+	var c *http.Cookie
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == authCookieName {
+			c = ck
+		}
+	}
+	if c == nil {
+		t.Fatal("expected auth cookie on preview file response")
+	}
+	if c.Path != "/api/v1/sessions/abc/preview/files/" {
+		t.Errorf("cookie Path = %q, want /api/v1/sessions/abc/preview/files/", c.Path)
+	}
+	if !c.HttpOnly {
+		t.Error("cookie must be HttpOnly")
+	}
+}
+
+// After a password regenerate the WebView still holds the cookie minted under the
+// OLD password. The top-level load re-authenticates via the Bearer header (the
+// mobile app has the new password), so the server must overwrite the stale cookie
+// — otherwise the page's subresources keep sending the old token and 401.
+func TestPreviewCookieRefreshedAfterPasswordChange(t *testing.T) {
+	h, _ := newAuthUnderTest("newpass12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqPathCookie(http.MethodGet,
+		"/api/v1/sessions/abc/preview/files/index.html", "Bearer newpass12", "oldpass12"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview index with new bearer + stale cookie: got %d want 200", w.Code)
+	}
+	var c *http.Cookie
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == authCookieName {
+			c = ck
+		}
+	}
+	if c == nil {
+		t.Fatal("expected stale auth cookie to be refreshed")
+	}
+	if c.Value != "newpass12" {
+		t.Errorf("cookie Value = %q, want the current token newpass12", c.Value)
+	}
+}
+
+// The cookie must NOT authenticate any non-preview endpoint: a preview page that
+// tries POST /kill with only the cookie is rejected. This is the server-side
+// half of the guarantee (the cookie's Path already stops the browser sending it
+// here at all).
+func TestPreviewCookieRejectedOnOtherEndpoints(t *testing.T) {
+	h, _ := newAuthUnderTest("secret12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqPathCookie(http.MethodPost, "/api/v1/sessions/abc/kill", "", "secret12"))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("cookie on /kill: got %d want 401", w.Code)
+	}
+}
+
+// A normal (non-preview) authenticated request must not get an auth cookie set,
+// so the cookie only ever exists for the preview flow.
+func TestNoCookieSetOnNonPreviewRoutes(t *testing.T) {
+	h, _ := newAuthUnderTest("secret12", time.Now)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("Bearer secret12")) // path /api/v1/sessions
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d want 200", w.Code)
+	}
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == authCookieName {
+			t.Fatal("auth cookie must not be set on a non-preview route")
+		}
+	}
+}
+
 func TestAuthLockoutIsPerSource(t *testing.T) {
 	now := time.Now()
 	h, _ := newAuthUnderTest("secret12", func() time.Time { return now })

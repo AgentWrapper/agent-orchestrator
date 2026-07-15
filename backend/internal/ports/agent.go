@@ -202,11 +202,12 @@ type LaunchConfig struct {
 
 // WorkspaceHookConfig carries inputs needed to install workspace-local agent hooks.
 type WorkspaceHookConfig struct {
-	Config        AgentConfig
-	DataDir       string
-	SessionID     string
-	SystemPrompt  string
-	WorkspacePath string
+	Config           AgentConfig
+	DataDir          string
+	SessionID        string
+	SystemPrompt     string
+	SystemPromptFile string
+	WorkspacePath    string
 }
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
@@ -219,7 +220,8 @@ type RestoreConfig struct {
 	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
 	// resume — it is not part of the transcript — so adapters whose CLI has a
 	// system-prompt flag should re-apply this in their resume command.
-	SystemPrompt string
+	SystemPrompt     string
+	SystemPromptFile string
 }
 
 // SessionRef identifies an AO session whose agent-owned metadata may be read.

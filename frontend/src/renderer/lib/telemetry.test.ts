@@ -1,12 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildTelemetryContext,
+	reserveDailyActiveCapture,
 	routeSurface,
 	sanitizePostHogEvent,
 	sanitizeReplayRequestName,
 	sanitizeRendererExceptionProperties,
 	sanitizeRendererProperties,
+	startDailyActiveHeartbeat,
 } from "./telemetry";
+
+function memoryStorage(initial: Record<string, string> = {}) {
+	const values = new Map(Object.entries(initial));
+	return {
+		getItem: (key: string) => values.get(key) ?? null,
+		setItem: (key: string, value: string) => {
+			values.set(key, value);
+		},
+	};
+}
 
 describe("telemetry sanitizers", () => {
 	it("builds stable AO version context for PostHog events", () => {
@@ -41,6 +53,18 @@ describe("telemetry sanitizers", () => {
 			search: "?token=secret",
 		});
 		expect(routeProps).toEqual({ surface: "project_board" });
+	});
+
+	it("keeps only the renderer channel on app active events", async () => {
+		const props = await sanitizeRendererProperties("ao.app.active", {
+			channel: "renderer",
+			project_id: "demo-project",
+			ip: "203.0.113.10",
+			country: "US",
+		});
+
+		expect(props).toEqual({ channel: "renderer" });
+		expect(await sanitizeRendererProperties("ao.app.active", { channel: "cli" })).toEqual({});
 	});
 
 	it("strips exception details down to coarse metadata", async () => {
@@ -83,6 +107,7 @@ describe("telemetry sanitizers", () => {
 			properties: {
 				$current_url: "app://renderer/index.html?token=secret",
 				$initial_current_url: "file:///Users/alice/private/index.html",
+				$referrer: "https://app.localhost:5173/private?token=secret",
 				message:
 					"failed to fetch http://localhost:3037/api/v1/projects?token=secret from app://renderer/index.html?token=secret and open /Users/alice/reverb/file.txt",
 				$exception_list: [
@@ -103,6 +128,7 @@ describe("telemetry sanitizers", () => {
 		const props = event.properties as Record<string, unknown>;
 		expect(props.$current_url).toBe("[redacted-local-url]");
 		expect(props.$initial_current_url).toBe("[redacted-local-url]");
+		expect(props.$referrer).toBe("[redacted-local-url]");
 		expect(props.message).toBe(
 			"failed to fetch [redacted-local-url] from [redacted-local-url] and open [redacted-local-path]",
 		);
@@ -221,5 +247,42 @@ describe("telemetry sanitizers", () => {
 		expect(
 			await sanitizeRendererProperties("ao.renderer.terminal_attach_failed", { reason: "something else" }),
 		).toEqual({});
+	});
+});
+
+describe("daily active heartbeat", () => {
+	it("reserves one active capture per UTC date", () => {
+		const storage = memoryStorage();
+
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:59.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
+	});
+
+	it("emits at startup and then only after a later UTC date is observed on user activity", () => {
+		const storage = memoryStorage();
+		const captured: string[] = [];
+		let now = new Date("2026-07-12T08:00:00.000Z");
+
+		const stop = startDailyActiveHeartbeat({
+			storage,
+			now: () => now,
+			capture: () => captured.push(now.toISOString()),
+			window,
+			document,
+		});
+		try {
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z"]);
+
+			window.dispatchEvent(new Event("focus"));
+			document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+			expect(captured).toHaveLength(1);
+
+			now = new Date("2026-07-13T09:00:00.000Z");
+			window.dispatchEvent(new Event("focus"));
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-13T09:00:00.000Z"]);
+		} finally {
+			stop();
+		}
 	});
 });

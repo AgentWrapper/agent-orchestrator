@@ -4,12 +4,14 @@ import {
 	clipboard,
 	dialog,
 	ipcMain,
+	Menu,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
 	shell,
 	WebContentsView,
+	webContents,
 	type OpenDialogOptions,
 } from "electron";
 import {
@@ -30,7 +32,7 @@ import {
 } from "./main/update-settings";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,6 +55,7 @@ import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
+import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -142,6 +145,11 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
+// Height (px) of the custom Windows title bar. Must stay in sync with the Window
+// Controls Overlay height passed to BrowserWindow and the .window-titlebar height
+// in styles.css, so the native min/max/close buttons line up with the app's bar.
+const TITLEBAR_HEIGHT = 36;
+
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
@@ -203,10 +211,15 @@ function annotatePreloadPath(): string {
 // uses the .app bundle's .icns instead. Packaged: shipped via extraResource to
 // resources/icon.png; dev: the source asset under frontend/assets.
 function windowIconPath(): string | undefined {
+	const iconFile = process.platform === "win32" ? "icon.ico" : "icon.png";
 	const candidate = app.isPackaged
+		? path.join(process.resourcesPath, iconFile)
+		: path.join(__dirname, `../../assets/${iconFile}`);
+	if (existsSync(candidate)) return candidate;
+	const fallback = app.isPackaged
 		? path.join(process.resourcesPath, "icon.png")
 		: path.join(__dirname, "../../assets/icon.png");
-	return existsSync(candidate) ? candidate : undefined;
+	return existsSync(fallback) ? fallback : undefined;
 }
 
 function applyRuntimeAppIcon(): void {
@@ -224,6 +237,44 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
 
+// Role-based menu installed on Windows where the native menu bar is hidden. The
+// bar stays out of sight, but the roles keep their accelerators alive (Reload,
+// DevTools, zoom, full screen, edit commands) and each acts on the *focused*
+// webContents — including a BrowserView panel — matching native menu behaviour.
+function buildWindowsAppMenu(): Menu {
+	return Menu.buildFromTemplate([
+		{
+			label: "Edit",
+			submenu: [
+				{ role: "undo" },
+				{ role: "redo" },
+				{ type: "separator" },
+				{ role: "cut" },
+				{ role: "copy" },
+				{ role: "paste" },
+				{ role: "selectAll" },
+			],
+		},
+		{
+			label: "View",
+			submenu: [
+				{ role: "reload" },
+				{ role: "toggleDevTools" },
+				{ type: "separator" },
+				{ role: "resetZoom" },
+				{ role: "zoomIn" },
+				{ role: "zoomOut" },
+				{ type: "separator" },
+				{ role: "togglefullscreen" },
+			],
+		},
+		{
+			label: "Window",
+			submenu: [{ role: "minimize" }, { role: "close" }],
+		},
+	]);
+}
+
 function createWindow(): void {
 	browserViewHost?.dispose();
 	browserViewHost = null;
@@ -235,12 +286,27 @@ function createWindow(): void {
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
-		titleBarStyle: "hiddenInset",
-		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
-		// line — so lights + nav cluster + header content share one row. macOS
-		// draws the 12pt disc 2pt below the given y (measured: center = y + 8),
-		// hence 20, not 22.
-		trafficLightPosition: { x: 14, y: 20 },
+		// Windows goes frameless with a Window Controls Overlay: Electron still draws
+		// native min/max/close on the right, while the renderer paints its own
+		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
+		// inset traffic-light chrome. Overlay colours are re-synced to the active
+		// theme from the renderer via the window:setOverlay IPC.
+		...(process.platform === "win32"
+			? {
+					titleBarStyle: "hidden" as const,
+					// Hide the native menu bar. A role-based menu is still installed (for
+					// accelerators) below; the visible menu is painted by WindowTitlebar.
+					autoHideMenuBar: true,
+					titleBarOverlay: { color: "#0f1014", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
+				}
+			: {
+					titleBarStyle: "hiddenInset" as const,
+					// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav
+					// center line — so lights + nav cluster + header content share one
+					// row. macOS draws the 12pt disc 2pt below the given y (measured:
+					// center = y + 8), hence 20, not 22.
+					trafficLightPosition: { x: 14, y: 20 },
+				}),
 		webPreferences: {
 			preload: preloadPath(),
 			contextIsolation: true,
@@ -249,11 +315,21 @@ function createWindow(): void {
 		},
 	});
 
+	// On Windows the app paints its own title bar (WindowTitlebar), so the native
+	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
+	// installed so its accelerators keep working and act on the focused pane;
+	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
+	// keep their native menus.
+	if (process.platform === "win32") {
+		Menu.setApplicationMenu(buildWindowsAppMenu());
+		mainWindow.setMenuBarVisibility(false);
+	}
+
 	// Harden navigation: never let renderer/terminal content open in-app windows or
 	// navigate the privileged window away from the app origin. External links go to
 	// the OS browser. Keep this in place before exposing any daemon output to the renderer.
 	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-		if (/^https?:\/\//.test(url)) {
+		if (isAllowedAppExternalURL(url)) {
 			void shell.openExternal(url);
 		}
 		return { action: "deny" };
@@ -889,6 +965,79 @@ ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
+ipcMain.handle("app:openExternal", async (_event, url: string) => {
+	await openAllowedAppExternalURL(url, shell);
+});
+
+// Re-tint the native window-button overlay (min/max/close) to match the active
+// theme; the renderer calls this on theme change. No-op unless the window was
+// created with a titleBarOverlay (Windows only).
+ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolColor: string }) => {
+	if (process.platform !== "win32" || !mainWindow) return;
+	try {
+		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
+	} catch {
+		// Window has no overlay on this platform; ignore.
+	}
+});
+
+// Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
+ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
+
+// Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
+// action the native default menu would have performed.
+ipcMain.handle("menu:action", (_event, action: string) => {
+	const win = mainWindow;
+	if (!win) return;
+	// Clicking this shell-painted menu moves focus off the panel, so prefer the last-focused panel, else the focused contents, else the shell.
+	const focused = webContents.getFocusedWebContents();
+	const wc =
+		(focused && focused !== win.webContents ? focused : browserViewHost?.getLastFocusedPanelContents()) ??
+		win.webContents;
+	switch (action) {
+		case "edit.undo":
+			return wc.undo();
+		case "edit.redo":
+			return wc.redo();
+		case "edit.cut":
+			return wc.cut();
+		case "edit.copy":
+			return wc.copy();
+		case "edit.paste":
+			return wc.paste();
+		case "edit.selectAll":
+			return wc.selectAll();
+		case "view.reload":
+			return wc.reload();
+		case "view.devtools":
+			return wc.toggleDevTools();
+		case "view.zoomIn":
+			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
+		case "view.zoomOut":
+			return wc.setZoomLevel(wc.getZoomLevel() - 0.5);
+		case "view.zoomReset":
+			return wc.setZoomLevel(0);
+		case "view.fullscreen":
+			return win.setFullScreen(!win.isFullScreen());
+		case "window.minimize":
+			return win.minimize();
+		case "window.maximize":
+			return win.isMaximized() ? win.unmaximize() : win.maximize();
+		case "window.close":
+			return win.close();
+		case "app.quit":
+			return app.quit();
+		case "help.about":
+			void dialog.showMessageBox(win, {
+				type: "info",
+				title: "About Agent Orchestrator",
+				message: "Agent Orchestrator",
+				detail: `Version ${app.getVersion()}`,
+				buttons: ["OK"],
+			});
+			return;
+	}
+});
 ipcMain.handle("telemetry:getBootstrap", () =>
 	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
 );
@@ -1065,6 +1214,20 @@ ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	}
 });
 ipcMain.handle("clipboard:readText", () => clipboard.readText());
+
+// A file dropped onto the terminal is delivered as raw bytes (its original path
+// is unavailable to the sandboxed renderer on macOS — see webUtils.getPathForFile
+// regressions in Electron 30-33). Stash the bytes under the app's own state dir
+// and return the path so the terminal can insert it, mirroring how a native
+// terminal inserts a dropped file's path.
+ipcMain.handle("terminal:saveDroppedFile", async (_event, input: { name: string; bytes: Uint8Array }) => {
+	const dir = path.join(app.getPath("userData"), "terminal-drops");
+	await mkdir(dir, { recursive: true });
+	const base = path.basename(input.name || "").replace(/[^\w.-]+/g, "_") || "dropped";
+	const target = path.join(dir, `${Date.now()}-${base}`);
+	await writeFile(target, Buffer.from(input.bytes));
+	return target;
+});
 
 ipcMain.handle("appState:getMigration", async (): Promise<MigrationState> => {
 	const runFile = runFilePath();

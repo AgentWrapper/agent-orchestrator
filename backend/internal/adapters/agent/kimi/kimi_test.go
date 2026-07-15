@@ -3,7 +3,10 @@ package kimi
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -189,9 +192,160 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksNoOp(t *testing.T) {
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err != nil {
-		t.Fatalf("GetAgentHooks err = %v, want nil", err)
+func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
+	workspace := t.TempDir()
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "follow AO rules\n",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	path := kimiInstructionsPath(workspace)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		kimiInstructionsSentinel,
+		"# Agent Orchestrator Session Instructions",
+		"follow AO rules",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions missing %q:\n%s", want, text)
+		}
+	}
+
+	gitignore, err := os.ReadFile(filepath.Join(workspace, kimiInstructionsDirName, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignore), "/AGENTS.md\n") {
+		t.Fatalf("gitignore does not ignore AGENTS.md:\n%s", gitignore)
+	}
+}
+
+func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
+	workspace := t.TempDir()
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath:    workspace,
+		SystemPromptFile: promptFile,
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(kimiInstructionsPath(workspace))
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	if !strings.Contains(string(data), "file rules") {
+		t.Fatalf("instructions missing file rules:\n%s", data)
+	}
+}
+
+func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	path := kimiInstructionsPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("user instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO rules",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"user instructions",
+		kimiInstructionsSentinel,
+		"AO rules",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "user instructions") > strings.Index(text, kimiInstructionsSentinel) {
+		t.Fatalf("user instructions should stay before AO-managed block:\n%s", text)
+	}
+}
+
+func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	path := kimiInstructionsPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(kimiInstructionsSentinel+"\n\nold\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "new rules",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "new rules") || strings.Contains(text, "old") {
+		t.Fatalf("managed instructions not rewritten cleanly:\n%s", text)
+	}
+}
+
+func TestGetAgentHooksRewritesManagedBlockAndPreservesSurroundingUserInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	path := kimiInstructionsPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	existing := "before\n\n" + kimiInstructionFile("old rules") + "\nafter\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "new rules",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"before", "after", "new rules"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "old rules") {
+		t.Fatalf("stale managed instructions preserved:\n%s", text)
+	}
+	if strings.Count(text, kimiInstructionsSentinel) != 1 {
+		t.Fatalf("managed block duplicated:\n%s", text)
 	}
 }
 

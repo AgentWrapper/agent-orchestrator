@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
 import type { FeatureBuild } from "../lib/bridge";
+import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import type { UpdateSettings, UpdateStatus } from "../../main/update-settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -275,20 +276,8 @@ function FeatureBuildItem({ build }: { build: FeatureBuild }) {
 
 // UpdateActions is the on-demand update control unchanged from before.
 function UpdateActions() {
-	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
+	const status = useUpdateStatus();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
-
-	useEffect(() => {
-		let live = true;
-		void aoBridge.updates.getStatus().then((s) => {
-			if (live) setStatus(s);
-		});
-		const off = aoBridge.updates.onStatus(setStatus);
-		return () => {
-			live = false;
-			off?.();
-		};
-	}, []);
 
 	const checking = status.state === "checking";
 	const downloading = status.state === "downloading";

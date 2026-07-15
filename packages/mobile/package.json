@@ -9,7 +9,8 @@
 		"android": "expo run:android",
 		"ios": "expo run:ios",
 		"typecheck": "tsc --noEmit",
-		"build": "npm run typecheck"
+		"build": "npm run typecheck",
+		"postinstall": "patch-package"
 	},
 	"dependencies": {
 		"@expo/vector-icons": "^15.0.3",
@@ -19,6 +20,7 @@
 		"expo-build-properties": "~1.0.10",
 		"expo-camera": "~17.0.10",
 		"expo-constants": "~18.0.13",
+		"expo-haptics": "~15.0.8",
 		"expo-linking": "~8.0.12",
 		"expo-router": "6.0.24",
 		"expo-secure-store": "~15.0.8",
@@ -31,6 +33,7 @@
 	},
 	"devDependencies": {
 		"@types/react": "~19.1.10",
+		"patch-package": "^8.0.1",
 		"typescript": "~5.9.2"
 	}
 }
