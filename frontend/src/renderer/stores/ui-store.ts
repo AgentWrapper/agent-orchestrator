@@ -52,10 +52,7 @@ function initialSidebarOpen() {
 	return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
 }
 
-function inspectorState(
-	sessions: Record<string, InspectorSessionState>,
-	sessionId: string,
-): InspectorSessionState {
+function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: false, view: "summary" };
 }
 
