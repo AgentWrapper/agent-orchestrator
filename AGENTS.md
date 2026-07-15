@@ -132,3 +132,7 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 - Use conventional commit messages (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
 - Explain intentional omissions in the PR body, especially when the TypeScript original had more behavior than the Go rewrite domain currently supports.
 - Run the narrowest relevant tests first, then the repo/CI commands that match the touched area.
+
+## Project learnings
+
+- For remote-client deployments, preserve the daemon wire protocol and business services; prefer an Electron-local authenticated forwarding proxy over changing REST, SSE, WebSocket, or terminal transports.
