@@ -94,6 +94,32 @@ describe("remote-forwarder", () => {
 		await reader.cancel();
 	});
 
+	it("forwards SSE response headers before the first event", async () => {
+		let finishUpstream: (() => void) | undefined;
+		const upstream = http.createServer((_req, res) => {
+			res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" });
+			res.flushHeaders();
+			finishUpstream = () => res.end();
+			setTimeout(() => res.end(), 500);
+		});
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "test-password" });
+		forwarders.push(forwarder);
+
+		const response = await Promise.race([
+			fetch(`http://127.0.0.1:${forwarder.port}/api/v1/events`),
+			new Promise<never>((_resolve, reject) =>
+				setTimeout(() => reject(new Error("SSE response headers were buffered")), 250),
+			),
+		]);
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toContain("text/event-stream");
+		finishUpstream?.();
+		await response.body?.cancel();
+	});
+
 	it("injects auth into WebSocket upgrades and pipes bytes bidirectionally", async () => {
 		let authorization: string | undefined;
 		let resolveUpstreamEnded: () => void = () => undefined;

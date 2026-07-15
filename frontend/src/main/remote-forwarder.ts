@@ -54,6 +54,9 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		});
 		upstream.on("response", (upstreamResponse) => {
 			response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+			if (upstreamResponse.headers["content-type"]?.startsWith("text/event-stream")) {
+				response.flushHeaders();
+			}
 			upstreamResponse.pipe(response);
 		});
 		upstream.on("error", () => writeUnavailable(response));
