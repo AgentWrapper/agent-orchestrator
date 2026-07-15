@@ -208,6 +208,21 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return true, nil
 }
 
+// ForegroundCommand reports the active pane's foreground process command. It is
+// used only as a boot-time adoption sanity check: a live tmux session whose
+// foreground command is the keep-alive shell no longer has an agent running.
+func (r *Runtime) ForegroundCommand(ctx context.Context, handle ports.RuntimeHandle) (string, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return "", err
+	}
+	out, err := r.run(ctx, foregroundCommandArgs(id)...)
+	if err != nil {
+		return "", fmt.Errorf("tmux runtime: foreground command %s: %w", id, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
 // presses Enter to submit. An empty message presses Enter alone (the nudge
 // contract on ports.AgentMessenger).

@@ -85,6 +85,10 @@ type runtimeController interface {
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
+type runtimeForegroundCommander interface {
+	ForegroundCommand(ctx context.Context, handle ports.RuntimeHandle) (string, error)
+}
+
 // Store is the persistence surface needed by the internal session Manager.
 type Store interface {
 	// GetProject loads a project row so spawn can resolve its per-project agent
@@ -824,6 +828,10 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
+	if err := m.validateAgentBinary(argv); err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
@@ -957,10 +965,11 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 }
 
 // reconcileLive handles a single non-terminated session on boot. If its runtime
-// session is still alive (tmux is the persistence layer, so it survives a daemon
-// crash) we adopt it: a no-op, the agent keeps running. If the runtime is gone,
-// the agent died with the daemon, so we save-and-tear-down to the SAME end state
-// a graceful shutdown produces: capture uncommitted work into a preserve ref,
+// session is still alive and, where the runtime can tell us, its foreground
+// process is not just the keep-alive shell, we adopt it: a no-op, the agent
+// keeps running. If the runtime is gone (or tmux reports a shell-only pane), the
+// agent died with the daemon, so we save-and-tear-down to the SAME end state a
+// graceful shutdown produces: capture uncommitted work into a preserve ref,
 // record the session_worktrees restore marker, mark terminated, and remove the
 // worktree. RestoreAll (which Reconcile runs immediately after) then relaunches
 // it on this same boot, resuming history. Crash recovery thus matches graceful
@@ -974,6 +983,7 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		return nil
 	}
 	handle := runtimeHandle(rec.Metadata)
+	destroyRuntime := false
 	if handle.ID != "" {
 		alive, err := m.runtime.IsAlive(ctx, handle)
 		if err != nil {
@@ -981,16 +991,50 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 		}
 		if alive {
-			return nil // adopt: the session survived the crash.
+			agentAlive, checked, err := m.runtimeHasForegroundAgent(ctx, handle)
+			if err != nil {
+				return fmt.Errorf("reconcile %s: foreground probe: %w", rec.ID, err)
+			}
+			if !checked || agentAlive {
+				return nil // adopt: the session survived the crash.
+			}
+			m.logger.Warn("reconcile: live runtime has no foreground agent; scheduling restore", "sessionID", rec.ID, "runtimeHandle", handle.ID)
+			destroyRuntime = true
 		}
 	}
-	if err := m.saveAndTeardownOne(ctx, rec, false); err != nil {
+	if err := m.saveAndTeardownOne(ctx, rec, destroyRuntime); err != nil {
 		m.logger.Warn("reconcile: save-and-teardown failed; terminating without restore marker", "sessionID", rec.ID, "error", err)
 		if mErr := m.lcm.MarkTerminated(ctx, rec.ID); mErr != nil {
 			return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, mErr)
 		}
 	}
 	return nil
+}
+
+func (m *Manager) runtimeHasForegroundAgent(ctx context.Context, handle ports.RuntimeHandle) (agentAlive bool, checked bool, err error) {
+	observer, ok := m.runtime.(runtimeForegroundCommander)
+	if !ok {
+		return true, false, nil
+	}
+	cmd, err := observer.ForegroundCommand(ctx, handle)
+	if err != nil {
+		return false, true, err
+	}
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return true, false, nil
+	}
+	return !isInteractiveShellCommand(cmd), true, nil
+}
+
+func isInteractiveShellCommand(cmd string) bool {
+	base := strings.ToLower(filepath.Base(cmd))
+	switch base {
+	case "sh", "bash", "zsh", "fish", "ksh", "csh", "tcsh", "nu", "elvish", "pwsh", "powershell", "cmd", "cmd.exe":
+		return true
+	default:
+		return false
+	}
 }
 
 // reconcileReap kills the leaked tmux session of a session the DB already marks
@@ -2222,8 +2266,16 @@ func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent
 	case sessionguard.SuppressedUnknown:
 		return fmt.Errorf("send %s: pre-write session read failed", id)
 	default:
+		if agentNudgeSafe(agent) {
+			m.confirmActive(ctx, m.messenger, id)
+		}
 		return nil
 	}
+}
+
+func agentNudgeSafe(agent ports.Agent) bool {
+	s, ok := agent.(ports.ActivitySignaler)
+	return ok && s.EmitsSubmitActivity() && s.EmitsBlockedActivity()
 }
 
 func (m *Manager) waitForPromptReadiness(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle) error {

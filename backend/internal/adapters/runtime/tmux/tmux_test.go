@@ -92,6 +92,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
 	}
+	if got, want := foregroundCommandArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_command}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("foregroundCommandArgs = %#v, want %#v", got, want)
+	}
 	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
 	}
@@ -472,6 +475,22 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 	}
 	if alive {
 		t.Fatal("alive = true on probe failure")
+	}
+}
+
+func TestForegroundCommandReturnsTrimmedPaneCommand(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("claude\n")}
+
+	cmd, err := r.ForegroundCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("ForegroundCommand: %v", err)
+	}
+	if cmd != "claude" {
+		t.Fatalf("ForegroundCommand = %q, want claude", cmd)
+	}
+	if got, want := fr.calls[0].args, foregroundCommandArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("foreground command args = %#v, want %#v", got, want)
 	}
 }
 

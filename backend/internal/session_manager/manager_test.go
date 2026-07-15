@@ -168,9 +168,11 @@ type fakeRuntime struct {
 	outputCalls        int
 	outputErr          error
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
-	aliveByHandle map[string]bool
-	aliveErr      error
-	destroyedIDs  []string
+	aliveByHandle      map[string]bool
+	aliveErr           error
+	foregroundByHandle map[string]string
+	foregroundErr      error
+	destroyedIDs       []string
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -205,6 +207,12 @@ func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int)
 		r.outputs = r.outputs[1:]
 	}
 	return out, nil
+}
+func (r *fakeRuntime) ForegroundCommand(_ context.Context, handle ports.RuntimeHandle) (string, error) {
+	if r.foregroundErr != nil {
+		return "", r.foregroundErr
+	}
+	return r.foregroundByHandle[handle.ID], nil
 }
 
 type fakeAgent struct{}
@@ -276,6 +284,13 @@ type afterStartAgent struct {
 func (a afterStartAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryAfterStart, nil
 }
+
+type afterStartSignalingAgent struct {
+	afterStartAgent
+}
+
+func (afterStartSignalingAgent) EmitsSubmitActivity() bool  { return true }
+func (afterStartSignalingAgent) EmitsBlockedActivity() bool { return true }
 
 type readinessAgent struct {
 	afterStartAgent
@@ -1392,6 +1407,40 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	}
 }
 
+func TestRestore_ValidatesAgentBinaryBeforeRuntimeCreate(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "", errors.New("missing") },
+	})
+
+	_, err := m.Restore(ctx, "mer-1")
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("Restore err = %v, want ErrAgentBinaryNotFound", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create calls = %d, want 0 (no shell-only zombie)", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("restore preflight failure must leave the session terminated")
+	}
+}
+
 func TestRestore_WorkspaceProjectRestoresChildrenAndRecordsInventory(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
@@ -2244,6 +2293,45 @@ func TestRestore_FallbackLaunchDeliversPromptAfterStartWhenAgentRequestsIt(t *te
 	}
 	if rt.created != 1 {
 		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+}
+
+func TestRestore_AfterStartPromptConfirmsAndNudgesWhenNotAccepted(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	msg := &flipOnNudgeMessenger{sessionID: "mer-1", store: st}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: afterStartSignalingAgent{afterStartAgent: afterStartAgent{recordingAgent: agent}}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.sendConfirm = sendConfirmConfig{pollInterval: time.Millisecond, attemptDeadline: 0, maxAttempts: 2}
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("delivery calls = %#v, want prompt plus Enter-only nudge", msg.msgs)
+	}
+	if msg.msgs[0] != "continue the task" || msg.msgs[1] != "" {
+		t.Fatalf("delivery calls = %#v, want saved prompt then empty nudge", msg.msgs)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("activity = %q, want active after confirmation nudge", got)
 	}
 }
 
@@ -3898,6 +3986,43 @@ func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
 	}
 	if ws.stashCalls != 0 || lcm.terminated["s2"] != 0 || rt.destroyed != 0 {
 		t.Fatalf("adopt should be a no-op: stash=%d term=%d destroy=%d", ws.stashCalls, lcm.terminated["s2"], rt.destroyed)
+	}
+}
+
+func TestReconcile_RestoresLiveShellRuntimeInsteadOfAdoptingZombie(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	ws.stashRef = "refs/ao/preserved/shell-zombie"
+	rt.aliveByHandle = map[string]bool{"s4": true}
+	rt.foregroundByHandle = map[string]string{"s4": "zsh"}
+	st.sessions["s4"] = domain.SessionRecord{
+		ID:           "s4",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s4/root", WorkspacePath: "/wt/s4", RuntimeHandleID: "s4", AgentSessionID: "agent-s4",
+		},
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if rt.destroyed != 1 || len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "s4" {
+		t.Fatalf("stale shell runtime destroys = %d ids=%v, want one destroy of s4", rt.destroyed, rt.destroyedIDs)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create calls = %d, want relaunch after shell-only runtime", rt.created)
+	}
+	if st.sessions["s4"].IsTerminated {
+		t.Fatal("session should be live after reconcile restores shell-only runtime")
+	}
+	if got := st.sessions["s4"].Metadata.RuntimeHandleID; got != "h1" {
+		t.Fatalf("runtime handle after restore = %q, want h1", got)
+	}
+	if rows := st.worktrees["s4"]; len(rows) != 0 {
+		t.Fatalf("restore marker should be consumed after relaunch, got %+v", rows)
 	}
 }
 
