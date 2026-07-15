@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-agent-instructions.sh
+# polyscribe.sh
 #
 # @sx-managed: polyscribe (vault) — do not edit; managed by the agent-vault hook
 #
@@ -22,10 +22,11 @@
 # prominence for every agent — an @import wrapper demotes that body behind an
 # import for the importing client, so each client carries the body inline instead.
 #
-# A primitive named "<name>.ref.md" instead of "<name>.md" is INLINED as usual,
-# but flagged REF in the length report — the convention for "this is a short
-# pointer that tells the agent to read a bigger file on demand" (context-budget
-# escape hatch). The build reports lengths so you can manage what to inline vs ref.
+# A primitive named "<name>.ref.md" instead of "<name>.md" emits a one-line
+# pointer rather than inlining its body. It is flagged REF in the length report —
+# the convention for "this is a short pointer that tells the agent to read a
+# bigger file on demand" (context-budget escape hatch). The build reports lengths
+# so you can manage what to inline vs ref.
 #
 # HTML comments are AUTHORING-ONLY. Any <!-- ... --> block in a source primitive
 # or override (multi-line included) is stripped during assembly and never reaches
@@ -83,14 +84,42 @@ discover_numbered_modules() {
 }
 # Prefer numbered fragments when present (SRC_DIR is defined above).
 if _numbered="$(discover_numbered_modules "$SRC_DIR")" && [[ -n "$_numbered" ]]; then
-  mapfile -t SOURCE_MODULES <<<"$_numbered"
+  SOURCE_MODULES=()
+  while IFS= read -r _mod; do
+    [ -n "$_mod" ] && SOURCE_MODULES+=("$_mod")
+  done <<EOF
+$_numbered
+EOF
 fi
-unset _numbered
+unset _numbered _mod
 REPO_CANONICAL="AGENTS.md"             # full: shared body + Codex identity (Codex reads it whole)
 REPO_CANONICAL_OVERRIDE="codex"
 REPO_SHARED="AGENTS.shared.md"         # shared body ONLY (no agent identity) — reference artifact
 REPO_CLIENTS=(CLAUDE.md GEMINI.md)     # full inline files: shared body + own identity (no @import)
 REPO_CLIENT_OVERRIDES=(claude agy)
+
+# Build only the client outputs whose identity overrides are configured. Nickify
+# intentionally scaffolds overrides for the clients listed in nickify.json, so
+# requiring every supported client would make the default Claude + Codex setup
+# fail merely because Agy/Gemini was not selected.
+REPO_ACTIVE_CLIENTS=()
+REPO_ACTIVE_CLIENT_OVERRIDES=()
+REPO_OVERRIDE_MODULES=()
+REPO_ALL=()
+if [[ -f "${OVR_DIR}/${REPO_CANONICAL_OVERRIDE}.md" ]]; then
+  REPO_ALL+=("$REPO_CANONICAL")
+  REPO_OVERRIDE_MODULES+=("$REPO_CANONICAL_OVERRIDE")
+fi
+REPO_ALL+=("$REPO_SHARED")
+for _client_i in "${!REPO_CLIENT_OVERRIDES[@]}"; do
+  if [[ -f "${OVR_DIR}/${REPO_CLIENT_OVERRIDES[$_client_i]}.md" ]]; then
+    REPO_ACTIVE_CLIENTS+=("${REPO_CLIENTS[$_client_i]}")
+    REPO_ACTIVE_CLIENT_OVERRIDES+=("${REPO_CLIENT_OVERRIDES[$_client_i]}")
+    REPO_ALL+=("${REPO_CLIENTS[$_client_i]}")
+    REPO_OVERRIDE_MODULES+=("${REPO_CLIENT_OVERRIDES[$_client_i]}")
+  fi
+done
+unset _client_i
 
 # --- SYSTEM scope ------------------------------------------------------------
 SYSTEM_MODULES=(response-style)
@@ -99,7 +128,7 @@ SYS_HOME="${AGENTS_SYSTEM_HOME:-$HOME}"
 SYSTEM_OUTPUTS=("${SYS_HOME}/.codex/AGENTS.md" "${SYS_HOME}/.claude/CLAUDE.md" "${SYS_HOME}/.gemini/GEMINI.md")
 
 # --- Helpers -----------------------------------------------------------------
-die() { printf 'build-agent-instructions: %s\n' "$*" >&2; exit 1; }
+die() { printf 'polyscribe: %s\n' "$*" >&2; exit 1; }
 
 # Resolve a module basename to its file: prefer <name>.md, else <name>.ref.md.
 module_file() {
@@ -218,16 +247,33 @@ report_output() {
   printf '    %-22s %4s%s\n' "$label" "$n" "$tag"
 }
 
+# Refuse to ignore a generated client file after its identity override is
+# removed. Leaving it in place would let that client keep reading stale
+# governance indefinitely. Repo-owned files (without our generated banner) are
+# untouched and do not participate in this drift check.
+check_stale_generated_output() {
+  local out="$1" override="$2" path first
+  path="${REPO_ROOT}/${out}"
+  if [[ -f "${OVR_DIR}/${override}.md" || ! -f "$path" ]]; then
+    return
+  fi
+  first="$(sed -n '1p' "$path")"
+  if [[ "$first" == "$BANNER" ]]; then
+    die "stale generated client output $out has no matching override ${override}.md; remove $out or restore ${OVR_DIR}/${override}.md"
+  fi
+}
+
 # --- Preflight ---------------------------------------------------------------
 preflight_repo() {
   [[ -d "$SRC_DIR" ]] || die "missing $SRC_DIR"
   [[ -d "$OVR_DIR" ]] || die "missing $OVR_DIR"
   local m i
   for m in "${SOURCE_MODULES[@]}"; do module_file "$SRC_DIR" "$m" >/dev/null; done
-  [[ -f "${OVR_DIR}/${REPO_CANONICAL_OVERRIDE}.md" ]] || die "missing ${OVR_DIR}/${REPO_CANONICAL_OVERRIDE}.md"
-  for i in "${!REPO_CLIENT_OVERRIDES[@]}"; do
-    [[ -f "${OVR_DIR}/${REPO_CLIENT_OVERRIDES[$i]}.md" ]] || die "missing ${OVR_DIR}/${REPO_CLIENT_OVERRIDES[$i]}.md"
+  check_stale_generated_output "$REPO_CANONICAL" "$REPO_CANONICAL_OVERRIDE"
+  for i in "${!REPO_CLIENTS[@]}"; do
+    check_stale_generated_output "${REPO_CLIENTS[$i]}" "${REPO_CLIENT_OVERRIDES[$i]}"
   done
+  [[ "${#REPO_OVERRIDE_MODULES[@]}" -gt 0 ]] || die "missing client identity overrides in $OVR_DIR"
 }
 preflight_system() {
   [[ -d "$SYS_DIR" ]] || die "missing $SYS_DIR"
@@ -248,17 +294,15 @@ render_repo() {
     emit_assembled "$SRC_DIR" "" "${SOURCE_MODULES[@]}"
     return
   fi
-  for i in "${!REPO_CLIENTS[@]}"; do
-    if [[ "${REPO_CLIENTS[$i]}" == "$out" ]]; then
+  for i in "${!REPO_ACTIVE_CLIENTS[@]}"; do
+    if [[ "${REPO_ACTIVE_CLIENTS[$i]}" == "$out" ]]; then
       # Full inline file: shared body + this client's OWN identity (no @import, no
       # Codex-identity bleed).
-      emit_assembled "$SRC_DIR" "${OVR_DIR}/${REPO_CLIENT_OVERRIDES[$i]}.md" "${SOURCE_MODULES[@]}"; return
+      emit_assembled "$SRC_DIR" "${OVR_DIR}/${REPO_ACTIVE_CLIENT_OVERRIDES[$i]}.md" "${SOURCE_MODULES[@]}"; return
     fi
   done
   die "no builder for repo output: $out"
 }
-
-REPO_ALL=("$REPO_CANONICAL" "$REPO_SHARED" "${REPO_CLIENTS[@]}")
 
 # --- Modes -------------------------------------------------------------------
 MODE="build"
@@ -278,7 +322,7 @@ if [[ "$MODE" == "check" ]]; then
     diff -u "${REPO_ROOT}/${out}" "${tmp}/${out}" --label "committed/${out}" --label "freshly-built/${out}" || drift=1
   done
   [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: bash scripts/polyscribe.sh"
-  printf 'build-agent-instructions: repo files (AGENTS.md + CLAUDE.md/GEMINI.md inline + AGENTS.shared.md) up to date.\n'
+  printf 'polyscribe: repo files (AGENTS.md + CLAUDE.md/GEMINI.md inline + AGENTS.shared.md) up to date.\n'
   exit 0
 fi
 
@@ -330,9 +374,6 @@ build_tmps=()   # all moved; nothing left for the trap to clean
 trap - EXIT
 printf '\nagent-instructions: REPO length report (ceiling %s)\n' "$CEILING"
 printf '  primitives (source/):\n'; report_modules "$SRC_DIR" "${SOURCE_MODULES[@]}"
-printf '  overrides:\n'; report_modules "$OVR_DIR" "$REPO_CANONICAL_OVERRIDE" "${REPO_CLIENT_OVERRIDES[@]}"
+printf '  overrides:\n'; report_modules "$OVR_DIR" "${REPO_OVERRIDE_MODULES[@]}"
 printf '  outputs:\n'
-report_output "AGENTS.md (canonical)" "${REPO_ROOT}/AGENTS.md"
-report_output "AGENTS.shared.md (body)" "${REPO_ROOT}/AGENTS.shared.md"
-report_output "CLAUDE.md (inline)" "${REPO_ROOT}/CLAUDE.md"
-report_output "GEMINI.md (inline)" "${REPO_ROOT}/GEMINI.md"
+for out in "${REPO_ALL[@]}"; do report_output "$out" "${REPO_ROOT}/${out}"; done
