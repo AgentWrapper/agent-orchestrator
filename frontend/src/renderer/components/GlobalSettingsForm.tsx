@@ -1,6 +1,7 @@
 import { DashboardSubhead } from "./DashboardSubhead";
 import { MigrationSection } from "./MigrationSection";
 import { UpdatesSection } from "./UpdatesSection";
+import { RemoteServerSettingsSection } from "./RemoteServerSettings";
 
 // App-wide settings, shown from the sidebar when no project is selected. Each
 // section is a self-contained card: Updates (auto-update channel, #2207) and
@@ -12,6 +13,7 @@ export function GlobalSettingsForm() {
 			<DashboardSubhead title="Global settings" subtitle="Settings that apply across all projects" />
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				<div className="mx-auto flex max-w-2xl flex-col gap-4">
+					<RemoteServerSettingsSection />
 					<UpdatesSection />
 					<MigrationSection />
 				</div>

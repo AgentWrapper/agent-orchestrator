@@ -4,6 +4,7 @@ import { type CSSProperties, useCallback, useEffect, useRef } from "react";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
+import { RemoteServerDialog } from "../components/RemoteServerSettings";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
@@ -28,8 +29,9 @@ export const Route = createFileRoute("/_shell")({
 	// children); pairs with the router's defaultPreload: "intent" so a hovered
 	// nav target is warm before the click.
 	loader: async ({ context }) => {
-		await refreshDaemonStatus().catch(() => undefined);
-		return context.queryClient.ensureQueryData(workspaceQueryOptions);
+		const status = await refreshDaemonStatus().catch(() => undefined);
+		if (status?.state === "ready") return context.queryClient.ensureQueryData(workspaceQueryOptions);
+		return undefined;
 	},
 	component: ShellLayout,
 });
@@ -242,6 +244,7 @@ function ShellLayout() {
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
+			<RemoteServerDialog open={daemonStatus.code === "not_configured"} />
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the

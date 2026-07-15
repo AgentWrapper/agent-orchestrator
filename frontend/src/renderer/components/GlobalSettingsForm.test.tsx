@@ -40,6 +40,7 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: { getVersion },
+		remoteServer: { isRemoteClient: vi.fn().mockResolvedValue(false) },
 		appState: { getMigration, setMigration },
 		updateSettings: { get: getUpdate, set: setUpdate },
 		updates: {
