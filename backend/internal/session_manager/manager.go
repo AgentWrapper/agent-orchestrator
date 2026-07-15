@@ -369,14 +369,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.markSpawnFailedTerminated(id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
 			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			m.markSpawnFailedTerminatedWithoutWorkspace(id)
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
 	}
@@ -532,8 +532,8 @@ func sessionPrefix(project domain.ProjectRecord) string {
 // A phantom half-spawned row is worse than a terminal one; we only delete the
 // row when nothing observable has landed yet (seed state) via rollbackSpawn or
 // rollbackSpawnSeedRow.
-func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
-	_ = m.lcm.MarkTerminated(ctx, id)
+func (m *Manager) markSpawnFailedTerminated(id domain.SessionID) {
+	_ = m.lcm.MarkTerminated(context.Background(), id)
 	m.cleanupSystemPromptDir(id)
 }
 
@@ -541,9 +541,9 @@ func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.Sessi
 // runtime row had become observable, but clears launch handles for resources
 // that were destroyed during rollback. This keeps later restore/cleanup paths
 // from treating a removed worktree as reusable state.
-func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context, id domain.SessionID) {
-	m.markSpawnFailedTerminated(ctx, id)
-	rec, ok, err := m.store.GetSession(ctx, id)
+func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(id domain.SessionID) {
+	m.markSpawnFailedTerminated(id)
+	rec, ok, err := m.store.GetSession(context.Background(), id)
 	if err != nil || !ok {
 		return
 	}
@@ -560,11 +560,11 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 // rows still in seed state; if the row has progressed or the delete itself
 // fails, fall back to parking it terminated so a phantom row never looks live.
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
-	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
+	if deleted, err := m.store.DeleteSession(context.Background(), id); err == nil && deleted {
 		m.cleanupSystemPromptDir(id)
 		return
 	}
-	m.markSpawnFailedTerminated(ctx, id)
+	m.markSpawnFailedTerminated(id)
 }
 
 // rollbackSpawn deletes a session row when it is still in seed state — used

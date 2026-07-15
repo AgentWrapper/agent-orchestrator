@@ -4523,3 +4523,124 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 	}
 	return nil
 }
+
+type ctxCancelStore struct {
+	*fakeStore
+}
+
+func (s *ctxCancelStore) DeleteSession(ctx context.Context, id domain.SessionID) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return s.fakeStore.DeleteSession(ctx, id)
+}
+
+func (s *ctxCancelStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.SessionRecord{}, false, err
+	}
+	return s.fakeStore.GetSession(ctx, id)
+}
+
+func (s *ctxCancelStore) UpdateSession(ctx context.Context, rec domain.SessionRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.fakeStore.UpdateSession(ctx, rec)
+}
+
+type ctxCancelLCM struct {
+	*fakeLCM
+}
+
+func (l *ctxCancelLCM) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return l.fakeLCM.MarkTerminated(ctx, id)
+}
+
+type ctxCancellingRuntime struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+func (r *ctxCancellingRuntime) Create(_ context.Context, _ ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	return ports.RuntimeHandle{}, r.err
+}
+
+func (r *ctxCancellingRuntime) Destroy(_ context.Context, _ ports.RuntimeHandle) error { return nil }
+func (r *ctxCancellingRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
+	return false, nil
+}
+func (r *ctxCancellingRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
+	return "", nil
+}
+
+func TestSpawn_CleansUpOnCancelledContext(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	cancelStore := &ctxCancelStore{fakeStore: st}
+	cancelLCM := &ctxCancelLCM{fakeLCM: &fakeLCM{store: st}}
+
+	spawnCtx, cancel := context.WithCancel(context.Background())
+	rt := &ctxCancellingRuntime{cancel: cancel, err: context.Canceled}
+	ws := &fakeWorkspace{}
+
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     cancelStore,
+		Messenger: &fakeMessenger{},
+		Lifecycle: cancelLCM,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(spawnCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want runtime cancellation error")
+	}
+
+	if rec, present := st.sessions["mer-1"]; present {
+		if !rec.IsTerminated {
+			t.Fatalf("session row left as orphan after cancelled spawn: %#v, want deleted or terminated", rec)
+		}
+	}
+}
+
+func TestSpawn_RollbackWorksOnCancelledContext_Provisioning(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	cancelStore := &ctxCancelStore{fakeStore: st}
+	cancelLCM := &ctxCancelLCM{fakeLCM: &fakeLCM{store: st}}
+
+	spawnCtx, cancel := context.WithCancel(context.Background())
+	ws := &fakeWorkspace{createErr: context.Canceled}
+
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     cancelStore,
+		Messenger: &fakeMessenger{},
+		Lifecycle: cancelLCM,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	cancel()
+
+	_, err := m.Spawn(spawnCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want workspace creation error")
+	}
+
+	if rec, present := st.sessions["mer-1"]; present {
+		if !rec.IsTerminated {
+			t.Fatalf("session row left as orphan after cancelled spawn: %#v, want deleted or terminated", rec)
+		}
+	}
+}
