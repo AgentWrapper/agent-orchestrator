@@ -1274,10 +1274,11 @@ ipcMain.handle(
 			const toast = new ElectronNotification({
 				title: notification.title,
 				body: notification.body,
-				// Show the AO logo in the notification (assets/icon.png). On Windows/Linux
-				// this is the notification icon; on macOS it renders as the banner's
-				// content image (the left app-icon slot is the OS-controlled bundle icon).
-				icon: windowIconPath(),
+				// AO logo as the notification icon on Windows/Linux. Omitted on macOS,
+				// where a custom icon renders only as a redundant right-side content image —
+				// macOS uses the app-bundle icon (the AO logo in a packaged build) as the
+				// single main icon.
+				icon: process.platform === "darwin" ? undefined : windowIconPath(),
 			});
 			toast.on("click", () => {
 				if (!mainWindow) return;
