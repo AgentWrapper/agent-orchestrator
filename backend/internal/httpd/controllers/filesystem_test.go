@@ -120,6 +120,13 @@ func TestFilesystemAPI_DefaultsToHome(t *testing.T) {
 	}
 }
 
+func TestFilesystemAPI_RejectsExplicitEmptyPath(t *testing.T) {
+	srv := newFilesystemTestServer(t)
+	body, status, headers := doRequest(t, srv, http.MethodGet, "/api/v1/filesystem/directories?path=", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "ABSOLUTE_PATH_REQUIRED")
+}
+
 func TestFilesystemAPI_AcceptsRoot(t *testing.T) {
 	srv := newFilesystemTestServer(t)
 	root := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)

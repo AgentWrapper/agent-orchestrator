@@ -24,8 +24,9 @@ func (c *FilesystemController) Register(r chi.Router) {
 }
 
 func (c *FilesystemController) listDirectories(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
+	query := r.URL.Query()
+	path := query.Get("path")
+	if !query.Has("path") {
 		var err error
 		path, err = os.UserHomeDir()
 		if err != nil {
