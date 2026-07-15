@@ -54,13 +54,30 @@ func Derive(agent, event string, payload []byte) (domain.ActivityState, bool) {
 	return derive(event, payload)
 }
 
-// SupportsHarness reports whether a harness has an activity pipeline at all:
-// a registered deriver here means its adapter installs `ao hooks <harness>`
-// callbacks that can reach the daemon. Status derivation uses this to decide
+// claudeCompatHarnesses are harnesses whose GetAgentHooks delegates to the
+// claude-code plugin, installing byte-identical `ao hooks claude-code <evt>`
+// callbacks. They have no deriver of their own (the token they emit at runtime is
+// "claude-code", which the registered claude-code deriver handles), so they are
+// absent from Derivers — but they DO have a working activity pipeline. Status
+// derivation must therefore treat them as signal-capable, otherwise a broken-hook
+// session of one of these harnesses is shown a confident "idle" forever instead of
+// "no_signal", unlike an identical claude-code session installing the same bytes.
+var claudeCompatHarnesses = map[string]bool{
+	string(domain.HarnessGrok):     true,
+	string(domain.HarnessDevin):    true,
+	string(domain.HarnessContinue): true,
+}
+
+// SupportsHarness reports whether a harness has an activity pipeline at all: a
+// registered deriver means its adapter installs `ao hooks <harness>` callbacks
+// that can reach the daemon, and a claude-compat harness installs `ao hooks
+// claude-code` callbacks by delegation. Status derivation uses this to decide
 // whether prolonged silence is suspicious (no_signal) or simply all a hook-less
 // harness can ever report (idle). Harness names and `ao hooks` agent tokens are
-// the same strings by convention.
+// the same strings by convention, except for the claude-compat delegators above.
 func SupportsHarness(h domain.AgentHarness) bool {
-	_, ok := Derivers[string(h)]
-	return ok
+	if _, ok := Derivers[string(h)]; ok {
+		return true
+	}
+	return claudeCompatHarnesses[string(h)]
 }

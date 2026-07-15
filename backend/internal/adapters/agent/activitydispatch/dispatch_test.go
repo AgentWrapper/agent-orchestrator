@@ -31,3 +31,17 @@ func TestSupportsHarness(t *testing.T) {
 		}
 	}
 }
+
+// grok/devin/continue install byte-identical claude-code hooks via GetAgentHooks
+// delegation, so they have a working activity pipeline and must be signal-capable
+// — otherwise a broken-hook session of one is shown a confident "idle" forever
+// instead of "no_signal", unlike an identical claude-code session. They are
+// intentionally absent from Derivers (the token they emit at runtime is
+// "claude-code"), so their capability is tracked separately.
+func TestSupportsHarnessClaudeCompatDelegates(t *testing.T) {
+	for _, h := range []domain.AgentHarness{domain.HarnessGrok, domain.HarnessDevin, domain.HarnessContinue} {
+		if !SupportsHarness(h) {
+			t.Errorf("SupportsHarness(%q) = false, want true (delegates to claude-code hooks)", h)
+		}
+	}
+}
