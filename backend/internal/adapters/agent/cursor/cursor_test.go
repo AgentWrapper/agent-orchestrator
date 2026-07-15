@@ -3,6 +3,7 @@ package cursor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -328,6 +329,145 @@ func TestGetAgentHooksInstallsCursorHooks(t *testing.T) {
 	if !strings.Contains(string(data), "keep me") {
 		t.Fatalf("unmanaged field 'customField' was dropped: %s", data)
 	}
+	trustPath := cursorWorkspaceTrustPath(cursorDataDir(cfg.DataDir), workspace)
+	trustData, err := os.ReadFile(trustPath)
+	if err != nil {
+		t.Fatalf("read trust marker: %v", err)
+	}
+	var trust cursorWorkspaceTrust
+	if err := json.Unmarshal(trustData, &trust); err != nil {
+		t.Fatalf("parse trust marker: %v", err)
+	}
+	if trust.WorkspacePath != workspace {
+		t.Fatalf("trust workspacePath = %q, want %q", trust.WorkspacePath, workspace)
+	}
+	if trust.TrustMethod != "ao-session" {
+		t.Fatalf("trustMethod = %q, want ao-session", trust.TrustMethod)
+	}
+	if trust.TrustedAt == "" {
+		t.Fatal("trustedAt is empty")
+	}
+	if !trust.AOManaged {
+		t.Fatal("aoManaged = false, want true")
+	}
+}
+
+func TestGetAgentHooksTrustSeedIsBestEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err != nil {
+		t.Fatalf("GetAgentHooks returned trust seed error; want best-effort nil: %v", err)
+	}
+}
+
+func TestAugmentRuntimeEnvUsesAODataDir(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	env := map[string]string{cursorDataDirEnv: "/outside-ao"}
+	dataDir := t.TempDir()
+
+	plugin.AugmentRuntimeEnv(env, dataDir)
+
+	if got, want := env[cursorDataDirEnv], cursorDataDir(dataDir); got != want {
+		t.Fatalf("%s = %q, want %q", cursorDataDirEnv, got, want)
+	}
+}
+
+func TestGetAgentHooksUsesCursorDataDirOverride(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	workspace := t.TempDir()
+	cursorDataDir := cursorDataDir(t.TempDir())
+	aoDataDir := t.TempDir()
+
+	cfg := ports.WorkspaceHookConfig{
+		DataDir:       aoDataDir,
+		Env:           map[string]string{cursorDataDirEnv: cursorDataDir},
+		SessionID:     "sess-1",
+		WorkspacePath: workspace,
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	trustPath := cursorWorkspaceTrustPath(cursorDataDir, workspace)
+	if _, err := os.Stat(trustPath); err != nil {
+		t.Fatalf("trust marker under CURSOR_DATA_DIR = %v, want exists", err)
+	}
+	statePath := cursorWorkspaceTrustStatePath(cfg)
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("trust cleanup state = %v, want exists", err)
+	}
+}
+
+func TestCleanupWorkspaceUsesRecordedTrustPathWhenEnvChanges(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	workspace := t.TempDir()
+	originalCursorDataDir := cursorDataDir(t.TempDir())
+	newCursorDataDir := cursorDataDir(t.TempDir())
+	aoDataDir := t.TempDir()
+
+	installCfg := ports.WorkspaceHookConfig{
+		DataDir:       aoDataDir,
+		Env:           map[string]string{cursorDataDirEnv: originalCursorDataDir},
+		SessionID:     "sess-1",
+		WorkspacePath: workspace,
+	}
+	if err := plugin.GetAgentHooks(context.Background(), installCfg); err != nil {
+		t.Fatal(err)
+	}
+	trustPath := cursorWorkspaceTrustPath(originalCursorDataDir, workspace)
+	if _, err := os.Stat(trustPath); err != nil {
+		t.Fatalf("original trust marker = %v, want exists", err)
+	}
+
+	cleanupCfg := installCfg
+	cleanupCfg.Env = map[string]string{cursorDataDirEnv: newCursorDataDir}
+	if err := plugin.CleanupWorkspace(context.Background(), cleanupCfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(trustPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original trust marker stat = %v, want removed", err)
+	}
+	if _, err := os.Stat(cursorWorkspaceTrustStatePath(installCfg)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("trust cleanup state stat = %v, want removed", err)
+	}
+}
+
+func TestCleanupWorkspaceRemovesOnlyAOManagedTrustMarker(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	workspace := t.TempDir()
+	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
+	trustPath := cursorWorkspaceTrustPath(cursorDataDir(cfg.DataDir), workspace)
+
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.CleanupWorkspace(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(trustPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("AO trust marker stat = %v, want missing", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(trustPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	userTrust := cursorWorkspaceTrust{
+		TrustedAt:     "2026-01-02T03:04:05.000Z",
+		WorkspacePath: workspace,
+		TrustMethod:   "manual",
+	}
+	data, err := json.Marshal(userTrust)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(trustPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.CleanupWorkspace(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(trustPath); err != nil {
+		t.Fatalf("user trust marker stat = %v, want preserved", err)
+	}
 }
 
 func TestUninstallHooksRemovesOnlyAOHooks(t *testing.T) {
@@ -396,6 +536,31 @@ func TestGetAgentHooksRequiresWorkspacePath(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{}); err == nil {
 		t.Fatal("want error for empty WorkspacePath")
+	}
+}
+
+func TestCursorWorkspaceProjectName(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{
+			path: "/Users/example/.ao/data/worktrees/project/session-1",
+			want: "Users-example-ao-data-worktrees-project-session-1",
+		},
+		{
+			path: "/Users/example/Library/Application Support/Cursor/workspace.json",
+			want: "Users-example-Library-Application-Support-Cursor-workspace-json",
+		},
+		{
+			path: "/tmp/with_underscores/and...dots",
+			want: "tmp-with-underscores-and-dots",
+		},
+	}
+	for _, tt := range tests {
+		if got := cursorWorkspaceProjectName(tt.path); got != tt.want {
+			t.Fatalf("project name for %q = %q, want %q", tt.path, got, tt.want)
+		}
 	}
 }
 

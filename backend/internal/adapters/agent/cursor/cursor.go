@@ -39,6 +39,23 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 
+// cursorDataDir returns the isolated Cursor profile AO uses for managed Cursor
+// sessions. This keeps Cursor's trust/cache state under AO_DATA_DIR instead of
+// the user's normal ~/.cursor profile.
+func cursorDataDir(dataDir string) string {
+	return filepath.Join(dataDir, "cursor")
+}
+
+// AugmentRuntimeEnv points cursor-agent at AO's isolated Cursor profile so
+// workspace trust seeded during hook installation is read by the launched
+// process without modifying the user's normal Cursor state.
+func (p *Plugin) AugmentRuntimeEnv(env map[string]string, dataDir string) {
+	if strings.TrimSpace(dataDir) == "" {
+		return
+	}
+	env[cursorDataDirEnv] = cursorDataDir(dataDir)
+}
+
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
@@ -52,20 +69,13 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds the argv to start a new Cursor CLI session:
+// GetLaunchCommand builds the argv to start a new interactive Cursor CLI
+// session:
 //
 //	cursor-agent [permission flags] <prompt>
 //
-// This runs cursor-agent in its normal interactive TUI mode (no -p/
-// --output-format, which are cursor-agent's headless/scripting flags and
-// would silence the interactive UI AO's terminal pane is meant to show).
-// `--trust` is deliberately NOT appended here: cursor-agent rejects it outside
-// print/headless mode ("--trust can only be used with --print/headless
-// mode"). Cursor has no interactive-mode equivalent to auto-skip the
-// workspace-trust prompt (open cursor-agent feature request), so a new
-// workspace's first interactive launch will show that prompt in the terminal
-// pane for the user to accept manually. The prompt is positional and must
-// come last, so a leading "-" is not read as a flag.
+// The prompt is positional and must come last, so a leading "-" is not read as
+// a flag.
 //
 // Cursor has no inline/file system-prompt flag: it reads workspace rule files
 // (AGENTS.md, .cursor/rules, CLAUDE.md). SystemPrompt/SystemPromptFile are
@@ -93,11 +103,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 //
 //	cursor-agent [perm flags] --resume <id>
 //
-// Like GetLaunchCommand, this runs interactively (no -p/--output-format,
-// no --trust — see GetLaunchCommand for why) so resumed sessions render the
-// normal Cursor Agent TUI. ok is false when the hook-derived native session id
-// has not landed yet, so callers can fall back to fresh launch behavior.
-// ports.RestoreConfig carries no prompt, so none is appended.
+// ok is false when the hook-derived native session id has not landed yet, so
+// callers can fall back to fresh launch behavior. ports.RestoreConfig carries no
+// prompt, so none is appended.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -112,7 +120,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 5)
+	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--resume", agentSessionID)
@@ -202,9 +210,6 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeAuto:
 		*cmd = append(*cmd, "--force")
 	case ports.PermissionModeBypassPermissions:
-		// --yolo is cursor-agent's documented alias for --force, not a
-		// stronger bypass: Cursor has no separate "full bypass" tier, so
-		// Auto and BypassPermissions are behaviorally identical here.
 		*cmd = append(*cmd, "--yolo")
 	}
 }

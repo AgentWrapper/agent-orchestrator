@@ -274,7 +274,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error("Unsupported browser URL");
 		}
-		await entry.view.webContents.loadURL(normalized.href);
+		try {
+			await entry.view.webContents.loadURL(normalized.href);
+		} catch (err) {
+			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
+			entry.view.setVisible?.(false);
+			entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to load page") };
+			options.mainWindow.webContents.send("browser:navState", entry.state);
+			return entry.state;
+		}
+		entry.view.setVisible?.(true);
 		return pushNavState(options, entry);
 	};
 
@@ -518,7 +527,10 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 	const update = () => {
 		pushNavState(options, entry);
 	};
-	contents.on("did-navigate", update);
+	contents.on("did-navigate", () => {
+		entry.view.setVisible?.(true);
+		update();
+	});
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
@@ -526,7 +538,9 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 		update();
 	});
 	contents.on("did-stop-loading", update);
-	contents.on("did-fail-load", (_event, _errorCode, errorDescription) => {
+	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+		if (errorCode === -3) return;
+		entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		options.mainWindow.webContents.send("browser:navState", entry.state);
 	});

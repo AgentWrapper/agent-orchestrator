@@ -9,6 +9,7 @@ import {
 	MoreVertical,
 	Pencil,
 	Plus,
+	RefreshCw,
 	Search,
 	Settings,
 	Smartphone,
@@ -16,6 +17,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { UpdateStatus } from "../../main/update-settings";
 import {
 	attentionZone,
 	newestActiveOrchestrator,
@@ -30,6 +32,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
+import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import {
 	DropdownMenu,
@@ -158,6 +161,8 @@ export function Sidebar({
 	const theme = useUiStore((s) => s.theme);
 	const toggleTheme = useUiStore((s) => s.toggleTheme);
 	const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+	// One IPC subscription for both footer variants of the restart-to-update prompt.
+	const updateStatus = useUpdateStatus();
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -346,6 +351,7 @@ export function Sidebar({
 						<MessageSquare aria-hidden="true" />
 						<span className="tracking-tight">Feedback</span>
 					</button>
+					<RestartToUpdateRow status={updateStatus} />
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<button
@@ -402,6 +408,7 @@ export function Sidebar({
 					</Tooltip>
 				</div>
 				<div className="pointer-events-none absolute inset-x-1.5 top-[7px] flex min-h-[74px] flex-col items-center justify-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
+					<RestartToUpdateRailButton status={updateStatus} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -819,6 +826,72 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				<Pencil aria-hidden="true" />
 			</button>
 		</SidebarMenuSubItem>
+	);
+}
+
+// RestartToUpdateRow sits directly above the Settings row when an update is
+// downloaded and staged. Transparent while fresh; orange (working tokens) once
+// the main-process evaluator flags it escalated. Clicking installs immediately;
+// the row itself is the prompt, so no confirmation dialog. Renders nothing in
+// every other update state.
+function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
+	if (status.state !== "downloaded") return null;
+	const escalated = status.escalated === true;
+	return (
+		<button
+			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+			className={cn(
+				"flex w-full items-center gap-2.5 rounded-md p-2 text-left text-control font-medium transition-colors",
+				escalated
+					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
+					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
+			)}
+			onClick={() => void aoBridge.updates.install()}
+			type="button"
+		>
+			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
+			<span className="min-w-0 flex-1">
+				<span className="block truncate tracking-tight">Restart to update</span>
+				{status.version && (
+					<span className={cn("block truncate text-caption font-normal", escalated ? "text-working" : "text-passive")}>
+						v{status.version} ready
+					</span>
+				)}
+			</span>
+			<span
+				aria-hidden="true"
+				className={cn("h-1.5 w-1.5 shrink-0 rounded-full", escalated ? "bg-working" : "bg-passive")}
+			/>
+		</button>
+	);
+}
+
+// Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
+// with the two-line copy in the tooltip.
+function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
+	if (status.state !== "downloaded") return null;
+	const escalated = status.escalated === true;
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+					className={cn(
+						"grid size-9 place-items-center rounded-lg transition-colors [&_svg]:size-4",
+						escalated
+							? "bg-working/12 text-working hover:bg-working/18"
+							: "text-passive hover:bg-interactive-hover hover:text-foreground",
+					)}
+					onClick={() => void aoBridge.updates.install()}
+					type="button"
+				>
+					<RefreshCw aria-hidden="true" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="right">
+				Restart to update{status.version ? ` · v${status.version} ready` : ""}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

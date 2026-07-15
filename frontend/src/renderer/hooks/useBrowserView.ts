@@ -358,8 +358,12 @@ export function useBrowserView({
 	const withView = useCallback(async (fn: (id: string) => Promise<BrowserNavState | void>) => {
 		const id = viewIdRef.current;
 		if (!id) return;
-		const next = await fn(id);
-		if (next) setNavState(next);
+		try {
+			const next = await fn(id);
+			if (next) setNavState(next);
+		} catch {
+			// navigation errors are handled by the did-fail-load event channel
+		}
 	}, []);
 
 	const setAnnotationMode = useCallback(

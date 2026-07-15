@@ -167,6 +167,43 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 }
 
+// TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken is a regression test for
+// issue #2685: when no GitHub token is configured, startSession must wire a
+// true-nil ports.Tracker so Spawn's issue-context guard fires instead of
+// dereferencing a typed-nil *github.Tracker. The pre-fix wiring assigned the
+// typed-nil return of newGitHubTracker directly, and `ao spawn --issue` panicked
+// on the first lookup.
+func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "mer", Path: "/repo/mer", RepoOriginURL: "https://github.com/acme/repo", RegisteredAt: time.Now()}); err != nil {
+		t.Fatalf("UpsertProject: %v", err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lcm := lifecycle.New(store, nil)
+	cfg := config.Config{DataDir: t.TempDir()}
+	rt := runtimeselect.New(nil)
+	messenger := newSessionMessenger(store, rt, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	if err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+
+	// Spawn reaches withIssueContext (and the tracker guard) before the manager
+	// tries to materialize a workspace. The manager may return an error from the
+	// no-op runtime, but it must not panic — that is the regression.
+	_, _ = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"})
+}
+
 // TestStartTrackerIntake_RunsEvenWithoutEnabledProjects is a regression test:
 // startTrackerIntake used to scan projects once at call time and skip starting
 // the observer loop entirely when none had intake enabled yet. Poll() itself
