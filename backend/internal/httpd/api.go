@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	pipelinesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pipeline"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
@@ -28,6 +29,7 @@ type APIDeps struct {
 	Notifications      controllers.NotificationService
 	NotificationStream controllers.NotificationStream
 	Import             controllers.ImportService
+	Pipelines          pipelinesvc.Manager
 	CDC                cdc.Source
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
@@ -45,6 +47,7 @@ type API struct {
 	reviews       *controllers.ReviewsController
 	notifications *controllers.NotificationsController
 	imports       *controllers.ImportController
+	pipelines     *controllers.PipelinesController
 	events        *EventsController
 }
 
@@ -68,6 +71,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		imports:       &controllers.ImportController{Svc: deps.Import},
+		pipelines:     &controllers.PipelinesController{Svc: deps.Pipelines},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -93,6 +97,7 @@ func (a *API) Register(root chi.Router) {
 			a.reviews.Register(r)
 			a.notifications.Register(r)
 			a.imports.Register(r)
+			a.pipelines.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
