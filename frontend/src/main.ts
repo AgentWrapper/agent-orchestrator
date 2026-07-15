@@ -1274,8 +1274,10 @@ ipcMain.handle(
 			const toast = new ElectronNotification({
 				title: notification.title,
 				body: notification.body,
-				// AO logo on Windows/Linux; macOS ignores this and uses the .app bundle icon.
-				icon: windowIconPath(),
+				// AO logo on Windows/Linux. macOS is omitted on purpose: it uses the
+				// .app bundle icon, and passing icon here would render a redundant
+				// second logo as the banner's content image.
+				icon: process.platform === "darwin" ? undefined : windowIconPath(),
 			});
 			toast.on("click", () => {
 				if (!mainWindow) return;
