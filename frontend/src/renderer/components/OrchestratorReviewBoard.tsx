@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	ArrowRight,
@@ -34,9 +34,31 @@ export type ReviewTranslation = {
 	question: string;
 };
 
-type ReviewCard = ReviewTranslation & {
+export type ReviewCard = Omit<ReviewTranslation, "question"> & {
+	question?: string;
 	session: WorkspaceSession;
 	reason: string;
+};
+
+export type ReviewPullRequestContext = {
+	number: number;
+	title?: string;
+	headSha?: string;
+	sourceBranch?: string;
+	targetBranch?: string;
+	state: string;
+	ci: string;
+	review: string;
+	changedFiles?: number;
+	failingChecks?: string[];
+	unresolvedComments?: number;
+	conflictFiles?: string[];
+};
+
+export type ReviewSourceContext = {
+	sessionId: string;
+	artifactPath?: string;
+	pullRequests: ReviewPullRequestContext[];
 };
 
 type OrchestratorReviewBoardProps = {
@@ -77,12 +99,12 @@ export function reviewCandidates(sessions: WorkspaceSession[]): WorkspaceSession
 		.slice(0, MAX_REVIEW_CARDS);
 }
 
-function fallbackTranslation(session: WorkspaceSession): ReviewTranslation & { reason: string } {
+function fallbackTranslation(session: WorkspaceSession): Omit<ReviewCard, "session"> {
+	const summary = `AO couldn't retrieve the exact review question for “${session.title}.”`;
 	if (session.activity?.state === "blocked") {
 		return {
 			sessionId: session.id,
-			summary: "This task is stopped at a permission or approval choice.",
-			question: "Can you open the task and choose whether the agent may continue?",
+			summary,
 			reason: "Waiting at a protected control prompt",
 		};
 	}
@@ -90,57 +112,49 @@ function fallbackTranslation(session: WorkspaceSession): ReviewTranslation & { r
 		case "needs_input":
 			return {
 				sessionId: session.id,
-				summary: "This agent has paused because it needs a decision or more direction.",
-				question: "What should this agent do next?",
+				summary,
 				reason: "Waiting for your direction",
 			};
 		case "changes_requested":
 			return {
 				sessionId: session.id,
-				summary: "A reviewer asked for changes before this work can move forward.",
-				question: "Should the agent address the review feedback now, or take a different route?",
+				summary,
 				reason: "Review changes requested",
 			};
 		case "ci_failed":
 			return {
 				sessionId: session.id,
-				summary: "One or more automated checks failed on this task.",
-				question: "Do you want the agent to investigate and fix the failing checks?",
+				summary,
 				reason: "Automated checks failed",
 			};
 		case "no_signal":
 			return {
 				sessionId: session.id,
-				summary: "AO has not heard from this agent recently, so its progress is uncertain.",
-				question: "Should we inspect this task now, or leave the agent running?",
+				summary,
 				reason: "Agent signal is missing",
 			};
 		case "review_pending":
 			return {
 				sessionId: session.id,
-				summary: "The work is waiting for review before it can continue.",
-				question: "Would you like to inspect the work now, or keep waiting for review?",
+				summary,
 				reason: "Review is pending",
 			};
 		case "draft":
 			return {
 				sessionId: session.id,
-				summary: "This agent has opened draft work that is ready for a human pass.",
-				question: "Would you like to review it now, or leave it as a draft?",
+				summary,
 				reason: "Draft pull request ready to inspect",
 			};
 		case "pr_open":
 			return {
 				sessionId: session.id,
-				summary: "This agent has opened a pull request that is ready for review.",
-				question: "Do you want to review this pull request now?",
+				summary,
 				reason: "Open pull request ready to inspect",
 			};
 		default:
 			return {
 				sessionId: session.id,
-				summary: "This task needs a quick human review before it continues.",
-				question: "What would you like this agent to do next?",
+				summary,
 				reason: "Human review requested",
 			};
 	}
@@ -151,6 +165,34 @@ function cleanTranslationText(value: unknown, maxLength: number): string | undef
 	const clean = value.replace(/\s+/g, " ").trim();
 	if (!clean) return undefined;
 	return clean.slice(0, maxLength);
+}
+
+const genericReviewQuestionPatterns = [
+	/\bdo you want to review\b/i,
+	/\bwould you like to (?:review|inspect|open)\b/i,
+	/\bwhat should (?:this|the)?\s*(?:agent|worker|task)\s+do next\b/i,
+	/\b(?:review|inspect|open)\s+(?:this|the|it)\b/i,
+	/\b(?:leave|left|keep)\b[^?]{0,60}\b(?:waiting|draft|open)\b/i,
+	/\bshould (?:this|the)\s+(?:draft|pull request|pr|task|work)\s+be\s+(?:reviewed|revised|left|kept)\b/i,
+	/\bshould (?:we|i)\s+(?:review|inspect|open|wait|continue)\b/i,
+];
+
+/** Only concrete, task-level decisions may become answerable review cards. */
+export function isSpecificReviewQuestion(value: string): boolean {
+	const question = value.replace(/\s+/g, " ").trim();
+	return (
+		question.length >= 16 &&
+		question.endsWith("?") &&
+		!genericReviewQuestionPatterns.some((pattern) => pattern.test(question))
+	);
+}
+
+export function hasReviewTranslationResponse(lines: string[], batchId: string): boolean {
+	const transcript = lines.join("\n");
+	const start = `AO_REVIEW_BOARD_${batchId}_START`;
+	const end = `AO_REVIEW_BOARD_${batchId}_END`;
+	const startAt = transcript.lastIndexOf(start);
+	return startAt >= 0 && transcript.indexOf(end, startAt + start.length) >= 0;
 }
 
 /** Parse the review helper's bounded, structured terminal response. */
@@ -193,7 +235,9 @@ export function parseReviewTranslations(lines: string[], batchId: string): Revie
 				const sessionId = cleanTranslationText(candidate.sessionId, 120)?.replace(/\s+/g, "");
 				const summary = cleanTranslationText(candidate.summary, 280);
 				const question = cleanTranslationText(candidate.question, 240);
-				return sessionId && summary && question ? [{ sessionId, summary, question }] : [];
+				return sessionId && summary && question && isSpecificReviewQuestion(question)
+					? [{ sessionId, summary, question }]
+					: [];
 			});
 			if (items.length > 0) latest = items;
 		}
@@ -210,10 +254,16 @@ function batchHash(value: string): string {
 	return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-export function reviewBatchId(candidates: WorkspaceSession[], refreshNonce: number): string {
+export function reviewBatchId(
+	candidates: WorkspaceSession[],
+	refreshNonce: number,
+	contexts: ReviewSourceContext[] = [],
+): string {
+	const contextsBySession = new Map(contexts.map((context) => [context.sessionId, context]));
 	return batchHash(
 		`${refreshNonce}|${candidates
 			.map((session) => {
+				const context = contextsBySession.get(session.id);
 				const pullRequests = openPRs(session)
 					.map(
 						(pr) =>
@@ -221,31 +271,148 @@ export function reviewBatchId(candidates: WorkspaceSession[], refreshNonce: numb
 					)
 					.sort()
 					.join(",");
-				return `${session.id}:${session.status}:${session.activity?.state ?? "unknown"}:${pullRequests}`;
+				const reviewContext = context
+					? `${context.artifactPath ?? ""}:${context.pullRequests
+							.map((pr) => `${pr.number}:${pr.title ?? ""}:${pr.headSha ?? ""}:${pr.ci}:${pr.review}`)
+							.join(",")}`
+					: "";
+				return `${session.id}:${session.status}:${session.activity?.state ?? "unknown"}:${pullRequests}:${reviewContext}`;
 			})
 			.join("|")}`,
 	);
 }
 
-export function reviewAgentPrompt(candidates: WorkspaceSession[], batchId: string): string {
-	const facts = candidates.map((session) => ({
-		sessionId: session.id,
-		title: session.title.slice(0, 80),
-		status: session.status,
-		activity: session.activity?.state ?? "unknown",
-		branch: session.branch.slice(0, 80),
-		openPullRequests: session.prs.filter((pr) => pr.state === "open" || pr.state === "draft").length,
-	}));
-	return [
-		"You are AO's small review translator. You do not implement work, edit files, run commands, or spawn agents.",
-		"Orbit selected the worker tasks below from live status facts. Translate each into calm, simple English for a human decision board.",
-		"For every item, write one short summary of what is happening and one direct question the user can answer.",
-		"Do not invent technical details. Keep the summary under 220 characters and the question under 180 characters.",
+function boundedUtf8(value: string, maxBytes: number): string {
+	const encoder = new TextEncoder();
+	let result = "";
+	let size = 0;
+	for (const character of value.replace(/\s+/g, " ").trim()) {
+		const nextSize = encoder.encode(character).byteLength;
+		if (size + nextSize > maxBytes) break;
+		result += character;
+		size += nextSize;
+	}
+	return result;
+}
+
+function reviewPromptFacts(candidates: WorkspaceSession[], contexts: ReviewSourceContext[], compact = false) {
+	const contextsBySession = new Map(contexts.map((context) => [context.sessionId, context]));
+	return candidates.map((session) => {
+		const context = contextsBySession.get(session.id);
+		return {
+			sessionId: boundedUtf8(session.id, 48),
+			title: boundedUtf8(session.title, compact ? 24 : 48),
+			status: session.status,
+			artifactPath: boundedUtf8(context?.artifactPath ?? "", compact ? 32 : 96),
+			pullRequests: (context?.pullRequests ?? [])
+				.filter((pr) => pr.state === "open" || pr.state === "draft")
+				.slice(0, 1)
+				.map((pr) => ({
+					number: pr.number,
+					title: boundedUtf8(pr.title ?? "", compact ? 28 : 72),
+					headSha: boundedUtf8(pr.headSha ?? "", 40),
+					...(compact
+						? {}
+						: {
+								sourceBranch: boundedUtf8(pr.sourceBranch ?? "", 48),
+								targetBranch: boundedUtf8(pr.targetBranch ?? "", 48),
+							}),
+					state: pr.state,
+					ci: pr.ci,
+					review: pr.review,
+					...(compact
+						? {}
+						: {
+								failingCheck: boundedUtf8(pr.failingChecks?.[0] ?? "", 48),
+								unresolvedComments: pr.unresolvedComments ?? 0,
+								conflictFile: boundedUtf8(pr.conflictFiles?.[0] ?? "", 56),
+							}),
+				})),
+		};
+	});
+}
+
+export function reviewAgentPrompt(
+	candidates: WorkspaceSession[],
+	batchId: string,
+	contexts: ReviewSourceContext[] = [],
+): string {
+	const promptLines = (facts: ReturnType<typeof reviewPromptFacts>) => [
+		"You are AO's small review translator. You may run only read-only git show or git diff commands to inspect a supplied PR commit. Do not edit files, run tests, send messages, or spawn agents.",
+		"Use the supplied PR title, headSha, and artifactPath. When necessary, inspect that commit before writing the question.",
+		"Turn each task and pull-request fact into calm, simple English.",
+		"For every item, ask one concrete acceptance question about a specific behavior, requirement, option, value, test, file, or tradeoff named in the facts.",
+		"Never ask whether to review, open, inspect, revise, continue, wait, or leave the work. Never ask what the agent should do next.",
+		"Do not invent missing details or choices. If the facts do not support a concrete question, omit that item.",
+		"Keep the summary under 220 characters and the question under 180 characters.",
 		`Return only this marker, one JSON object, and the closing marker: AO_REVIEW_BOARD_${batchId}_START`,
-		'{"items":[{"sessionId":"exact id","summary":"plain English","question":"one direct question"}]}',
+		'{"items":[{"sessionId":"exact id","summary":"plain English","question":"one concrete task decision"}]}',
 		`AO_REVIEW_BOARD_${batchId}_END`,
 		`Worker facts: ${JSON.stringify(facts)}`,
 	].join("\n");
+	let prompt = promptLines(reviewPromptFacts(candidates, contexts));
+	if (new TextEncoder().encode(prompt).byteLength > 4096) {
+		prompt = promptLines(reviewPromptFacts(candidates, contexts, true));
+	}
+	return prompt;
+}
+
+function reviewArtifactPath(previewUrl?: string): string | undefined {
+	const raw = previewUrl?.trim();
+	if (!raw) return undefined;
+	const marker = "/preview/files/";
+	const markerAt = raw.indexOf(marker);
+	const encoded = markerAt >= 0 ? raw.slice(markerAt + marker.length) : raw.includes("://") ? "" : raw;
+	if (!encoded) return undefined;
+	try {
+		return decodeURIComponent(encoded).replace(/^\/+/, "");
+	} catch {
+		return encoded.replace(/^\/+/, "");
+	}
+}
+
+export async function fetchReviewSourceContexts(candidates: WorkspaceSession[]): Promise<ReviewSourceContext[]> {
+	return Promise.all(
+		candidates.map(async (session) => {
+			const fallbackPullRequests = session.prs.map((pr) => ({
+				number: pr.number,
+				state: pr.state,
+				ci: pr.ci,
+				review: pr.review,
+				unresolvedComments: pr.reviewComments ? 1 : 0,
+			}));
+			try {
+				const scm = await apiClient.GET("/api/v1/sessions/{sessionId}/pr", {
+					params: { path: { sessionId: session.id } },
+				});
+				return {
+					sessionId: session.id,
+					artifactPath: reviewArtifactPath(session.previewUrl),
+					pullRequests:
+						scm.data?.prs.map((pr) => ({
+							number: pr.number,
+							title: pr.title,
+							headSha: pr.headSha,
+							sourceBranch: pr.sourceBranch,
+							targetBranch: pr.targetBranch,
+							state: pr.state,
+							ci: pr.ci.state,
+							review: pr.review.decision,
+							changedFiles: pr.changedFiles,
+							failingChecks: pr.ci.failingChecks.map((check) => check.name),
+							unresolvedComments: pr.review.unresolvedBy.reduce((count, reviewer) => count + reviewer.count, 0),
+							conflictFiles: pr.mergeability.conflictFiles?.map((file) => file.path) ?? [],
+						})) ?? fallbackPullRequests,
+				};
+			} catch {
+				return {
+					sessionId: session.id,
+					artifactPath: reviewArtifactPath(session.previewUrl),
+					pullRequests: fallbackPullRequests,
+				};
+			}
+		}),
+	);
 }
 
 function newestReviewHelper(sessions: WorkspaceSession[]): WorkspaceSession | undefined {
@@ -265,6 +432,21 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 	const queryClient = useQueryClient();
 	const candidates = useMemo(() => reviewCandidates(sessions), [sessions]);
 	const helper = useMemo(() => newestReviewHelper(sessions), [sessions]);
+	const candidateContextKey = useMemo(
+		() =>
+			candidates
+				.map((session) => `${session.id}:${session.updatedAt}:${session.previewRevision ?? 0}`)
+				.join("|"),
+		[candidates],
+	);
+	const contextQuery = useQuery({
+		queryKey: ["orchestrator-review-source", orchestrator.workspaceId, candidateContextKey],
+		queryFn: () => fetchReviewSourceContexts(candidates),
+		enabled: daemonReady && candidates.length > 0,
+		retry: 1,
+	});
+	const reviewContexts = contextQuery.data ?? [];
+	const contextsReady = !daemonReady || candidates.length === 0 || contextQuery.isFetched;
 	const [refreshNonce, setRefreshNonce] = useState(0);
 	const [transcriptLines, setTranscriptLines] = useState<string[]>([]);
 	const [helperState, setHelperState] = useState<TerminalSessionState>("idle");
@@ -272,9 +454,19 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 	const [requestError, setRequestError] = useState<string>();
 	const [isRequesting, setIsRequesting] = useState(false);
 	const requestedBatchRef = useRef<string | undefined>(undefined);
-	const batchId = useMemo(() => reviewBatchId(candidates, refreshNonce), [candidates, refreshNonce]);
-	const prompt = useMemo(() => reviewAgentPrompt(candidates, batchId), [batchId, candidates]);
+	const batchId = useMemo(
+		() => reviewBatchId(candidates, refreshNonce, reviewContexts),
+		[candidates, refreshNonce, reviewContexts],
+	);
+	const prompt = useMemo(
+		() => reviewAgentPrompt(candidates, batchId, reviewContexts),
+		[batchId, candidates, reviewContexts],
+	);
 	const parsedItems = useMemo(() => parseReviewTranslations(transcriptLines, batchId), [batchId, transcriptLines]);
+	const helperResponded = useMemo(
+		() => hasReviewTranslationResponse(transcriptLines, batchId),
+		[batchId, transcriptLines],
+	);
 	const translatedItems = useMemo(() => {
 		const candidateIds = new Set(candidates.map((candidate) => candidate.id));
 		return parsedItems.filter((item) => candidateIds.has(item.sessionId));
@@ -295,7 +487,7 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 	}, [helper?.id]);
 
 	useEffect(() => {
-		if (candidates.length === 0 || !daemonReady || requestedBatchRef.current === batchId) return;
+		if (candidates.length === 0 || !daemonReady || !contextsReady || requestedBatchRef.current === batchId) return;
 		const expectedIssueId = `${REVIEW_TRANSLATOR_ISSUE_PREFIX}${batchId}`;
 		if (helper?.issueId === expectedIssueId) {
 			requestedBatchRef.current = batchId;
@@ -335,7 +527,7 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 				setIsRequesting(false);
 			}
 		})();
-	}, [batchId, candidates.length, daemonReady, helper, orchestrator.workspaceId, prompt, queryClient]);
+	}, [batchId, candidates.length, contextsReady, daemonReady, helper, orchestrator.workspaceId, prompt, queryClient]);
 
 	const openTask = useCallback(
 		(session: WorkspaceSession) =>
@@ -350,12 +542,16 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 		requestedBatchRef.current = undefined;
 		setTranscriptLines([]);
 		setRefreshNonce(Date.now());
+		void contextQuery.refetch();
 	};
 
 	const helperReady = candidates.length > 0 && translations.size === candidates.length;
 	const helperWorking =
+		contextQuery.isLoading ||
+		contextQuery.isFetching ||
 		isRequesting ||
-		Boolean(helper && !helperReady && !requestError && helperState !== "error" && helperState !== "exited");
+		Boolean(helper && !helperResponded && !requestError && helperState !== "error" && helperState !== "exited");
+	const someQuestionsUnavailable = helperResponded && !helperReady;
 	const allClear = candidates.length === 0;
 
 	return (
@@ -379,8 +575,8 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 					<div className="min-w-0 flex-1">
 						<div className="text-sm font-semibold text-foreground">Your review board</div>
 						<div className="mt-0.5 text-xs text-muted-foreground">
-							Orbit picked the tasks that need a human decision. A small review agent turns their status into one clear
-							question.
+							Orbit picked the tasks that need a human decision. A small review agent turns their task context into one
+							concrete question.
 						</div>
 					</div>
 					<div className="flex shrink-0 items-center gap-2">
@@ -402,7 +598,9 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 									? "Review ready"
 									: helperWorking
 										? "Review agent thinking"
-										: "Simple fallback"}
+										: someQuestionsUnavailable
+											? "Some questions unavailable"
+											: "Open tasks for details"}
 						</span>
 						<button
 							className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-caption font-semibold text-muted-foreground transition hover:bg-interactive-hover hover:text-foreground disabled:opacity-50"
@@ -417,7 +615,7 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 				</div>
 				{requestError || helperError ? (
 					<div className="mx-auto mt-3 max-w-5xl rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-						{requestError ?? helperError} The cards below remain usable with AO's status-based wording.
+						{requestError ?? helperError} Cards without a concrete question link to the original task instead.
 					</div>
 				) : null}
 			</div>
@@ -448,7 +646,7 @@ export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, t
 	);
 }
 
-function ReviewTaskCard({
+export function ReviewTaskCard({
 	card,
 	index,
 	onOpenTask,
@@ -464,10 +662,11 @@ function ReviewTaskCard({
 	const [sent, setSent] = useState(false);
 	const [error, setError] = useState<string>();
 	const protectedPrompt = card.session.activity?.state === "blocked";
+	const question = card.question;
 
 	const sendAnswer = async () => {
 		const message = answer.trim();
-		if (!message || isSending || protectedPrompt) return;
+		if (!question || !message || isSending || protectedPrompt) return;
 		setIsSending(true);
 		setError(undefined);
 		try {
@@ -489,10 +688,10 @@ function ReviewTaskCard({
 		<article className="h-96 w-full max-w-sm [perspective:1200px]">
 			<div
 				className="relative h-full w-full transition-transform duration-500 [transform-style:preserve-3d] motion-reduce:transition-none"
-				style={{ transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)" }}
+				style={{ transform: question && flipped ? "rotateY(180deg)" : "rotateY(0deg)" }}
 			>
 				<div
-					aria-hidden={flipped}
+					aria-hidden={Boolean(question && flipped)}
 					className="absolute inset-0 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-lg [backface-visibility:hidden]"
 				>
 					<div className="flex items-start gap-3">
@@ -511,29 +710,52 @@ function ReviewTaskCard({
 						</div>
 						<p className="mt-2 text-sm leading-6 text-foreground/90">{card.summary}</p>
 					</div>
-					<div className="mt-5 rounded-xl border border-accent/20 bg-accent/8 p-4">
-						<div className="font-mono text-caption font-semibold uppercase tracking-wide-md text-accent">
-							Question for you
+					{question ? (
+						<div className="mt-5 rounded-xl border border-accent/20 bg-accent/8 p-4">
+							<div className="font-mono text-caption font-semibold uppercase tracking-wide-md text-accent">
+								Question for you
+							</div>
+							<p className="mt-2 text-base font-medium leading-6 text-foreground">{question}</p>
 						</div>
-						<p className="mt-2 text-base font-medium leading-6 text-foreground">{card.question}</p>
-					</div>
+					) : (
+						<div className="mt-5 rounded-xl border border-warning/20 bg-warning/8 p-4">
+							<div className="font-mono text-caption font-semibold uppercase tracking-wide-md text-warning">
+								Exact question unavailable
+							</div>
+							<p className="mt-2 text-sm leading-6 text-foreground">
+								Open the task to read and answer the agent's original question.
+							</p>
+						</div>
+					)}
 
-					<button
-						aria-label={`Flip ${card.session.title} to answer`}
-						className="mt-auto inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background text-xs font-semibold text-foreground transition hover:bg-interactive-hover"
-						onClick={() => setFlipped(true)}
-						tabIndex={flipped ? -1 : 0}
-						type="button"
-					>
-						<FlipHorizontal2 className="size-4" aria-hidden="true" />
-						Flip to answer
-					</button>
+					{question ? (
+						<button
+							aria-label={`Flip ${card.session.title} to answer`}
+							className="mt-auto inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background text-xs font-semibold text-foreground transition hover:bg-interactive-hover"
+							onClick={() => setFlipped(true)}
+							tabIndex={flipped ? -1 : 0}
+							type="button"
+						>
+							<FlipHorizontal2 className="size-4" aria-hidden="true" />
+							Flip to answer
+						</button>
+					) : (
+						<button
+							className="mt-auto inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background text-xs font-semibold text-foreground transition hover:bg-interactive-hover"
+							onClick={() => onOpenTask(card.session)}
+							type="button"
+						>
+							<ExternalLink className="size-4" aria-hidden="true" />
+							Open task
+						</button>
+					)}
 				</div>
 
-				<div
-					aria-hidden={!flipped}
-					className="absolute inset-0 flex flex-col overflow-hidden rounded-2xl border border-accent/25 bg-surface p-5 shadow-lg [backface-visibility:hidden] [transform:rotateY(180deg)]"
-				>
+				{question ? (
+					<div
+						aria-hidden={!flipped}
+						className="absolute inset-0 flex flex-col overflow-hidden rounded-2xl border border-accent/25 bg-surface p-5 shadow-lg [backface-visibility:hidden] [transform:rotateY(180deg)]"
+					>
 					<div className="flex items-start justify-between gap-3">
 						<div>
 							<div className="text-sm font-semibold text-foreground">Answer the agent</div>
@@ -553,7 +775,7 @@ function ReviewTaskCard({
 					</div>
 
 					<div className="mt-4 rounded-lg border border-border bg-background/70 p-3 text-sm leading-5 text-foreground">
-						{card.question}
+						{question}
 					</div>
 
 					{protectedPrompt ? (
@@ -615,7 +837,8 @@ function ReviewTaskCard({
 							</button>
 						) : null}
 					</div>
-				</div>
+					</div>
+				) : null}
 			</div>
 		</article>
 	);
