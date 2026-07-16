@@ -33,6 +33,11 @@ describe("renderer i18n", () => {
 		expect(i18n.t("settings.language.title")).toBe("语言");
 	});
 
+	it("resets locale state between renderer tests", () => {
+		expect(i18n.resolvedLanguage).toBe("en");
+		expect(document.documentElement.lang).toBe("en");
+	});
+
 	it("derives a system snapshot from the browser locale", () => {
 		expect(resolveNavigatorLocaleSnapshot("zh-Hans-CN")).toEqual({
 			preference: "system",

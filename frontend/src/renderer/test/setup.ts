@@ -4,6 +4,12 @@ import "@testing-library/jest-dom/vitest";
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
 // ponytail: single guard; node env has no DOM to stub.
 if (typeof window !== "undefined") {
+	beforeEach(async () => {
+		const { initializeRendererI18n } = await import("../i18n");
+		await initializeRendererI18n("en");
+		document.documentElement.lang = "en";
+	});
+
 	class ResizeObserverStub {
 		observe() {}
 		unobserve() {}
