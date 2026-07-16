@@ -178,6 +178,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Connection, error
 	if row.ID == GitHubDefaultConnectionID {
 		return Connection{}, apierr.Invalid("RESERVED_SCM_CONNECTION_ID", "SCM connection id is reserved", nil)
 	}
+	configured := in.Token.Present && in.Token.Value != ""
+	viewConfigured := configured
+	if !viewConfigured {
+		viewConfigured, err = s.credentialOverrideConfigured(ctx, connectionTestConfig(row, ""))
+		if err != nil {
+			return Connection{}, err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -193,7 +201,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Connection, error
 	now := s.clock().UTC()
 	row.CreatedAt, row.UpdatedAt = now, now
 	row.Status = domain.SCMConnectionStatusUnknown
-	configured := in.Token.Present && in.Token.Value != ""
 	if configured {
 		if err := s.credentials.Put(ctx, row.CredentialRef, []byte(in.Token.Value)); err != nil {
 			return Connection{}, credentialError()
@@ -209,10 +216,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Connection, error
 			primaryErr = apierr.Conflict("SCM_CONNECTION_ALREADY_EXISTS", "An SCM connection with this id already exists", nil)
 		}
 		return Connection{}, errors.Join(primaryErr, cleanupErr)
-	}
-	viewConfigured, err := s.credentialConfigured(ctx, row)
-	if err != nil {
-		return Connection{}, err
 	}
 	return connectionView(row, viewConfigured), nil
 }
@@ -294,6 +297,19 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 			}
 		}
 	}
+	viewConfigured := configured
+	if !viewConfigured {
+		viewConfigured, err = s.credentialOverrideConfigured(ctx, connectionTestConfig(replacement, ""))
+		if err != nil {
+			return Connection{}, err
+		}
+		if !viewConfigured && !rotated {
+			viewConfigured, err = s.vaultCredentialConfigured(ctx, replacement.CredentialRef)
+			if err != nil {
+				return Connection{}, err
+			}
+		}
+	}
 	if replacement.Provider != original.Provider || replacement.WebBaseURL != original.WebBaseURL ||
 		replacement.APIBaseURL != original.APIBaseURL || rotated {
 		replacement.Status = domain.SCMConnectionStatusUnknown
@@ -340,10 +356,6 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 			}
 			return Connection{}, errors.Join(primaryErr, cleanupErr)
 		}
-	}
-	viewConfigured, err := s.credentialConfigured(ctx, replacement)
-	if err != nil {
-		return Connection{}, err
 	}
 	return connectionView(replacement, viewConfigured), nil
 }
@@ -453,7 +465,11 @@ func (s *Service) credentialConfigured(ctx context.Context, row domain.SCMConnec
 	if err != nil || override {
 		return override, err
 	}
-	secret, ok, err := s.credentials.Get(ctx, row.CredentialRef)
+	return s.vaultCredentialConfigured(ctx, row.CredentialRef)
+}
+
+func (s *Service) vaultCredentialConfigured(ctx context.Context, ref string) (bool, error) {
+	secret, ok, err := s.credentials.Get(ctx, ref)
 	zero(secret)
 	if err != nil {
 		return false, credentialError()

@@ -195,6 +195,7 @@ type fakeTester struct {
 	overrideConfigured bool
 	overrideByProvider map[domain.SCMProvider]bool
 	overrideChecks     int
+	overrideErr        error
 	entered            chan struct{}
 	release            chan struct{}
 }
@@ -211,6 +212,9 @@ func (f *fakeTester) Test(_ context.Context, config ConnectionTestConfig) (TestR
 
 func (f *fakeTester) CredentialOverrideConfigured(_ context.Context, config ConnectionTestConfig) (bool, error) {
 	f.overrideChecks++
+	if f.overrideErr != nil {
+		return false, f.overrideErr
+	}
 	if f.overrideByProvider != nil {
 		return f.overrideByProvider[config.Provider], nil
 	}
@@ -316,6 +320,26 @@ func TestCreateAndUpdateResponsesUseResultingEffectiveCredential(t *testing.T) {
 	})
 	if err != nil || updated.CredentialConfigured {
 		t.Fatalf("provider change = (%#v, %v), want resulting GitHub credential state", updated, err)
+	}
+}
+
+func TestCreateAndUpdateDoNotCommitWhenEffectiveCredentialCheckFails(t *testing.T) {
+	tester := &fakeTester{overrideErr: errors.New("vault unavailable")}
+	st, creds := newFakeStore(), newFakeCredentials()
+	_, err := newTestService(st, creds, tester).Create(context.Background(), createInput(nil))
+	assertAPIError(t, err, "SCM_CREDENTIAL_STORE_FAILED")
+	if len(st.rows) != 0 {
+		t.Fatalf("create committed rows after credential check failure: %#v", st.rows)
+	}
+
+	st, creds = seededConnection()
+	original := st.rows["gitlab-work"]
+	_, err = newTestService(st, creds, tester).Update(context.Background(), "gitlab-work", UpdateInput{
+		Provider: domain.SCMProviderGitHub, DisplayName: "GitHub",
+	})
+	assertAPIError(t, err, "SCM_CREDENTIAL_STORE_FAILED")
+	if got := st.rows["gitlab-work"]; !reflect.DeepEqual(got, original) {
+		t.Fatalf("update committed after credential check failure: got=%#v want=%#v", got, original)
 	}
 }
 

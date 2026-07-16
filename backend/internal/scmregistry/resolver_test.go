@@ -32,9 +32,11 @@ func (f *fakeConnectionStore) GetSCMConnection(_ context.Context, id string) (do
 }
 
 type fakeCredentials struct {
-	secrets map[string][]byte
-	gets    []string
-	err     error
+	secrets       map[string][]byte
+	gets          []string
+	err           error
+	missingSecret []byte
+	lastGet       []byte
 }
 
 func (f *fakeCredentials) Put(context.Context, string, []byte) error { return nil }
@@ -45,7 +47,12 @@ func (f *fakeCredentials) Get(_ context.Context, ref string) ([]byte, bool, erro
 		return nil, false, f.err
 	}
 	secret, ok := f.secrets[ref]
-	return append([]byte(nil), secret...), ok, nil
+	if !ok {
+		secret = f.missingSecret
+	}
+	result := append([]byte(nil), secret...)
+	f.lastGet = result
+	return result, ok, nil
 }
 
 type stubSCM struct{ id string }
@@ -509,6 +516,44 @@ func TestResolverConnectionTestUsesEnvironmentBeforeVault(t *testing.T) {
 	result, err := resolver.Test(context.Background(), config)
 	if err != nil || result.Status != scmconnection.StatusConnected || len(factory.tokens) != 1 || factory.tokens[0] != "environment-token" {
 		t.Fatalf("Test = (%#v, %v), tokens=%v", result, err, factory.tokens)
+	}
+}
+
+func TestResolverConnectionTestKeepsVaultFailuresInternalAndZeroesMissingBuffers(t *testing.T) {
+	connection := domain.SCMConnection{ID: "gitlab-work", Provider: domain.SCMProviderGitLab, CredentialRef: "vault/ref"}
+	config := scmconnection.ConnectionTestConfig{ID: connection.ID, Provider: connection.Provider, Repository: "group/repo"}
+	for _, tc := range []struct {
+		name        string
+		credentials *fakeCredentials
+		wantErr     error
+	}{
+		{name: "vault failure", credentials: &fakeCredentials{err: errors.New("keyring failed")}, wantErr: ErrCredentialUnavailable},
+		{name: "missing zeroes returned bytes", credentials: &fakeCredentials{secrets: map[string][]byte{}, missingSecret: []byte("must-zero")}, wantErr: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			factory := &fakeFactory{}
+			resolver := New(Deps{
+				Connections: &fakeConnectionStore{connections: map[string]domain.SCMConnection{connection.ID: connection}},
+				Credentials: tc.credentials,
+				Factories:   map[domain.SCMProvider]ProviderFactory{domain.SCMProviderGitLab: factory},
+				LookupEnv:   func(string) string { return "" },
+			})
+			result, err := resolver.Test(context.Background(), config)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) || len(factory.tests) != 0 {
+					t.Fatalf("Test = (%#v, %v), factory calls=%d", result, err, len(factory.tests))
+				}
+				return
+			}
+			if err != nil || result.Status != scmconnection.StatusMissingCredential {
+				t.Fatalf("Test = (%#v, %v)", result, err)
+			}
+			for i, b := range tc.credentials.lastGet {
+				if b != 0 {
+					t.Fatalf("credential byte %d = %d, want zero", i, b)
+				}
+			}
+		})
 	}
 }
 

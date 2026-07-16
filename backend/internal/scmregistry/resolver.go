@@ -194,7 +194,7 @@ func (r *Resolver) Test(ctx context.Context, config scmconnection.ConnectionTest
 		if errors.Is(err, ErrMissingCredential) {
 			return scmconnection.TestResult{Status: scmconnection.StatusMissingCredential}, nil
 		}
-		return scmconnection.TestResult{}, scmconnection.NewTestFailure(scmconnection.TestFailureAuth, ErrCredentialUnavailable)
+		return scmconnection.TestResult{}, ErrCredentialUnavailable
 	}
 	defer zero(effective)
 	return factory.Test(ctx, config, effective)
@@ -232,14 +232,15 @@ func (r *Resolver) testCredentialBytes(ctx context.Context, connection domain.SC
 			zero(secret)
 			return nil, ErrCredentialUnavailable
 		}
+		var token []byte
 		if ok {
-			token := append([]byte(nil), bytes.TrimSpace(secret)...)
-			zero(secret)
-			if len(token) != 0 {
-				return token, nil
-			}
-			zero(token)
+			token = append([]byte(nil), bytes.TrimSpace(secret)...)
 		}
+		zero(secret)
+		if len(token) != 0 {
+			return token, nil
+		}
+		zero(token)
 	}
 	if connection.Provider == domain.SCMProviderGitHub && connection.ID == githubDefaultConnectionID && r.githubFallback != nil {
 		token, err := r.githubFallback.Token(ctx)
