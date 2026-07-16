@@ -129,11 +129,42 @@ func writeDirectoryCreateError(w http.ResponseWriter, r *http.Request, err error
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "DIRECTORY_ALREADY_EXISTS", "Directory already exists", nil)
 	case errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.EROFS):
 		envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "DIRECTORY_PERMISSION_DENIED", "Directory permission denied", nil)
+	case errors.Is(err, fs.ErrNotExist) && errors.Is(err, syscall.ENOTDIR):
+		if directoryCreateParentIsNotDirectory(err) {
+			envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOT_A_DIRECTORY", "Path is not a directory", nil)
+			return
+		}
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "DIRECTORY_NOT_FOUND", "Directory not found", nil)
 	case errors.Is(err, fs.ErrNotExist):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "DIRECTORY_NOT_FOUND", "Directory not found", nil)
 	case errors.Is(err, syscall.ENOTDIR):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOT_A_DIRECTORY", "Path is not a directory", nil)
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "DIRECTORY_CREATE_FAILED", "Directory create failed", nil)
+	}
+}
+
+// Windows uses ERROR_PATH_NOT_FOUND for both missing path components and a
+// non-directory parent. Inspect the nearest existing component to disambiguate.
+func directoryCreateParentIsNotDirectory(err error) bool {
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		return false
+	}
+
+	parent := filepath.Dir(pathErr.Path)
+	for {
+		info, statErr := os.Stat(parent)
+		if statErr == nil {
+			return !info.IsDir()
+		}
+		if !errors.Is(statErr, fs.ErrNotExist) && !errors.Is(statErr, syscall.ENOTDIR) {
+			return false
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return false
+		}
+		parent = next
 	}
 }
