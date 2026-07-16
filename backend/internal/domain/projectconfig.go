@@ -100,6 +100,7 @@ func (c SCMProjectConfig) WithDefaults() SCMProjectConfig {
 // Validate rejects unknown providers, unsafe connection IDs, and repository
 // paths that the selected provider cannot parse.
 func (c SCMProjectConfig) Validate() error {
+	c = c.WithDefaults()
 	if !c.Provider.IsKnown() {
 		return fmt.Errorf("scm.provider: unsupported provider %q", c.Provider)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -12,15 +13,35 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/scmregistry"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
+
+type wiringCredentials struct{}
+
+func (wiringCredentials) Put(context.Context, string, []byte) error { return nil }
+func (wiringCredentials) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, nil
+}
+func (wiringCredentials) Delete(context.Context, string) error { return nil }
+
+type recordingProviderResolver struct {
+	projects []domain.ProjectRecord
+	err      error
+}
+
+func (r *recordingProviderResolver) Resolve(_ context.Context, project domain.ProjectRecord) (scmregistry.ProviderBundle, error) {
+	r.projects = append(r.projects, project)
+	return scmregistry.ProviderBundle{}, r.err
+}
 
 // TestWiring_WriteFlowsToBroadcaster exercises the real boot path end to end:
 // a lifecycle write -> sqlite -> DB trigger -> change_log -> CDC poller ->
@@ -152,7 +173,8 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	providers := newProjectProviderResolver(store, wiringCredentials{}, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, providers, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -167,12 +189,80 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 }
 
+func TestWiring_LegacyConsumersUseSharedGitHubDefaultResolution(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lcm := lifecycle.New(store, nil)
+	cfg := config.Config{DataDir: t.TempDir()}
+	rt := runtimeselect.New(nil)
+	messenger := newSessionMessenger(store, rt, log)
+	resolveErr := errors.New("provider unavailable for wiring test")
+	providers := &recordingProviderResolver{err: resolveErr}
+
+	if _, _, _, err := startSession(cfg, rt, store, lcm, messenger, providers, telemetryadapter.NoopSink{}, log); err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+	if done := startSCMObserver(context.Background(), nil, nil, providers, log); !isClosed(done) {
+		t.Fatal("SCM observer did not stop after provider resolution failed")
+	}
+	if done := startTrackerIntake(context.Background(), nil, nil, providers, log); !isClosed(done) {
+		t.Fatal("tracker intake did not stop after provider resolution failed")
+	}
+
+	want := legacyGitHubProject()
+	if len(providers.projects) != 3 {
+		t.Fatalf("provider resolutions = %d, want 3", len(providers.projects))
+	}
+	for i, project := range providers.projects {
+		if !reflect.DeepEqual(project, want) {
+			t.Fatalf("provider resolution %d project = %#v, want virtual GitHub default %#v", i, project, want)
+		}
+	}
+}
+
+func TestWiring_ProjectProviderResolverCachesLegacyBundleAcrossConsumers(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	providers := newProjectProviderResolver(store, wiringCredentials{}, log)
+	first, err := providers.Resolve(context.Background(), legacyGitHubProject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := providers.Resolve(context.Background(), legacyGitHubProject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SCM == nil || first.Tracker == nil {
+		t.Fatalf("legacy bundle = %#v", first)
+	}
+	if first.SCM != second.SCM || first.Tracker != second.Tracker {
+		t.Fatal("legacy consumers received independently constructed provider bundles")
+	}
+}
+
+func isClosed(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
 // TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken is a regression test for
-// issue #2685: when no GitHub token is configured, startSession must wire a
-// true-nil ports.Tracker so Spawn's issue-context guard fires instead of
-// dereferencing a typed-nil *github.Tracker. The pre-fix wiring assigned the
-// typed-nil return of newGitHubTracker directly, and `ao spawn --issue` panicked
-// on the first lookup.
+// issue #2685: when no GitHub token is configured, the lazy tracker must return
+// a credential error instead of dereferencing the typed-nil *github.Tracker
+// previously returned by newGitHubTracker.
 func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	t.Setenv("AO_GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
@@ -193,7 +283,16 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	providers := scmregistry.New(scmregistry.Deps{
+		Connections: store,
+		Factories: map[domain.SCMProvider]scmregistry.ProviderFactory{
+			domain.SCMProviderGitHub: scmregistry.NewGitHubFactory(scmregistry.GitHubFactoryOptions{Logger: log}),
+		},
+		LookupEnv:               func(string) string { return "" },
+		GitHubFallback:          scmgithub.StaticTokenSource(""),
+		SkipCredentialPreflight: true,
+	})
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, providers, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -222,13 +321,14 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	providers := newProjectProviderResolver(store, wiringCredentials{}, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, providers, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := startTrackerIntake(ctx, store, svc, log)
+	done := startTrackerIntake(ctx, store, svc, providers, log)
 
 	select {
 	case <-done:
@@ -241,18 +341,6 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("observer did not stop after context cancellation")
-	}
-}
-
-func TestTrackerTokenSourcePrefersAOGitHubToken(t *testing.T) {
-	t.Setenv("AO_GITHUB_TOKEN", "ao-token")
-	t.Setenv("GITHUB_TOKEN", "github-token")
-	token, err := (&trackerTokenSource{}).Token(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if token != "ao-token" {
-		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
 	}
 }
 

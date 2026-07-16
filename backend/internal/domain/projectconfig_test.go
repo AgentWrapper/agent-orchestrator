@@ -132,6 +132,24 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 }
 
+func TestSCMProjectConfigValidateAppliesDefaultsWithoutMutation(t *testing.T) {
+	original := SCMProjectConfig{}
+	if err := original.Validate(); err != nil {
+		t.Fatalf("Validate legacy zero config: %v", err)
+	}
+	if original != (SCMProjectConfig{}) {
+		t.Fatalf("Validate mutated original: %#v", original)
+	}
+
+	resolved := original.WithDefaults()
+	if resolved.Provider != SCMProviderGitHub || resolved.ConnectionID != "github-default" {
+		t.Fatalf("WithDefaults = %#v, want github/github-default", resolved)
+	}
+	if original != (SCMProjectConfig{}) {
+		t.Fatalf("WithDefaults mutated original: %#v", original)
+	}
+}
+
 func TestResolveReviewerHarness(t *testing.T) {
 	// A configured reviewer always wins, regardless of the worker harness.
 	cfg := ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}

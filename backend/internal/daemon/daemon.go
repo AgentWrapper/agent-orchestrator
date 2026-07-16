@@ -114,18 +114,20 @@ func Run() error {
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	credentials := keyring.New()
+	providers := newProjectProviderResolver(store, credentials, log)
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, log)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, providers, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, providers, telemetrySink, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -134,7 +136,7 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, providers, log)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 	agentSvc := agentsvc.New()
 	go func() {
@@ -168,7 +170,7 @@ func Run() error {
 		Activity:           lcStack.LCM,
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
-		SCMConnections:     scmconnectionsvc.New(scmconnectionsvc.Deps{Store: store, Credentials: keyring.New()}),
+		SCMConnections:     scmconnectionsvc.New(scmconnectionsvc.Deps{Store: store, Credentials: credentials, Tester: providers}),
 	})
 	if err != nil {
 		stop()

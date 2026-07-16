@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	"github.com/aoagents/agent-orchestrator/backend/internal/scmregistry"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -80,7 +81,7 @@ type sessionLifecycle interface {
 // store + LCM, the per-session agent resolver, and the agent messenger. The
 // returned service is mounted at httpd APIDeps.Sessions. It also returns the
 // manager so the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, providers scmregistry.ProjectProviderResolver, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
@@ -111,28 +112,16 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		DataDir:   cfg.DataDir,
 		Logger:    log,
 	})
-	scmProvider, err := newGitHubSCMProvider(log)
+	bundle, err := providers.Resolve(context.Background(), legacyGitHubProject())
 	if err != nil {
 		logSCMProviderDisabled(log, err)
-	}
-	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
-	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
-	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueContext and dereferences nil on the
-	// first issue lookup (issue #2685). Assigning the concrete value only on
-	// success leaves tracker as a real interface-nil otherwise.
-	var tracker ports.Tracker
-	if t, err := newGitHubTracker(); err != nil {
-		logTrackerDisabled(log, err)
-	} else {
-		tracker = t
 	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:   mgr,
 		Store:     store,
 		PRClaimer: store,
-		SCM:       scmProvider,
-		Tracker:   tracker,
+		SCM:       bundle.SCM,
+		Tracker:   bundle.Tracker,
 		Telemetry: telemetry,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
