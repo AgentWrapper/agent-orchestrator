@@ -158,6 +158,9 @@ export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneV
 }
 
 export function getSessionDotView(session: Pick<WorkspaceSession, "status">): { className: string } {
+	if (session.status === "ci_failed") {
+		return { className: "bg-error" };
+	}
 	return { className: getAttentionZoneView(session.status).dotClassName };
 }
 

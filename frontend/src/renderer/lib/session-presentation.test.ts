@@ -104,7 +104,7 @@ describe("session presentation", () => {
 
 		expect(workingDotClass).toContain("bg-working");
 		expect(workingDotClass).toContain("motion-reduce:animate-none");
-		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-warning");
+		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-error");
 		expect(getSessionDotView(sessionWith({ status: "unknown" })).className).toContain("bg-warning");
 	});
 
