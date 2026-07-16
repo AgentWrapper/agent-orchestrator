@@ -1223,6 +1223,10 @@ export interface components {
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
         };
+        TestSCMConnectionRequest: {
+            /** @description Provider-native repository path, for example owner/repo or group/subgroup/repo. */
+            repository: string;
+        };
         TrackerIntakeConfig: {
             assignee?: string;
             enabled?: boolean;
@@ -2656,7 +2660,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestSCMConnectionRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

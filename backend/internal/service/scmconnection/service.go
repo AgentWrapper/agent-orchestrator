@@ -20,6 +20,9 @@ import (
 
 const cleanupTimeout = 5 * time.Second
 
+// GitHubDefaultConnectionID is reserved for the virtual legacy GitHub connection.
+const GitHubDefaultConnectionID = "github-default"
+
 // Connection validation statuses exposed by the SCM connection API.
 const (
 	StatusUnknown           = string(domain.SCMConnectionStatusUnknown)
@@ -89,12 +92,23 @@ type ConnectionTestConfig struct {
 	Provider   domain.SCMProvider
 	WebBaseURL string
 	APIBaseURL string
+	Repository string
+}
+
+// TestInput identifies the repository whose read/write permissions are tested.
+type TestInput struct {
+	Repository string `json:"repository" description:"Provider-native repository path, for example owner/repo or group/subgroup/repo."`
 }
 
 // ConnectionTester probes one provider connection using a credential supplied
 // only for the duration of the call. Implementations return normalized data.
 type ConnectionTester interface {
 	Test(ctx context.Context, config ConnectionTestConfig, token []byte) (TestResult, error)
+}
+
+// CredentialOverrideChecker reports credentials that take precedence over the vault.
+type CredentialOverrideChecker interface {
+	CredentialOverrideConfigured(ctx context.Context, config ConnectionTestConfig) (bool, error)
 }
 
 // Store is the metadata persistence surface used by Service.
@@ -114,7 +128,7 @@ type Manager interface {
 	Get(ctx context.Context, id string) (Connection, error)
 	Update(ctx context.Context, id string, in UpdateInput) (Connection, error)
 	Delete(ctx context.Context, id string) error
-	Test(ctx context.Context, id string) (TestResult, error)
+	Test(ctx context.Context, id, repository string) (TestResult, error)
 }
 
 // Deps supplies SCM connection persistence, credentials, testing, and policy.
@@ -161,6 +175,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Connection, error
 	if err != nil {
 		return Connection{}, err
 	}
+	if row.ID == GitHubDefaultConnectionID {
+		return Connection{}, apierr.Invalid("RESERVED_SCM_CONNECTION_ID", "SCM connection id is reserved", nil)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -204,7 +221,7 @@ func (s *Service) List(ctx context.Context) ([]Connection, error) {
 	}
 	out := make([]Connection, 0, len(rows))
 	for _, row := range rows {
-		configured, err := s.credentialConfigured(ctx, row.CredentialRef)
+		configured, err := s.credentialConfigured(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +236,7 @@ func (s *Service) Get(ctx context.Context, id string) (Connection, error) {
 	if err != nil {
 		return Connection{}, err
 	}
-	configured, err := s.credentialConfigured(ctx, row.CredentialRef)
+	configured, err := s.credentialConfigured(ctx, row)
 	if err != nil {
 		return Connection{}, err
 	}
@@ -231,6 +248,9 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 	id = strings.TrimSpace(id)
 	if !connectionIDPattern.MatchString(id) {
 		return Connection{}, apierr.Invalid("INVALID_SCM_CONNECTION_ID", "Invalid SCM connection id", nil)
+	}
+	if id == GitHubDefaultConnectionID {
+		return Connection{}, apierr.Invalid("RESERVED_SCM_CONNECTION_ID", "SCM connection id is reserved", nil)
 	}
 	replacement, err := normalizeUpdate(id, in, s.allowLoopbackHTTP)
 	if err != nil {
@@ -259,7 +279,7 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 	rotated := in.Token.Present
 	var configured bool
 	if !rotated {
-		configured, err = s.credentialConfigured(ctx, original.CredentialRef)
+		configured, err = s.credentialConfigured(ctx, original)
 		if err != nil {
 			return Connection{}, err
 		}
@@ -374,16 +394,32 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 // Test validates one SCM connection and persists its normalized result.
-func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
+func (s *Service) Test(ctx context.Context, id, repository string) (TestResult, error) {
+	repository = strings.TrimSpace(repository)
+	if repository == "" {
+		return TestResult{}, apierr.Invalid("SCM_REPOSITORY_REQUIRED", "SCM repository is required", nil)
+	}
 	row, err := s.getRow(ctx, id)
 	if err != nil {
 		return TestResult{}, err
 	}
-	token, ok, err := s.credentials.Get(ctx, row.CredentialRef)
-	if err != nil {
-		return TestResult{}, credentialError()
+	if s.tester == nil {
+		return TestResult{}, apierr.Internal("SCM_CONNECTION_TEST_UNAVAILABLE", "SCM connection testing is unavailable")
 	}
-	if !ok {
+	config := connectionTestConfig(row, repository)
+	overrideConfigured, err := s.credentialOverrideConfigured(ctx, config)
+	if err != nil {
+		return TestResult{}, err
+	}
+	var token []byte
+	ok := false
+	if !overrideConfigured {
+		token, ok, err = s.credentials.Get(ctx, row.CredentialRef)
+		if err != nil {
+			return TestResult{}, credentialError()
+		}
+	}
+	if !ok && !overrideConfigured {
 		result := TestResult{Status: StatusMissingCredential}
 		if err := s.persistValidation(ctx, row, domain.SCMConnectionStatusMissingCredential, ""); err != nil {
 			return TestResult{}, err
@@ -391,12 +427,7 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 		return result, nil
 	}
 	defer zero(token)
-	if s.tester == nil {
-		return TestResult{}, apierr.Internal("SCM_CONNECTION_TEST_UNAVAILABLE", "SCM connection testing is unavailable")
-	}
-	result, err := s.tester.Test(ctx, ConnectionTestConfig{
-		ID: row.ID, Provider: row.Provider, WebBaseURL: row.WebBaseURL, APIBaseURL: row.APIBaseURL,
-	}, token)
+	result, err := s.tester.Test(ctx, config, token)
 	if err != nil {
 		status, username, mapped := mapTestFailure(result, err)
 		if persistErr := s.persistValidation(ctx, row, status, username); persistErr != nil {
@@ -428,13 +459,36 @@ func (s *Service) getRow(ctx context.Context, id string) (domain.SCMConnection, 
 	return row, nil
 }
 
-func (s *Service) credentialConfigured(ctx context.Context, ref string) (bool, error) {
-	secret, ok, err := s.credentials.Get(ctx, ref)
+func (s *Service) credentialConfigured(ctx context.Context, row domain.SCMConnection) (bool, error) {
+	override, err := s.credentialOverrideConfigured(ctx, connectionTestConfig(row, ""))
+	if err != nil || override {
+		return override, err
+	}
+	secret, ok, err := s.credentials.Get(ctx, row.CredentialRef)
 	zero(secret)
 	if err != nil {
 		return false, credentialError()
 	}
 	return ok, nil
+}
+
+func (s *Service) credentialOverrideConfigured(ctx context.Context, config ConnectionTestConfig) (bool, error) {
+	checker, ok := s.tester.(CredentialOverrideChecker)
+	if !ok {
+		return false, nil
+	}
+	configured, err := checker.CredentialOverrideConfigured(ctx, config)
+	if err != nil {
+		return false, credentialError()
+	}
+	return configured, nil
+}
+
+func connectionTestConfig(row domain.SCMConnection, repository string) ConnectionTestConfig {
+	return ConnectionTestConfig{
+		ID: row.ID, Provider: row.Provider, WebBaseURL: row.WebBaseURL,
+		APIBaseURL: row.APIBaseURL, Repository: repository,
+	}
 }
 
 func (s *Service) persistValidation(ctx context.Context, row domain.SCMConnection, status domain.SCMConnectionStatus, username string) error {

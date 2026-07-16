@@ -27,6 +27,7 @@ type fakeSCMConnectionManager struct {
 	updated    scmconnectionsvc.UpdateInput
 	deletedID  string
 	testedID   string
+	testedRepo string
 }
 
 func (f *fakeSCMConnectionManager) Create(_ context.Context, in scmconnectionsvc.CreateInput) (scmconnectionsvc.Connection, error) {
@@ -52,8 +53,8 @@ func (f *fakeSCMConnectionManager) Delete(_ context.Context, id string) error {
 	return f.err
 }
 
-func (f *fakeSCMConnectionManager) Test(_ context.Context, id string) (scmconnectionsvc.TestResult, error) {
-	f.testedID = id
+func (f *fakeSCMConnectionManager) Test(_ context.Context, id, repository string) (scmconnectionsvc.TestResult, error) {
+	f.testedID, f.testedRepo = id, repository
 	return f.result, f.err
 }
 
@@ -123,9 +124,9 @@ func TestSCMConnectionTestRouteReturnsNormalizedStatuses(t *testing.T) {
 				Capabilities: scmconnectionsvc.Capabilities{Read: true, Write: testStatus == scmconnectionsvc.StatusConnected},
 			}}
 			srv := newSCMConnectionServer(t, mgr)
-			body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/gitlab-work/test", "")
-			if status != http.StatusOK || mgr.testedID != "gitlab-work" {
-				t.Fatalf("test = %d %s id=%q", status, body, mgr.testedID)
+			body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/gitlab-work/test", `{"repository":"group/repo"}`)
+			if status != http.StatusOK || mgr.testedID != "gitlab-work" || mgr.testedRepo != "group/repo" {
+				t.Fatalf("test = %d %s id=%q repo=%q", status, body, mgr.testedID, mgr.testedRepo)
 			}
 			var got struct {
 				Result scmconnectionsvc.TestResult `json:"result"`
@@ -154,6 +155,8 @@ func TestSCMConnectionRoutesStrictJSONAndErrorMapping(t *testing.T) {
 		{name: "unknown update field", method: http.MethodPut, path: "/api/v1/scm/connections/x", request: `{"provider":"gitlab","displayName":"x","credentialRef":"bad"}`, status: 400, code: "INVALID_JSON"},
 		{name: "null update token", method: http.MethodPut, path: "/api/v1/scm/connections/x", request: `{"provider":"gitlab","displayName":"x","token":null}`, status: 400, code: "INVALID_JSON"},
 		{name: "trailing update value", method: http.MethodPut, path: "/api/v1/scm/connections/x", request: `{"provider":"gitlab","displayName":"x"} true`, status: 400, code: "INVALID_JSON"},
+		{name: "missing test repository", method: http.MethodPost, path: "/api/v1/scm/connections/x/test", request: `{}`, status: 400, code: "SCM_REPOSITORY_REQUIRED"},
+		{name: "unknown test field", method: http.MethodPost, path: "/api/v1/scm/connections/x/test", request: `{"repository":"group/repo","token":"bad"}`, status: 400, code: "INVALID_JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body, status, _ := doRequest(t, srv, tc.method, tc.path, tc.request)
@@ -170,14 +173,14 @@ func TestSCMConnectionRoutesStrictJSONAndErrorMapping(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusNotFound, "SCM_CONNECTION_NOT_FOUND")
 
 	mgr.err = apierr.Internal("SCM_CONNECTION_TEST_FAILED", "Failed to test SCM connection")
-	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", "")
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", `{"repository":"group/repo"}`)
 	assertErrorCode(t, body, status, http.StatusInternalServerError, "SCM_CONNECTION_TEST_FAILED")
 	if strings.Contains(string(body), "provider body") {
 		t.Fatalf("provider response leaked: %s", body)
 	}
 
 	mgr.err = apierr.Conflict("SCM_CONNECTION_TEST_STALE", "SCM connection changed while the test was running", nil)
-	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", "")
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", `{"repository":"group/repo"}`)
 	assertErrorCode(t, body, status, http.StatusConflict, "SCM_CONNECTION_TEST_STALE")
 
 	for _, tc := range []struct {
@@ -196,7 +199,7 @@ func TestSCMConnectionRoutesStrictJSONAndErrorMapping(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mgr.err = apierr.New(tc.kind, tc.code, "redacted", nil)
-			body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", "")
+			body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", `{"repository":"group/repo"}`)
 			assertErrorCode(t, body, status, tc.status, tc.code)
 		})
 	}

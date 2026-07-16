@@ -1046,6 +1046,12 @@ paths:
         schema:
           description: SCM connection identifier.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSCMConnectionRequest'
+        required: true
       responses:
         "200":
           content:
@@ -3338,6 +3344,15 @@ components:
       required:
       - runId
       - verdict
+      type: object
+    TestSCMConnectionRequest:
+      properties:
+        repository:
+          description: Provider-native repository path, for example owner/repo or
+            group/subgroup/repo.
+          type: string
+      required:
+      - repository
       type: object
     TrackerIntakeConfig:
       properties:

@@ -79,10 +79,11 @@ func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited
 // production code typically sets Token alone; tests inject HTTPClient and
 // BaseURL to point at an httptest fake.
 type Options struct {
-	Token      TokenSource
-	HTTPClient *http.Client
-	BaseURL    string
-	UserAgent  string
+	Token              TokenSource
+	HTTPClient         *http.Client
+	BaseURL            string
+	UserAgent          string
+	SkipTokenPreflight bool
 }
 
 // Tracker implements ports.Tracker against the GitHub REST API.
@@ -125,8 +126,10 @@ func New(opts Options) (*Tracker, error) {
 	if src == nil {
 		return nil, ErrNoToken
 	}
-	if _, err := src.Token(context.Background()); err != nil {
-		return nil, err
+	if !opts.SkipTokenPreflight {
+		if _, err := src.Token(context.Background()); err != nil {
+			return nil, err
+		}
 	}
 	t := &Tracker{
 		http:      opts.HTTPClient,

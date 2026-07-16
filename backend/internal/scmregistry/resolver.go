@@ -4,19 +4,14 @@ package scmregistry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
-	trackergithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -32,7 +27,7 @@ var (
 	ErrCredentialUnavailable = errors.New("SCM credential is unavailable")
 )
 
-const githubDefaultConnectionID = "github-default"
+const githubDefaultConnectionID = scmconnection.GitHubDefaultConnectionID
 
 // TokenSource resolves a provider credential on demand so environment and
 // credential-store rotation do not require rebuilding clients between requests.
@@ -107,6 +102,7 @@ type Resolver struct {
 
 var _ ProjectProviderResolver = (*Resolver)(nil)
 var _ scmconnection.ConnectionTester = (*Resolver)(nil)
+var _ scmconnection.CredentialOverrideChecker = (*Resolver)(nil)
 
 // New constructs a project provider resolver.
 func New(d Deps) *Resolver {
@@ -166,8 +162,12 @@ func (r *Resolver) Resolve(ctx context.Context, project domain.ProjectRecord) (P
 	}
 
 	r.mu.Lock()
-	if current, ok := r.cache[connection.ID]; ok && current.updatedAt.Equal(connection.UpdatedAt) {
-		bundle = current.bundle
+	if current, ok := r.cache[connection.ID]; ok {
+		if current.updatedAt.Equal(connection.UpdatedAt) {
+			bundle = current.bundle
+		} else if !current.updatedAt.After(connection.UpdatedAt) {
+			r.cache[connection.ID] = cacheEntry{updatedAt: connection.UpdatedAt, bundle: bundle}
+		}
 	} else {
 		r.cache[connection.ID] = cacheEntry{updatedAt: connection.UpdatedAt, bundle: bundle}
 	}
@@ -181,7 +181,57 @@ func (r *Resolver) Test(ctx context.Context, config scmconnection.ConnectionTest
 	if !ok || factory == nil {
 		return scmconnection.TestResult{}, scmconnection.NewTestFailure(scmconnection.TestFailureUnreachable, ErrProviderUnavailable)
 	}
-	return factory.Test(ctx, config, token)
+	effective, err := r.testCredential(ctx, config, token)
+	if err != nil {
+		if errors.Is(err, ErrMissingCredential) {
+			return scmconnection.TestResult{Status: scmconnection.StatusMissingCredential}, nil
+		}
+		return scmconnection.TestResult{}, scmconnection.NewTestFailure(scmconnection.TestFailureAuth, ErrCredentialUnavailable)
+	}
+	secret := []byte(effective)
+	defer zero(secret)
+	return factory.Test(ctx, config, secret)
+}
+
+// CredentialOverrideConfigured reports environment or legacy gh credentials
+// that take precedence over a connection's vault entry.
+func (r *Resolver) CredentialOverrideConfigured(ctx context.Context, config scmconnection.ConnectionTestConfig) (bool, error) {
+	for _, name := range providerEnvVars(config.Provider) {
+		if strings.TrimSpace(r.lookupEnv(name)) != "" {
+			return true, nil
+		}
+	}
+	if config.Provider == domain.SCMProviderGitHub && config.ID == githubDefaultConnectionID && r.githubFallback != nil {
+		token, err := r.githubFallback.Token(ctx)
+		if err == nil {
+			return strings.TrimSpace(token) != "", nil
+		}
+		if !isMissingTokenError(err) {
+			return false, ErrCredentialUnavailable
+		}
+	}
+	return false, nil
+}
+
+func (r *Resolver) testCredential(ctx context.Context, config scmconnection.ConnectionTestConfig, vault []byte) (string, error) {
+	for _, name := range providerEnvVars(config.Provider) {
+		if token := strings.TrimSpace(r.lookupEnv(name)); token != "" {
+			return token, nil
+		}
+	}
+	if token := strings.TrimSpace(string(vault)); token != "" {
+		return token, nil
+	}
+	if config.Provider == domain.SCMProviderGitHub && config.ID == githubDefaultConnectionID && r.githubFallback != nil {
+		token, err := r.githubFallback.Token(ctx)
+		if err == nil && strings.TrimSpace(token) != "" {
+			return token, nil
+		}
+		if err != nil && !isMissingTokenError(err) {
+			return "", ErrCredentialUnavailable
+		}
+	}
+	return "", ErrMissingCredential
 }
 
 func (r *Resolver) connection(ctx context.Context, config domain.SCMProjectConfig) (domain.SCMConnection, error) {
@@ -205,15 +255,8 @@ func (r *Resolver) connection(ctx context.Context, config domain.SCMProjectConfi
 }
 
 func (r *Resolver) tokenSource(connection domain.SCMConnection) TokenSource {
-	var envVars []string
-	switch connection.Provider {
-	case domain.SCMProviderGitHub:
-		envVars = []string{"AO_GITHUB_TOKEN", "GITHUB_TOKEN"}
-	case domain.SCMProviderGitLab:
-		envVars = []string{"AO_GITLAB_TOKEN"}
-	}
 	return &connectionTokenSource{
-		envVars: envVars, lookupEnv: r.lookupEnv, credentials: r.credentials,
+		envVars: providerEnvVars(connection.Provider), lookupEnv: r.lookupEnv, credentials: r.credentials,
 		credentialRef: connection.CredentialRef,
 		fallback: func() TokenSource {
 			if connection.ID == githubDefaultConnectionID {
@@ -221,6 +264,17 @@ func (r *Resolver) tokenSource(connection domain.SCMConnection) TokenSource {
 			}
 			return nil
 		}(),
+	}
+}
+
+func providerEnvVars(provider domain.SCMProvider) []string {
+	switch provider {
+	case domain.SCMProviderGitHub:
+		return []string{"AO_GITHUB_TOKEN", "GITHUB_TOKEN"}
+	case domain.SCMProviderGitLab:
+		return []string{"AO_GITLAB_TOKEN"}
+	default:
+		return nil
 	}
 }
 
@@ -262,6 +316,12 @@ func (s *connectionTokenSource) Token(ctx context.Context) (string, error) {
 	return "", ErrMissingCredential
 }
 
+func (s *connectionTokenSource) InvalidateToken() {
+	if invalidator, ok := s.fallback.(interface{ InvalidateToken() }); ok {
+		invalidator.InvalidateToken()
+	}
+}
+
 type primedTokenSource struct {
 	mu    sync.Mutex
 	token string
@@ -280,6 +340,15 @@ func (s *primedTokenSource) Token(ctx context.Context) (string, error) {
 	return s.next.Token(ctx)
 }
 
+func (s *primedTokenSource) InvalidateToken() {
+	s.mu.Lock()
+	s.token = ""
+	s.mu.Unlock()
+	if invalidator, ok := s.next.(interface{ InvalidateToken() }); ok {
+		invalidator.InvalidateToken()
+	}
+}
+
 func isMissingTokenError(err error) bool {
 	return errors.Is(err, ErrMissingCredential) || errors.Is(err, scmgithub.ErrNoToken)
 }
@@ -290,165 +359,4 @@ func zero(secret []byte) {
 	for i := range secret {
 		secret[i] = 0
 	}
-}
-
-// GitHubFactoryOptions supplies production GitHub adapter dependencies.
-type GitHubFactoryOptions struct {
-	HTTPClient *http.Client
-	Logger     *slog.Logger
-}
-
-type githubFactory struct {
-	httpClient *http.Client
-	logger     *slog.Logger
-}
-
-// NewGitHubFactory registers the existing GitHub SCM and tracker adapters
-// behind the provider-neutral construction and connection-test boundary.
-func NewGitHubFactory(opts GitHubFactoryOptions) ProviderFactory {
-	return &githubFactory{httpClient: opts.HTTPClient, logger: opts.Logger}
-}
-
-func (f *githubFactory) Build(_ context.Context, config FactoryConfig) (ProviderBundle, error) {
-	graphqlURL := strings.TrimRight(config.APIBaseURL, "/") + "/graphql"
-	scmProvider, err := scmgithub.NewProvider(scmgithub.ProviderOptions{
-		HTTPClient: f.httpClient, Token: config.Token, SkipTokenPreflight: true,
-		RESTBase: config.APIBaseURL, GraphQLURL: graphqlURL, Logger: f.logger,
-	})
-	if err != nil {
-		return ProviderBundle{}, err
-	}
-	return ProviderBundle{
-		SCM: scmProvider,
-		Tracker: &lazyGitHubTracker{
-			token: config.Token, httpClient: f.httpClient, baseURL: config.APIBaseURL,
-		},
-	}, nil
-}
-
-func (f *githubFactory) Test(ctx context.Context, config scmconnection.ConnectionTestConfig, token []byte) (scmconnection.TestResult, error) {
-	if config.Provider != domain.SCMProviderGitHub || strings.TrimSpace(string(token)) == "" {
-		return scmconnection.TestResult{}, githubTestFailure(scmconnection.TestFailureAuth)
-	}
-	baseURL := strings.TrimRight(config.APIBaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.github.com"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/user", http.NoBody)
-	if err != nil {
-		return scmconnection.TestResult{}, githubTestFailure(scmconnection.TestFailureUnreachable)
-	}
-	req.Header.Set("Authorization", "Bearer "+string(token))
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "ao-agent-orchestrator/scm-connection-test")
-	client := f.httpClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return scmconnection.TestResult{}, githubTestFailure(scmconnection.TestFailureUnreachable)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return scmconnection.TestResult{}, githubTestFailure(githubFailureKind(resp))
-	}
-	var identity struct {
-		Login string `json:"login"`
-		Name  string `json:"name"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&identity); err != nil || identity.Login == "" {
-		return scmconnection.TestResult{}, githubTestFailure(scmconnection.TestFailureUnreachable)
-	}
-	return scmconnection.TestResult{
-		Status: scmconnection.StatusConnected,
-		Identity: scmconnection.Identity{
-			Username: identity.Login, DisplayName: identity.Name,
-		},
-		Capabilities: scmconnection.Capabilities{
-			Read: true, Write: githubScopesAllowWrite(resp.Header.Get("X-OAuth-Scopes")),
-		},
-	}, nil
-}
-
-func githubFailureKind(resp *http.Response) scmconnection.TestFailureKind {
-	switch resp.StatusCode {
-	case http.StatusUnauthorized:
-		return scmconnection.TestFailureAuth
-	case http.StatusForbidden:
-		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
-			return scmconnection.TestFailureRateLimited
-		}
-		return scmconnection.TestFailureForbidden
-	case http.StatusTooManyRequests:
-		return scmconnection.TestFailureRateLimited
-	default:
-		return scmconnection.TestFailureUnreachable
-	}
-}
-
-func githubScopesAllowWrite(raw string) bool {
-	for _, scope := range strings.Split(raw, ",") {
-		switch strings.TrimSpace(scope) {
-		case "repo", "public_repo":
-			return true
-		}
-	}
-	return false
-}
-
-func githubTestFailure(kind scmconnection.TestFailureKind) error {
-	return scmconnection.NewTestFailure(kind, errors.New("GitHub connection test failed"))
-}
-
-type lazyGitHubTracker struct {
-	token      TokenSource
-	httpClient *http.Client
-	baseURL    string
-
-	mu      sync.Mutex
-	tracker ports.Tracker
-}
-
-var _ ports.Tracker = (*lazyGitHubTracker)(nil)
-
-func (t *lazyGitHubTracker) Get(ctx context.Context, id domain.TrackerID) (domain.Issue, error) {
-	tracker, err := t.resolve()
-	if err != nil {
-		return domain.Issue{}, err
-	}
-	return tracker.Get(ctx, id)
-}
-
-func (t *lazyGitHubTracker) List(ctx context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
-	tracker, err := t.resolve()
-	if err != nil {
-		return nil, err
-	}
-	return tracker.List(ctx, repo, filter)
-}
-
-func (t *lazyGitHubTracker) Preflight(ctx context.Context) error {
-	tracker, err := t.resolve()
-	if err != nil {
-		return err
-	}
-	return tracker.Preflight(ctx)
-}
-
-func (t *lazyGitHubTracker) resolve() (ports.Tracker, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.tracker != nil {
-		return t.tracker, nil
-	}
-	tracker, err := trackergithub.New(trackergithub.Options{
-		Token: t.token, HTTPClient: t.httpClient, BaseURL: t.baseURL,
-	})
-	if err != nil {
-		return nil, err
-	}
-	t.tracker = tracker
-	return tracker, nil
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,6 +92,46 @@ type fakeFactory struct {
 	tokens []string
 }
 
+type mutableConnectionStore struct {
+	mu         sync.Mutex
+	connection domain.SCMConnection
+}
+
+func (s *mutableConnectionStore) GetSCMConnection(context.Context, string) (domain.SCMConnection, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.connection, true, nil
+}
+
+func (s *mutableConnectionStore) set(connection domain.SCMConnection) {
+	s.mu.Lock()
+	s.connection = connection
+	s.mu.Unlock()
+}
+
+type orderedFactory struct {
+	mu           sync.Mutex
+	builds       int
+	firstEntered chan struct{}
+	releaseFirst chan struct{}
+}
+
+func (f *orderedFactory) Build(_ context.Context, cfg FactoryConfig) (ProviderBundle, error) {
+	f.mu.Lock()
+	f.builds++
+	build := f.builds
+	f.mu.Unlock()
+	if build == 1 {
+		close(f.firstEntered)
+		<-f.releaseFirst
+	}
+	return ProviderBundle{SCM: &stubSCM{id: cfg.APIBaseURL}}, nil
+}
+
+func (*orderedFactory) Test(context.Context, scmconnection.ConnectionTestConfig, []byte) (scmconnection.TestResult, error) {
+	return scmconnection.TestResult{}, nil
+}
+
 func (f *fakeFactory) Build(ctx context.Context, cfg FactoryConfig) (ProviderBundle, error) {
 	token, err := cfg.Token.Token(ctx)
 	if err != nil {
@@ -117,6 +158,28 @@ type staticTokenSource struct {
 func (s *staticTokenSource) Token(context.Context) (string, error) {
 	s.calls++
 	return s.token, s.err
+}
+
+type rotatingTokenSource struct {
+	mu            sync.Mutex
+	tokens        []string
+	index         int
+	invalidations int
+}
+
+func (s *rotatingTokenSource) Token(context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tokens[s.index], nil
+}
+
+func (s *rotatingTokenSource) InvalidateToken() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.invalidations++
+	if s.index+1 < len(s.tokens) {
+		s.index++
+	}
 }
 
 func TestResolverLegacyProjectUsesVirtualGitHubDefault(t *testing.T) {
@@ -232,8 +295,16 @@ func TestResolverCachesIndependentlyAndInvalidatesOnlyOnMetadataVersion(t *testi
 	if oneValidationOnly.SCM != oneV1.SCM || len(factory.builds) != 2 {
 		t.Fatalf("validation-only read rebuilt bundle: same=%v builds=%d", oneValidationOnly.SCM == oneV1.SCM, len(factory.builds))
 	}
-
 	one := store.connections["one"]
+	one.Status = domain.SCMConnectionStatusConnected
+	one.Username = "alice"
+	store.connections["one"] = one
+	oneStatusOnly, err := r.Resolve(context.Background(), project("one"))
+	if err != nil || oneStatusOnly.SCM != oneV1.SCM || len(factory.builds) != 2 {
+		t.Fatalf("status-only mutation rebuilt bundle: same=%v builds=%d err=%v", oneStatusOnly.SCM == oneV1.SCM, len(factory.builds), err)
+	}
+
+	one = store.connections["one"]
 	one.UpdatedAt = v1.Add(time.Second)
 	store.connections["one"] = one
 	oneV2, err := r.Resolve(context.Background(), project("one"))
@@ -246,6 +317,97 @@ func TestResolverCachesIndependentlyAndInvalidatesOnlyOnMetadataVersion(t *testi
 	}
 	if oneV2.SCM == oneV1.SCM || twoAgain.SCM != twoV1.SCM || len(factory.builds) != 3 {
 		t.Fatalf("cache invalidation wrong: one rebuilt=%v two stable=%v builds=%d", oneV2.SCM != oneV1.SCM, twoAgain.SCM == twoV1.SCM, len(factory.builds))
+	}
+}
+
+func TestResolverSlowOldBuildCannotReplaceNewerCache(t *testing.T) {
+	v1 := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	store := &mutableConnectionStore{connection: domain.SCMConnection{
+		ID: "github-work", Provider: domain.SCMProviderGitHub, APIBaseURL: "v1",
+		CredentialRef: "secret/ref", UpdatedAt: v1,
+	}}
+	factory := &orderedFactory{firstEntered: make(chan struct{}), releaseFirst: make(chan struct{})}
+	resolver := New(Deps{
+		Connections: store, Credentials: &fakeCredentials{secrets: map[string][]byte{"secret/ref": []byte("token")}},
+		Factories: map[domain.SCMProvider]ProviderFactory{domain.SCMProviderGitHub: factory},
+		LookupEnv: func(string) string { return "" },
+	})
+	project := domain.ProjectRecord{Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+		Provider: domain.SCMProviderGitHub, ConnectionID: "github-work",
+	}}}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := resolver.Resolve(context.Background(), project)
+		firstDone <- err
+	}()
+	<-factory.firstEntered
+	newer := store.connection
+	newer.APIBaseURL = "v2"
+	newer.UpdatedAt = v1.Add(time.Second)
+	store.set(newer)
+	second, err := resolver.Resolve(context.Background(), project)
+	if err != nil || second.SCM.(*stubSCM).id != "v2" {
+		t.Fatalf("newer Resolve = (%#v, %v)", second.SCM, err)
+	}
+	close(factory.releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	third, err := resolver.Resolve(context.Background(), project)
+	if err != nil || third.SCM != second.SCM {
+		t.Fatalf("cached Resolve = (%#v, %v), want newer bundle", third.SCM, err)
+	}
+	factory.mu.Lock()
+	builds := factory.builds
+	factory.mu.Unlock()
+	if builds != 2 {
+		t.Fatalf("builds = %d, want 2", builds)
+	}
+}
+
+func TestConnectionTokenInvalidationReachesFallback(t *testing.T) {
+	fallback := &rotatingTokenSource{tokens: []string{"old-token", "new-token"}}
+	source := &connectionTokenSource{lookupEnv: func(string) string { return "" }, fallback: fallback}
+	if token, err := source.Token(context.Background()); err != nil || token != "old-token" {
+		t.Fatalf("first token = (%q, %v)", token, err)
+	}
+	source.InvalidateToken()
+	if token, err := source.Token(context.Background()); err != nil || token != "new-token" || fallback.invalidations != 1 {
+		t.Fatalf("rotated token = (%q, %v), invalidations=%d", token, err, fallback.invalidations)
+	}
+
+	primed := &primedTokenSource{token: "stale-primed", next: source}
+	primed.InvalidateToken()
+	if token, err := primed.Token(context.Background()); err != nil || token != "new-token" || fallback.invalidations != 2 {
+		t.Fatalf("primed token = (%q, %v), invalidations=%d", token, err, fallback.invalidations)
+	}
+}
+
+type blockingTokenSource struct{ entered chan struct{} }
+
+func (s *blockingTokenSource) Token(ctx context.Context) (string, error) {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func TestGitHubFactoryTrackerUsesCallerCancellation(t *testing.T) {
+	tokens := &blockingTokenSource{entered: make(chan struct{}, 1)}
+	bundle, err := NewGitHubFactory(GitHubFactoryOptions{}).Build(context.Background(), FactoryConfig{
+		ConnectionID: "github-work", Provider: domain.SCMProviderGitHub,
+		APIBaseURL: "https://api.github.com", Token: tokens,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := bundle.Tracker.Preflight(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Preflight error = %v, want context.Canceled", err)
 	}
 }
 
@@ -306,13 +468,35 @@ func TestResolverUnavailableProviderAndConnectionTesterDispatch(t *testing.T) {
 		t.Fatalf("unavailable error = %v", err)
 	}
 
-	cfg := scmconnection.ConnectionTestConfig{ID: "github-work", Provider: domain.SCMProviderGitHub, WebBaseURL: "https://github.com", APIBaseURL: "https://api.github.com"}
+	cfg := scmconnection.ConnectionTestConfig{ID: "github-work", Provider: domain.SCMProviderGitHub, WebBaseURL: "https://github.com", APIBaseURL: "https://api.github.com", Repository: "owner/repo"}
 	result, err := r.Test(context.Background(), cfg, []byte("test-token"))
 	if err != nil || result.Status != scmconnection.StatusConnected {
 		t.Fatalf("Test = (%#v, %v)", result, err)
 	}
 	if len(githubFactory.tests) != 1 || githubFactory.tests[0] != cfg || githubFactory.tokens[0] != "test-token" {
 		t.Fatalf("tester dispatch configs=%#v tokens=%v", githubFactory.tests, githubFactory.tokens)
+	}
+}
+
+func TestResolverConnectionTestUsesEnvironmentBeforeVault(t *testing.T) {
+	factory := &fakeFactory{}
+	resolver := New(Deps{
+		Factories: map[domain.SCMProvider]ProviderFactory{domain.SCMProviderGitLab: factory},
+		LookupEnv: func(name string) string {
+			if name == "AO_GITLAB_TOKEN" {
+				return "environment-token"
+			}
+			return ""
+		},
+	})
+	config := scmconnection.ConnectionTestConfig{ID: "gitlab-work", Provider: domain.SCMProviderGitLab, Repository: "group/repo"}
+	configured, err := resolver.CredentialOverrideConfigured(context.Background(), config)
+	if err != nil || !configured {
+		t.Fatalf("CredentialOverrideConfigured = (%v, %v)", configured, err)
+	}
+	result, err := resolver.Test(context.Background(), config, []byte("vault-token"))
+	if err != nil || result.Status != scmconnection.StatusConnected || len(factory.tokens) != 1 || factory.tokens[0] != "environment-token" {
+		t.Fatalf("Test = (%#v, %v), tokens=%v", result, err, factory.tokens)
 	}
 }
 
@@ -340,34 +524,82 @@ func TestGitHubFactoryBuildIsLazyAndReturnsCurrentBundle(t *testing.T) {
 }
 
 func TestGitHubFactoryTestsConnection(t *testing.T) {
-	var authorization string
+	var authorizations []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authorization = r.Header.Get("Authorization")
-		if r.URL.Path != "/user" {
+		authorizations = append(authorizations, r.Header.Get("Authorization"))
+		switch r.URL.Path {
+		case "/user":
+			_, _ = w.Write([]byte(`{"login":"alice","name":"Alice Example"}`))
+		case "/repos/octocat/hello-world":
+			_, _ = w.Write([]byte(`{"permissions":{"pull":true,"push":true,"admin":false,"maintain":false}}`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		w.Header().Set("X-OAuth-Scopes", "repo, read:org")
-		_, _ = w.Write([]byte(`{"login":"alice","name":"Alice Example"}`))
 	}))
 	t.Cleanup(server.Close)
 
 	factory := NewGitHubFactory(GitHubFactoryOptions{HTTPClient: server.Client()})
 	result, err := factory.Test(context.Background(), scmconnection.ConnectionTestConfig{
 		ID: "github-work", Provider: domain.SCMProviderGitHub,
-		WebBaseURL: "https://github.example", APIBaseURL: server.URL,
+		WebBaseURL: "https://github.example", APIBaseURL: server.URL, Repository: "octocat/hello-world",
 	}, []byte("github-test-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorization != "Bearer github-test-token" {
-		t.Fatalf("Authorization = %q", authorization)
+	if len(authorizations) != 2 || authorizations[0] != "Bearer github-test-token" || authorizations[1] != "Bearer github-test-token" {
+		t.Fatalf("Authorization = %v", authorizations)
 	}
 	if result.Status != scmconnection.StatusConnected || result.Identity.Username != "alice" || result.Identity.DisplayName != "Alice Example" {
 		t.Fatalf("result = %#v", result)
 	}
 	if !result.Capabilities.Read || !result.Capabilities.Write {
 		t.Fatalf("capabilities = %#v", result.Capabilities)
+	}
+}
+
+func TestGitHubFactoryTestsRepositoryCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		repoStatus int
+		repoBody   string
+		wantKind   scmconnection.TestFailureKind
+	}{
+		{name: "write scope missing", repoStatus: http.StatusOK, repoBody: `{"permissions":{"pull":true}}`, wantKind: scmconnection.TestFailureWriteScopeMissing},
+		{name: "repository missing", repoStatus: http.StatusNotFound, repoBody: `{}`, wantKind: scmconnection.TestFailureRepoNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/user" {
+					_, _ = w.Write([]byte(`{"login":"alice"}`))
+					return
+				}
+				w.WriteHeader(tc.repoStatus)
+				_, _ = w.Write([]byte(tc.repoBody))
+			}))
+			t.Cleanup(server.Close)
+			result, err := NewGitHubFactory(GitHubFactoryOptions{HTTPClient: server.Client()}).Test(context.Background(), scmconnection.ConnectionTestConfig{
+				ID: "github-work", Provider: domain.SCMProviderGitHub, APIBaseURL: server.URL, Repository: "octocat/hello-world",
+			}, []byte("token"))
+			var failure *scmconnection.TestFailure
+			if !errors.As(err, &failure) || failure.Kind != tc.wantKind {
+				t.Fatalf("error = %v, result=%#v", err, result)
+			}
+			if result.Status != scmconnection.StatusConnected || result.Identity.Username != "alice" || result.Capabilities.Write {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestGitHubFactoryClassifiesTLSFailure(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(server.Close)
+	_, err := NewGitHubFactory(GitHubFactoryOptions{}).Test(context.Background(), scmconnection.ConnectionTestConfig{
+		ID: "github-work", Provider: domain.SCMProviderGitHub, APIBaseURL: server.URL, Repository: "octocat/hello-world",
+	}, []byte("token"))
+	var failure *scmconnection.TestFailure
+	if !errors.As(err, &failure) || failure.Kind != scmconnection.TestFailureTLS {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -380,7 +612,7 @@ func TestGitHubFactoryTestFailureIsRedacted(t *testing.T) {
 
 	factory := NewGitHubFactory(GitHubFactoryOptions{HTTPClient: server.Client()})
 	_, err := factory.Test(context.Background(), scmconnection.ConnectionTestConfig{
-		ID: "github-work", Provider: domain.SCMProviderGitHub, APIBaseURL: server.URL,
+		ID: "github-work", Provider: domain.SCMProviderGitHub, APIBaseURL: server.URL, Repository: "owner/repo",
 	}, []byte(secret))
 	var failure *scmconnection.TestFailure
 	if !errors.As(err, &failure) || failure.Kind != scmconnection.TestFailureAuth {

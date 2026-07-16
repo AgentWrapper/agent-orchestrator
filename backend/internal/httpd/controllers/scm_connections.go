@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -107,7 +108,16 @@ func (c *SCMConnectionsController) test(w http.ResponseWriter, r *http.Request) 
 		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/scm/connections/{id}/test")
 		return
 	}
-	result, err := c.Svc.Test(r.Context(), chi.URLParam(r, "id"))
+	var in scmconnectionsvc.TestInput
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if strings.TrimSpace(in.Repository) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SCM_REPOSITORY_REQUIRED", "SCM repository is required", nil)
+		return
+	}
+	result, err := c.Svc.Test(r.Context(), chi.URLParam(r, "id"), in.Repository)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

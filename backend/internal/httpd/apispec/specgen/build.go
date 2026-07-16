@@ -232,6 +232,7 @@ var schemaNames = map[string]string{
 	"ScmconnectionConnection":   "SCMConnection",
 	"ScmconnectionCreateInput":  "CreateSCMConnectionRequest",
 	"ScmconnectionUpdateInput":  "UpdateSCMConnectionRequest",
+	"ScmconnectionTestInput":    "TestSCMConnectionRequest",
 	"ScmconnectionIdentity":     "SCMConnectionIdentity",
 	"ScmconnectionCapabilities": "SCMConnectionCapabilities",
 	"ScmconnectionTestResult":   "SCMConnectionTestResult",
@@ -381,6 +382,7 @@ func scmConnectionOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/scm/connections/{id}/test", id: "testSCMConnection", tag: "scm-connections",
 			summary: "Test an SCM connection and return normalized identity and capabilities", pathParams: id,
+			reqBody: scmconnectionsvc.TestInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SCMConnectionTestResponse{}},
 				{http.StatusUnauthorized, envelope.APIError{}},

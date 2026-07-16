@@ -188,13 +188,14 @@ func (f *fakeCredentials) Delete(ctx context.Context, ref string) error {
 }
 
 type fakeTester struct {
-	result  TestResult
-	err     error
-	config  ConnectionTestConfig
-	token   []byte
-	calls   int
-	entered chan struct{}
-	release chan struct{}
+	result             TestResult
+	err                error
+	config             ConnectionTestConfig
+	token              []byte
+	calls              int
+	overrideConfigured bool
+	entered            chan struct{}
+	release            chan struct{}
 }
 
 func (f *fakeTester) Test(_ context.Context, config ConnectionTestConfig, token []byte) (TestResult, error) {
@@ -206,6 +207,10 @@ func (f *fakeTester) Test(_ context.Context, config ConnectionTestConfig, token 
 		<-f.release
 	}
 	return f.result, f.err
+}
+
+func (f *fakeTester) CredentialOverrideConfigured(context.Context, ConnectionTestConfig) (bool, error) {
+	return f.overrideConfigured, nil
 }
 
 func newTestService(st *fakeStore, creds *fakeCredentials, tester ConnectionTester) *Service {
@@ -269,6 +274,22 @@ func TestCreateListGetDefaultsAndKeepsTokenWriteOnly(t *testing.T) {
 	}
 }
 
+func TestListAndGetReportEnvironmentCredentialOverride(t *testing.T) {
+	st, creds := seededConnection()
+	delete(creds.secrets, st.rows["gitlab-work"].CredentialRef)
+	tester := &fakeTester{overrideConfigured: true}
+	svc := newTestService(st, creds, tester)
+
+	got, err := svc.Get(context.Background(), "gitlab-work")
+	if err != nil || !got.CredentialConfigured {
+		t.Fatalf("Get = (%#v, %v), want configured override", got, err)
+	}
+	list, err := svc.List(context.Background())
+	if err != nil || len(list) != 1 || !list[0].CredentialConfigured {
+		t.Fatalf("List = (%#v, %v), want configured override", list, err)
+	}
+}
+
 func TestGetAndListReflectPersistedValidation(t *testing.T) {
 	st, creds := seededConnection()
 	row := st.rows["gitlab-work"]
@@ -294,6 +315,7 @@ func TestCreateValidationAndDuplicateMapping(t *testing.T) {
 		code string
 	}{
 		{name: "id", in: CreateInput{ID: "../bad", Provider: domain.SCMProviderGitLab, DisplayName: "x"}, code: "INVALID_SCM_CONNECTION_ID"},
+		{name: "reserved id", in: CreateInput{ID: "github-default", Provider: domain.SCMProviderGitHub, DisplayName: "x"}, code: "RESERVED_SCM_CONNECTION_ID"},
 		{name: "provider", in: CreateInput{ID: "x", Provider: "bitbucket", DisplayName: "x"}, code: "INVALID_SCM_PROVIDER"},
 		{name: "display name", in: CreateInput{ID: "x", Provider: domain.SCMProviderGitLab}, code: "SCM_CONNECTION_DISPLAY_NAME_REQUIRED"},
 		{name: "non-loopback http", in: CreateInput{ID: "x", Provider: domain.SCMProviderGitLab, DisplayName: "x", WebBaseURL: "http://gitlab.example.com"}, code: "INVALID_SCM_CONNECTION_URL"},
@@ -345,6 +367,18 @@ func TestCreateValidationAndDuplicateMapping(t *testing.T) {
 		token := "replacement-must-not-win"
 		_, err := svc.Create(context.Background(), createInput(&token))
 		assertAPIError(t, err, "SCM_CONNECTION_ALREADY_EXISTS")
+	})
+
+	t.Run("reserved id update", func(t *testing.T) {
+		st, creds := seededConnection()
+		row := st.rows["gitlab-work"]
+		delete(st.rows, row.ID)
+		row.ID = GitHubDefaultConnectionID
+		st.rows[row.ID] = row
+		_, err := newTestService(st, creds, nil).Update(context.Background(), row.ID, UpdateInput{
+			Provider: domain.SCMProviderGitHub, DisplayName: "Reserved",
+		})
+		assertAPIError(t, err, "RESERVED_SCM_CONNECTION_ID")
 	})
 }
 
@@ -659,13 +693,13 @@ func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 		Capabilities: Capabilities{Read: true, Write: false},
 	}}
 	svc := newTestService(st, creds, tester)
-	got, err := svc.Test(context.Background(), "gitlab-work")
+	got, err := svc.Test(context.Background(), "gitlab-work", "group/repo")
 	if err != nil || !reflect.DeepEqual(got, tester.result) {
 		t.Fatalf("test = (%#v, %v)", got, err)
 	}
 	if tester.calls != 1 || string(tester.token) != "old" || tester.config != (ConnectionTestConfig{
 		ID: "gitlab-work", Provider: domain.SCMProviderGitLab,
-		WebBaseURL: "https://gitlab.com", APIBaseURL: "https://gitlab.com/api/v4",
+		WebBaseURL: "https://gitlab.com", APIBaseURL: "https://gitlab.com/api/v4", Repository: "group/repo",
 	}) {
 		t.Fatalf("tester call = %#v token=%q", tester.config, tester.token)
 	}
@@ -681,17 +715,19 @@ func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 	}
 
 	delete(creds.secrets, st.rows["gitlab-work"].CredentialRef)
-	got, err = svc.Test(context.Background(), "gitlab-work")
-	if err != nil || got.Status != StatusMissingCredential || tester.calls != 1 {
+	tester.result = connectedTestResult("alice")
+	tester.overrideConfigured = true
+	got, err = svc.Test(context.Background(), "gitlab-work", "group/repo")
+	if err != nil || got.Status != StatusConnected || tester.calls != 2 || len(tester.token) != 0 {
 		t.Fatalf("missing credential test = (%#v, %v), calls=%d", got, err, tester.calls)
 	}
-	if row := st.rows["gitlab-work"]; row.Status != domain.SCMConnectionStatusMissingCredential || row.Username != "" {
-		t.Fatalf("persisted missing credential = (%q, %q)", row.Status, row.Username)
+	if row := st.rows["gitlab-work"]; row.Status != domain.SCMConnectionStatusConnected || row.Username != "alice" {
+		t.Fatalf("persisted override validation = (%q, %q)", row.Status, row.Username)
 	}
 
 	creds.secrets[st.rows["gitlab-work"].CredentialRef] = []byte("old")
 	tester.err = errors.New("provider body contains glpat-secret")
-	_, err = svc.Test(context.Background(), "gitlab-work")
+	_, err = svc.Test(context.Background(), "gitlab-work", "group/repo")
 	e := assertAPIError(t, err, "SCM_CONNECTION_TEST_FAILED")
 	if strings.Contains(e.Message, "provider") || strings.Contains(e.Message, "glpat") {
 		t.Fatalf("raw provider error leaked: %q", e.Message)
@@ -719,7 +755,7 @@ func TestConnectionTestMapsAndPersistsStructuredFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st, creds := seededConnection()
 			tester := &fakeTester{result: tc.result, err: NewTestFailure(tc.failure, errors.New("provider body contains glpat-secret"))}
-			_, err := newTestService(st, creds, tester).Test(context.Background(), "gitlab-work")
+			_, err := newTestService(st, creds, tester).Test(context.Background(), "gitlab-work", "group/repo")
 			var got *apierr.Error
 			if !errors.As(err, &got) || got.Kind != tc.wantKind || got.Code != tc.wantCode {
 				t.Fatalf("error = %#v, want kind=%v code=%s", got, tc.wantKind, tc.wantCode)
@@ -749,7 +785,7 @@ func TestConnectionTestRejectsNilErrorNonSuccessResults(t *testing.T) {
 				return row
 			}()
 			tester := &fakeTester{result: TestResult{Status: status}}
-			_, err := newTestService(st, creds, tester).Test(context.Background(), "gitlab-work")
+			_, err := newTestService(st, creds, tester).Test(context.Background(), "gitlab-work", "group/repo")
 			assertAPIError(t, err, "SCM_CONNECTION_TEST_FAILED")
 			row := st.rows["gitlab-work"]
 			if row.Status != domain.SCMConnectionStatusUnknown || row.Username != "" {
@@ -770,7 +806,7 @@ func TestConnectionTestCannotOverwriteNewerConfigurationValidation(t *testing.T)
 
 	testErr := make(chan error, 1)
 	go func() {
-		_, err := svc.Test(context.Background(), "gitlab-work")
+		_, err := svc.Test(context.Background(), "gitlab-work", "group/repo")
 		testErr <- err
 	}()
 	<-tester.entered

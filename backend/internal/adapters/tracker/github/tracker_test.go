@@ -93,12 +93,34 @@ func newTrackerForTest(t *testing.T, f *fakeGH) *Tracker {
 
 func ctx() context.Context { return context.Background() }
 
+type tokenSourceFunc func(context.Context) (string, error)
+
+func (f tokenSourceFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
+
 func TestNewRejectsMissingToken(t *testing.T) {
 	if _, err := New(Options{Token: StaticTokenSource("")}); !errors.Is(err, ErrNoToken) {
 		t.Fatalf("New with empty token = %v, want ErrNoToken", err)
 	}
 	if _, err := New(Options{}); !errors.Is(err, ErrNoToken) {
 		t.Fatalf("New with no source = %v, want ErrNoToken", err)
+	}
+}
+
+func TestNewCanDeferTokenResolutionToCallerContext(t *testing.T) {
+	calls := 0
+	source := tokenSourceFunc(func(ctx context.Context) (string, error) {
+		calls++
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	tracker, err := New(Options{Token: source, SkipTokenPreflight: true})
+	if err != nil || calls != 0 {
+		t.Fatalf("New = (%#v, %v), token calls=%d", tracker, err, calls)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := tracker.Preflight(ctx); !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("Preflight error=%v calls=%d", err, calls)
 	}
 }
 
