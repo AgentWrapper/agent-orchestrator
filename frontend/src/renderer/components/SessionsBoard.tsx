@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Plus, RotateCcw, RotateCw } from "lucide-react";
+import { AlertTriangle, Plus, RotateCw } from "lucide-react";
 import { DashboardSubhead } from "./DashboardSubhead";
 import {
 	type AttentionZone,
@@ -459,7 +459,7 @@ function SessionCard({
 	return (
 		<div
 			className={cn(
-				"w-full rounded-md border border-border bg-surface text-left transition-colors",
+				"group relative w-full rounded-md border border-border bg-surface text-left transition-colors",
 				interactive && "hover:border-border-strong",
 			)}
 		>
@@ -480,18 +480,6 @@ function SessionCard({
 					<span className="ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive">
 						{agentLabel(session.provider)}
 					</span>
-					{restoreAction && (
-						<button
-							aria-label={`Restore ${session.title}`}
-							title={`Restore ${session.title}`}
-							className="inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm border border-accent bg-accent text-accent-foreground shadow-sm transition-opacity duration-normal ease-out hover:opacity-90 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
-							disabled={isRestoreDisabled}
-							onClick={restoreAction}
-							type="button"
-						>
-							<RotateCcw className={cn("size-3", isRestoring && "animate-spin")} aria-hidden="true" />
-						</button>
-					)}
 				</div>
 				<div
 					className={cn(
@@ -508,7 +496,7 @@ function SessionCard({
 				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{restoreError}</div>
 			)}
 			<div
-				className="border-t border-border px-3.25 py-2 font-mono text-2xs text-passive"
+				className={cn("border-t border-border px-3.25 py-2 font-mono text-2xs text-passive", restoreAction && "pr-20")}
 				onClick={(event) => event.stopPropagation()}
 			>
 				{prSummaries.length === 0 ? (
@@ -521,6 +509,21 @@ function SessionCard({
 					</div>
 				)}
 			</div>
+			{restoreAction && (
+				<button
+					aria-label={`Restore ${session.title}`}
+					title={`Restore ${session.title}`}
+					className={cn(
+						"absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-accent bg-accent px-2.5 text-2xs font-semibold text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out hover:opacity-90 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-50 group-hover:opacity-100 group-focus-within:opacity-100",
+						isRestoring && "opacity-100",
+					)}
+					disabled={isRestoreDisabled}
+					onClick={restoreAction}
+					type="button"
+				>
+					{isRestoring ? "Restoring" : "Restore"}
+				</button>
+			)}
 		</div>
 	);
 }
