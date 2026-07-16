@@ -70,6 +70,7 @@ vi.mock("./BrowserPanel", () => ({
 	}),
 }));
 const browserDestroy = vi.hoisted(() => vi.fn());
+const browserRemeasure = vi.hoisted(() => vi.fn());
 vi.mock("../hooks/useBrowserView", () => ({
 	useBrowserView: () => ({
 		viewId: "browser:sess-1",
@@ -82,6 +83,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 			isLoading: false,
 		},
 		slotRef: vi.fn(),
+		remeasure: browserRemeasure,
 		navigate: vi.fn(),
 		goBack: vi.fn(),
 		goForward: vi.fn(),
@@ -269,6 +271,22 @@ describe("SessionView", () => {
 		act(() => entry.onResize?.({ asPercentage: 12.4, inPixels: 160 }));
 		expect(useUiStore.getState().isInspectorOpen).toBe(false);
 		expect(window.localStorage.getItem("ao.inspector.split")).toBeNull();
+	});
+
+	// #2693: expanding the terminal shrinks the inspector column, but the native
+	// browser overlay's ResizeObserver did not re-measure on a divider drag, so
+	// the preview kept stale bounds and overlapped the terminal. rrp's onResize
+	// (fired every drag frame) must drive a re-measure of the overlay.
+	it("re-measures the browser overlay on an inspector drag (#2693)", () => {
+		render(<SessionView sessionId="sess-1" />);
+		const entry = panels.get("inspector")!;
+		browserRemeasure.mockClear();
+
+		// A live drag frame (separator active) shrinking the inspector must
+		// re-measure the overlay so it follows the divider instead of overlapping.
+		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
+		act(() => entry.onResize?.({ asPercentage: 24, inPixels: 320 }));
+		expect(browserRemeasure).toHaveBeenCalled();
 	});
 
 	it("restores the persisted split width", () => {

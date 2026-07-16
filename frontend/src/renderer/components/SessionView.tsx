@@ -161,6 +161,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// with the expand()/collapse() effect above.
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
+			// rrp fires onResize on every drag frame — the authoritative signal that
+			// the inspector column changed width. The browser view's ResizeObserver
+			// does not re-measure the native overlay during a divider drag that
+			// expands the terminal, so drive it from here or the preview keeps its
+			// old bounds and overlaps the terminal (#2693). Before the drag-only
+			// guard below so a resize (not just a collapse) always re-measures.
+			browserView.remeasure();
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
 			const open = useUiStore.getState().isInspectorOpen;
 			if (size.asPercentage > 0) {
@@ -170,7 +177,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				toggleInspector();
 			}
 		},
-		[toggleInspector],
+		[browserView.remeasure, toggleInspector],
 	);
 
 	if (!session && !workspaceQuery.isLoading) {

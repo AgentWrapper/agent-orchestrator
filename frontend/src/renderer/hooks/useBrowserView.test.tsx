@@ -149,6 +149,50 @@ describe("useBrowserView", () => {
 		);
 	});
 
+	it("re-sends the current slot bounds when remeasure() is called (divider-drag re-measure, #2693)", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+		await waitFor(() => expect(bridge.setBounds).toHaveBeenCalled());
+
+		// The ResizeObserver is a no-op in tests (as it effectively is for a divider
+		// drag in the app), so nothing re-measures on its own. After the slot shrinks
+		// with the inspector column, remeasure() must re-send the fresh, smaller
+		// bounds so the overlay follows the divider instead of overlapping.
+		bridge.setBounds.mockClear();
+		slot.getBoundingClientRect = vi.fn(() => ({
+			x: 12,
+			y: 34,
+			width: 180,
+			height: 240,
+			top: 34,
+			right: 192,
+			bottom: 274,
+			left: 12,
+			toJSON: () => ({}),
+		}));
+		act(() => result.current.remeasure());
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 180, height: 240 },
+				visible: true,
+			}),
+		);
+	});
+
 	it("re-measures after a layout transition settles, catching a position-only shift", async () => {
 		// A ResizeObserver fires on size changes only; entering pop-out / opening the
 		// inspector moves the slot to a new x without resizing it, so the transition

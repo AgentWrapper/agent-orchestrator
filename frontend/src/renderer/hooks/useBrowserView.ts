@@ -34,6 +34,13 @@ export type BrowserViewModel = {
 	mirrorUrl: string;
 	mirrorStream: MediaStream | null;
 	slotRef: (node: HTMLDivElement | null) => void;
+	/**
+	 * Force the native overlay to re-measure its slot and re-send bounds. The
+	 * ResizeObserver misses layout changes that don't resize the observed slot
+	 * or column — notably a divider drag that expands the terminal — so callers
+	 * that own such a transition (the inspector's rrp `onResize`) drive it here.
+	 */
+	remeasure: () => void;
 	navigate: (url: string) => Promise<void>;
 	goBack: () => Promise<void>;
 	goForward: () => Promise<void>;
@@ -469,6 +476,7 @@ export function useBrowserView({
 		mirrorUrl,
 		mirrorStream,
 		slotRef,
+		remeasure: scheduleSettleMeasure,
 		navigate,
 		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
