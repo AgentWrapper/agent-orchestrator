@@ -5,6 +5,7 @@ type ApplicationMenuOptions = {
 	platform: NodeJS.Platform;
 	productName: string;
 	t: TFunction;
+	onAbout(): void;
 };
 
 type ApplicationMenuApi<MenuType> = {
@@ -18,7 +19,7 @@ type RebuildApplicationMenuOptions<MenuType> = ApplicationMenuOptions & {
 
 const separator = (): MenuItemConstructorOptions => ({ type: "separator" });
 
-function editMenu(t: TFunction, includeDesktopRoles: boolean): MenuItemConstructorOptions {
+function editMenu(t: TFunction, includeDesktopRoles: boolean, includeMacRoles = false): MenuItemConstructorOptions {
 	return {
 		label: t("native.menu.edit"),
 		submenu: [
@@ -35,6 +36,29 @@ function editMenu(t: TFunction, includeDesktopRoles: boolean): MenuItemConstruct
 					]
 				: []),
 			{ role: "selectAll", label: t("native.menu.selectAll") },
+			...(includeMacRoles
+				? [
+						separator(),
+						{
+							label: t("native.menu.substitutions"),
+							submenu: [
+								{ role: "showSubstitutions" as const, label: t("native.menu.showSubstitutions") },
+								separator(),
+								{ role: "toggleSmartQuotes" as const, label: t("native.menu.smartQuotes") },
+								{ role: "toggleSmartDashes" as const, label: t("native.menu.smartDashes") },
+								{ role: "toggleTextReplacement" as const, label: t("native.menu.textReplacement") },
+							],
+						},
+						separator(),
+						{
+							label: t("native.menu.speech"),
+							submenu: [
+								{ role: "startSpeaking" as const, label: t("native.menu.startSpeaking") },
+								{ role: "stopSpeaking" as const, label: t("native.menu.stopSpeaking") },
+							],
+						},
+					]
+				: []),
 		],
 	};
 }
@@ -58,14 +82,15 @@ function viewMenu(t: TFunction, includeForceReload: boolean): MenuItemConstructo
 	};
 }
 
-function aboutItem(productName: string, t: TFunction): MenuItemConstructorOptions {
-	return { role: "about", label: t("native.menu.about", { productName }) };
+function aboutItem(productName: string, t: TFunction, onAbout: () => void): MenuItemConstructorOptions {
+	return { label: t("native.menu.about", { productName }), click: onAbout };
 }
 
 export function buildApplicationMenuTemplate({
 	platform,
 	productName,
 	t,
+	onAbout,
 }: ApplicationMenuOptions): MenuItemConstructorOptions[] {
 	if (platform === "win32") {
 		return [
@@ -101,19 +126,18 @@ export function buildApplicationMenuTemplate({
 						{ role: "zoom", label: t("native.menu.zoom") },
 						separator(),
 						{ role: "front", label: t("native.menu.bringAllToFront") },
-						separator(),
-						{ role: "window", label: t("native.menu.window") },
 					]
 				: [
 						{ role: "minimize", label: t("native.menu.minimize") },
+						{ role: "zoom", label: t("native.menu.zoom") },
 						{ role: "close", label: t("native.menu.close") },
 					],
 	};
 	const helpMenu: MenuItemConstructorOptions = {
 		label: t("native.menu.help"),
-		submenu: [aboutItem(productName, t)],
+		submenu: [aboutItem(productName, t, onAbout)],
 	};
-	const commonMenus = [fileMenu, editMenu(t, true), viewMenu(t, true), windowMenu, helpMenu];
+	const commonMenus = [fileMenu, editMenu(t, true, platform === "darwin"), viewMenu(t, true), windowMenu, helpMenu];
 
 	if (platform !== "darwin") return commonMenus;
 
@@ -121,7 +145,7 @@ export function buildApplicationMenuTemplate({
 		{
 			label: productName,
 			submenu: [
-				aboutItem(productName, t),
+				aboutItem(productName, t, onAbout),
 				separator(),
 				{ role: "services", label: t("native.menu.services") },
 				separator(),
@@ -161,6 +185,6 @@ export function buildAboutDialogOptions({
 	};
 }
 
-export function resolveDirectoryChooserTitle(title: string | undefined, t: TFunction): string {
-	return title?.trim() ? title : t("native.directory.chooseRepository");
+export function resolveDirectoryChooserTitle(title: unknown, t: TFunction): string {
+	return typeof title === "string" && title.trim() ? title : t("native.directory.chooseRepository");
 }

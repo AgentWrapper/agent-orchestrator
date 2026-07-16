@@ -27,7 +27,7 @@ vi.mock("electron-updater", () => ({
 
 import { ensureUpdatePrefs } from "./auto-updater";
 import { mainI18n } from "./i18n";
-import { readUpdateSettings } from "./update-settings";
+import { readUpdateSettings, writeUpdateSettings } from "./update-settings";
 
 describe("ensureUpdatePrefs", () => {
 	let stateDir: string;
@@ -39,6 +39,16 @@ describe("ensureUpdatePrefs", () => {
 
 	afterEach(async () => {
 		await rm(stateDir, { recursive: true, force: true });
+	});
+
+	it("does not prompt or overwrite existing update settings", async () => {
+		const settings = { enabled: true, channel: "nightly", nightlyAck: true } as const;
+		await writeUpdateSettings(stateDir, settings);
+
+		await ensureUpdatePrefs(stateDir, mainI18n.getFixedT("zh-CN"));
+
+		expect(showMessageBox).not.toHaveBeenCalled();
+		expect(await readUpdateSettings(stateDir)).toEqual(settings);
 	});
 
 	it("localizes the opt-in prompt and preserves the opt-out settings", async () => {

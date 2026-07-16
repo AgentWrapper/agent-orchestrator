@@ -1039,6 +1039,7 @@ function rebuildNativeMenu(): void {
 		platform: process.platform,
 		productName: clientIdentity.productName,
 		t: mainT,
+		onAbout: showAboutDialog,
 	});
 }
 
