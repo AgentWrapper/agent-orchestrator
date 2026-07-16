@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ArrowRight, ArrowUp, Folder, LoaderCircle, X } from "lucide-react";
+import { ArrowRight, ArrowUp, Check, Folder, FolderPlus, LoaderCircle, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -30,6 +30,9 @@ export function RemoteDirectoryPickerDialog({
 	const [path, setPath] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+	const [newFolderName, setNewFolderName] = useState("");
+	const [newFolderOpen, setNewFolderOpen] = useState(false);
+	const [creatingFolder, setCreatingFolder] = useState(false);
 	const requestNumber = useRef(0);
 
 	const openPath = useCallback(async (nextPath?: string) => {
@@ -59,7 +62,12 @@ export function RemoteDirectoryPickerDialog({
 	}, []);
 
 	useEffect(() => {
-		if (open) void openPath();
+		if (open) {
+			void openPath();
+		} else {
+			setNewFolderName("");
+			setNewFolderOpen(false);
+		}
 		return () => {
 			requestNumber.current += 1;
 		};
@@ -71,8 +79,35 @@ export function RemoteDirectoryPickerDialog({
 		if (normalized) void openPath(normalized);
 	};
 
+	const createFolder = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		const name = newFolderName.trim();
+		if (!current || !name || creatingFolder) return;
+		setCreatingFolder(true);
+		setError(null);
+		try {
+			const { data, error: apiError } = await apiClient.POST("/api/v1/filesystem/directories", {
+				body: { parentPath: current.path, name },
+			});
+			if (apiError) {
+				setError(apiErrorMessage(apiError, "Could not create folder"));
+				return;
+			}
+			if (data) {
+				setNewFolderName("");
+				setNewFolderOpen(false);
+				await openPath(data.path);
+			}
+		} catch (cause) {
+			setError(apiErrorMessage(cause, "Could not create folder"));
+		} finally {
+			setCreatingFolder(false);
+		}
+	};
+
 	const isWorkspace = kind === "workspace";
 	const breadcrumbs = current ? directoryBreadcrumbs(current.path) : [];
+	const busy = loading || creatingFolder;
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -107,7 +142,7 @@ export function RemoteDirectoryPickerDialog({
 									value={path}
 									onChange={(event) => setPath(event.target.value)}
 									placeholder="/home/claude/code/project"
-									disabled={disabled}
+									disabled={disabled || busy}
 								/>
 							</div>
 							<Button
@@ -116,7 +151,7 @@ export function RemoteDirectoryPickerDialog({
 								size="icon"
 								aria-label="Go"
 								title="Go"
-								disabled={disabled || loading || !path.trim()}
+									disabled={disabled || busy || !path.trim()}
 							>
 								<ArrowRight className="size-4" aria-hidden="true" />
 							</Button>
@@ -129,7 +164,7 @@ export function RemoteDirectoryPickerDialog({
 								size="icon-sm"
 								aria-label="Up"
 								title="Up"
-								disabled={disabled || loading || !current?.parent}
+									disabled={disabled || busy || !current?.parent}
 								onClick={() => current?.parent && void openPath(current.parent)}
 							>
 								<ArrowUp className="size-4" aria-hidden="true" />
@@ -147,7 +182,7 @@ export function RemoteDirectoryPickerDialog({
 														type="button"
 														className="truncate text-muted-foreground hover:text-foreground"
 														aria-label={`Go to ${breadcrumb.path}`}
-														disabled={disabled || loading}
+														disabled={disabled || busy}
 														onClick={() => void openPath(breadcrumb.path)}
 													>
 														{breadcrumb.label}
@@ -158,7 +193,49 @@ export function RemoteDirectoryPickerDialog({
 									))}
 								</BreadcrumbList>
 							</Breadcrumb>
+							{!newFolderOpen && (
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={disabled || busy || !current}
+									onClick={() => setNewFolderOpen(true)}
+								>
+									<FolderPlus className="size-4" aria-hidden="true" />
+									New folder
+								</Button>
+							)}
 						</div>
+						{newFolderOpen && (
+							<form className="flex items-end gap-2" onSubmit={createFolder}>
+								<div className="min-w-0 flex-1">
+									<Label htmlFor="remote-directory-new-folder" className="mb-1.5 block text-xs text-muted-foreground">
+										Folder name
+									</Label>
+									<Input
+										id="remote-directory-new-folder"
+										autoFocus
+										value={newFolderName}
+										onChange={(event) => setNewFolderName(event.target.value)}
+										disabled={disabled || busy}
+									/>
+								</div>
+								<Button
+									type="submit"
+									variant="outline"
+									size="icon"
+									aria-label="Create"
+									title="Create"
+									disabled={disabled || busy || !newFolderName.trim()}
+								>
+									{creatingFolder ? (
+										<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+									) : (
+										<Check className="size-4" aria-hidden="true" />
+									)}
+								</Button>
+							</form>
+						)}
 
 						<div className="h-64 overflow-y-auto rounded-md border border-border bg-background">
 							{loading ? (
@@ -174,7 +251,7 @@ export function RemoteDirectoryPickerDialog({
 											key={directory.path}
 											className="flex h-10 w-full items-center gap-2 rounded-md px-2.5 text-left font-mono text-sm text-foreground hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 											aria-label={`Open ${directory.name}`}
-											disabled={disabled}
+											disabled={disabled || busy}
 											onClick={() => void openPath(directory.path)}
 										>
 											<Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -200,7 +277,7 @@ export function RemoteDirectoryPickerDialog({
 						<Button
 							type="button"
 							variant="primary"
-							disabled={disabled || loading || !current || path.trim() !== current.path}
+							disabled={disabled || busy || !current || path.trim() !== current.path}
 							onClick={() => current && onSelect(current.path)}
 						>
 							Select this folder

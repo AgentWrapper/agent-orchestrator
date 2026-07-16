@@ -3,10 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RemoteDirectoryPickerDialog } from "./RemoteDirectoryPickerDialog";
 
-const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
+const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
 			return error.message;
@@ -34,6 +34,7 @@ function renderPicker(onSelect = vi.fn()) {
 
 beforeEach(() => {
 	getMock.mockReset();
+	postMock.mockReset();
 });
 
 describe("RemoteDirectoryPickerDialog", () => {
@@ -161,5 +162,115 @@ describe("RemoteDirectoryPickerDialog", () => {
 		await user.click(await screen.findByRole("button", { name: "Select this folder" }));
 
 		expect(onSelect).toHaveBeenCalledWith("/home/claude/code");
+	});
+
+	it("opens a new-folder form with Create disabled for a blank name", async () => {
+		const user = userEvent.setup();
+		getMock.mockResolvedValueOnce(response("/home/ubuntu/code", "/home/ubuntu", []));
+		renderPicker();
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+
+		expect(screen.getByLabelText("Folder name")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+	});
+
+	it("creates a folder, enters the returned path, and selects it", async () => {
+		const user = userEvent.setup();
+		const onSelect = vi.fn();
+		getMock
+			.mockResolvedValueOnce(response("/home/ubuntu/code", "/home/ubuntu", []))
+			.mockResolvedValueOnce(response("/home/ubuntu/code/new-project", "/home/ubuntu/code", []));
+		postMock.mockResolvedValueOnce({
+			data: { name: "new-project", path: "/home/ubuntu/code/new-project" },
+			error: undefined,
+			response: new Response(null, { status: 201 }),
+		});
+		renderPicker(onSelect);
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+		await user.type(screen.getByLabelText("Folder name"), "new-project");
+		await user.click(screen.getByRole("button", { name: "Create" }));
+
+		expect(postMock).toHaveBeenCalledWith("/api/v1/filesystem/directories", {
+			body: { parentPath: "/home/ubuntu/code", name: "new-project" },
+		});
+		await waitFor(() =>
+			expect(getMock).toHaveBeenLastCalledWith("/api/v1/filesystem/directories", {
+				params: { query: { path: "/home/ubuntu/code/new-project" } },
+			}),
+		);
+		const selectButton = screen.getByRole("button", { name: "Select this folder" });
+		await waitFor(() => expect(selectButton).toBeEnabled());
+		await user.click(selectButton);
+
+		expect(onSelect).toHaveBeenCalledWith("/home/ubuntu/code/new-project");
+	});
+
+	it("keeps the folder-name draft visible when creation fails", async () => {
+		const user = userEvent.setup();
+		getMock.mockResolvedValueOnce(response("/home/ubuntu/code", "/home/ubuntu", []));
+		postMock.mockResolvedValueOnce({
+			data: undefined,
+			error: { message: "Folder already exists" },
+			response: new Response(null, { status: 409 }),
+		});
+		renderPicker();
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+		const nameInput = screen.getByLabelText("Folder name");
+		await user.type(nameInput, "new-project");
+		await user.click(screen.getByRole("button", { name: "Create" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Folder already exists");
+		expect(nameInput).toHaveValue("new-project");
+		expect(postMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("prevents duplicate creation and disables navigation while creation is pending", async () => {
+		const user = userEvent.setup();
+		getMock.mockResolvedValueOnce(
+			response("/home/ubuntu/code", "/home/ubuntu", [{ name: "existing", path: "/home/ubuntu/code/existing" }]),
+		);
+		postMock.mockReturnValue(new Promise<never>(() => undefined));
+		renderPicker();
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+		await user.type(screen.getByLabelText("Folder name"), "new-project");
+		const createButton = screen.getByRole("button", { name: "Create" });
+		await user.click(createButton);
+
+		expect(createButton).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Go" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Up" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Open existing" })).toBeDisabled();
+		await user.click(createButton);
+		expect(postMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("resets the new-folder form after canceling and reopening", async () => {
+		const user = userEvent.setup();
+		const onOpenChange = vi.fn();
+		getMock.mockResolvedValue(response("/home/ubuntu/code", "/home/ubuntu", []));
+		const picker = (open: boolean) => (
+			<RemoteDirectoryPickerDialog
+				disabled={false}
+				kind="single_repo"
+				onOpenChange={onOpenChange}
+				onSelect={vi.fn()}
+				open={open}
+			/>
+		);
+		const { rerender } = render(picker(true));
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+		await user.type(screen.getByLabelText("Folder name"), "unfinished");
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(onOpenChange).toHaveBeenCalledWith(false);
+		rerender(picker(false));
+		rerender(picker(true));
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+		expect(screen.getByLabelText("Folder name")).toHaveValue("");
 	});
 });
