@@ -113,5 +113,6 @@ describe("session presentation", () => {
 				}),
 			),
 		).toBe(false);
+		expect(isSessionInIdleStack(sessionWith({ status: "working" }))).toBe(false);
 	});
 });
