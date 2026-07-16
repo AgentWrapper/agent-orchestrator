@@ -766,3 +766,293 @@ cd frontend && npm run build
 - Merge/Resolve 不再返回 501/stub，并按持久化 Provider 路由。
 - OpenAPI spec 与 `frontend/src/api/schema.ts` 同步生成。
 - backend race tests、frontend typecheck/build 和 UI 手工验证全部通过。
+
+## 15. 可执行任务拆分
+
+以下任务是前述 7 个阶段的执行粒度。每个任务都必须遵循 RED -> GREEN -> focused regression -> commit，且不得提前实现后续任务。
+
+### Task 1: Project-level SCM and Coordinator configuration
+
+**Files:**
+- Modify: `backend/internal/domain/projectconfig.go`
+- Modify: `backend/internal/domain/projectconfig_test.go`
+- Modify: `backend/internal/domain/tracker.go`
+- Modify: `backend/internal/domain/tracker_test.go`
+
+**Produces:** `SCMProvider`, `SCMProjectConfig`, `CoordinatorConfig`, and project-level validation/defaulting. Provider, repository, and connection selection belong to each project; there is no daemon-global active provider.
+
+- [ ] Write failing table tests for GitHub defaults, explicit GitLab config, safe connection IDs, subgroup repo paths, tracker inheritance, and tracker/SCM mismatch rejection.
+- [ ] Run `cd backend && go test ./internal/domain` and confirm failures are caused by missing types/validation.
+- [ ] Implement only the domain types, defaults, and validation required by those tests. Allow `github|gitlab`; preserve old projects as `github-default` at resolve/read time without rewriting stored JSON.
+- [ ] Re-run `cd backend && go test ./internal/domain` and commit as `feat: add project-level SCM configuration`.
+
+### Task 2: SCM connection persistence and credential boundary
+
+**Files:**
+- Create: `backend/internal/storage/sqlite/migrations/0024_scm_connections.sql`
+- Create: `backend/internal/storage/sqlite/queries/scm_connections.sql`
+- Create: `backend/internal/storage/sqlite/store/scm_connection_store.go`
+- Create: `backend/internal/storage/sqlite/store/scm_connection_store_test.go`
+- Create: `backend/internal/ports/credentials.go`
+- Create: `backend/internal/adapters/credentials/keyring/store.go`
+- Create: `backend/internal/adapters/credentials/keyring/store_test.go`
+- Modify generated sqlc files only through `npm run sqlc`
+
+**Produces:** metadata-only SCM connection storage and `CredentialStore.Put/Get/Delete`. SQLite stores only `credential_ref`; secrets use the OS credential vault. Headless GitLab can resolve `AO_GITLAB_TOKEN` without persisting it.
+
+- [ ] Write failing migration/store tests for CRUD, CDC triggers, reference conflicts, and proof that token bytes never enter SQLite.
+- [ ] Write failing credential adapter tests using an injected vault backend; cover put/get/delete, missing values, and redacted errors.
+- [ ] Run the focused tests and confirm expected failures.
+- [ ] Add migration `0024`, queries, store, credential port/adapter, run `npm run sqlc`, then re-run focused tests and commit as `feat: persist SCM connection metadata`.
+
+### Task 3: SCM connection service and HTTP API
+
+**Files:**
+- Create: `backend/internal/service/scmconnection/service.go`
+- Create: `backend/internal/service/scmconnection/service_test.go`
+- Create: `backend/internal/httpd/controllers/scm_connections.go`
+- Create: `backend/internal/httpd/controllers/scm_connections_test.go`
+- Modify: `backend/internal/httpd/controllers/dto.go`
+- Modify: `backend/internal/httpd/apispec/specgen/build.go`
+- Modify: `backend/internal/httpd/server.go`
+- Modify: `backend/internal/daemon/daemon.go`
+- Regenerate: `backend/internal/httpd/apispec/openapi.yaml`
+- Regenerate: `frontend/src/api/schema.ts`
+
+**Produces:** connection CRUD/test routes. Read responses expose metadata, `credentialConfigured`, status, and username, never token. Token omission on PUT retains the existing secret; deletion of referenced connections returns 409.
+
+- [ ] Write failing service/controller tests for CRUD, URL validation, write-only token, retain/replace/remove credential behavior, reference conflict, and structured error codes.
+- [ ] Run focused service/controller tests and confirm expected failures.
+- [ ] Implement routes and DTOs, wire dependencies, run `npm run api`, then run `cd backend && go test ./internal/service/scmconnection ./internal/httpd/...`.
+- [ ] Verify generated API responses contain no token field and commit as `feat: add SCM connection API`.
+
+### Task 4: Project provider resolver and GitHub compatibility
+
+**Files:**
+- Create: `backend/internal/scmregistry/resolver.go`
+- Create: `backend/internal/scmregistry/resolver_test.go`
+- Modify: `backend/internal/daemon/scm_wiring.go`
+- Modify: `backend/internal/daemon/tracker_intake_wiring.go`
+- Modify: `backend/internal/daemon/lifecycle_wiring.go`
+
+**Produces:** `ProjectProviderResolver.Resolve(ctx, project)` returning connection-scoped SCM/Tracker/Writer bundles cached by connection version. GitHub default behavior continues through `github-default`.
+
+- [ ] Write failing resolver tests for old-project GitHub fallback, explicit project-level GitHub/GitLab selection, independent connection caches, invalidation after connection update, and missing credentials.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement resolver interfaces and move GitHub construction behind the resolver without changing observer behavior yet.
+- [ ] Run resolver plus daemon/GitHub regressions and commit as `refactor: resolve SCM providers per project`.
+
+### Task 5: GitLab HTTP client and authentication
+
+**Files:**
+- Create: `backend/internal/adapters/scm/gitlab/auth.go`
+- Create: `backend/internal/adapters/scm/gitlab/client.go`
+- Create: `backend/internal/adapters/scm/gitlab/client_test.go`
+
+**Produces:** bounded GitLab REST client using `PRIVATE-TOKEN`, 30-second timeout, encoded project paths, pagination, response-size limits, token invalidation, structured 401/403/404/409/422/429/network/TLS errors, and scrubbed diagnostics.
+
+- [ ] Write failing `httptest` cases for auth header, subgroup encoding, RFC Link and `X-Next-Page`, missing/rotated token, every status mapping, rate-limit retry metadata, size limits, and secret scrubbing.
+- [ ] Run `cd backend && go test ./internal/adapters/scm/gitlab` and confirm missing implementation failures.
+- [ ] Implement the minimal client/auth layer and re-run the focused suite.
+- [ ] Commit as `feat: add GitLab API client`.
+
+### Task 6: GitLab issue tracker
+
+**Files:**
+- Create: `backend/internal/adapters/tracker/gitlab/tracker.go`
+- Create: `backend/internal/adapters/tracker/gitlab/tracker_test.go`
+- Modify: `backend/internal/domain/tracker.go`
+
+**Produces:** `ports.Tracker` for `GET /projects/:encoded/issues/:iid`, paginated issue list with `scope=all`, opened/closed state, assignee (`username`, `*`, `none`), all-label matching, confidential 403/404 non-disclosure, and canonical host/project/IID IDs.
+
+- [ ] Write failing tracker contract tests for get/list/preflight, subgroup paths, filters, pagination, labels, confidential issues, rate limit, and canonical ID round trips.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement `ports.Tracker`, reusing the GitLab client without leaking GitLab DTOs.
+- [ ] Run tracker tests and commit as `feat: add GitLab issue tracker`.
+
+### Task 7: Multi-provider issue intake
+
+**Files:**
+- Modify: `backend/internal/observe/trackerintake/observer.go`
+- Modify: `backend/internal/observe/trackerintake/observer_test.go`
+- Modify: `backend/internal/daemon/tracker_intake_wiring.go`
+- Modify: `frontend/src/renderer/components/IntakeFields.tsx`
+- Modify: `frontend/src/renderer/components/IntakeFields.test.tsx`
+
+**Produces:** intake resolves the project's SCM connection/provider, derives provider-neutral repo keys, supports GitLab filters, and preserves durable IssueID dedup across restarts.
+
+- [ ] Write failing observer/UI tests for mixed GitHub/GitLab projects, inherited provider, subgroup preview, assignee/labels, confidential issues, restart dedup, and 20-issue scans.
+- [ ] Run focused Go and frontend tests and confirm expected failures.
+- [ ] Implement provider routing and provider-neutral repo preview without changing direct Worker issue-context trust boundaries.
+- [ ] Re-run focused tests and commit as `feat: route issue intake by project provider`.
+
+### Task 8: GitLab MR parsing, discovery, detail, and diff stats
+
+**Files:**
+- Create: `backend/internal/adapters/scm/gitlab/provider.go`
+- Create: `backend/internal/adapters/scm/gitlab/observer_provider.go`
+- Create: `backend/internal/adapters/scm/gitlab/normalize.go`
+- Create: `backend/internal/adapters/scm/gitlab/provider_test.go`
+- Modify: `backend/internal/ports/scm.go`
+
+**Produces:** GitLab remote/MR ref parsing, open MR discovery, fork-safe branch ownership, normalized detail and truthful diff stats with `DiffStatsComplete`.
+
+- [ ] Write failing tests for all HTTPS/SSH/path/ref forms, nested groups, wrong host, fork MR attribution, state/SHA/branch mapping, binary diffs, truncated diffs, and incomplete-stat signaling.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement parsing/discovery/detail/raw-diff normalization with bounded four-request concurrency per connection.
+- [ ] Run focused tests and commit as `feat: observe GitLab merge requests`.
+
+### Task 9: GitLab pipelines, jobs, and failed logs
+
+**Files:**
+- Modify: `backend/internal/adapters/scm/gitlab/observer_provider.go`
+- Modify: `backend/internal/adapters/scm/gitlab/normalize.go`
+- Modify: `backend/internal/adapters/scm/gitlab/provider_test.go`
+
+**Produces:** latest head-SHA pipeline selection, branch fallback, job/check normalization, aggregate CI state, synthetic revision, and bounded 20-line failed trace tail with invalid UTF-8 and secret scrubbing.
+
+- [ ] Write failing tests for no/old/current pipeline, every documented job state, retried/manual/child jobs, aggregate priority, trace 403/404/oversize/invalid UTF-8, and log-tail scrubbing.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement only CI/job/log behavior and re-run focused tests.
+- [ ] Commit as `feat: map GitLab pipelines and jobs`.
+
+### Task 10: GitLab approvals, discussions, and mergeability
+
+**Files:**
+- Modify: `backend/internal/adapters/scm/gitlab/observer_provider.go`
+- Modify: `backend/internal/adapters/scm/gitlab/normalize.go`
+- Modify: `backend/internal/adapters/scm/gitlab/provider_test.go`
+
+**Produces:** approval decisions, bounded/paginated discussions, bot/system filtering, unresolved human threads, provider blockers, behind/conflict status, and ready-to-merge only when every required condition is satisfied.
+
+- [ ] Write failing tests for approvals-left, requested changes, unresolved/resolved/system/bot discussions, partial windows, conflict, need-rebase, checking, draft, and strict ready-to-merge gating.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement review and mergeability normalization, then re-run focused tests.
+- [ ] Commit as `feat: map GitLab reviews and mergeability`.
+
+### Task 11: Multi-provider SCM observer
+
+**Files:**
+- Modify: `backend/internal/observe/scm/observer.go`
+- Modify: `backend/internal/observe/scm/observer_test.go`
+- Modify: `backend/internal/daemon/scm_wiring.go`
+
+**Produces:** subject discovery resolves provider per project, groups batches by connection/repo, maintains independent backoff/revision state, and supports GitHub and GitLab simultaneously.
+
+- [ ] Write failing observer tests for mixed providers, no cross-connection batches, provider switch on next poll, independent 429 backoff, 20 workers without cross-attribution, and ten-minute full reconciliation.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Refactor observer/provider resolution without changing normalized persistence/lifecycle contracts.
+- [ ] Run SCM observer, lifecycle, and both adapter suites; commit as `feat: observe SCM per project connection`.
+
+### Task 12: Provider-neutral claim and SCM writers/actions
+
+**Files:**
+- Modify: `backend/internal/service/session/claim_pr.go`
+- Modify: `backend/internal/service/session/claim_pr_test.go`
+- Modify: `backend/internal/service/pr/action_service.go`
+- Modify: `backend/internal/service/pr/action_service_test.go`
+- Modify: `backend/internal/ports/outbound.go`
+- Create: `backend/internal/adapters/scm/gitlab/writer.go`
+- Create: `backend/internal/adapters/scm/gitlab/writer_test.go`
+- Modify: `backend/internal/adapters/scm/github/provider.go`
+- Modify: `backend/internal/daemon/lifecycle_wiring.go`
+
+**Produces:** provider-neutral change ref parsing, persisted-provider routing, same host/repo checks, GitHub/GitLab writers, SHA-guarded squash merge, reply/resolve thread, and real PR Action Service wiring without 501 stubs.
+
+- [ ] Write failing tests for GitHub/GitLab URL/native/numeric claims, wrong host/repo, takeover, stale SHA, merge preconditions, wrong thread, squash merge, and provider routing.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement `SCMWriter` and action wiring, preserving explicit merge authorization.
+- [ ] Run session/pr/controller/GitHub/GitLab tests and commit as `feat: route PR and MR actions by provider`.
+
+### Task 13: Provider-neutral review publication
+
+**Files:**
+- Modify: `backend/internal/review/planner.go`
+- Modify: `backend/internal/review/planner_test.go`
+- Modify: `backend/internal/service/review/review.go`
+- Modify: `backend/internal/service/review/review_test.go`
+- Modify: `backend/internal/cli/review.go`
+- Modify: `backend/internal/cli/review_test.go`
+
+**Produces:** `ao review publish --session <worker> --reviews -`; service publishes GitHub reviews or GitLab summary notes/inline resolvable discussions through the project resolver, without provider CLI commands or token exposure.
+
+- [ ] Write failing planner/service/CLI tests for stdin payload validation, GitHub/GitLab routing, summary and inline findings, reply+resolve reuse, publication failure retention, and no `gh api`/`glab` in prompts.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement provider-neutral publication and update reviewer prompts.
+- [ ] Re-run focused tests and commit as `feat: publish reviews through SCM providers`.
+
+### Task 14: Desktop project-level SCM settings
+
+**Files:**
+- Create: `frontend/src/renderer/components/SCMConnectionFields.tsx`
+- Create: `frontend/src/renderer/components/SCMConnectionFields.test.tsx`
+- Create: `frontend/src/renderer/hooks/useSCMConnections.ts`
+- Create: `frontend/src/renderer/lib/scm-repo.ts`
+- Create: `frontend/src/renderer/lib/scm-repo.test.ts`
+- Modify: `frontend/src/renderer/components/ProjectSettingsForm.tsx`
+- Modify: `frontend/src/renderer/components/CreateProjectFlow.tsx`
+
+**Produces:** per-project GitHub/GitLab selection and connection choice in create/settings flows, self-hosted URL/API derivation, write-only token input, configured/replace/remove states, structured test results, repo override/preview, and provider-aware PR/MR wording.
+
+- [ ] Write failing component/parser tests for GitHub defaults, GitLab nested repo, connection create/select, HTTPS enforcement, API derivation, token write-only behavior, provider switching, all error statuses, and long text layout.
+- [ ] Run focused Vitest tests and confirm expected failures.
+- [ ] Implement the minimal UI using generated API types and existing compact form primitives; token must never enter query cache, telemetry, persistent browser storage, or read responses.
+- [ ] Run focused tests, typecheck, build, and commit as `feat: configure SCM per project`.
+
+### Task 15: Coordinator durable inbox, service, API, and CLI
+
+**Files:**
+- Create: `backend/internal/storage/sqlite/migrations/0025_coordinator_events.sql`
+- Create: `backend/internal/storage/sqlite/queries/coordinator_events.sql`
+- Create: `backend/internal/storage/sqlite/store/coordinator_event_store.go`
+- Create: `backend/internal/storage/sqlite/store/coordinator_event_store_test.go`
+- Create: `backend/internal/service/coordinator/service.go`
+- Create: `backend/internal/service/coordinator/service_test.go`
+- Create: `backend/internal/httpd/controllers/coordinator.go`
+- Create: `backend/internal/httpd/controllers/coordinator_test.go`
+- Create: `backend/internal/cli/coordinator.go`
+- Create: `backend/internal/cli/coordinator_test.go`
+
+**Produces:** deduplicated pending/leased/acknowledged/dead-letter events, atomic batches, project-scoped orchestrator authorization, inbox/ack/manual-wake HTTP routes, and `ao coordinator` commands.
+
+- [ ] Write failing migration/store/service/API/CLI tests for dedup, lease ownership/expiry, ACK authorization, Worker refusal, dead-letter, crash windows, and safe normalized summaries.
+- [ ] Run focused tests and confirm expected failures.
+- [ ] Implement storage/service/routes/CLI, run `npm run sqlc` and `npm run api`, then re-run focused tests.
+- [ ] Commit as `feat: add durable coordinator inbox`.
+
+### Task 16: Coordinator event production and wake supervisor
+
+**Files:**
+- Create: `backend/internal/observe/coordinator/supervisor.go`
+- Create: `backend/internal/observe/coordinator/supervisor_test.go`
+- Modify: `backend/internal/lifecycle/manager.go`
+- Modify: `backend/internal/lifecycle/manager_test.go`
+- Modify: `backend/internal/observe/trackerintake/observer.go`
+- Modify: `backend/internal/sessionguard/guard.go`
+- Modify: `backend/internal/sessionguard/guard_test.go`
+- Modify: `backend/internal/session_manager/prompt.go`
+- Modify: `backend/internal/daemon/daemon.go`
+
+**Produces:** durable worker/SCM/intake events, five-second batching, 30-second reconcile/cooldown, 60-second leases, three-attempt dead-letter, active/idle/waiting-input wake guard, blocked deferral, coordinator ensure/restore/spawn, fixed safe wake message, and prompt ACK instructions.
+
+- [ ] Write failing tests for every event/dedup key, 20-event single batch, blocked Coordinator, dead restore/spawn, enqueue/paste crash windows, ACK/no-ACK retry, dead-letter notification, and no Coordinator self-loop.
+- [ ] Run focused tests (including race) and confirm expected failures.
+- [ ] Implement producers, supervisor, guard, daemon wiring, and prompt rules without embedding external text in wake messages.
+- [ ] Run `cd backend && go test -race ./internal/observe/coordinator ./internal/lifecycle ./internal/sessionguard ./internal/session_manager` and commit as `feat: wake coordinators from durable events`.
+
+### Task 17: Parity E2E, internal instance smoke, and status docs
+
+**Files:**
+- Create or modify focused contract tests under GitHub/GitLab adapters and `backend/internal/integration/`
+- Modify: `docs/STATUS.md`
+- Modify: `docs/architecture.md`
+- Modify: `frontend/src/landing/content/docs/plugins/scm/gitlab.mdx`
+- Modify: `frontend/src/landing/content/docs/plugins/trackers/gitlab.mdx`
+
+**Produces:** shared adapter contract coverage, mixed-provider daemon verification, 20-worker attribution/wake burst, token-safe internal GitLab smoke evidence, final generated artifacts, and documentation that matches shipped behavior.
+
+- [ ] Add failing integration/contract tests for the remaining completion-definition gaps and verify they fail for the expected missing behavior.
+- [ ] Complete only the integration fixes needed for those tests; run `npm run api` after any DTO change.
+- [ ] Inject the approved test credential only through `AO_GITLAB_TOKEN`, validate `/user` and one readable project/MR/Issue against the documented self-hosted API, and record only redacted status/capability evidence.
+- [ ] Run `npm run lint`, `npm run frontend:typecheck`, `cd backend && go test -race ./...`, `cd frontend && npm test -- --run`, and `cd frontend && npm run build`; verify no tracked file except the explicitly approved requirements section contains the token.
+- [ ] Visually verify Project Settings/create flow in the Electron desktop and commit as `test: verify GitLab provider parity`.
