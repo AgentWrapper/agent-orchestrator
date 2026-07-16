@@ -35,16 +35,14 @@ function setupBridge() {
 				isLoading: false,
 			};
 		},
-		ensure: vi.fn(
-			async (sessionId: string): Promise<BrowserNavState> => ({
-				viewId: `42:${sessionId}`,
-				url: "",
-				title: "",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		),
+		ensure: vi.fn(async (sessionId: string): Promise<BrowserNavState> => ({
+			viewId: `42:${sessionId}`,
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		})),
 		setBounds: vi.fn(),
 		capture: vi.fn(async () => "data:image/jpeg;base64,snapshot"),
 		requestMirror: vi.fn(async () => false),

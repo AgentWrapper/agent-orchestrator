@@ -4,9 +4,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 export type RestoreSessionResult =
-	| { status: "success" }
-	| { status: "not_resumable" }
-	| { status: "error"; message: string };
+	{ status: "success" } | { status: "not_resumable" } | { status: "error"; message: string };
 
 export function useRestoreSession(): (sessionId: string) => Promise<RestoreSessionResult> {
 	const queryClient = useQueryClient();
