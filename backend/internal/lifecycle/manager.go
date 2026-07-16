@@ -125,9 +125,11 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 	})
 }
 
-// ApplyActivitySignal records an authoritative agent activity signal.
+// ApplyActivitySignal records an authoritative agent activity signal and any
+// native agent session id carried alongside it. Metadata-only hooks leave the
+// existing activity and first-signal facts untouched.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
-	if !s.Valid {
+	if !s.Valid && s.AgentSessionID == "" {
 		return nil
 	}
 	var intent *ports.NotificationIntent
@@ -152,10 +154,25 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// rule, while their tracking side effects still land. Untagged signals
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
-	s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
-	if !s.Valid {
+	metadataChanged := s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID
+	if s.Valid {
+		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
+	}
+	if !s.Valid && !metadataChanged {
 		m.mu.Unlock()
 		return nil
+	}
+	if !s.Valid {
+		rec.Metadata.AgentSessionID = s.AgentSessionID
+		rec.UpdatedAt = now
+		err := m.store.UpdateSession(ctx, rec)
+		m.mu.Unlock()
+		return err
+	}
+	if metadataChanged {
+		// Fold metadata into rec before copying it into next below, so the
+		// activity and resume handle land in one store update.
+		rec.Metadata.AgentSessionID = s.AgentSessionID
 	}
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
@@ -167,6 +184,12 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameActivity(rec.Activity, act) && !rec.FirstSignalAt.IsZero() {
+		if metadataChanged {
+			rec.UpdatedAt = now
+			err := m.store.UpdateSession(ctx, rec)
+			m.mu.Unlock()
+			return err
+		}
 		m.mu.Unlock()
 		return nil
 	}

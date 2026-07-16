@@ -413,11 +413,13 @@ type ClaimPRResponse struct {
 // specific approved tool finishes. Absent on old CLIs and on adapters whose
 // payloads carry no tool identity — the signal then keeps its plain
 // state-only semantics.
+// AgentSessionID may arrive without State on metadata-only SessionStart hooks.
 type SetActivityRequest struct {
-	State     string `json:"state" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook."`
-	Event     string `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
-	ToolName  string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
-	ToolUseID string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	State          string `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
+	Event          string `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
+	ToolName       string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
+	ToolUseID      string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.

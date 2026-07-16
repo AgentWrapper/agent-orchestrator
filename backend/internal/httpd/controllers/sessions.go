@@ -459,10 +459,17 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := domain.ActivityState(in.State)
-	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
-	default:
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
+	if state != "" {
+		switch state {
+		case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
+		default:
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
+			return
+		}
+	}
+	agentSessionID := capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.AgentSessionID)))
+	if state == "" && agentSessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ACTIVITY_OR_SESSION_ID_REQUIRED", "Activity state or agent session ID is required", nil)
 		return
 	}
 	// The correlation fields ride the same lenient decode: absent on old CLIs.
@@ -471,11 +478,12 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	// never match its pre/post counterpart, so overlong values are dropped by
 	// the CLI; the cap here is defense against non-AO callers).
 	sig := ports.ActivitySignal{
-		Valid:     true,
-		State:     state,
-		Event:     capActivityMeta(domain.SanitizeControlChars(in.Event)),
-		ToolName:  capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
-		ToolUseID: capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		Valid:          state != "",
+		State:          state,
+		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		AgentSessionID: agentSessionID,
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {
