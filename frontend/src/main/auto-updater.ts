@@ -11,6 +11,7 @@ import {
 	type UpdateStatus,
 } from "./update-settings";
 import { evaluateEscalation } from "./escalation-evaluator";
+import type { TFunction } from "i18next";
 
 // configureFeed sets the update channel on electron-updater. The repo/owner
 // are loaded automatically from app-update.yml (written by forge.config.ts's
@@ -272,16 +273,16 @@ export function quitAndInstallUpdate(): void {
 
 // ensureUpdatePrefs prompts once (first run, before any settings file exists)
 // for auto-update opt-in + channel, with a nightly instability disclaimer.
-export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
+export async function ensureUpdatePrefs(stateDir: string, t: TFunction): Promise<void> {
 	if (existsSync(path.join(stateDir, UPDATE_SETTINGS_FILE_NAME))) return;
 
 	const optIn = await dialog.showMessageBox({
 		type: "question",
-		buttons: ["Enable auto-updates", "Not now"],
+		buttons: [t("native.updates.enable"), t("native.updates.notNow")],
 		defaultId: 0,
 		cancelId: 1,
-		message: "Keep Agent Orchestrator up to date automatically?",
-		detail: "You can change this later in Settings.",
+		message: t("native.updates.optInMessage"),
+		detail: t("native.updates.optInDetail"),
 	});
 	if (optIn.response !== 0) {
 		await writeUpdateSettings(stateDir, { enabled: false, channel: "latest", nightlyAck: false });
@@ -290,11 +291,11 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
 
 	const chan = await dialog.showMessageBox({
 		type: "question",
-		buttons: ["Stable", "Nightly"],
+		buttons: [t("native.updates.stable"), t("native.updates.nightly")],
 		defaultId: 0,
 		cancelId: 0,
-		message: "Which update channel?",
-		detail: "Stable is released and tested. Nightly is the newest daily build.",
+		message: t("native.updates.channelMessage"),
+		detail: t("native.updates.channelDetail"),
 	});
 	if (chan.response !== 1) {
 		await writeUpdateSettings(stateDir, { enabled: true, channel: "latest", nightlyAck: false });
@@ -303,11 +304,11 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
 
 	const ack = await dialog.showMessageBox({
 		type: "warning",
-		buttons: ["I understand, use Nightly", "Use Stable instead"],
+		buttons: [t("native.updates.ackNightly"), t("native.updates.useStable")],
 		defaultId: 1,
 		cancelId: 1,
-		message: "Nightly builds can be unstable",
-		detail: "Nightly is built every day and may be broken or lose data. Only use it if you are comfortable with that.",
+		message: t("native.updates.warningMessage"),
+		detail: t("native.updates.warningDetail"),
 	});
 	await writeUpdateSettings(
 		stateDir,

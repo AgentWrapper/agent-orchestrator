@@ -64,9 +64,14 @@ import {
 } from "./main/remote-server-config";
 import { resolveRemoteClientBuild, resolveRemoteClientIdentity } from "./main/remote-client-build";
 import { createUpdateIpcHandlers } from "./main/update-ipc";
-import { mainI18n } from "./main/i18n";
+import { mainI18n, mainT } from "./main/i18n";
 import { LocaleController } from "./main/locale-controller";
 import { readLocalePreference, writeLocalePreference } from "./main/locale-settings";
+import {
+	buildAboutDialogOptions,
+	rebuildApplicationMenu,
+	resolveDirectoryChooserTitle,
+} from "./main/application-menu";
 import type { LocalePreference, LocaleSnapshot } from "./shared/locale";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -276,44 +281,6 @@ function createRemoteClientRuntime(): RemoteClientRuntime {
 	});
 }
 
-// Role-based menu installed on Windows where the native menu bar is hidden. The
-// bar stays out of sight, but the roles keep their accelerators alive (Reload,
-// DevTools, zoom, full screen, edit commands) and each acts on the *focused*
-// webContents — including a BrowserView panel — matching native menu behaviour.
-function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate([
-		{
-			label: "Edit",
-			submenu: [
-				{ role: "undo" },
-				{ role: "redo" },
-				{ type: "separator" },
-				{ role: "cut" },
-				{ role: "copy" },
-				{ role: "paste" },
-				{ role: "selectAll" },
-			],
-		},
-		{
-			label: "View",
-			submenu: [
-				{ role: "reload" },
-				{ role: "toggleDevTools" },
-				{ type: "separator" },
-				{ role: "resetZoom" },
-				{ role: "zoomIn" },
-				{ role: "zoomOut" },
-				{ type: "separator" },
-				{ role: "togglefullscreen" },
-			],
-		},
-		{
-			label: "Window",
-			submenu: [{ role: "minimize" }, { role: "close" }],
-		},
-	]);
-}
-
 function createWindow(): void {
 	browserViewHost?.dispose();
 	browserViewHost = null;
@@ -360,7 +327,6 @@ function createWindow(): void {
 	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
 	// keep their native menus.
 	if (process.platform === "win32") {
-		Menu.setApplicationMenu(buildWindowsAppMenu());
 		mainWindow.setMenuBarVisibility(false);
 	}
 
@@ -1054,6 +1020,28 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 	}
 });
 
+function showAboutDialog(): void {
+	const options = buildAboutDialogOptions({
+		productName: clientIdentity.productName,
+		version: app.getVersion(),
+		t: mainT,
+	});
+	if (mainWindow) {
+		void dialog.showMessageBox(mainWindow, options);
+		return;
+	}
+	void dialog.showMessageBox(options);
+}
+
+function rebuildNativeMenu(): void {
+	rebuildApplicationMenu({
+		menu: Menu,
+		platform: process.platform,
+		productName: clientIdentity.productName,
+		t: mainT,
+	});
+}
+
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 
@@ -1101,13 +1089,7 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "app.quit":
 			return app.quit();
 		case "help.about":
-			void dialog.showMessageBox(win, {
-				type: "info",
-				title: "About Agent Orchestrator",
-				message: "Agent Orchestrator",
-				detail: `Version ${app.getVersion()}`,
-				buttons: ["OK"],
-			});
+			showAboutDialog();
 			return;
 	}
 });
@@ -1274,7 +1256,7 @@ async function scanImportFolder(rootPath: string, mode: "project" | "workspace")
 }
 
 ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
-	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
+	return chooseDirectory(resolveDirectoryChooserTitle(title, mainT));
 });
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
 	await ensureShellEnv();
@@ -1358,7 +1340,7 @@ function initAutoUpdates(): void {
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);
-	void ensureUpdatePrefs(stateDir).then(() => startAutoUpdates(stateDir));
+	void ensureUpdatePrefs(stateDir, mainT).then(() => startAutoUpdates(stateDir));
 }
 
 // Resolve the bundle path `ao start` will later `open` and stat as a usable app.
@@ -1450,15 +1432,14 @@ app.whenReady().then(async () => {
 		readPreference: readLocalePreference,
 		writePreference: writeLocalePreference,
 		changeLanguage: (locale) => mainI18n.changeLanguage(locale),
-		rebuildMenus: () => {
-			if (process.platform === "win32") Menu.setApplicationMenu(buildWindowsAppMenu());
-		},
+		rebuildMenus: rebuildNativeMenu,
 	});
 	await localeController.initialize();
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
 	createWindow();
+	rebuildNativeMenu();
 	void startDaemon();
 	initAutoUpdates();
 
