@@ -38,12 +38,24 @@ describe("CenterPane toolbar session label", () => {
 	});
 
 	it("defaults orchestrators to the desktop conversation view and keeps the terminal available", () => {
-		render(<CenterPane session={{ ...worker, id: "sess-orch", kind: "orchestrator" }} theme="dark" daemonReady />);
+		render(
+			<CenterPane
+				session={{ ...worker, id: "sess-orch", kind: "orchestrator" }}
+				projectSessions={[worker]}
+				theme="dark"
+				daemonReady
+			/>,
+		);
 
 		expect(screen.getByLabelText("Orbit profile, powered by Claude")).toBeInTheDocument();
 		expect(screen.getByAltText("Claude logo")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Show conversation" })).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByTestId("terminal-body")).toHaveAttribute("data-view-mode", "conversation");
+		expect(screen.getByRole("button", { name: "Show review board" })).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "Show review board" }));
+		expect(screen.getByRole("button", { name: "Show review board" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByTestId("terminal-body")).toHaveAttribute("data-view-mode", "review");
 
 		fireEvent.click(screen.getByRole("button", { name: "Show terminal" }));
 		expect(screen.getByRole("button", { name: "Show terminal" })).toHaveAttribute("aria-pressed", "true");
@@ -62,6 +74,7 @@ describe("CenterPane toolbar session label", () => {
 
 		expect(screen.getByText("Suggestion discussion")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Show conversation" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.queryByRole("button", { name: "Show review board" })).not.toBeInTheDocument();
 		expect(screen.getByTestId("terminal-body")).toHaveAttribute("data-view-mode", "conversation");
 	});
 

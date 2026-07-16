@@ -10,8 +10,9 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { OrchestratorConversation } from "./OrchestratorConversation";
+import { OrchestratorReviewBoard } from "./OrchestratorReviewBoard";
 
-export type OrchestratorViewMode = "conversation" | "terminal";
+export type OrchestratorViewMode = "conversation" | "review" | "terminal";
 
 type TerminalPaneProps = {
 	session?: WorkspaceSession;
@@ -21,6 +22,7 @@ type TerminalPaneProps = {
 	fontSize: number;
 	viewMode?: OrchestratorViewMode;
 	onViewModeChange?: (mode: OrchestratorViewMode) => void;
+	reviewSessions?: WorkspaceSession[];
 };
 
 export function TerminalPane({
@@ -31,11 +33,22 @@ export function TerminalPane({
 	fontSize,
 	viewMode = "terminal",
 	onViewModeChange,
+	reviewSessions = [],
 }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
 
 	if (!window.ao) {
+		if (viewMode === "review" && session) {
+			return (
+				<OrchestratorReviewBoard
+					daemonReady={false}
+					orchestrator={session}
+					sessions={reviewSessions}
+					theme={theme}
+				/>
+			);
+		}
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		const lines =
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);
@@ -78,6 +91,7 @@ export function TerminalPane({
 			terminalTarget={terminalTarget}
 			viewMode={viewMode}
 			onViewModeChange={onViewModeChange}
+			reviewSessions={reviewSessions}
 		/>
 	);
 }
@@ -159,6 +173,7 @@ function AttachedTerminal({
 	fontSize,
 	viewMode = "terminal",
 	onViewModeChange,
+	reviewSessions = [],
 }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
@@ -181,6 +196,7 @@ function AttachedTerminal({
 	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
 	const supportsConversation = session?.kind === "orchestrator" || isSuggestionDiscussionSession(session);
 	const conversationMode = terminalTarget?.kind !== "reviewer" && supportsConversation && viewMode === "conversation";
+	const reviewMode = terminalTarget?.kind !== "reviewer" && session?.kind === "orchestrator" && viewMode === "review";
 
 	useEffect(() => {
 		setTranscriptLines([]);
@@ -296,8 +312,8 @@ function AttachedTerminal({
 			)}
 			<div className="relative min-h-0 flex-1">
 				<div
-					aria-hidden={conversationMode || undefined}
-					className={`absolute inset-0 transition-opacity ${conversationMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
+					aria-hidden={conversationMode || reviewMode || undefined}
+					className={`absolute inset-0 transition-opacity ${conversationMode || reviewMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
 				>
 					<XtermTerminal
 						ariaLabel="Session terminal"
@@ -319,7 +335,15 @@ function AttachedTerminal({
 						onTerminalInput={terminal ? (input) => terminal.sendUserInput(input, "shortcut") : undefined}
 					/>
 				)}
-				{showEmptyState && !conversationMode && (
+				{reviewMode && session ? (
+					<OrchestratorReviewBoard
+						daemonReady={daemonReady}
+						orchestrator={session}
+						sessions={reviewSessions}
+						theme={theme}
+					/>
+				) : null}
+				{showEmptyState && !conversationMode && !reviewMode && (
 					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
 						<div className="text-center">
 							<div className="text-terminal">{emptyStateTitle}</div>

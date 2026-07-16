@@ -51,6 +51,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const projectSessions = session
+		? (workspaces.find((workspace) => workspace.id === session.workspaceId)?.sessions ?? [])
+		: [];
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = !isOrchestrator;
@@ -193,6 +196,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						session={session}
 						terminalTarget={terminalTarget}
 						theme={theme}
+						projectSessions={projectSessions}
 					/>
 				</ResizablePanel>
 				{hasInspector ? (

@@ -1,4 +1,4 @@
-import { ChevronLeft, Maximize2, MessageSquareText, Minimize2, Shield, SquareTerminal } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Maximize2, MessageSquareText, Minimize2, Shield, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import type { Theme } from "../stores/ui-store";
@@ -17,6 +17,7 @@ type CenterPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	onSelectWorkerTerminal?: () => void;
+	projectSessions?: WorkspaceSession[];
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
@@ -35,7 +36,14 @@ function initialTerminalFontSize(): number {
 	return clampTerminalFontSize(parsed);
 }
 
-export function CenterPane({ session, theme, daemonReady, terminalTarget, onSelectWorkerTerminal }: CenterPaneProps) {
+export function CenterPane({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	onSelectWorkerTerminal,
+	projectSessions = [],
+}: CenterPaneProps) {
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
 	const lastWheelZoomAtRef = useRef(0);
@@ -152,6 +160,18 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 								<MessageSquareText className="size-3.5" aria-hidden="true" />
 								Conversation
 							</button>
+							{isOrchestrator ? (
+								<button
+									aria-label="Show review board"
+									aria-pressed={orchestratorView === "review"}
+									className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-caption font-semibold transition ${orchestratorView === "review" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+									onClick={() => setOrchestratorView("review")}
+									type="button"
+								>
+									<ClipboardCheck className="size-3.5" aria-hidden="true" />
+									Review
+								</button>
+							) : null}
 							<button
 								aria-label="Show terminal"
 								aria-pressed={orchestratorView === "terminal"}
@@ -234,6 +254,7 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 					theme={theme}
 					viewMode={isConversationSession ? orchestratorView : "terminal"}
 					onViewModeChange={setOrchestratorView}
+					reviewSessions={projectSessions}
 				/>
 			</div>
 		</div>
