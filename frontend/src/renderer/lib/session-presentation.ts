@@ -16,8 +16,8 @@ const agentActivityViews: Record<SessionActivityState, AgentActivityView> = {
 	unknown: { state: "unknown", label: "Unknown", tone: "var(--color-text-muted)", breathe: false },
 };
 
-export function getAgentActivityView(activity?: SessionActivity | SessionActivityState | null): AgentActivityView {
-	const state = typeof activity === "string" ? activity : (activity?.state ?? "unknown");
+export function getAgentActivityView(activity?: SessionActivity | null): AgentActivityView {
+	const state = activity?.state ?? "unknown";
 	return agentActivityViews[state] ?? agentActivityViews.unknown;
 }
 
@@ -72,7 +72,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 		dot: "var(--color-working)",
 		dotGlow: true,
 		titleClassName: "text-working",
-		dotClassName: "animate-status-pulse bg-working",
+		dotClassName: "animate-status-pulse motion-reduce:animate-none bg-working",
 	},
 	action: {
 		zone: "action",
@@ -158,10 +158,25 @@ export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneV
 }
 
 export function getSessionDotView(session: Pick<WorkspaceSession, "status">): { className: string } {
-	if (session.status === "ci_failed") {
-		return { className: "bg-error" };
-	}
 	return { className: getAttentionZoneView(session.status).dotClassName };
+}
+
+export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;
+
+export type SessionTimelinePillView = {
+	label: string;
+	tone: string;
+	breathe: boolean;
+};
+
+const sessionTimelinePillViews: Record<SessionTimelinePillStatus, SessionTimelinePillView> = {
+	no_signal: { label: "No Signal", tone: "var(--color-text-muted)", breathe: false },
+	ci_failed: { label: "CI Failed", tone: "var(--color-danger)", breathe: false },
+	changes_requested: { label: "Changes Requested", tone: "var(--color-warning)", breathe: false },
+};
+
+export function getSessionTimelinePillView(status: SessionTimelinePillStatus): SessionTimelinePillView {
+	return sessionTimelinePillViews[status];
 }
 
 export function isSessionInIdleStack(session: Pick<WorkspaceSession, "status" | "activity">): boolean {

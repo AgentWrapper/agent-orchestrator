@@ -9,7 +9,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
-import { getAgentActivityView } from "../lib/session-presentation";
+import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -336,7 +336,7 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 				</span>
 				{session.status === "no_signal" ? (
 					<span className="inline-flex align-middle">
-						<TimelinePill {...ACTIVITY_WARNING_PILL.no_signal} />
+						<TimelinePill {...getSessionTimelinePillView("no_signal")} />
 					</span>
 				) : null}
 				{scmTimelineStates(session).map((state) => (
@@ -391,24 +391,17 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-const ACTIVITY_WARNING_PILL: Record<"no_signal", { label: string; tone: string; breathe: boolean }> = {
-	no_signal: { label: "No Signal", tone: "var(--color-text-muted)", breathe: false },
-};
-
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const SCM_PILL: Record<ScmTimelineState, { label: string; tone: string; breathe: boolean }> = {
-	ci_failed: { label: "CI Failed", tone: "var(--color-danger)", breathe: false },
-	changes_requested: { label: "Changes Requested", tone: "var(--color-warning)", breathe: false },
-	conflict: { label: "Conflict", tone: "var(--color-danger)", breathe: false },
-};
+const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
 
 function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
 	return <TimelinePill {...getAgentActivityView(activity)} />;
 }
 
 function InspectorScmPill({ state }: { state: ScmTimelineState }) {
-	return <TimelinePill {...SCM_PILL[state]} />;
+	if (state === "conflict") return <TimelinePill {...CONFLICT_PILL} />;
+	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
 function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {

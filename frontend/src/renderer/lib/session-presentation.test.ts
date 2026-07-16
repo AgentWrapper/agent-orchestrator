@@ -5,6 +5,7 @@ import {
 	getAttentionZoneView,
 	getSessionDotView,
 	getSessionStatusView,
+	getSessionTimelinePillView,
 	isAgentActivityWorking,
 	isSessionInIdleStack,
 } from "./session-presentation";
@@ -24,6 +25,17 @@ function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 		...overrides,
 	};
 }
+
+const openPr: WorkspaceSession["prs"][number] = {
+	number: 7,
+	url: "https://github.com/acme/app/pull/7",
+	state: "open",
+	ci: "unknown",
+	review: "none",
+	mergeability: "unknown",
+	reviewComments: false,
+	updatedAt: "2026-01-01T00:00:00Z",
+};
 
 describe("session presentation", () => {
 	it.each([
@@ -83,15 +95,16 @@ describe("session presentation", () => {
 	});
 
 	it("uses attention zone only for sidebar dots", () => {
-		expect(
-			getSessionDotView(
-				sessionWith({
-					status: "working",
-					activity: { state: "idle", lastActivityAt: "" },
-				}),
-			).className,
-		).toContain("bg-working");
-		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-error");
+		const workingDotClass = getSessionDotView(
+			sessionWith({
+				status: "working",
+				activity: { state: "idle", lastActivityAt: "" },
+			}),
+		).className;
+
+		expect(workingDotClass).toContain("bg-working");
+		expect(workingDotClass).toContain("motion-reduce:animate-none");
+		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-warning");
 		expect(getSessionDotView(sessionWith({ status: "unknown" })).className).toContain("bg-warning");
 	});
 
@@ -100,8 +113,18 @@ describe("session presentation", () => {
 		expect(
 			isSessionInIdleStack(
 				sessionWith({
+					status: "idle",
+					activity: { state: "active", lastActivityAt: "" },
+					prs: [openPr],
+				}),
+			),
+		).toBe(true);
+		expect(
+			isSessionInIdleStack(
+				sessionWith({
 					status: "working",
 					activity: { state: "idle", lastActivityAt: "" },
+					prs: [openPr],
 				}),
 			),
 		).toBe(true);
@@ -114,5 +137,13 @@ describe("session presentation", () => {
 			),
 		).toBe(false);
 		expect(isSessionInIdleStack(sessionWith({ status: "working" }))).toBe(false);
+	});
+
+	it.each([
+		["no_signal", "No Signal", "var(--color-text-muted)"],
+		["ci_failed", "CI Failed", "var(--color-danger)"],
+		["changes_requested", "Changes Requested", "var(--color-warning)"],
+	] as const)("centralizes the %s timeline pill", (status, label, tone) => {
+		expect(getSessionTimelinePillView(status)).toMatchObject({ label, tone, breathe: false });
 	});
 });
