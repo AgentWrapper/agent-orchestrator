@@ -41,14 +41,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const { theme } = useUiStore();
-	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
+	const isInspectorOpen = useUiStore((state) => state.inspectorOpenBySessionId[sessionId] ?? false);
+	const setInspectorOpen = useUiStore((state) => state.setInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
+	const inspectorPanelMountedRef = useRef(false);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
+	const inspectorViewRef = useRef<InspectorView>("summary");
+	const inspectorViewBySessionRef = useRef<Map<string, InspectorView>>(new Map());
+	const observedPreviewBySessionRef = useRef<Map<string, { revision: number | null; target: string }>>(new Map());
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
@@ -56,7 +61,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const hasInspector = !isOrchestrator;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
-	const revealedPreviewRef = useRef<number | null>(null);
 	const browserView = useBrowserView({
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
@@ -71,24 +75,35 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	});
 
 	useEffect(() => {
+		inspectorViewRef.current = inspectorView;
+	}, [inspectorView]);
+
+	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
-		setInspectorView("summary");
-		revealedPreviewRef.current = null;
+		setInspectorView(inspectorViewBySessionRef.current.get(sessionId) ?? "summary");
+		return () => {
+			inspectorViewBySessionRef.current.set(sessionId, inspectorViewRef.current);
+		};
 	}, [sessionId]);
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); surface the result
 	// in the inspector rail's Browser tab (opening the rail if collapsed), not the
-	// center pane. Tracked per preview revision so re-revealing fires on every
-	// `ao preview` (even a re-run of the same target) while a manual tab switch
-	// sticks for a given revision. `ao preview clear` (empty url) does not reveal.
+	// center pane. The first preview payload observed for a navigated-to session
+	// is treated as restored daemon state, not a fresh reveal, so switching
+	// sessions never opens the browser on its own. Later revision bumps still
+	// reveal, including `ao preview` re-runs of the same URL.
 	useEffect(() => {
-		const revision = previewRevision ?? 0;
-		if (!previewUrl || revealedPreviewRef.current === revision) return;
-		revealedPreviewRef.current = revision;
+		if (!session || !hasInspector) return;
+		const revision = typeof previewRevision === "number" ? previewRevision : null;
+		const target = previewUrl ?? "";
+		const previous = observedPreviewBySessionRef.current.get(sessionId);
+		if (previous?.revision === revision && previous.target === target) return;
+		observedPreviewBySessionRef.current.set(sessionId, { revision, target });
+		if (!previous || !target) return;
 		setInspectorView("browser");
-		if (!useUiStore.getState().isInspectorOpen) toggleInspector();
-	}, [previewRevision, previewUrl, toggleInspector]);
+		setInspectorOpen(true, sessionId);
+	}, [hasInspector, previewRevision, previewUrl, session, sessionId, setInspectorOpen]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
@@ -105,6 +120,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorDefaultSizeRef = useRef<string | null>(null);
 	if (!hasInspector) {
 		inspectorDefaultSizeRef.current = null;
+		inspectorPanelMountedRef.current = false;
 	} else if (inspectorDefaultSizeRef.current === null) {
 		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : "0%";
 	}
@@ -116,11 +132,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			if (event.key.toLowerCase() !== "b" || !event.shiftKey) return;
 			if (!event.metaKey && !event.ctrlKey) return;
 			event.preventDefault();
-			toggleInspector();
+			toggleInspector(sessionId);
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [hasInspector, toggleInspector]);
+	}, [hasInspector, sessionId, toggleInspector]);
 
 	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
 	// drag-to-collapse all stay in sync. hasInspector must NOT be a dep: when
@@ -133,6 +149,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		const panel = inspectorRef.current;
 		if (!panel) return;
+		if (!inspectorPanelMountedRef.current) {
+			inspectorPanelMountedRef.current = true;
+			return;
+		}
 		if (isInspectorOpen) {
 			panel.expand();
 			// expand() restores the "most recent" size, which is 0 when the panel
@@ -162,15 +182,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-			const open = useUiStore.getState().isInspectorOpen;
+			const open = useUiStore.getState().inspectorOpenBySessionId[sessionId] ?? false;
 			if (size.asPercentage > 0) {
 				window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
-				if (!open) toggleInspector();
+				if (!open) setInspectorOpen(true, sessionId);
 			} else if (open) {
-				toggleInspector();
+				setInspectorOpen(false, sessionId);
 			}
 		},
-		[toggleInspector],
+		[sessionId, setInspectorOpen],
 	);
 
 	if (!session && !workspaceQuery.isLoading) {

@@ -31,6 +31,14 @@ const { workspaces, panels } = vi.hoisted(() => {
 		updatedAt: "2026-06-10T00:00:00Z",
 		prs: [],
 	} satisfies WorkspaceSession;
+	const workerTwo = {
+		...worker,
+		id: "sess-2",
+		title: "do the other thing",
+		branch: "ao/sess-2",
+		previewUrl: "http://localhost:5173/",
+		previewRevision: 4,
+	} satisfies WorkspaceSession;
 	const orchestrator = {
 		...worker,
 		id: "sess-orch",
@@ -38,7 +46,7 @@ const { workspaces, panels } = vi.hoisted(() => {
 		title: "orchestrate",
 	} satisfies WorkspaceSession;
 	const workspaces: WorkspaceSummary[] = [
-		{ id: "proj-1", name: "my-app", path: "/p", type: "main", sessions: [worker, orchestrator] },
+		{ id: "proj-1", name: "my-app", path: "/p", type: "main", sessions: [worker, workerTwo, orchestrator] },
 	];
 	return { workspaces, panels: new Map<string, PanelEntry>() };
 });
@@ -177,7 +185,7 @@ function panelSizes(id: string): unknown[] {
 describe("SessionView", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
-		useUiStore.setState({ isInspectorOpen: true });
+		useUiStore.setState({ isInspectorOpen: true, inspectorOpenBySessionId: { "sess-1": true } });
 		panels.clear();
 		browserDestroy.mockReset();
 	});
@@ -207,14 +215,14 @@ describe("SessionView", () => {
 	});
 
 	it("mounts collapsed and inert when the store says closed", () => {
-		useUiStore.setState({ isInspectorOpen: false });
+		useUiStore.setState({ isInspectorOpen: false, inspectorOpenBySessionId: { "sess-1": false } });
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("inspector")[0]).toBe("0%");
 		const pane = screen.getByTestId("panel-inspector");
 		expect(pane).toHaveAttribute("inert");
 		expect(pane).toHaveAttribute("aria-hidden", "true");
-		expect(panels.get("inspector")!.handle.collapse).toHaveBeenCalled();
+		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
 	});
 
 	it("toggles the inspector with mod+shift+B through the imperative panel API", () => {
@@ -222,16 +230,16 @@ describe("SessionView", () => {
 		const handle = panels.get("inspector")!.handle;
 
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
-		expect(useUiStore.getState().isInspectorOpen).toBe(false);
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(false);
 		expect(handle.collapse).toHaveBeenCalledTimes(1);
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
-		expect(useUiStore.getState().isInspectorOpen).toBe(true);
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(true);
 		expect(handle.expand).toHaveBeenCalled();
 
 		// Plain ⌘B belongs to the sidebar — the inspector must not react.
 		fireEvent.keyDown(window, { key: "b", metaKey: true });
-		expect(useUiStore.getState().isInspectorOpen).toBe(true);
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(true);
 	});
 
 	it("syncs drag resizes back into the store and persists the split", () => {
@@ -242,11 +250,11 @@ describe("SessionView", () => {
 
 		// Dragging past minSize collapses the panel → store follows.
 		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
-		expect(useUiStore.getState().isInspectorOpen).toBe(false);
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(false);
 
 		// Dragging it back open reopens + persists the width.
 		act(() => entry.onResize?.({ asPercentage: 31.5, inPixels: 400 }));
-		expect(useUiStore.getState().isInspectorOpen).toBe(true);
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(true);
 		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
 	});
 
@@ -262,12 +270,12 @@ describe("SessionView", () => {
 
 		// Mount-time/layout event at 0% must not collapse the store…
 		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
-		expect(useUiStore.getState().isInspectorOpen).toBe(true);
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(true);
 
 		// …and a mid-collapse transition frame must not re-open or persist.
-		act(() => useUiStore.getState().toggleInspector());
+		act(() => useUiStore.getState().toggleInspector("sess-1"));
 		act(() => entry.onResize?.({ asPercentage: 12.4, inPixels: 160 }));
-		expect(useUiStore.getState().isInspectorOpen).toBe(false);
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(false);
 		expect(window.localStorage.getItem("ao.inspector.split")).toBeNull();
 	});
 
@@ -284,13 +292,13 @@ describe("SessionView", () => {
 	// inspector" and unwound the route to the error boundary. The panel must
 	// mount already in sync via defaultSize instead.
 	it("mounts the inspector in sync when navigating from an orchestrator session, without the imperative API", () => {
-		useUiStore.setState({ isInspectorOpen: false });
+		useUiStore.setState({ isInspectorOpen: false, inspectorOpenBySessionId: { "sess-1": false } });
 		const { rerender } = render(<SessionView sessionId="sess-orch" />);
 		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
 
 		// Toggled open while on the orchestrator (shell topbar button) — the
 		// panel that mounts later must pick this up from defaultSize alone.
-		act(() => useUiStore.getState().toggleInspector());
+		act(() => useUiStore.getState().toggleInspector("sess-1"));
 		rerender(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
@@ -329,19 +337,37 @@ describe("SessionView", () => {
 
 	it("reveals an `ao preview` URL in the inspector Browser tab, not the center pane", () => {
 		const worker = workspaces[0].sessions[0];
-		worker.previewUrl = "http://localhost:5173/";
 		try {
-			useUiStore.setState({ isInspectorOpen: false });
-			render(<SessionView sessionId="sess-1" />);
+			useUiStore.setState({ isInspectorOpen: false, inspectorOpenBySessionId: { "sess-1": false } });
+			delete worker.previewUrl;
+			delete worker.previewRevision;
+			const { rerender } = render(<SessionView sessionId="sess-1" />);
+			worker.previewUrl = "http://localhost:5173/";
+			worker.previewRevision = 1;
+			rerender(<SessionView sessionId="sess-1" />);
 
 			// Center pane keeps the terminal — the preview must not pop out over it.
 			expect(screen.getByText("terminal center")).toBeInTheDocument();
 			expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
 			// Rail opened and switched to the Browser tab.
-			expect(useUiStore.getState().isInspectorOpen).toBe(true);
+			expect(useUiStore.getState().inspectorOpenBySessionId["sess-1"]).toBe(true);
 			expect(screen.getByRole("button", { name: "pop browser" })).toHaveAttribute("data-view", "browser");
 		} finally {
 			delete worker.previewUrl;
+			delete worker.previewRevision;
 		}
+	});
+
+	it("does not open the browser tab just because a different worker has a stored preview URL", () => {
+		useUiStore.setState({
+			isInspectorOpen: false,
+			inspectorOpenBySessionId: { "sess-1": false, "sess-2": false },
+		});
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+
+		rerender(<SessionView sessionId="sess-2" />);
+
+		expect(useUiStore.getState().inspectorOpenBySessionId["sess-2"]).toBe(false);
+		expect(screen.getByRole("button", { name: "pop browser", hidden: true })).toHaveAttribute("data-view", "summary");
 	});
 });

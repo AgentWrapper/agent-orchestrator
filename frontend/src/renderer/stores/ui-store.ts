@@ -14,7 +14,9 @@ export type WorkbenchTab = "changes" | "files" | "terminal";
 type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
+	/** Legacy/global mirror; worker session routes should use inspectorOpenBySessionId. */
 	isInspectorOpen: boolean;
+	inspectorOpenBySessionId: Record<string, boolean>;
 	theme: Theme;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, string>;
@@ -23,7 +25,8 @@ type UiState = {
 	setTheme: (theme: Theme) => void;
 	toggleTheme: () => void;
 	toggleSidebar: () => void;
-	toggleInspector: () => void;
+	setInspectorOpen: (open: boolean, sessionId?: string) => void;
+	toggleInspector: (sessionId?: string) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
@@ -42,13 +45,14 @@ function initialSidebarOpen() {
 }
 
 function initialInspectorOpen() {
-	return getLocalStorage()?.getItem(inspectorStorageKey) !== "false";
+	return getLocalStorage()?.getItem(inspectorStorageKey) === "true";
 }
 
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	isInspectorOpen: initialInspectorOpen(),
+	inspectorOpenBySessionId: {},
 	theme: resolveTheme(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
@@ -70,11 +74,24 @@ export const useUiStore = create<UiState>((set) => ({
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
 			return { isSidebarOpen };
 		}),
-	toggleInspector: () =>
+	setInspectorOpen: (open, sessionId) =>
+		set((state) => ({
+			isInspectorOpen: open,
+			inspectorOpenBySessionId: sessionId
+				? { ...state.inspectorOpenBySessionId, [sessionId]: open }
+				: state.inspectorOpenBySessionId,
+		})),
+	toggleInspector: (sessionId) =>
 		set((state) => {
-			const isInspectorOpen = !state.isInspectorOpen;
-			getLocalStorage()?.setItem(inspectorStorageKey, String(isInspectorOpen));
-			return { isInspectorOpen };
+			const current = sessionId ? (state.inspectorOpenBySessionId[sessionId] ?? false) : state.isInspectorOpen;
+			const isInspectorOpen = !current;
+			if (!sessionId) getLocalStorage()?.setItem(inspectorStorageKey, String(isInspectorOpen));
+			return {
+				isInspectorOpen,
+				inspectorOpenBySessionId: sessionId
+					? { ...state.inspectorOpenBySessionId, [sessionId]: isInspectorOpen }
+					: state.inspectorOpenBySessionId,
+			};
 		}),
 	setProjectRestarting: (projectId, restarting) =>
 		set((state) => {
