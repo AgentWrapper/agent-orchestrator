@@ -58,6 +58,43 @@ func TestClientDefaultTimeout(t *testing.T) {
 	if client.http.Timeout != 30*time.Second {
 		t.Fatalf("timeout = %s", client.http.Timeout)
 	}
+	injected := NewClient(ClientOptions{HTTPClient: &http.Client{}})
+	if injected.http.Timeout != 30*time.Second {
+		t.Fatalf("injected client timeout = %s", injected.http.Timeout)
+	}
+}
+
+func TestClientRejectsUnsafeBaseURLs(t *testing.T) {
+	t.Parallel()
+	for _, baseURL := range []string{"https://%", "http://gitlab.example.com/api/v4", "https://user:pass@gitlab.example.com/api/v4?token=bad"} {
+		t.Run(baseURL, func(t *testing.T) {
+			client := NewClient(ClientOptions{BaseURL: baseURL, Token: StaticTokenSource("must-not-send")})
+			_, err := client.DoJSON(context.Background(), http.MethodGet, "/user", nil, nil, nil)
+			if !errors.Is(err, ErrInvalidBaseURL) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestClientRefusesCrossOriginRedirectWithoutLeakingToken(t *testing.T) {
+	t.Parallel()
+	var leaked string
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Get("PRIVATE-TOKEN")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer destination.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", destination.URL+"/stolen")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer source.Close()
+	client := NewClient(ClientOptions{BaseURL: source.URL, Token: StaticTokenSource("redirect-secret"), HTTPClient: &http.Client{}})
+	_, err := client.DoJSON(context.Background(), http.MethodGet, "/resource", nil, nil, nil)
+	if err == nil || leaked != "" {
+		t.Fatalf("err = %v, leaked token = %q", err, leaked)
+	}
 }
 
 func TestGetJSONPagesPrefersLinkAndFallsBackToXNextPage(t *testing.T) {
@@ -350,16 +387,41 @@ func TestClientErrorDiagnosticsNeverLeakRequestOrResponseSecrets(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(ClientOptions{BaseURL: server.URL, Token: StaticTokenSource(token)})
-	_, err := client.DoJSON(context.Background(), http.MethodPost, "/resource", url.Values{
+	response, err := client.DoJSON(context.Background(), http.MethodPost, "/resource", url.Values{
 		"access_token": {"query-secret"},
 	}, map[string]string{"token": "request-body-secret"}, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	if len(response.Header) != 0 {
+		t.Fatalf("error response exposed headers: %#v", response.Header)
+	}
 	for _, secret := range []string{token, "body-secret", "password-secret", "query-secret", "request-body-secret", "access_token", "private_token"} {
 		if strings.Contains(err.Error(), secret) {
 			t.Fatalf("error leaked %q: %v", secret, err)
 		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestClientPreservesRequestCancellation(t *testing.T) {
+	t.Parallel()
+	client := NewClient(ClientOptions{
+		BaseURL: "https://gitlab.example.com/api/v4",
+		Token:   StaticTokenSource("token"),
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := client.DoJSON(ctx, http.MethodGet, "/user", nil, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
 	}
 }
 

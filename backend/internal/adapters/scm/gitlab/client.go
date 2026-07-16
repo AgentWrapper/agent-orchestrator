@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -45,6 +46,8 @@ var (
 	ErrResponseTooLarge = errors.New("gitlab scm: response too large")
 	// ErrInvalidPagination identifies an unsafe or malformed next-page link.
 	ErrInvalidPagination = errors.New("gitlab scm: invalid pagination link")
+	// ErrInvalidBaseURL identifies a non-absolute or unsafe GitLab API URL.
+	ErrInvalidBaseURL = errors.New("gitlab scm: invalid base URL")
 )
 
 // RateLimitError carries GitLab's Retry-After backoff hint.
@@ -93,6 +96,7 @@ type Client struct {
 	http         *http.Client
 	tokens       TokenSource
 	baseURL      *url.URL
+	baseErr      error
 	userAgent    string
 	maxJSONBytes int64
 	maxRawBytes  int64
@@ -108,17 +112,14 @@ type Response struct {
 
 // NewClient creates a bounded GitLab REST client.
 func NewClient(opts ClientOptions) *Client {
-	httpClient := opts.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
+	httpClient := hardenedHTTPClient(opts.HTTPClient)
 	base := strings.TrimSpace(opts.BaseURL)
 	if base == "" {
 		base = defaultBaseURL
 	}
 	parsed, err := url.Parse(base)
-	if err != nil {
-		parsed, _ = url.Parse(defaultBaseURL)
+	if err == nil {
+		err = validateBaseURL(parsed)
 	}
 	userAgent := opts.UserAgent
 	if userAgent == "" {
@@ -137,7 +138,7 @@ func NewClient(opts ClientOptions) *Client {
 		now = time.Now
 	}
 	return &Client{
-		http: httpClient, tokens: opts.Token, baseURL: parsed, userAgent: userAgent,
+		http: httpClient, tokens: opts.Token, baseURL: parsed, baseErr: err, userAgent: userAgent,
 		maxJSONBytes: maxJSON, maxRawBytes: maxRaw, now: now,
 	}
 }
@@ -160,6 +161,9 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, query url.Valu
 	}
 	endpoint, err := c.requestURL(path, query)
 	if err != nil {
+		if errors.Is(err, ErrInvalidBaseURL) {
+			return Response{}, err
+		}
 		return Response{}, errors.New("gitlab scm: invalid request path")
 	}
 	response, err := c.do(ctx, method, endpoint, reader, "application/json", c.maxJSONBytes)
@@ -178,6 +182,9 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, query url.Valu
 func (c *Client) GetRaw(ctx context.Context, path string, query url.Values) ([]byte, error) {
 	endpoint, err := c.requestURL(path, query)
 	if err != nil {
+		if errors.Is(err, ErrInvalidBaseURL) {
+			return nil, err
+		}
 		return nil, errors.New("gitlab scm: invalid request path")
 	}
 	response, err := c.do(ctx, http.MethodGet, endpoint, http.NoBody, "*/*", c.maxRawBytes)
@@ -229,6 +236,9 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body 
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return Response{}, ctx.Err()
+		}
 		if isTLSError(err) {
 			return Response{}, ErrTLS
 		}
@@ -243,10 +253,11 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body 
 			c.invalidateToken()
 		}
 		response.Body = nil
+		response.Header = nil
 		return response, classified
 	}
 	if err != nil {
-		return Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone()}, err
+		return Response{StatusCode: resp.StatusCode}, err
 	}
 	return response, nil
 }
@@ -296,8 +307,8 @@ func (c *Client) classify(resp *http.Response) error {
 }
 
 func (c *Client) requestURL(path string, query url.Values) (*url.URL, error) {
-	if c.baseURL == nil || c.baseURL.Scheme == "" || c.baseURL.Host == "" {
-		return nil, errors.New("invalid base URL")
+	if c.baseErr != nil || c.baseURL == nil {
+		return nil, ErrInvalidBaseURL
 	}
 	result := *c.baseURL
 	requestedRawPath := path
@@ -314,6 +325,47 @@ func (c *Client) requestURL(path string, query url.Values) (*url.URL, error) {
 	result.RawQuery = cloneValues(query).Encode()
 	result.Fragment = ""
 	return &result, nil
+}
+
+func hardenedHTTPClient(source *http.Client) *http.Client {
+	client := &http.Client{}
+	if source != nil {
+		*client = *source
+	}
+	if client.Timeout <= 0 {
+		client.Timeout = 30 * time.Second
+	}
+	previous := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) == 0 || !sameOrigin(via[0].URL, req.URL) {
+			return errors.New("gitlab scm: unsafe redirect")
+		}
+		if previous != nil {
+			return previous(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("gitlab scm: too many redirects")
+		}
+		return nil
+	}
+	return client
+}
+
+func validateBaseURL(base *url.URL) error {
+	if base == nil || !base.IsAbs() || base.Host == "" || base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" {
+		return ErrInvalidBaseURL
+	}
+	switch strings.ToLower(base.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		host := base.Hostname()
+		ip := net.ParseIP(host)
+		if strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	}
+	return ErrInvalidBaseURL
 }
 
 func (c *Client) nextPageURL(current *url.URL, header http.Header) (*url.URL, error) {
