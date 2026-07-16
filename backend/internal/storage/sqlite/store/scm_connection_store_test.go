@@ -17,8 +17,8 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
-	sqlitestore "github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
 var deleteLockBarrier struct {
@@ -37,8 +37,55 @@ func testSCMConnection() domain.SCMConnection {
 		WebBaseURL:    "https://gitlab.example.com",
 		APIBaseURL:    "https://gitlab.example.com/api/v4",
 		CredentialRef: "scm/gitlab-work",
+		Status:        domain.SCMConnectionStatusUnknown,
 		CreatedAt:     now,
 		UpdatedAt:     now,
+	}
+}
+
+func TestSCMConnectionValidationPersistsAcrossRestartAndEmitsCDC(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	s, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := testSCMConnection()
+	if err := s.CreateSCMConnection(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated, err := s.UpdateSCMConnectionValidation(ctx, conn.ID, domain.SCMConnectionStatusConnected, "alice"); err != nil || !updated {
+		t.Fatalf("update validation: updated=%v err=%v", updated, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	got, ok, err := reopened.GetSCMConnection(ctx, conn.ID)
+	if err != nil || !ok {
+		t.Fatalf("get after restart: ok=%v err=%v", ok, err)
+	}
+	if got.Status != domain.SCMConnectionStatusConnected || got.Username != "alice" {
+		t.Fatalf("validation after restart = (%q, %q)", got.Status, got.Username)
+	}
+	if got.UpdatedAt != conn.UpdatedAt {
+		t.Fatalf("validation advanced configuration revision from %v to %v", conn.UpdatedAt, got.UpdatedAt)
+	}
+	events, err := reopened.EventsAfter(ctx, before, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != cdc.EventSCMConnectionUpdated {
+		t.Fatalf("validation events = %#v, want one connection update", events)
 	}
 }
 
@@ -109,7 +156,7 @@ func TestSCMConnectionStoreRejectsReferencedDelete(t *testing.T) {
 	}
 
 	ok, err := s.DeleteSCMConnection(ctx, conn.ID)
-	if ok || !errors.Is(err, sqlitestore.ErrSCMConnectionReferenced) {
+	if ok || !errors.Is(err, ports.ErrSCMConnectionReferenced) {
 		t.Fatalf("delete referenced: ok=%v err=%v", ok, err)
 	}
 	if _, exists, getErr := s.GetSCMConnection(ctx, conn.ID); getErr != nil || !exists {
@@ -131,7 +178,7 @@ func TestSCMConnectionDeleteAcrossStoresPreservesReferenceIntegrity(t *testing.T
 		}
 
 		deleted, err := first.DeleteSCMConnection(ctx, conn.ID)
-		if deleted || !errors.Is(err, sqlitestore.ErrSCMConnectionReferenced) {
+		if deleted || !errors.Is(err, ports.ErrSCMConnectionReferenced) {
 			t.Fatalf("delete after reference commit: deleted=%v err=%v", deleted, err)
 		}
 		assertNoDanglingProjectConnection(t, first, conn.ID, "ao")

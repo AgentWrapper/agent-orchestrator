@@ -1,15 +1,15 @@
 -- name: CreateSCMConnection :exec
 INSERT INTO scm_connections (
-    id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    id, provider, display_name, web_base_url, api_base_url, credential_ref, status, username, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetSCMConnection :one
-SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at
+SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, status, username, created_at, updated_at
 FROM scm_connections
 WHERE id = ?;
 
 -- name: ListSCMConnections :many
-SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at
+SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, status, username, created_at, updated_at
 FROM scm_connections
 ORDER BY id;
 
@@ -20,7 +20,15 @@ UPDATE scm_connections SET
     web_base_url = ?,
     api_base_url = ?,
     credential_ref = ?,
+    status = ?,
+    username = ?,
     updated_at = ?
+WHERE id = ?;
+
+-- name: UpdateSCMConnectionValidation :execrows
+UPDATE scm_connections SET
+    status = ?,
+    username = ?
 WHERE id = ?;
 
 -- name: DeleteUnreferencedSCMConnection :execrows

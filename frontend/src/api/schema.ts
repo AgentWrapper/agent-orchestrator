@@ -780,7 +780,7 @@ export interface components {
             id: string;
             /** @enum {string} */
             provider: "github" | "gitlab";
-            token?: null | string;
+            token?: string;
             webBaseUrl?: string;
         };
         DegradedProject: {
@@ -1239,7 +1239,7 @@ export interface components {
             displayName: string;
             /** @enum {string} */
             provider: "github" | "gitlab";
-            token?: null | string;
+            token?: string;
             webBaseUrl?: string;
         };
         WorkspaceRepo: {
@@ -2667,8 +2667,35 @@ export interface operations {
                     "application/json": components["schemas"]["SCMConnectionTestResponse"];
                 };
             };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2687,6 +2714,15 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

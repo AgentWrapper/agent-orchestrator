@@ -51,6 +51,7 @@ session-events.jsonl.*
 .codegraph/
 .cursor/
 .worktrees/
+.superpowers/
 
 # OS
 .DS_Store

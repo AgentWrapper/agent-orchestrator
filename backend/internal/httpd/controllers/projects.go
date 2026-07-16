@@ -6,6 +6,8 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -146,5 +148,15 @@ func decodeJSON(r *http.Request, out any) error {
 func decodeJSONStrict(r *http.Request, out any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(out)
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return errors.New("request body must contain exactly one JSON value")
+	}
+	return nil
 }

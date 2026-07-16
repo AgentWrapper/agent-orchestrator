@@ -167,6 +167,8 @@ type SCMConnection struct {
 	WebBaseURL    string
 	APIBaseURL    string
 	CredentialRef string
+	Status        string
+	Username      string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

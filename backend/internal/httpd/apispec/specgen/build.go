@@ -47,6 +47,9 @@ func Build() ([]byte, error) {
 		// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
 		jsonschema.InterceptDefName(schemaName),
 	)
+	tokenSchema := jsonschema.Schema{}
+	tokenSchema.AddType(jsonschema.String)
+	r.AddTypeMapping(scmconnectionsvc.TokenInput{}, tokenSchema)
 
 	r.Spec.SetTitle("Agent Orchestrator HTTP daemon")
 	r.Spec.SetVersion("0.1.0-route-shell")
@@ -380,9 +383,13 @@ func scmConnectionOperations() []operation {
 			summary: "Test an SCM connection and return normalized identity and capabilities", pathParams: id,
 			resps: []respUnit{
 				{http.StatusOK, controllers.SCMConnectionTestResponse{}},
+				{http.StatusUnauthorized, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusTooManyRequests, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
 			},
 		},
 	}

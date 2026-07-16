@@ -18,6 +18,9 @@ CREATE TABLE scm_connections (
     web_base_url   TEXT NOT NULL,
     api_base_url   TEXT NOT NULL,
     credential_ref TEXT NOT NULL UNIQUE,
+    status          TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (status IN ('unknown', 'connected', 'missing_credential', 'unauthorized', 'forbidden', 'unreachable', 'tls_error', 'rate_limited')),
+    username        TEXT NOT NULL DEFAULT '',
     created_at     TIMESTAMP NOT NULL,
     updated_at     TIMESTAMP NOT NULL
 );
@@ -204,11 +207,17 @@ WHEN OLD.provider <> NEW.provider
     OR OLD.web_base_url <> NEW.web_base_url
     OR OLD.api_base_url <> NEW.api_base_url
     OR OLD.credential_ref <> NEW.credential_ref
+    OR OLD.status <> NEW.status
+    OR OLD.username <> NEW.username
     OR OLD.updated_at <> NEW.updated_at
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NULL, NULL, 'scm_connection_updated',
-        json_object('id', NEW.id, 'provider', NEW.provider), NEW.updated_at);
+        json_object('id', NEW.id, 'provider', NEW.provider),
+        CASE
+            WHEN OLD.status <> NEW.status OR OLD.username <> NEW.username THEN datetime('now')
+            ELSE NEW.updated_at
+        END);
 END;
 -- +goose StatementEnd
 

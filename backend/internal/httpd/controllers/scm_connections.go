@@ -15,6 +15,7 @@ type SCMConnectionsController struct {
 	Svc scmconnectionsvc.Manager
 }
 
+// Register mounts the global SCM connection routes.
 func (c *SCMConnectionsController) Register(r chi.Router) {
 	r.Get("/scm/connections", c.list)
 	r.Post("/scm/connections", c.create)

@@ -215,6 +215,8 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 		{name: "invalid json", body: `{`, wantStatus: 400, wantCode: "INVALID_JSON"},
 
+		{name: "trailing json value", body: `{} {}`, wantStatus: 400, wantCode: "INVALID_JSON"},
+
 		{name: "missing path", body: `{}`, wantStatus: 400, wantCode: "PATH_REQUIRED"},
 
 		{name: "not git", body: `{"path":` + quote(notRepo) + `}`, wantStatus: 400, wantCode: "NOT_A_GIT_REPO"},

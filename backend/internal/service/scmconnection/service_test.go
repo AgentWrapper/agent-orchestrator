@@ -10,18 +10,20 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type fakeStore struct {
-	rows       map[string]domain.SCMConnection
-	createErr  error
-	updateErr  error
-	deleteErr  error
-	updateOK   bool
-	deleteOK   bool
-	createCall []domain.SCMConnection
-	updateCall []domain.SCMConnection
+	rows          map[string]domain.SCMConnection
+	createErr     error
+	updateErr     error
+	updateErrs    []error
+	deleteErr     error
+	validationErr error
+	updateOK      bool
+	deleteOK      bool
+	createCall    []domain.SCMConnection
+	updateCall    []domain.SCMConnection
 }
 
 func newFakeStore() *fakeStore {
@@ -57,6 +59,13 @@ func (f *fakeStore) ListSCMConnections(context.Context) ([]domain.SCMConnection,
 
 func (f *fakeStore) UpdateSCMConnection(_ context.Context, row domain.SCMConnection) (bool, error) {
 	f.updateCall = append(f.updateCall, row)
+	if len(f.updateErrs) > 0 {
+		err := f.updateErrs[0]
+		f.updateErrs = f.updateErrs[1:]
+		if err != nil {
+			return false, err
+		}
+	}
 	if f.updateErr != nil {
 		err := f.updateErr
 		f.updateErr = nil
@@ -69,6 +78,20 @@ func (f *fakeStore) UpdateSCMConnection(_ context.Context, row domain.SCMConnect
 		return false, nil
 	}
 	f.rows[row.ID] = row
+	return true, nil
+}
+
+func (f *fakeStore) UpdateSCMConnectionValidation(_ context.Context, id string, status domain.SCMConnectionStatus, username string) (bool, error) {
+	if f.validationErr != nil {
+		return false, f.validationErr
+	}
+	row, ok := f.rows[id]
+	if !ok {
+		return false, nil
+	}
+	row.Status = status
+	row.Username = username
+	f.rows[id] = row
 	return true, nil
 }
 
@@ -89,12 +112,14 @@ func (f *fakeStore) DeleteSCMConnection(_ context.Context, id string) (bool, err
 }
 
 type fakeCredentials struct {
-	secrets   map[string][]byte
-	putErr    error
-	getErr    error
-	deleteErr error
-	puts      []string
-	deletes   []string
+	secrets       map[string][]byte
+	putErr        error
+	getErr        error
+	deleteErr     error
+	puts          []string
+	deletes       []string
+	deleteCtxErrs []error
+	lastGet       []byte
 }
 
 func newFakeCredentials() *fakeCredentials { return &fakeCredentials{secrets: map[string][]byte{}} }
@@ -115,11 +140,14 @@ func (f *fakeCredentials) Get(_ context.Context, ref string) ([]byte, bool, erro
 		return nil, false, f.getErr
 	}
 	secret, ok := f.secrets[ref]
-	return append([]byte(nil), secret...), ok, nil
+	result := append([]byte(nil), secret...)
+	f.lastGet = result
+	return result, ok, nil
 }
 
-func (f *fakeCredentials) Delete(_ context.Context, ref string) error {
+func (f *fakeCredentials) Delete(ctx context.Context, ref string) error {
 	f.deletes = append(f.deletes, ref)
+	f.deleteCtxErrs = append(f.deleteCtxErrs, ctx.Err())
 	if f.deleteErr != nil {
 		err := f.deleteErr
 		f.deleteErr = nil
@@ -145,10 +173,15 @@ func (f *fakeTester) Test(_ context.Context, row domain.SCMConnection, token []b
 }
 
 func newTestService(st *fakeStore, creds *fakeCredentials, tester ConnectionTester) *Service {
+	return newTestServiceWithLoopbackPolicy(st, creds, tester, false)
+}
+
+func newTestServiceWithLoopbackPolicy(st *fakeStore, creds *fakeCredentials, tester ConnectionTester, allow bool) *Service {
 	return New(Deps{
-		Store:       st,
-		Credentials: creds,
-		Tester:      tester,
+		Store:                 st,
+		Credentials:           creds,
+		Tester:                tester,
+		AllowInsecureLoopback: allow,
 		Clock: func() time.Time {
 			return time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 		},
@@ -157,10 +190,14 @@ func newTestService(st *fakeStore, creds *fakeCredentials, tester ConnectionTest
 }
 
 func createInput(token *string) CreateInput {
-	return CreateInput{
+	in := CreateInput{
 		ID: "gitlab-work", Provider: domain.SCMProviderGitLab,
-		DisplayName: "Work GitLab", Token: token,
+		DisplayName: "Work GitLab",
 	}
+	if token != nil {
+		in.Token = tokenInput(*token)
+	}
+	return in
 }
 
 func TestCreateListGetDefaultsAndKeepsTokenWriteOnly(t *testing.T) {
@@ -196,6 +233,24 @@ func TestCreateListGetDefaultsAndKeepsTokenWriteOnly(t *testing.T) {
 	}
 }
 
+func TestGetAndListReflectPersistedValidation(t *testing.T) {
+	st, creds := seededConnection()
+	row := st.rows["gitlab-work"]
+	row.Status = domain.SCMConnectionStatusConnected
+	row.Username = "alice"
+	st.rows[row.ID] = row
+	svc := newTestService(st, creds, nil)
+
+	got, err := svc.Get(context.Background(), row.ID)
+	if err != nil || got.Status != StatusConnected || got.Username != "alice" {
+		t.Fatalf("get validation = (%#v, %v)", got, err)
+	}
+	list, err := svc.List(context.Background())
+	if err != nil || len(list) != 1 || list[0].Status != StatusConnected || list[0].Username != "alice" {
+		t.Fatalf("list validation = (%#v, %v)", list, err)
+	}
+}
+
 func TestCreateValidationAndDuplicateMapping(t *testing.T) {
 	cases := []struct {
 		name string
@@ -211,6 +266,7 @@ func TestCreateValidationAndDuplicateMapping(t *testing.T) {
 		{name: "query", in: CreateInput{ID: "x", Provider: domain.SCMProviderGitLab, DisplayName: "x", APIBaseURL: "https://gitlab.example.com/api/v4?token=x"}, code: "INVALID_SCM_CONNECTION_URL"},
 		{name: "empty query", in: CreateInput{ID: "x", Provider: domain.SCMProviderGitLab, DisplayName: "x", APIBaseURL: "https://gitlab.example.com/api/v4?"}, code: "INVALID_SCM_CONNECTION_URL"},
 		{name: "fragment", in: CreateInput{ID: "x", Provider: domain.SCMProviderGitLab, DisplayName: "x", APIBaseURL: "https://gitlab.example.com/api/v4#x"}, code: "INVALID_SCM_CONNECTION_URL"},
+		{name: "empty fragment", in: CreateInput{ID: "x", Provider: domain.SCMProviderGitLab, DisplayName: "x", APIBaseURL: "https://gitlab.example.com/api/v4#"}, code: "INVALID_SCM_CONNECTION_URL"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,10 +275,17 @@ func TestCreateValidationAndDuplicateMapping(t *testing.T) {
 		})
 	}
 
-	t.Run("loopback HTTP and derived API", func(t *testing.T) {
+	t.Run("production rejects loopback HTTP", func(t *testing.T) {
 		in := createInput(nil)
 		in.WebBaseURL = "http://127.0.0.1:8080/gitlab/"
-		got, err := newTestService(newFakeStore(), newFakeCredentials(), nil).Create(context.Background(), in)
+		_, err := newTestService(newFakeStore(), newFakeCredentials(), nil).Create(context.Background(), in)
+		assertAPIError(t, err, "INVALID_SCM_CONNECTION_URL")
+	})
+
+	t.Run("development policy allows loopback HTTP and derived API", func(t *testing.T) {
+		in := createInput(nil)
+		in.WebBaseURL = "http://127.0.0.1:8080/gitlab/"
+		got, err := newTestServiceWithLoopbackPolicy(newFakeStore(), newFakeCredentials(), nil, true).Create(context.Background(), in)
 		if err != nil || got.APIBaseURL != "http://127.0.0.1:8080/gitlab/api/v4" {
 			t.Fatalf("create = (%#v, %v)", got, err)
 		}
@@ -266,7 +329,7 @@ func TestUpdateCredentialPresenceSemantics(t *testing.T) {
 			svc := newTestService(st, creds, nil)
 			got, err := svc.Update(context.Background(), "gitlab-work", UpdateInput{
 				Provider: domain.SCMProviderGitLab, DisplayName: "Renamed",
-				WebBaseURL: "https://gitlab.example.com", Token: tc.token,
+				WebBaseURL: "https://gitlab.example.com", Token: tokenInputPtr(tc.token),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -281,6 +344,47 @@ func TestUpdateCredentialPresenceSemantics(t *testing.T) {
 			}
 			if row.APIBaseURL != "https://gitlab.example.com/api/v4" || row.DisplayName != "Renamed" {
 				t.Fatalf("updated row = %#v", row)
+			}
+		})
+	}
+}
+
+func TestUpdateInvalidatesValidationOnlyForConnectionChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		update     UpdateInput
+		wantStatus string
+		wantUser   string
+	}{
+		{
+			name:       "display name retains",
+			update:     UpdateInput{Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", WebBaseURL: "https://gitlab.com"},
+			wantStatus: StatusConnected, wantUser: "alice",
+		},
+		{
+			name:       "URL invalidates",
+			update:     UpdateInput{Provider: domain.SCMProviderGitLab, DisplayName: "Work", WebBaseURL: "https://gitlab.example.com"},
+			wantStatus: StatusUnknown,
+		},
+		{
+			name:       "token invalidates",
+			update:     UpdateInput{Provider: domain.SCMProviderGitLab, DisplayName: "Work", WebBaseURL: "https://gitlab.com", Token: tokenInput("new")},
+			wantStatus: StatusUnknown,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, creds := seededConnection()
+			row := st.rows["gitlab-work"]
+			row.Status = domain.SCMConnectionStatusConnected
+			row.Username = "alice"
+			st.rows[row.ID] = row
+			got, err := newTestService(st, creds, nil).Update(context.Background(), row.ID, tc.update)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := st.rows[row.ID]
+			if got.Status != tc.wantStatus || got.Username != tc.wantUser || string(stored.Status) != tc.wantStatus || stored.Username != tc.wantUser {
+				t.Fatalf("validation = response(%q,%q) stored(%q,%q)", got.Status, got.Username, stored.Status, stored.Username)
 			}
 		})
 	}
@@ -302,7 +406,7 @@ func TestMutationCompensation(t *testing.T) {
 		st, creds := seededConnection()
 		st.updateErr = errors.New("db unavailable")
 		_, err := newTestService(st, creds, nil).Update(context.Background(), "gitlab-work", UpdateInput{
-			Provider: domain.SCMProviderGitLab, DisplayName: "x", Token: ptr("new"),
+			Provider: domain.SCMProviderGitLab, DisplayName: "x", Token: tokenInput("new"),
 		})
 		assertAPIError(t, err, "SCM_CONNECTION_UPDATE_FAILED")
 		row := st.rows["gitlab-work"]
@@ -315,7 +419,7 @@ func TestMutationCompensation(t *testing.T) {
 		st, creds := seededConnection()
 		st.updateErr = errors.New("db unavailable")
 		_, err := newTestService(st, creds, nil).Update(context.Background(), "gitlab-work", UpdateInput{
-			Provider: domain.SCMProviderGitLab, DisplayName: "x", Token: ptr(""),
+			Provider: domain.SCMProviderGitLab, DisplayName: "x", Token: tokenInput(""),
 		})
 		assertAPIError(t, err, "SCM_CONNECTION_UPDATE_FAILED")
 		row := st.rows["gitlab-work"]
@@ -328,12 +432,55 @@ func TestMutationCompensation(t *testing.T) {
 		st, creds := seededConnection()
 		creds.deleteErr = errors.New("vault unavailable")
 		_, err := newTestService(st, creds, nil).Update(context.Background(), "gitlab-work", UpdateInput{
-			Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", Token: ptr("new"),
+			Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", Token: tokenInput("new"),
 		})
 		assertAPIError(t, err, "SCM_CREDENTIAL_STORE_FAILED")
 		row := st.rows["gitlab-work"]
 		if row.DisplayName != "Work" || row.CredentialRef != "scm/gitlab-work/old" || len(creds.secrets) != 1 {
 			t.Fatalf("state after rollback = %#v credentials=%#v", row, creds.secrets)
+		}
+	})
+
+	t.Run("rollback failure keeps replacement credential consistent with metadata", func(t *testing.T) {
+		st, creds := seededConnection()
+		st.updateErrs = []error{nil, errors.New("rollback unavailable")}
+		creds.deleteErr = errors.New("vault unavailable")
+		_, err := newTestService(st, creds, nil).Update(context.Background(), "gitlab-work", UpdateInput{
+			Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", Token: tokenInput("new"),
+		})
+		assertAPIError(t, err, "SCM_CONNECTION_UPDATE_FAILED")
+		row := st.rows["gitlab-work"]
+		if row.CredentialRef != "scm/gitlab-work/new" || string(creds.secrets[row.CredentialRef]) != "new" {
+			t.Fatalf("metadata/credential diverged after rollback failure: row=%#v credentials=%#v", row, creds.secrets)
+		}
+	})
+
+	t.Run("create cleanup survives cancellation and surfaces cleanup failure", func(t *testing.T) {
+		st, creds := newFakeStore(), newFakeCredentials()
+		st.createErr = errors.New("db unavailable")
+		creds.deleteErr = errors.New("vault cleanup unavailable")
+		token := "secret"
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := newTestService(st, creds, nil).Create(ctx, createInput(&token))
+		assertJoinedAPIErrorCodes(t, err, "SCM_CONNECTION_CREATE_FAILED", "SCM_CREDENTIAL_CLEANUP_FAILED")
+		if len(creds.deleteCtxErrs) != 1 || creds.deleteCtxErrs[0] != nil {
+			t.Fatalf("create cleanup context errors = %v, want [nil]", creds.deleteCtxErrs)
+		}
+	})
+
+	t.Run("update cleanup survives cancellation and surfaces cleanup failure", func(t *testing.T) {
+		st, creds := seededConnection()
+		st.updateErr = errors.New("db unavailable")
+		creds.deleteErr = errors.New("vault cleanup unavailable")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := newTestService(st, creds, nil).Update(ctx, "gitlab-work", UpdateInput{
+			Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", Token: tokenInput("new"),
+		})
+		assertJoinedAPIErrorCodes(t, err, "SCM_CONNECTION_UPDATE_FAILED", "SCM_CREDENTIAL_CLEANUP_FAILED")
+		if len(creds.deleteCtxErrs) != 1 || creds.deleteCtxErrs[0] != nil {
+			t.Fatalf("update cleanup context errors = %v, want [nil]", creds.deleteCtxErrs)
 		}
 	})
 
@@ -356,12 +503,27 @@ func TestMutationCompensation(t *testing.T) {
 			t.Fatal("metadata was not restored")
 		}
 	})
+
+	t.Run("delete zeros loaded credential bytes", func(t *testing.T) {
+		st, creds := seededConnection()
+		if err := newTestService(st, creds, nil).Delete(context.Background(), "gitlab-work"); err != nil {
+			t.Fatal(err)
+		}
+		if len(creds.lastGet) == 0 {
+			t.Fatal("delete did not load credential bytes")
+		}
+		for i, b := range creds.lastGet {
+			if b != 0 {
+				t.Fatalf("loaded credential byte %d = %d, want zero", i, b)
+			}
+		}
+	})
 }
 
 func TestDeleteMapsNotFoundAndReferenceConflict(t *testing.T) {
 	st, creds := seededConnection()
 	svc := newTestService(st, creds, nil)
-	st.deleteErr = store.ErrSCMConnectionReferenced
+	st.deleteErr = ports.ErrSCMConnectionReferenced
 	creds.getErr = errors.New("vault unavailable")
 	assertAPIError(t, svc.Delete(context.Background(), "gitlab-work"), "SCM_CONNECTION_REFERENCED")
 	if len(creds.deletes) != 0 {
@@ -385,11 +547,17 @@ func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 	if tester.calls != 1 || string(tester.token) != "old" || tester.row.CredentialRef == "" {
 		t.Fatalf("tester call = %#v token=%q", tester.row, tester.token)
 	}
+	if row := st.rows["gitlab-work"]; row.Status != domain.SCMConnectionStatusConnected || row.Username != "alice" {
+		t.Fatalf("persisted successful validation = (%q, %q)", row.Status, row.Username)
+	}
 
 	delete(creds.secrets, st.rows["gitlab-work"].CredentialRef)
 	got, err = svc.Test(context.Background(), "gitlab-work")
 	if err != nil || got.Status != StatusMissingCredential || tester.calls != 1 {
 		t.Fatalf("missing credential test = (%#v, %v), calls=%d", got, err, tester.calls)
+	}
+	if row := st.rows["gitlab-work"]; row.Status != domain.SCMConnectionStatusMissingCredential || row.Username != "" {
+		t.Fatalf("persisted missing credential = (%q, %q)", row.Status, row.Username)
 	}
 
 	creds.secrets[st.rows["gitlab-work"].CredentialRef] = []byte("old")
@@ -401,12 +569,58 @@ func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 	}
 }
 
+func TestConnectionTestMapsAndPersistsStructuredFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		failure    TestFailureKind
+		result     TestResult
+		wantKind   apierr.Kind
+		wantCode   string
+		wantStatus domain.SCMConnectionStatus
+		wantUser   string
+	}{
+		{name: "auth", failure: TestFailureAuth, wantKind: apierr.KindUnauthorized, wantCode: "SCM_AUTH_FAILED", wantStatus: domain.SCMConnectionStatusUnauthorized},
+		{name: "forbidden", failure: TestFailureForbidden, wantKind: apierr.KindForbidden, wantCode: "SCM_FORBIDDEN", wantStatus: domain.SCMConnectionStatusForbidden},
+		{name: "unreachable", failure: TestFailureUnreachable, wantKind: apierr.KindUnavailable, wantCode: "SCM_INSTANCE_UNREACHABLE", wantStatus: domain.SCMConnectionStatusUnreachable},
+		{name: "TLS", failure: TestFailureTLS, wantKind: apierr.KindUnavailable, wantCode: "SCM_TLS_FAILED", wantStatus: domain.SCMConnectionStatusTLSError},
+		{name: "rate limited", failure: TestFailureRateLimited, wantKind: apierr.KindRateLimited, wantCode: "SCM_RATE_LIMITED", wantStatus: domain.SCMConnectionStatusRateLimited},
+		{name: "repo missing", failure: TestFailureRepoNotFound, result: connectedTestResult("alice"), wantKind: apierr.KindNotFound, wantCode: "SCM_REPO_NOT_FOUND", wantStatus: domain.SCMConnectionStatusConnected, wantUser: "alice"},
+		{name: "write scope", failure: TestFailureWriteScopeMissing, result: connectedTestResult("alice"), wantKind: apierr.KindForbidden, wantCode: "SCM_WRITE_SCOPE_MISSING", wantStatus: domain.SCMConnectionStatusConnected, wantUser: "alice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, creds := seededConnection()
+			tester := &fakeTester{result: tc.result, err: NewTestFailure(tc.failure, errors.New("provider body contains glpat-secret"))}
+			_, err := newTestService(st, creds, tester).Test(context.Background(), "gitlab-work")
+			var got *apierr.Error
+			if !errors.As(err, &got) || got.Kind != tc.wantKind || got.Code != tc.wantCode {
+				t.Fatalf("error = %#v, want kind=%v code=%s", got, tc.wantKind, tc.wantCode)
+			}
+			if strings.Contains(err.Error(), "provider body") || strings.Contains(err.Error(), "glpat") {
+				t.Fatalf("raw provider failure leaked: %v", err)
+			}
+			row := st.rows["gitlab-work"]
+			if row.Status != tc.wantStatus || row.Username != tc.wantUser {
+				t.Fatalf("persisted failure = (%q,%q), want (%q,%q)", row.Status, row.Username, tc.wantStatus, tc.wantUser)
+			}
+		})
+	}
+}
+
+func connectedTestResult(username string) TestResult {
+	return TestResult{
+		Status:       StatusConnected,
+		Identity:     Identity{Username: username},
+		Capabilities: Capabilities{Read: true},
+	}
+}
+
 func seededConnection() (*fakeStore, *fakeCredentials) {
 	st, creds := newFakeStore(), newFakeCredentials()
 	row := domain.SCMConnection{
 		ID: "gitlab-work", Provider: domain.SCMProviderGitLab, DisplayName: "Work",
 		WebBaseURL: "https://gitlab.com", APIBaseURL: "https://gitlab.com/api/v4",
 		CredentialRef: "scm/gitlab-work/old", CreatedAt: time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
+		Status:    domain.SCMConnectionStatusUnknown,
 		UpdatedAt: time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
 	}
 	st.rows[row.ID] = row
@@ -415,6 +629,17 @@ func seededConnection() (*fakeStore, *fakeCredentials) {
 }
 
 func ptr(v string) *string { return &v }
+
+func tokenInput(value string) TokenInput {
+	return TokenInput{Value: value, Present: true}
+}
+
+func tokenInputPtr(value *string) TokenInput {
+	if value == nil {
+		return TokenInput{}
+	}
+	return tokenInput(*value)
+}
 
 func assertAPIError(t *testing.T, err error, code string) *apierr.Error {
 	t.Helper()
@@ -426,4 +651,34 @@ func assertAPIError(t *testing.T, err error, code string) *apierr.Error {
 		t.Fatalf("error code = %q, want %q", got.Code, code)
 	}
 	return got
+}
+
+func assertJoinedAPIErrorCodes(t *testing.T, err error, codes ...string) {
+	t.Helper()
+	got := map[string]bool{}
+	var visit func(error)
+	visit = func(current error) {
+		if current == nil {
+			return
+		}
+		var apiError *apierr.Error
+		if errors.As(current, &apiError) {
+			got[apiError.Code] = true
+		}
+		if joined, ok := current.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				visit(child)
+			}
+			return
+		}
+		if wrapped := errors.Unwrap(current); wrapped != nil {
+			visit(wrapped)
+		}
+	}
+	visit(err)
+	for _, code := range codes {
+		if !got[code] {
+			t.Fatalf("error codes = %v, want %q in %v", got, code, err)
+		}
+	}
 }

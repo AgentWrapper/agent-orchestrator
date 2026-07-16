@@ -91,6 +91,8 @@ func TestMigration0024PreservesCDCAndAddsGlobalSCMConnectionEvents(t *testing.T)
 			(id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at)
 		VALUES
 			('gitlab-work', 'gitlab', 'Work', 'https://gitlab.example.com', 'https://gitlab.example.com/api/v4', 'scm/gitlab-work', '2026-07-16T00:02:00Z', '2026-07-16T00:02:00Z');
+		UPDATE scm_connections SET status = 'connected', username = 'alice'
+		WHERE id = 'gitlab-work';
 		UPDATE scm_connections SET display_name = 'Work GitLab', updated_at = '2026-07-16T00:03:00Z'
 		WHERE id = 'gitlab-work';
 		DELETE FROM scm_connections WHERE id = 'gitlab-work';
@@ -108,7 +110,7 @@ func TestMigration0024PreservesCDCAndAddsGlobalSCMConnectionEvents(t *testing.T)
 		t.Fatalf("query connection events: %v", err)
 	}
 	defer rows.Close()
-	wantTypes := []string{"scm_connection_created", "scm_connection_updated", "scm_connection_deleted"}
+	wantTypes := []string{"scm_connection_created", "scm_connection_updated", "scm_connection_updated", "scm_connection_deleted"}
 	var gotTypes []string
 	for rows.Next() {
 		var eventType, payload string
@@ -134,6 +136,25 @@ func TestMigration0024PreservesCDCAndAddsGlobalSCMConnectionEvents(t *testing.T)
 		if gotTypes[i] != wantTypes[i] {
 			t.Fatalf("connection events = %v, want %v", gotTypes, wantTypes)
 		}
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO scm_connections
+			(id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at)
+		VALUES
+			('defaults', 'gitlab', 'Defaults', 'https://gitlab.com', 'https://gitlab.com/api/v4', 'scm/defaults', '2026-07-16T00:04:00Z', '2026-07-16T00:04:00Z');
+	`); err != nil {
+		t.Fatalf("insert default validation metadata: %v", err)
+	}
+	var status, username string
+	if err := db.QueryRow(`SELECT status, username FROM scm_connections WHERE id = 'defaults'`).Scan(&status, &username); err != nil {
+		t.Fatalf("read validation defaults: %v", err)
+	}
+	if status != "unknown" || username != "" {
+		t.Fatalf("validation defaults = (%q, %q), want (unknown, empty)", status, username)
+	}
+	if _, err := db.Exec(`UPDATE scm_connections SET status = 'invalid' WHERE id = 'defaults'`); err == nil {
+		t.Fatal("invalid validation status committed")
 	}
 }
 

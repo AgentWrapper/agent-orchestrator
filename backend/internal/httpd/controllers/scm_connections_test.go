@@ -83,7 +83,7 @@ func TestSCMConnectionRoutesCRUDAndWriteOnlyToken(t *testing.T) {
 	assertNoSCMSecrets(t, body)
 
 	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections", `{"id":"gitlab-work","provider":"gitlab","displayName":"Work","token":"write-only"}`)
-	if status != http.StatusCreated || mgr.created.Token == nil || *mgr.created.Token != "write-only" {
+	if status != http.StatusCreated || !mgr.created.Token.Present || mgr.created.Token.Value != "write-only" {
 		t.Fatalf("create = %d %s input=%#v", status, body, mgr.created)
 	}
 	assertNoSCMSecrets(t, body)
@@ -95,12 +95,12 @@ func TestSCMConnectionRoutesCRUDAndWriteOnlyToken(t *testing.T) {
 	assertNoSCMSecrets(t, body)
 
 	body, status, _ = doRequest(t, srv, http.MethodPut, "/api/v1/scm/connections/gitlab-work", `{"provider":"gitlab","displayName":"Renamed"}`)
-	if status != http.StatusOK || mgr.updatedID != "gitlab-work" || mgr.updated.Token != nil {
+	if status != http.StatusOK || mgr.updatedID != "gitlab-work" || mgr.updated.Token.Present {
 		t.Fatalf("update omitted token = %d %s input=%#v", status, body, mgr.updated)
 	}
 
 	body, status, _ = doRequest(t, srv, http.MethodPut, "/api/v1/scm/connections/gitlab-work", `{"provider":"gitlab","displayName":"Renamed","token":""}`)
-	if status != http.StatusOK || mgr.updated.Token == nil || *mgr.updated.Token != "" {
+	if status != http.StatusOK || !mgr.updated.Token.Present || mgr.updated.Token.Value != "" {
 		t.Fatalf("update empty token = %d %s input=%#v", status, body, mgr.updated)
 	}
 
@@ -154,7 +154,11 @@ func TestSCMConnectionRoutesStrictJSONAndErrorMapping(t *testing.T) {
 	}{
 		{name: "invalid create json", method: http.MethodPost, path: "/api/v1/scm/connections", request: `{`, status: 400, code: "INVALID_JSON"},
 		{name: "unknown create field", method: http.MethodPost, path: "/api/v1/scm/connections", request: `{"id":"x","provider":"gitlab","displayName":"x","credentialRef":"bad"}`, status: 400, code: "INVALID_JSON"},
+		{name: "null create token", method: http.MethodPost, path: "/api/v1/scm/connections", request: `{"id":"x","provider":"gitlab","displayName":"x","token":null}`, status: 400, code: "INVALID_JSON"},
+		{name: "trailing create value", method: http.MethodPost, path: "/api/v1/scm/connections", request: `{"id":"x","provider":"gitlab","displayName":"x"} {}`, status: 400, code: "INVALID_JSON"},
 		{name: "unknown update field", method: http.MethodPut, path: "/api/v1/scm/connections/x", request: `{"provider":"gitlab","displayName":"x","credentialRef":"bad"}`, status: 400, code: "INVALID_JSON"},
+		{name: "null update token", method: http.MethodPut, path: "/api/v1/scm/connections/x", request: `{"provider":"gitlab","displayName":"x","token":null}`, status: 400, code: "INVALID_JSON"},
+		{name: "trailing update value", method: http.MethodPut, path: "/api/v1/scm/connections/x", request: `{"provider":"gitlab","displayName":"x"} true`, status: 400, code: "INVALID_JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body, status, _ := doRequest(t, srv, tc.method, tc.path, tc.request)
@@ -175,6 +179,27 @@ func TestSCMConnectionRoutesStrictJSONAndErrorMapping(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusInternalServerError, "SCM_CONNECTION_TEST_FAILED")
 	if strings.Contains(string(body), "provider body") {
 		t.Fatalf("provider response leaked: %s", body)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		kind   apierr.Kind
+		code   string
+		status int
+	}{
+		{name: "auth", kind: apierr.KindUnauthorized, code: "SCM_AUTH_FAILED", status: http.StatusUnauthorized},
+		{name: "forbidden", kind: apierr.KindForbidden, code: "SCM_FORBIDDEN", status: http.StatusForbidden},
+		{name: "unreachable", kind: apierr.KindUnavailable, code: "SCM_INSTANCE_UNREACHABLE", status: http.StatusServiceUnavailable},
+		{name: "TLS", kind: apierr.KindUnavailable, code: "SCM_TLS_FAILED", status: http.StatusServiceUnavailable},
+		{name: "rate limited", kind: apierr.KindRateLimited, code: "SCM_RATE_LIMITED", status: http.StatusTooManyRequests},
+		{name: "repo missing", kind: apierr.KindNotFound, code: "SCM_REPO_NOT_FOUND", status: http.StatusNotFound},
+		{name: "write scope", kind: apierr.KindForbidden, code: "SCM_WRITE_SCOPE_MISSING", status: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr.err = apierr.New(tc.kind, tc.code, "redacted", nil)
+			body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", "")
+			assertErrorCode(t, body, status, tc.status, tc.code)
+		})
 	}
 }
 

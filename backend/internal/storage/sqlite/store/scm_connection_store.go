@@ -7,11 +7,9 @@ import (
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
-
-// ErrSCMConnectionReferenced prevents deleting a connection selected by a project.
-var ErrSCMConnectionReferenced = errors.New("scm connection is referenced by a project")
 
 // CreateSCMConnection inserts one metadata-only SCM connection.
 func (s *Store) CreateSCMConnection(ctx context.Context, connection domain.SCMConnection) error {
@@ -58,11 +56,28 @@ func (s *Store) UpdateSCMConnection(ctx context.Context, connection domain.SCMCo
 		WebBaseURL:    connection.WebBaseURL,
 		APIBaseURL:    connection.APIBaseURL,
 		CredentialRef: connection.CredentialRef,
+		Status:        string(connection.Status),
+		Username:      connection.Username,
 		UpdatedAt:     connection.UpdatedAt,
 		ID:            connection.ID,
 	})
 	if err != nil {
 		return false, fmt.Errorf("update SCM connection %s: %w", connection.ID, err)
+	}
+	return rows > 0, nil
+}
+
+// UpdateSCMConnectionValidation persists test metadata without advancing the configuration revision.
+func (s *Store) UpdateSCMConnectionValidation(ctx context.Context, id string, status domain.SCMConnectionStatus, username string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateSCMConnectionValidation(ctx, gen.UpdateSCMConnectionValidationParams{
+		Status:   string(status),
+		Username: username,
+		ID:       id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("update SCM connection %s validation: %w", id, err)
 	}
 	return rows > 0, nil
 }
@@ -95,7 +110,7 @@ func (s *Store) DeleteSCMConnection(ctx context.Context, id string) (bool, error
 		if err != nil {
 			return fmt.Errorf("classify zero-row delete: %w", err)
 		}
-		return ErrSCMConnectionReferenced
+		return ports.ErrSCMConnectionReferenced
 	})
 	if err != nil {
 		return false, err
@@ -111,6 +126,8 @@ func createSCMConnectionParams(connection domain.SCMConnection) gen.CreateSCMCon
 		WebBaseURL:    connection.WebBaseURL,
 		APIBaseURL:    connection.APIBaseURL,
 		CredentialRef: connection.CredentialRef,
+		Status:        string(connection.Status),
+		Username:      connection.Username,
 		CreatedAt:     connection.CreatedAt,
 		UpdatedAt:     connection.UpdatedAt,
 	}
@@ -124,6 +141,8 @@ func scmConnectionFromGen(row gen.SCMConnection) domain.SCMConnection {
 		WebBaseURL:    row.WebBaseURL,
 		APIBaseURL:    row.APIBaseURL,
 		CredentialRef: row.CredentialRef,
+		Status:        domain.SCMConnectionStatus(row.Status),
+		Username:      row.Username,
 		CreatedAt:     row.CreatedAt,
 		UpdatedAt:     row.UpdatedAt,
 	}

@@ -20,6 +20,14 @@ const (
 	KindNotFound
 	// KindConflict is a state/uniqueness clash; it maps to 409.
 	KindConflict
+	// KindUnauthorized is invalid or expired authentication; it maps to 401.
+	KindUnauthorized
+	// KindForbidden is insufficient permission; it maps to 403.
+	KindForbidden
+	// KindRateLimited is provider throttling; it maps to 429.
+	KindRateLimited
+	// KindUnavailable is a temporarily unreachable dependency; it maps to 503.
+	KindUnavailable
 )
 
 // Error is the structured error every service returns. Code is a stable machine

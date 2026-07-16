@@ -29,8 +29,8 @@ func (q *Queries) AcquireSCMConnectionWriteLock(ctx context.Context) error {
 
 const createSCMConnection = `-- name: CreateSCMConnection :exec
 INSERT INTO scm_connections (
-    id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    id, provider, display_name, web_base_url, api_base_url, credential_ref, status, username, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateSCMConnectionParams struct {
@@ -40,6 +40,8 @@ type CreateSCMConnectionParams struct {
 	WebBaseURL    string
 	APIBaseURL    string
 	CredentialRef string
+	Status        string
+	Username      string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -52,6 +54,8 @@ func (q *Queries) CreateSCMConnection(ctx context.Context, arg CreateSCMConnecti
 		arg.WebBaseURL,
 		arg.APIBaseURL,
 		arg.CredentialRef,
+		arg.Status,
+		arg.Username,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -82,7 +86,7 @@ func (q *Queries) DeleteUnreferencedSCMConnection(ctx context.Context, arg Delet
 }
 
 const getSCMConnection = `-- name: GetSCMConnection :one
-SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at
+SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, status, username, created_at, updated_at
 FROM scm_connections
 WHERE id = ?
 `
@@ -97,6 +101,8 @@ func (q *Queries) GetSCMConnection(ctx context.Context, id string) (SCMConnectio
 		&i.WebBaseURL,
 		&i.APIBaseURL,
 		&i.CredentialRef,
+		&i.Status,
+		&i.Username,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -104,7 +110,7 @@ func (q *Queries) GetSCMConnection(ctx context.Context, id string) (SCMConnectio
 }
 
 const listSCMConnections = `-- name: ListSCMConnections :many
-SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at
+SELECT id, provider, display_name, web_base_url, api_base_url, credential_ref, status, username, created_at, updated_at
 FROM scm_connections
 ORDER BY id
 `
@@ -125,6 +131,8 @@ func (q *Queries) ListSCMConnections(ctx context.Context) ([]SCMConnection, erro
 			&i.WebBaseURL,
 			&i.APIBaseURL,
 			&i.CredentialRef,
+			&i.Status,
+			&i.Username,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -148,6 +156,8 @@ UPDATE scm_connections SET
     web_base_url = ?,
     api_base_url = ?,
     credential_ref = ?,
+	status = ?,
+	username = ?,
     updated_at = ?
 WHERE id = ?
 `
@@ -158,6 +168,8 @@ type UpdateSCMConnectionParams struct {
 	WebBaseURL    string
 	APIBaseURL    string
 	CredentialRef string
+	Status        string
+	Username      string
 	UpdatedAt     time.Time
 	ID            string
 }
@@ -169,9 +181,32 @@ func (q *Queries) UpdateSCMConnection(ctx context.Context, arg UpdateSCMConnecti
 		arg.WebBaseURL,
 		arg.APIBaseURL,
 		arg.CredentialRef,
+		arg.Status,
+		arg.Username,
 		arg.UpdatedAt,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateSCMConnectionValidation = `-- name: UpdateSCMConnectionValidation :execrows
+UPDATE scm_connections SET
+	status = ?,
+	username = ?
+WHERE id = ?
+`
+
+type UpdateSCMConnectionValidationParams struct {
+	Status   string
+	Username string
+	ID       string
+}
+
+func (q *Queries) UpdateSCMConnectionValidation(ctx context.Context, arg UpdateSCMConnectionValidationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSCMConnectionValidation, arg.Status, arg.Username, arg.ID)
 	if err != nil {
 		return 0, err
 	}
