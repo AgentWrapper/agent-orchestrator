@@ -13,6 +13,7 @@ import (
 	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/scmregistry"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -29,7 +30,17 @@ func newProjectProviderResolver(store scmregistry.ConnectionStore, credentials p
 	})
 }
 
-func legacyGitHubProject() domain.ProjectRecord { return domain.ProjectRecord{} }
+type sessionProjectProviderResolver struct {
+	providers scmregistry.ProjectProviderResolver
+}
+
+func (r sessionProjectProviderResolver) ResolveProjectProvider(ctx context.Context, project domain.ProjectRecord) (sessionsvc.ProjectProviderBundle, error) {
+	bundle, err := r.providers.Resolve(ctx, project)
+	if err != nil {
+		return sessionsvc.ProjectProviderBundle{}, err
+	}
+	return sessionsvc.ProjectProviderBundle{SCM: bundle.SCM, Tracker: bundle.Tracker}, nil
+}
 
 type projectSCMResolver struct {
 	providers scmregistry.ProjectProviderResolver
@@ -51,8 +62,4 @@ func (r projectSCMResolver) ResolveSCM(ctx context.Context, project domain.Proje
 func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, providers scmregistry.ProjectProviderResolver, logger *slog.Logger) <-chan struct{} {
 	observer := scmobserve.NewWithResolver(projectSCMResolver{providers: providers}, store, lcm, scmobserve.Config{Logger: logger})
 	return observer.Start(ctx)
-}
-
-func logSCMProviderDisabled(logger *slog.Logger, err error) {
-	logger.Warn("scm observer disabled: provider setup failed", "err", err)
 }

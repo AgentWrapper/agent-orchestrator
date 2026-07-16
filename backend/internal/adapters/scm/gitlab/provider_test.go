@@ -82,7 +82,15 @@ func TestProviderParseRepositoryAndMergeRequestRef(t *testing.T) {
 			if !ok || got.Number != 42 || got.Repo != wantRepo || got.URL != "https://gitlab.example.com/group/subgroup/project/-/merge_requests/42" {
 				t.Fatalf("ParseMergeRequestRef(%q) = %#v, %v", input, got, ok)
 			}
+			change, changeOK := provider.ParseChangeRef(input, wantRepo)
+			if !changeOK || change != got {
+				t.Fatalf("ParseChangeRef(%q) = %#v, %v", input, change, changeOK)
+			}
 		})
+	}
+	withoutContext, ok := provider.ParseChangeRef("https://gitlab.example.com/group/subgroup/project/-/merge_requests/42", ports.SCMRepo{})
+	if !ok || withoutContext.Repo != wantRepo || withoutContext.Number != 42 {
+		t.Fatalf("ParseChangeRef without context = %#v, %v", withoutContext, ok)
 	}
 	for _, input := range []string{
 		"https://wrong.example.com/group/subgroup/project/-/merge_requests/42",

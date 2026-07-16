@@ -73,10 +73,23 @@ type CleanupSkipped struct {
 	Reason    string           `json:"reason"`
 }
 
-type scmProvider interface {
+// SCMProvider is the live, provider-neutral SCM surface used by session claim
+// and issue-context flows.
+type SCMProvider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
+}
+
+// ProjectProviderBundle contains the connection-scoped adapters selected by a project.
+type ProjectProviderBundle struct {
+	SCM     SCMProvider
+	Tracker ports.Tracker
+}
+
+// ProjectProviderResolver resolves SCM adapters from one project's persisted config.
+type ProjectProviderResolver interface {
+	ResolveProjectProvider(ctx context.Context, project domain.ProjectRecord) (ProjectProviderBundle, error)
 }
 
 // Service is the controller-facing session service. It delegates command-side
@@ -86,8 +99,9 @@ type Service struct {
 	manager             commander
 	store               Store
 	prClaimer           ports.PRClaimer
-	scm                 scmProvider
+	scm                 SCMProvider
 	tracker             ports.Tracker
+	providers           ProjectProviderResolver
 	clock               func() time.Time
 	telemetry           ports.EventSink
 	orchestratorLocksMu sync.Mutex
@@ -111,8 +125,9 @@ type Deps struct {
 	Manager   commander
 	Store     Store
 	PRClaimer ports.PRClaimer
-	SCM       scmProvider
+	SCM       SCMProvider
 	Tracker   ports.Tracker
+	Providers ProjectProviderResolver
 	Clock     func() time.Time
 	Telemetry ports.EventSink
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
@@ -123,7 +138,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, providers: d.Providers, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -133,6 +148,13 @@ func NewWithDeps(d Deps) *Service {
 		s.clock = time.Now
 	}
 	return s
+}
+
+func (s *Service) projectProvider(ctx context.Context, project domain.ProjectRecord) (ProjectProviderBundle, error) {
+	if s.providers != nil {
+		return s.providers.ResolveProjectProvider(ctx, project)
+	}
+	return ProjectProviderBundle{SCM: s.scm, Tracker: s.tracker}, nil
 }
 
 // Spawn creates a session and returns the API-facing read model.

@@ -14,17 +14,21 @@ import (
 const issueContextBodyLimit = 12000
 
 func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) ports.SpawnConfig {
-	if cfg.IssueContext != "" || cfg.IssueID == "" || s.tracker == nil {
+	if cfg.IssueContext != "" || cfg.IssueID == "" {
 		return cfg
 	}
 	if cfg.Kind != "" && cfg.Kind != domain.KindWorker {
 		return cfg
 	}
-	id, ok := s.trackerIDForIssue(project, cfg.IssueID)
+	bundle, err := s.projectProvider(ctx, project)
+	if err != nil || bundle.Tracker == nil {
+		return cfg
+	}
+	id, ok := trackerIDForIssue(project, bundle.SCM, cfg.IssueID)
 	if !ok {
 		return cfg
 	}
-	issue, err := s.tracker.Get(ctx, id)
+	issue, err := bundle.Tracker.Get(ctx, id)
 	if err != nil {
 		return cfg
 	}
@@ -34,36 +38,89 @@ func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, p
 	return cfg
 }
 
-func (s *Service) trackerIDForIssue(project domain.ProjectRecord, issueID domain.IssueID) (domain.TrackerID, bool) {
-	issue := strings.TrimPrefix(strings.TrimSpace(string(issueID)), "#")
+func trackerIDForIssue(project domain.ProjectRecord, provider SCMProvider, issueID domain.IssueID) (domain.TrackerID, bool) {
+	scmConfig := project.Config.SCM.WithDefaults()
+	trackerProvider := domain.TrackerProvider(scmConfig.Provider)
+	issue := strings.TrimSpace(string(issueID))
+	prefix := string(scmConfig.Provider) + ":"
+	if strings.HasPrefix(strings.ToLower(issue), prefix) {
+		issue = issue[len(prefix):]
+	}
+	issue = strings.TrimPrefix(issue, "#")
 	if issue == "" {
 		return domain.TrackerID{}, false
 	}
-	if native, ok := canonicalGitHubIssueNative(issue); ok {
-		return domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: native}, true
-	}
-	n, err := strconv.Atoi(issue)
-	if err != nil || n <= 0 {
-		return domain.TrackerID{}, false
-	}
-	repo, ok := s.githubRepoForTracker(project)
-	if !ok {
-		return domain.TrackerID{}, false
-	}
-	return domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: fmt.Sprintf("%s#%d", repo, n)}, true
-}
-
-func (s *Service) githubRepoForTracker(project domain.ProjectRecord) (string, bool) {
-	if s.scm != nil {
-		if repo, ok := s.scm.ParseRepository(project.RepoOriginURL); ok && repo.Provider == "github" && repo.Repo != "" {
-			return repo.Repo, true
+	repo, repoOK := projectSCMRepo(provider, project)
+	switch trackerProvider {
+	case domain.TrackerProviderGitHub:
+		if native, ok := canonicalGitHubIssueNative(issue); ok {
+			return domain.TrackerID{Provider: trackerProvider, Native: native}, true
+		}
+	case domain.TrackerProviderGitLab:
+		if repoOK {
+			if native, ok := canonicalGitLabIssueNative(issue, repo); ok {
+				return domain.TrackerID{Provider: trackerProvider, Native: native}, true
+			}
 		}
 	}
-	owner, repo, err := githubRepoFromURL(project.RepoOriginURL)
-	if err != nil {
+	n, err := strconv.Atoi(issue)
+	if err != nil || n <= 0 || !repoOK {
+		return domain.TrackerID{}, false
+	}
+	switch trackerProvider {
+	case domain.TrackerProviderGitHub:
+		return domain.TrackerID{Provider: trackerProvider, Native: fmt.Sprintf("%s#%d", repo.Repo, n)}, true
+	case domain.TrackerProviderGitLab:
+		return domain.TrackerID{Provider: trackerProvider, Native: fmt.Sprintf("%s/%s#!%d", repo.Host, repo.Repo, n)}, true
+	default:
+		return domain.TrackerID{}, false
+	}
+}
+
+func projectSCMRepo(provider SCMProvider, project domain.ProjectRecord) (ports.SCMRepo, bool) {
+	if provider == nil {
+		if project.Config.SCM.WithDefaults().Provider != domain.SCMProviderGitHub {
+			return ports.SCMRepo{}, false
+		}
+		owner, name, err := githubRepoFromURL(project.RepoOriginURL)
+		if err != nil {
+			return ports.SCMRepo{}, false
+		}
+		return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: name, Repo: owner + "/" + name}, true
+	}
+	repository := strings.TrimSpace(project.Config.SCM.Repo)
+	if repository == "" {
+		repository = project.RepoOriginURL
+	}
+	return provider.ParseRepository(repository)
+}
+
+func canonicalGitLabIssueNative(raw string, repo ports.SCMRepo) (string, bool) {
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || !strings.EqualFold(u.Hostname(), repo.Host) {
+			return "", false
+		}
+		marker := "/-/issues/"
+		at := strings.LastIndex(u.Path, marker)
+		if at <= 0 {
+			return "", false
+		}
+		n, err := strconv.Atoi(strings.Trim(u.Path[at+len(marker):], "/"))
+		if err != nil || n <= 0 || !strings.EqualFold(strings.Trim(u.Path[:at], "/"), repo.Repo) {
+			return "", false
+		}
+		return fmt.Sprintf("%s/%s#!%d", repo.Host, repo.Repo, n), true
+	}
+	delimiter := strings.LastIndex(raw, "#!")
+	if delimiter <= 0 {
 		return "", false
 	}
-	return owner + "/" + repo, true
+	n, err := strconv.Atoi(raw[delimiter+2:])
+	if err != nil || n <= 0 || !strings.EqualFold(strings.Trim(raw[:delimiter], "/"), repo.Host+"/"+repo.Repo) {
+		return "", false
+	}
+	return fmt.Sprintf("%s/%s#!%d", repo.Host, repo.Repo, n), true
 }
 
 func canonicalGitHubIssueNative(raw string) (string, bool) {

@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	// ErrInvalidPRRef is returned when a claim request does not name a GitHub PR URL or positive PR number.
+	// ErrInvalidPRRef is returned when a claim request is not valid for the project's SCM provider.
 	ErrInvalidPRRef = errors.New("session: invalid pr ref")
 	// ErrPRNotFound is returned when the SCM provider has no matching pull request.
 	ErrPRNotFound = errors.New("session: pr not found")
@@ -57,7 +57,7 @@ func (s *Service) ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PR
 	return s.listPRFacts(ctx, id)
 }
 
-// ClaimPR attaches a live GitHub PR to a worker session and persists the current SCM facts atomically.
+// ClaimPR attaches a live pull/merge request to a worker session and persists the current SCM facts atomically.
 func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts ClaimPROptions) (ClaimPRResult, error) {
 	rec, ok, err := s.store.GetSession(ctx, id)
 	if err != nil {
@@ -82,35 +82,31 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	if !ok {
 		return ClaimPRResult{}, apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
 	}
-	prURL, number, err := normalizePRRef(ref, project.RepoOriginURL)
+	bundle, err := s.projectProvider(ctx, project)
 	if err != nil {
-		return ClaimPRResult{}, err
+		return ClaimPRResult{}, fmt.Errorf("%w: %w", ErrSCMUnavailable, err)
 	}
-	if err := requireSameGitHubRepo(prURL, project.RepoOriginURL); err != nil {
-		return ClaimPRResult{}, err
-	}
-	if s.scm == nil || s.prClaimer == nil {
+	if bundle.SCM == nil || s.prClaimer == nil {
 		return ClaimPRResult{}, ErrSCMUnavailable
 	}
-	repo, err := scmRepoForClaim(s.scm, project.RepoOriginURL, prURL)
+	refSpec, err := claimRef(bundle.SCM, project, ref)
 	if err != nil {
 		return ClaimPRResult{}, err
 	}
-	refSpec := ports.SCMPRRef{Repo: repo, Number: number, URL: prURL}
-	obs, err := s.fetchClaimObservation(ctx, refSpec)
+	obs, err := s.fetchClaimObservation(ctx, bundle.SCM, refSpec)
 	if err != nil {
 		return ClaimPRResult{}, err
 	}
 	if obs.PR.Number == 0 {
-		obs.PR.Number = number
+		obs.PR.Number = refSpec.Number
 	}
 	if obs.PR.URL == "" {
-		obs.PR.URL = prURL
+		obs.PR.URL = refSpec.URL
 	}
 	if obs.PR.Draft || obs.PR.Merged || obs.PR.Closed {
 		return ClaimPRResult{}, ErrPRNotOpen
 	}
-	reviewMode, err := s.enrichClaimReviews(ctx, refSpec, &obs)
+	reviewMode, err := s.enrichClaimReviews(ctx, bundle.SCM, refSpec, &obs)
 	if err != nil {
 		return ClaimPRResult{}, err
 	}
@@ -124,7 +120,7 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	if err != nil {
 		return ClaimPRResult{}, err
 	}
-	prs = claimedFirst(prs, prURL)
+	prs = claimedFirst(prs, refSpec.URL)
 	// TODO: implement workspace branch checkout. Until then, leave BranchChanged
 	// false and let CLI output omit the checkout line rather than claiming the
 	// session was already on the PR branch.
@@ -135,8 +131,8 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	return res, nil
 }
 
-func (s *Service) fetchClaimObservation(ctx context.Context, ref ports.SCMPRRef) (ports.SCMObservation, error) {
-	batch, err := s.scm.FetchPullRequests(ctx, []ports.SCMPRRef{ref})
+func (s *Service) fetchClaimObservation(ctx context.Context, provider SCMProvider, ref ports.SCMPRRef) (ports.SCMObservation, error) {
+	batch, err := provider.FetchPullRequests(ctx, []ports.SCMPRRef{ref})
 	if err != nil {
 		if errors.Is(err, ports.ErrSCMNotFound) {
 			return ports.SCMObservation{}, ErrPRNotFound
@@ -153,8 +149,8 @@ func (s *Service) fetchClaimObservation(ctx context.Context, ref ports.SCMPRRef)
 	return obs, nil
 }
 
-func (s *Service) enrichClaimReviews(ctx context.Context, ref ports.SCMPRRef, obs *ports.SCMObservation) (ports.ReviewWriteMode, error) {
-	review, err := s.scm.FetchReviewThreads(ctx, ref)
+func (s *Service) enrichClaimReviews(ctx context.Context, provider SCMProvider, ref ports.SCMPRRef, obs *ports.SCMObservation) (ports.ReviewWriteMode, error) {
+	review, err := provider.FetchReviewThreads(ctx, ref)
 	if err != nil {
 		if errors.Is(err, ports.ErrSCMNotFound) {
 			return ports.ReviewWritePreserve, ErrPRNotFound
@@ -173,15 +169,56 @@ func (s *Service) enrichClaimReviews(ctx context.Context, ref ports.SCMPRRef, ob
 	return ports.ReviewWriteReplace, nil
 }
 
-func scmRepoForClaim(provider scmProvider, projectOrigin, prURL string) (ports.SCMRepo, error) {
-	if repo, ok := provider.ParseRepository(projectOrigin); ok {
-		return repo, nil
+type changeRefParser interface {
+	ParseChangeRef(raw string, contextRepo ports.SCMRepo) (ports.SCMPRRef, bool)
+}
+
+func claimRef(provider SCMProvider, project domain.ProjectRecord, raw string) (ports.SCMPRRef, error) {
+	repository := strings.TrimSpace(project.Config.SCM.Repo)
+	if repository == "" {
+		repository = project.RepoOriginURL
 	}
-	owner, name, _, err := parseGitHubPRURL(prURL)
+	var contextRepo ports.SCMRepo
+	if repository != "" {
+		var ok bool
+		contextRepo, ok = provider.ParseRepository(repository)
+		if !ok {
+			return ports.SCMPRRef{}, ErrInvalidPRRef
+		}
+	}
+	if parser, ok := provider.(changeRefParser); ok {
+		ref, parsed := parser.ParseChangeRef(raw, contextRepo)
+		if !parsed {
+			return ports.SCMPRRef{}, ErrInvalidPRRef
+		}
+		if contextRepo.Repo != "" && !sameSCMRepo(ref.Repo, contextRepo) {
+			return ports.SCMPRRef{}, ErrProjectMismatch
+		}
+		return ref, nil
+	}
+
+	// Compatibility for test/fallback providers that predate ParseChangeRef.
+	prURL, number, err := normalizePRRef(raw, project.RepoOriginURL)
 	if err != nil {
-		return ports.SCMRepo{}, ErrInvalidPRRef
+		return ports.SCMPRRef{}, err
 	}
-	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: name, Repo: owner + "/" + name}, nil
+	if err := requireSameGitHubRepo(prURL, project.RepoOriginURL); err != nil {
+		return ports.SCMPRRef{}, err
+	}
+	if contextRepo.Repo == "" {
+		var ok bool
+		contextRepo, ok = provider.ParseRepository(prURL)
+		if !ok {
+			return ports.SCMPRRef{}, ErrInvalidPRRef
+		}
+	}
+	return ports.SCMPRRef{Repo: contextRepo, Number: number, URL: prURL}, nil
+}
+
+func sameSCMRepo(left, right ports.SCMRepo) bool {
+	return strings.EqualFold(strings.TrimSpace(left.Provider), strings.TrimSpace(right.Provider)) &&
+		strings.EqualFold(strings.TrimSpace(left.Host), strings.TrimSpace(right.Host)) &&
+		strings.EqualFold(strings.Trim(strings.TrimSuffix(left.Repo, ".git"), "/"), strings.Trim(strings.TrimSuffix(right.Repo, ".git"), "/"))
 }
 
 func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {

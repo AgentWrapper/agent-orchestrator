@@ -45,6 +45,71 @@ func (p *Provider) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	return repo, ok
 }
 
+// ParseChangeRef accepts a GitHub PR URL, owner/repo#number, #number, or number
+// and returns a canonical reference in the supplied project context.
+func (p *Provider) ParseChangeRef(raw string, contextRepo ports.SCMRepo) (ports.SCMPRRef, bool) {
+	input := strings.TrimSpace(raw)
+	if input == "" || (contextRepo.Repo != "" && !strings.EqualFold(contextRepo.Provider, "github")) {
+		return ports.SCMPRRef{}, false
+	}
+	repo := contextRepo
+	numberText := strings.TrimPrefix(input, "#")
+	switch {
+	case strings.Contains(input, "://"):
+		u, err := url.Parse(input)
+		if err != nil || !strings.EqualFold(u.Scheme, "https") {
+			return ports.SCMPRRef{}, false
+		}
+		owner, name, number, err := parsePRURL(input)
+		if err != nil {
+			return ports.SCMPRRef{}, false
+		}
+		parsed := makeGitHubRepo(strings.ToLower(u.Hostname()), owner, name)
+		if contextRepo.Repo != "" && !sameGitHubRepo(parsed, contextRepo) {
+			return ports.SCMPRRef{}, false
+		}
+		repo = parsed
+		numberText = strconv.Itoa(number)
+	case strings.LastIndex(input, "#") > 0:
+		hash := strings.LastIndex(input, "#")
+		owner, name, ok := splitOwnerRepo(input[:hash])
+		if !ok {
+			return ports.SCMPRRef{}, false
+		}
+		host := contextRepo.Host
+		if host == "" {
+			host = "github.com"
+		}
+		parsed := makeGitHubRepo(host, owner, name)
+		if contextRepo.Repo != "" && !sameGitHubRepo(parsed, contextRepo) {
+			return ports.SCMPRRef{}, false
+		}
+		repo = parsed
+		numberText = input[hash+1:]
+	}
+	number, err := strconv.Atoi(numberText)
+	if err != nil || number <= 0 || repo.Repo == "" {
+		return ports.SCMPRRef{}, false
+	}
+	host := strings.ToLower(strings.TrimSpace(repo.Host))
+	if host == "" || host == "www.github.com" || host == "api.github.com" {
+		host = "github.com"
+	}
+	prURL := (&url.URL{Scheme: "https", Host: host, Path: "/" + repo.Repo + "/pull/" + strconv.Itoa(number)}).String()
+	return ports.SCMPRRef{Repo: repo, Number: number, URL: prURL}, true
+}
+
+func sameGitHubRepo(left, right ports.SCMRepo) bool {
+	normalizeHost := func(host string) string {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host == "www.github.com" || host == "api.github.com" {
+			return "github.com"
+		}
+		return host
+	}
+	return normalizeHost(left.Host) == normalizeHost(right.Host) && strings.EqualFold(left.Repo, right.Repo)
+}
+
 // RepoPRListGuard checks GitHub's cheap open-PR-list ETag guard.
 func (p *Provider) RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag string) (ports.SCMGuardResult, error) {
 	q := url.Values{}

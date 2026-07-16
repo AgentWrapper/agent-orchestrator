@@ -150,7 +150,7 @@ func (p *Provider) ParseMergeRequestRef(raw string, contextRepo ports.SCMRepo) (
 			return ports.SCMPRRef{}, false
 		}
 		parsed, ok := makeRepo(p.host, u.Path[:at])
-		if !ok || !sameRepo(parsed, contextRepo) {
+		if !ok || (contextRepo.Repo != "" && !sameRepo(parsed, contextRepo)) {
 			return ports.SCMPRRef{}, false
 		}
 		repo = parsed
@@ -158,7 +158,7 @@ func (p *Provider) ParseMergeRequestRef(raw string, contextRepo ports.SCMRepo) (
 	} else if bang := strings.LastIndex(input, "!"); bang >= 0 {
 		if bang > 0 {
 			parsed, ok := makeRepo(p.host, input[:bang])
-			if !ok || !sameRepo(parsed, contextRepo) {
+			if !ok || (contextRepo.Repo != "" && !sameRepo(parsed, contextRepo)) {
 				return ports.SCMPRRef{}, false
 			}
 			repo = parsed
@@ -170,6 +170,11 @@ func (p *Provider) ParseMergeRequestRef(raw string, contextRepo ports.SCMRepo) (
 		return ports.SCMPRRef{}, false
 	}
 	return ports.SCMPRRef{Repo: repo, Number: iid, URL: p.mergeRequestURL(repo.Repo, iid)}, true
+}
+
+// ParseChangeRef exposes GitLab MR reference parsing through the shared claim boundary.
+func (p *Provider) ParseChangeRef(raw string, contextRepo ports.SCMRepo) (ports.SCMPRRef, bool) {
+	return p.ParseMergeRequestRef(raw, contextRepo)
 }
 
 func (p *Provider) mergeRequestURL(repo string, iid int) string {

@@ -211,14 +211,8 @@ func TestWiring_SCMObserverDoesNotEagerlyResolveLegacyGitHub(t *testing.T) {
 	cancelObserver()
 	<-startSCMObserver(observerCtx, store, lcm, providers, log)
 
-	want := legacyGitHubProject()
-	if len(providers.projects) != 1 {
-		t.Fatalf("provider resolutions = %d, want only the remaining eager legacy consumer", len(providers.projects))
-	}
-	for i, project := range providers.projects {
-		if !reflect.DeepEqual(project, want) {
-			t.Fatalf("provider resolution %d project = %#v, want virtual GitHub default %#v", i, project, want)
-		}
+	if len(providers.projects) != 0 {
+		t.Fatalf("provider resolutions = %d, want lazy project-scoped resolution", len(providers.projects))
 	}
 }
 
@@ -315,11 +309,11 @@ func TestWiring_ProjectProviderResolverCachesLegacyBundleAcrossConsumers(t *test
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	providers := newProjectProviderResolver(store, wiringCredentials{}, log)
-	first, err := providers.Resolve(context.Background(), legacyGitHubProject())
+	first, err := providers.Resolve(context.Background(), domain.ProjectRecord{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := providers.Resolve(context.Background(), legacyGitHubProject())
+	second, err := providers.Resolve(context.Background(), domain.ProjectRecord{})
 	if err != nil {
 		t.Fatal(err)
 	}

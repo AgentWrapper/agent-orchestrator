@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -502,7 +503,7 @@ func TestSessionClaimPR_JSONAndNoTakeoverError(t *testing.T) {
 	}
 }
 
-func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
+func TestSessionClaimPR_PassesRawRefWithoutCallingGH(t *testing.T) {
 	cfg := setConfigEnv(t)
 	log := &sessionRequestLog{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -523,21 +524,18 @@ func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
-	var ghDir string
+	commandCalled := false
 	out, _, err := executeCLI(t, Deps{
 		ProcessAlive: func(int) bool { return true },
-		CommandOutputInDir: func(_ context.Context, dir, name string, args ...string) ([]byte, error) {
-			ghDir = dir
-			if name != "gh" {
-				t.Fatalf("command name=%s", name)
-			}
-			return []byte("https://github.com/aoagents/agent-orchestrator\n"), nil
+		CommandOutputInDir: func(context.Context, string, string, ...string) ([]byte, error) {
+			commandCalled = true
+			return nil, errors.New("must not shell out")
 		},
 	}, "session", "claim-pr", "demo-1", "142")
 	if err != nil {
 		t.Fatalf("claim-pr fallback failed: %v", err)
 	}
-	if ghDir != "/repo/demo" || !strings.Contains(out, "claimed PR #142") {
-		t.Fatalf("ghDir=%q out=%s", ghDir, out)
+	if commandCalled || !strings.Contains(out, "claimed PR #142") {
+		t.Fatalf("commandCalled=%v out=%s", commandCalled, out)
 	}
 }

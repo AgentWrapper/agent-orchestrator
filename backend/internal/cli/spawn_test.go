@@ -78,7 +78,7 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-9/pr/claim":
 			var req claimPRRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req.PR != "https://github.com/aoagents/agent-orchestrator/pull/142" || req.AllowTakeover {
+			if req.PR != "142" || req.AllowTakeover {
 				t.Fatalf("claim request = %#v", req)
 			}
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-9","prs":[{"url":"https://github.com/aoagents/agent-orchestrator/pull/142","number":142,"state":"open","ci":"passing","review":"review_required","mergeability":"mergeable","reviewComments":false,"updatedAt":"2026-06-04T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
