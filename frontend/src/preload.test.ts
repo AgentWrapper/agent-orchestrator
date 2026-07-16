@@ -21,10 +21,15 @@ describe("preload remoteServer bridge", () => {
 		get(): Promise<unknown>;
 		revealPassword(): Promise<unknown>;
 	};
+	let locale: {
+		get(): Promise<unknown>;
+		set(preference: string): Promise<unknown>;
+	};
 
 	beforeAll(async () => {
 		await import("./preload");
 		remoteServer = exposeInMainWorld.mock.calls[0][1].remoteServer;
+		locale = exposeInMainWorld.mock.calls[0][1].locale;
 	});
 
 	it("uses a separate IPC call for explicit password reveal", async () => {
@@ -33,5 +38,13 @@ describe("preload remoteServer bridge", () => {
 
 		await remoteServer.revealPassword();
 		expect(invoke).toHaveBeenLastCalledWith("remoteServer:revealPassword");
+	});
+
+	it("uses the locale IPC channels exactly", async () => {
+		await locale.get();
+		expect(invoke).toHaveBeenLastCalledWith("locale:get");
+
+		await locale.set("zh-CN");
+		expect(invoke).toHaveBeenLastCalledWith("locale:set", "zh-CN");
 	});
 });

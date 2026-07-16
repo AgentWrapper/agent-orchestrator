@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { initializeRendererI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 
 const {
@@ -18,6 +19,8 @@ const {
 	updOnStatus,
 	getVersion,
 	isRemoteClient,
+	getLocale,
+	setLocale,
 } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
@@ -32,6 +35,8 @@ const {
 	updOnStatus: vi.fn(),
 	getVersion: vi.fn(),
 	isRemoteClient: vi.fn(),
+	getLocale: vi.fn(),
+	setLocale: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -48,6 +53,7 @@ vi.mock("../lib/bridge", () => ({
 			revealPassword: vi.fn().mockResolvedValue(null),
 			save: vi.fn(),
 		},
+		locale: { get: getLocale, set: setLocale },
 		appState: { getMigration, setMigration },
 		updateSettings: { get: getUpdate, set: setUpdate },
 		updates: {
@@ -70,7 +76,8 @@ function renderForm() {
 	return qc;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+	await initializeRendererI18n("en");
 	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate]) m.mockReset();
 	getMigration.mockResolvedValue({ status: "pending" });
 	getMock.mockResolvedValue({ data: { available: true, legacyRoot: "/home/u/.agent-orchestrator" }, error: undefined });
@@ -85,13 +92,18 @@ beforeEach(() => {
 	updOnStatus.mockReturnValue(() => undefined);
 	getVersion.mockResolvedValue("1.4.0");
 	isRemoteClient.mockResolvedValue(false);
+	getLocale.mockResolvedValue({ preference: "en", effectiveLocale: "en", systemLocale: "en" });
+	setLocale.mockResolvedValue({ preference: "en", effectiveLocale: "en", systemLocale: "en" });
 });
 
 describe("GlobalSettingsForm", () => {
-	it("renders the Updates and Migration sections", async () => {
+	it("renders Language before the Updates and Migration sections", async () => {
 		renderForm();
-		expect(await screen.findByText("Updates")).toBeInTheDocument();
-		expect(screen.getByText("Migration")).toBeInTheDocument();
+		const language = await screen.findByText("Language");
+		const updates = await screen.findByText("Updates");
+		const migration = screen.getByText("Migration");
+		expect(language.compareDocumentPosition(updates) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(updates.compareDocumentPosition(migration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("hides updates in a remote client while preserving other global settings", async () => {
@@ -99,6 +111,7 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 
 		expect(await screen.findByText("Remote server")).toBeInTheDocument();
+		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.queryByText("Updates")).not.toBeInTheDocument();
 		expect(screen.getByText("Migration")).toBeInTheDocument();
 		expect(getUpdate).not.toHaveBeenCalled();

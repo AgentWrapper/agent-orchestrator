@@ -10,6 +10,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
 import type { EditableRemoteServerConfig, RemoteServerConfigUpdate } from "./main/remote-client-runtime";
+import type { LocalePreference, LocaleSnapshot } from "./shared/locale";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -82,6 +83,11 @@ const api = {
 		get: () => ipcRenderer.invoke("remoteServer:get") as Promise<EditableRemoteServerConfig | null>,
 		revealPassword: () => ipcRenderer.invoke("remoteServer:revealPassword") as Promise<string | null>,
 		save: (input: RemoteServerConfigUpdate) => ipcRenderer.invoke("remoteServer:save", input) as Promise<DaemonStatus>,
+	},
+	locale: {
+		get: () => ipcRenderer.invoke("locale:get") as Promise<LocaleSnapshot>,
+		set: (preference: LocalePreference) =>
+			ipcRenderer.invoke("locale:set", preference) as Promise<LocaleSnapshot>,
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,

@@ -87,6 +87,14 @@ if (typeof window !== "undefined") {
 			revealPassword: async () => null,
 			save: async () => ({ state: "ready", port: 3001 }),
 		},
+		locale: {
+			get: async () => ({ preference: "system", effectiveLocale: "en", systemLocale: "en" }),
+			set: async (preference) => ({
+				preference,
+				effectiveLocale: preference === "zh-CN" ? "zh-CN" : "en",
+				systemLocale: "en",
+			}),
+		},
 		telemetry: {
 			getBootstrap: async () => null,
 		},

@@ -1,4 +1,7 @@
 import type { AoBridge } from "../../preload";
+import { resolveLocaleSnapshot, type LocalePreference } from "../../shared/locale";
+
+let previewLocalePreference: LocalePreference = "system";
 
 export const aoBridge: AoBridge =
 	window.ao ??
@@ -43,6 +46,13 @@ export const aoBridge: AoBridge =
 			get: async () => null,
 			revealPassword: async () => null,
 			save: async () => ({ state: "error", code: "not_configured", message: "Electron preload is not available." }),
+		},
+		locale: {
+			get: async () => resolveLocaleSnapshot(previewLocalePreference, navigator.language),
+			set: async (preference) => {
+				previewLocalePreference = preference;
+				return resolveLocaleSnapshot(preference, navigator.language);
+			},
 		},
 		telemetry: {
 			getBootstrap: async () => null,

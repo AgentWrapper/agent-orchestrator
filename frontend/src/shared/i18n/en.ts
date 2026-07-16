@@ -4,7 +4,7 @@ export const en = {
 			title: "Language",
 			system: "System default",
 			english: "English",
-			simplifiedChinese: "Simplified Chinese",
+			simplifiedChinese: "简体中文",
 			effective: "Currently using {{language}}",
 			saveFailed: "Could not save language",
 		},

@@ -64,6 +64,10 @@ import {
 } from "./main/remote-server-config";
 import { resolveRemoteClientBuild, resolveRemoteClientIdentity } from "./main/remote-client-build";
 import { createUpdateIpcHandlers } from "./main/update-ipc";
+import { mainI18n } from "./main/i18n";
+import { LocaleController } from "./main/locale-controller";
+import { readLocalePreference, writeLocalePreference } from "./main/locale-settings";
+import type { LocalePreference, LocaleSnapshot } from "./shared/locale";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -117,6 +121,7 @@ let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 let remoteClientRuntime: RemoteClientRuntime | null = null;
+let localeController: LocaleController | null = null;
 
 const execFileAsync = promisify(execFile);
 
@@ -1024,6 +1029,14 @@ ipcMain.handle("remoteServer:save", (_event, input: RemoteServerConfigUpdate) =>
 	}
 	return remoteClientRuntime.saveConfig(input);
 });
+ipcMain.handle("locale:get", (): LocaleSnapshot => {
+	if (!localeController) throw new Error("Locale controller is not ready");
+	return localeController.get();
+});
+ipcMain.handle("locale:set", async (_event, preference: LocalePreference): Promise<LocaleSnapshot> => {
+	if (!localeController) throw new Error("Locale controller is not ready");
+	return localeController.set(preference);
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1430,6 +1443,18 @@ app.whenReady().then(async () => {
 	} catch (err) {
 		console.error("failed to write app-state marker:", err);
 	}
+
+	localeController = new LocaleController({
+		userDataDir: app.getPath("userData"),
+		systemLocale: () => app.getLocale(),
+		readPreference: readLocalePreference,
+		writePreference: writeLocalePreference,
+		changeLanguage: (locale) => mainI18n.changeLanguage(locale),
+		rebuildMenus: () => {
+			if (process.platform === "win32") Menu.setApplicationMenu(buildWindowsAppMenu());
+		},
+	});
+	await localeController.initialize();
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();

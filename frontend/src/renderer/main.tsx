@@ -10,23 +10,34 @@ import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { initTelemetry } from "./lib/telemetry";
 import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
+import { aoBridge } from "./lib/bridge";
+import { applyLocaleSnapshot, resolveNavigatorLocaleSnapshot } from "./i18n";
 
-const router = createAppRouter(queryClient);
-void initTelemetry();
-startDaemonFailureTelemetry();
+type AppRouter = ReturnType<typeof createAppRouter>;
 
 declare module "@tanstack/react-router" {
 	interface Register {
-		router: typeof router;
+		router: AppRouter;
 	}
 }
 
-createRoot(document.getElementById("root") as HTMLElement).render(
-	<React.StrictMode>
-		<TelemetryBoundary>
-			<QueryClientProvider client={queryClient}>
-				<RouterProvider router={router} />
-			</QueryClientProvider>
-		</TelemetryBoundary>
-	</React.StrictMode>,
-);
+async function bootstrap(): Promise<void> {
+	const snapshot = await aoBridge.locale.get().catch(() => resolveNavigatorLocaleSnapshot());
+	await applyLocaleSnapshot(snapshot);
+
+	const router = createAppRouter(queryClient);
+	void initTelemetry();
+	startDaemonFailureTelemetry();
+
+	createRoot(document.getElementById("root") as HTMLElement).render(
+		<React.StrictMode>
+			<TelemetryBoundary>
+				<QueryClientProvider client={queryClient}>
+					<RouterProvider router={router} />
+				</QueryClientProvider>
+			</TelemetryBoundary>
+		</React.StrictMode>,
+	);
+}
+
+void bootstrap();

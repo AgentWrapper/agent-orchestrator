@@ -4,11 +4,11 @@ import { DashboardSubhead } from "./DashboardSubhead";
 import { MigrationSection } from "./MigrationSection";
 import { UpdatesSection } from "./UpdatesSection";
 import { RemoteServerSettingsSection } from "./RemoteServerSettings";
+import { LanguageSettingsSection } from "./LanguageSettingsSection";
 
 // App-wide settings, shown from the sidebar when no project is selected. Each
-// section is a self-contained card: Updates (auto-update channel, #2207) and
-// Migration (re-run the legacy-AO import, #2205). Connect Mobile lives in the
-// sidebar Settings menu, not here.
+// section is a self-contained card. Connect Mobile lives in the sidebar Settings
+// menu, not here.
 export function GlobalSettingsForm() {
 	const [remoteClient, setRemoteClient] = useState<boolean | null>(null);
 	useEffect(() => {
@@ -20,6 +20,7 @@ export function GlobalSettingsForm() {
 			<DashboardSubhead title="Global settings" subtitle="Settings that apply across all projects" />
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				<div className="mx-auto flex max-w-2xl flex-col gap-4">
+					<LanguageSettingsSection />
 					<RemoteServerSettingsSection />
 					{remoteClient === false && <UpdatesSection />}
 					<MigrationSection />
