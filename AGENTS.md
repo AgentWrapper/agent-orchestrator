@@ -136,3 +136,4 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 ## Project learnings
 
 - For remote-client deployments, preserve the daemon wire protocol and business services; prefer an Electron-local authenticated forwarding proxy over changing REST, SSE, WebSocket, or terminal transports.
+- SCM provider, repository, and connection selection are project-level settings; never model one globally active repository provider for the daemon.

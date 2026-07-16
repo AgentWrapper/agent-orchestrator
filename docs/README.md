@@ -10,13 +10,15 @@ Start with [architecture.md](architecture.md) for the current backend model and
 
 ## Reference docs
 
-| Doc                                                    | What it covers                                                                                                        |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| [architecture.md](architecture.md)                     | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
-| [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
-| [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |
-| [STATUS.md](STATUS.md)                                 | What is shipped on `main` today and what is still in flight.                                                          |
-| [stack.md](stack.md)                                   | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
+| Doc                                                                                                                      | What it covers                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| [architecture.md](architecture.md)                                                                                       | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
+| [backend-code-structure.md](backend-code-structure.md)                                                                   | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
+| [cli/README.md](cli/README.md)                                                                                           | CLI commands and daemon control surface.                                                                              |
+| [STATUS.md](STATUS.md)                                                                                                   | What is shipped on `main` today and what is still in flight.                                                          |
+| [stack.md](stack.md)                                                                                                     | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
+| [gitlab-provider-and-coordinator-wakeup-requirements.md](gitlab-provider-and-coordinator-wakeup-requirements.md)         | Proposed GitLab parity, project-level SCM selection, desktop credentials, and Coordinator self-wake requirements.     |
+| [plans/2026-07-15-gitlab-provider-and-coordinator-wakeup.md](plans/2026-07-15-gitlab-provider-and-coordinator-wakeup.md) | Development design and phased implementation plan for GitLab adapters and durable Coordinator scheduling.             |
 
 ## Mental model
 
