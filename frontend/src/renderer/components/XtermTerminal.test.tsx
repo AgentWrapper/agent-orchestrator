@@ -14,7 +14,9 @@ const state = vi.hoisted(() => ({
 			active: {
 				type: string;
 				length: number;
-				getLine: (index: number) => { isWrapped: boolean; translateToString: (trimRight?: boolean) => string } | undefined;
+				getLine: (
+					index: number,
+				) => { isWrapped: boolean; translateToString: (trimRight?: boolean) => string } | undefined;
 			};
 		};
 		scrollLines: ReturnType<typeof vi.fn>;
@@ -79,6 +81,9 @@ vi.mock("@xterm/xterm", () => ({
 			return { dispose: () => undefined };
 		}
 		onRender() {
+			return { dispose: () => undefined };
+		}
+		onWriteParsed() {
 			return { dispose: () => undefined };
 		}
 		onKey(listener: (event: { key: string }) => void) {

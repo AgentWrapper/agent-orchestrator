@@ -5,6 +5,7 @@ import { SUGGESTION_DISCUSSION_ISSUE_PREFIX, type WorkspaceSession } from "../ty
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
 const postMock = vi.fn();
+const terminalAttachMock = vi.fn();
 let terminalLinkHandler: ((uri: string) => void) | undefined;
 let terminalReadyHandler: ((terminal: unknown) => void) | undefined;
 
@@ -23,7 +24,7 @@ vi.mock("./XtermTerminal", () => ({
 
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: () => ({
-		attach: vi.fn(),
+		attach: terminalAttachMock,
 		state: "idle",
 		error: undefined,
 	}),
@@ -52,6 +53,7 @@ const orchestrator = {
 beforeEach(() => {
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: {} });
+	terminalAttachMock.mockReset();
 	terminalLinkHandler = undefined;
 	terminalReadyHandler = undefined;
 });
@@ -119,10 +121,7 @@ describe("TerminalPane empty states", () => {
 describe("orchestrator conversation history", () => {
 	it("clears the local terminal scrollback only after confirmation", () => {
 		const clear = vi.fn();
-		const view = renderPane(
-			{ ...orchestrator, terminalHandleId: "term-orchestrator" },
-			"conversation",
-		);
+		const view = renderPane({ ...orchestrator, terminalHandleId: "term-orchestrator" }, "conversation");
 		try {
 			act(() =>
 				terminalReadyHandler?.({

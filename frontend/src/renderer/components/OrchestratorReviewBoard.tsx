@@ -19,6 +19,7 @@ import type { Theme } from "../stores/ui-store";
 import {
 	isOrchestratorSession,
 	isSuggestionDiscussionSession,
+	openPRs,
 	sessionNeedsAttention,
 	type WorkspaceSession,
 } from "../types/workspace";
@@ -51,7 +52,13 @@ const reviewPriority: Partial<Record<WorkspaceSession["status"], number>> = {
 	ci_failed: 2,
 	no_signal: 3,
 	review_pending: 4,
+	draft: 5,
+	pr_open: 5,
 };
+
+function hasReviewablePullRequest(session: WorkspaceSession): boolean {
+	return (session.status === "draft" || session.status === "pr_open") && openPRs(session).length > 0;
+}
 
 export function reviewCandidates(sessions: WorkspaceSession[]): WorkspaceSession[] {
 	return sessions
@@ -60,7 +67,7 @@ export function reviewCandidates(sessions: WorkspaceSession[]): WorkspaceSession
 				!isOrchestratorSession(session) &&
 				!isSuggestionDiscussionSession(session) &&
 				!session.issueId?.startsWith(REVIEW_TRANSLATOR_ISSUE_PREFIX) &&
-				sessionNeedsAttention(session),
+				(sessionNeedsAttention(session) || hasReviewablePullRequest(session)),
 		)
 		.sort(
 			(a, b) =>
@@ -115,6 +122,20 @@ function fallbackTranslation(session: WorkspaceSession): ReviewTranslation & { r
 				question: "Would you like to inspect the work now, or keep waiting for review?",
 				reason: "Review is pending",
 			};
+		case "draft":
+			return {
+				sessionId: session.id,
+				summary: "This agent has opened draft work that is ready for a human pass.",
+				question: "Would you like to review it now, or leave it as a draft?",
+				reason: "Draft pull request ready to inspect",
+			};
+		case "pr_open":
+			return {
+				sessionId: session.id,
+				summary: "This agent has opened a pull request that is ready for review.",
+				question: "Do you want to review this pull request now?",
+				reason: "Open pull request ready to inspect",
+			};
 		default:
 			return {
 				sessionId: session.id,
@@ -146,26 +167,35 @@ export function parseReviewTranslations(lines: string[], batchId: string): Revie
 		const endAt = transcript.indexOf(end, bodyAt);
 		if (endAt < 0) break;
 		cursor = endAt + end.length;
-		try {
-			const body = transcript
-				.slice(bodyAt, endAt)
-				.trim()
-				.replace(/^```(?:json)?\s*/i, "")
-				.replace(/\s*```$/, "");
-			const parsed = JSON.parse(body) as { items?: unknown[] };
-			if (!Array.isArray(parsed.items)) continue;
+		const body = transcript
+			.slice(bodyAt, endAt)
+			.trim()
+			.replace(/^```(?:json)?\s*/i, "")
+			.replace(/\s*```$/, "");
+		let parsed: { items?: unknown[] } | undefined;
+		// Full-screen agent UIs can hard-wrap a JSON string into rendered terminal
+		// lines. Try the exact response first, then reflow those visual line breaks
+		// to spaces so a valid structured answer survives the terminal transcript.
+		for (const candidate of [body, body.replace(/\r?\n[\t ]*/g, " ")]) {
+			try {
+				parsed = JSON.parse(candidate) as { items?: unknown[] };
+				break;
+			} catch {
+				// Keep trying bounded variants of this marker pair.
+			}
+		}
+		if (Array.isArray(parsed?.items)) {
 			const items = parsed.items.flatMap((item) => {
 				if (!item || typeof item !== "object") return [];
 				const candidate = item as Record<string, unknown>;
-				const sessionId = cleanTranslationText(candidate.sessionId, 120);
+				// Session ids never contain whitespace. Terminal reflow may insert a
+				// visual break in the middle of one, so remove it after validation.
+				const sessionId = cleanTranslationText(candidate.sessionId, 120)?.replace(/\s+/g, "");
 				const summary = cleanTranslationText(candidate.summary, 280);
 				const question = cleanTranslationText(candidate.question, 240);
 				return sessionId && summary && question ? [{ sessionId, summary, question }] : [];
 			});
 			if (items.length > 0) latest = items;
-		} catch {
-			// Agent terminal output can contain an echoed example before the real
-			// result. Ignore malformed marker pairs and keep scanning for the latest.
 		}
 	}
 	return latest;
@@ -180,9 +210,20 @@ function batchHash(value: string): string {
 	return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-function reviewBatchId(candidates: WorkspaceSession[], refreshNonce: number): string {
+export function reviewBatchId(candidates: WorkspaceSession[], refreshNonce: number): string {
 	return batchHash(
-		`${refreshNonce}|${candidates.map((session) => `${session.id}:${session.status}:${session.updatedAt}`).join("|")}`,
+		`${refreshNonce}|${candidates
+			.map((session) => {
+				const pullRequests = openPRs(session)
+					.map(
+						(pr) =>
+							`${pr.number}:${pr.state}:${pr.ci}:${pr.review}:${pr.mergeability}:${pr.reviewComments ? "comments" : "clear"}`,
+					)
+					.sort()
+					.join(",");
+				return `${session.id}:${session.status}:${session.activity?.state ?? "unknown"}:${pullRequests}`;
+			})
+			.join("|")}`,
 	);
 }
 
@@ -212,18 +253,14 @@ function newestReviewHelper(sessions: WorkspaceSession[]): WorkspaceSession | un
 		.filter(
 			(session) =>
 				session.issueId?.startsWith(REVIEW_TRANSLATOR_ISSUE_PREFIX) &&
+				Boolean(session.terminalHandleId) &&
 				session.status !== "terminated" &&
 				session.status !== "merged",
 		)
 		.sort((a, b) => Date.parse(b.createdAt ?? b.updatedAt) - Date.parse(a.createdAt ?? a.updatedAt))[0];
 }
 
-export function OrchestratorReviewBoard({
-	daemonReady,
-	orchestrator,
-	sessions,
-	theme,
-}: OrchestratorReviewBoardProps) {
+export function OrchestratorReviewBoard({ daemonReady, orchestrator, sessions, theme }: OrchestratorReviewBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const candidates = useMemo(() => reviewCandidates(sessions), [sessions]);
@@ -237,18 +274,12 @@ export function OrchestratorReviewBoard({
 	const requestedBatchRef = useRef<string | undefined>(undefined);
 	const batchId = useMemo(() => reviewBatchId(candidates, refreshNonce), [candidates, refreshNonce]);
 	const prompt = useMemo(() => reviewAgentPrompt(candidates, batchId), [batchId, candidates]);
-	const parsedItems = useMemo(
-		() => parseReviewTranslations(transcriptLines, batchId),
-		[batchId, transcriptLines],
-	);
+	const parsedItems = useMemo(() => parseReviewTranslations(transcriptLines, batchId), [batchId, transcriptLines]);
 	const translatedItems = useMemo(() => {
 		const candidateIds = new Set(candidates.map((candidate) => candidate.id));
 		return parsedItems.filter((item) => candidateIds.has(item.sessionId));
 	}, [candidates, parsedItems]);
-	const translations = useMemo(
-		() => new Map(translatedItems.map((item) => [item.sessionId, item])),
-		[translatedItems],
-	);
+	const translations = useMemo(() => new Map(translatedItems.map((item) => [item.sessionId, item])), [translatedItems]);
 	const cards = useMemo<ReviewCard[]>(
 		() =>
 			candidates.map((session) => {
@@ -286,7 +317,6 @@ export function OrchestratorReviewBoard({
 						body: {
 							projectId: orchestrator.workspaceId,
 							kind: "worker",
-							harness: orchestrator.provider,
 							issueId: expectedIssueId,
 							displayName: "Review helper",
 							prompt,
@@ -305,16 +335,7 @@ export function OrchestratorReviewBoard({
 				setIsRequesting(false);
 			}
 		})();
-	}, [
-		batchId,
-		candidates.length,
-		daemonReady,
-		helper,
-		orchestrator.provider,
-		orchestrator.workspaceId,
-		prompt,
-		queryClient,
-	]);
+	}, [batchId, candidates.length, daemonReady, helper, orchestrator.workspaceId, prompt, queryClient]);
 
 	const openTask = useCallback(
 		(session: WorkspaceSession) =>
@@ -358,7 +379,8 @@ export function OrchestratorReviewBoard({
 					<div className="min-w-0 flex-1">
 						<div className="text-sm font-semibold text-foreground">Your review board</div>
 						<div className="mt-0.5 text-xs text-muted-foreground">
-							Orbit picked the tasks that need a human decision. A small review agent turns their status into one clear question.
+							Orbit picked the tasks that need a human decision. A small review agent turns their status into one clear
+							question.
 						</div>
 					</div>
 					<div className="flex shrink-0 items-center gap-2">
@@ -409,7 +431,8 @@ export function OrchestratorReviewBoard({
 							</div>
 							<h2 className="mt-4 text-base font-semibold text-foreground">Nothing needs your answer</h2>
 							<p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-								Orbit will place a task here when an agent pauses, loses signal, fails checks, or receives review feedback.
+								Orbit will place a task here when an agent pauses, loses signal, fails checks, or receives review
+								feedback.
 							</p>
 						</div>
 					</div>
@@ -483,11 +506,15 @@ function ReviewTaskCard({
 					</div>
 
 					<div className="mt-6">
-						<div className="font-mono text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">Summary</div>
+						<div className="font-mono text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">
+							Summary
+						</div>
 						<p className="mt-2 text-sm leading-6 text-foreground/90">{card.summary}</p>
 					</div>
 					<div className="mt-5 rounded-xl border border-accent/20 bg-accent/8 p-4">
-						<div className="font-mono text-caption font-semibold uppercase tracking-wide-md text-accent">Question for you</div>
+						<div className="font-mono text-caption font-semibold uppercase tracking-wide-md text-accent">
+							Question for you
+						</div>
 						<p className="mt-2 text-base font-medium leading-6 text-foreground">{card.question}</p>
 					</div>
 
@@ -510,7 +537,9 @@ function ReviewTaskCard({
 					<div className="flex items-start justify-between gap-3">
 						<div>
 							<div className="text-sm font-semibold text-foreground">Answer the agent</div>
-							<div className="mt-1 text-caption text-muted-foreground">Your reply goes only to {card.session.title}.</div>
+							<div className="mt-1 text-caption text-muted-foreground">
+								Your reply goes only to {card.session.title}.
+							</div>
 						</div>
 						<button
 							aria-label={`Flip ${card.session.title} back to summary`}
@@ -529,7 +558,8 @@ function ReviewTaskCard({
 
 					{protectedPrompt ? (
 						<div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs leading-5 text-warning">
-							This is a protected approval prompt. Open the task and choose there so AO never answers a permission dialog for you.
+							This is a protected approval prompt. Open the task and choose there so AO never answers a permission
+							dialog for you.
 						</div>
 					) : sent ? (
 						<div className="mt-4 grid flex-1 place-items-center text-center">
@@ -617,7 +647,10 @@ function ReviewAgentBridge({
 	}, [attach, terminal]);
 
 	return (
-		<div aria-hidden="true" className="pointer-events-none absolute -left-[10000px] top-0 h-[1000px] w-[1200px] opacity-0">
+		<div
+			aria-hidden="true"
+			className="pointer-events-none absolute -left-[10000px] top-0 h-[1000px] w-[1200px] opacity-0"
+		>
 			<XtermTerminal
 				ariaLabel="Review helper terminal"
 				fontSize={13}

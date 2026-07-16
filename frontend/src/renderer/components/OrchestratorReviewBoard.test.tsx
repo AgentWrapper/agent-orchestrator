@@ -8,6 +8,7 @@ import {
 	parseReviewTranslations,
 	REVIEW_TRANSLATOR_ISSUE_PREFIX,
 	reviewAgentPrompt,
+	reviewBatchId,
 	reviewCandidates,
 } from "./OrchestratorReviewBoard";
 
@@ -68,6 +69,17 @@ function worker(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
 	};
 }
 
+const openPr = {
+	url: "https://example.com/pull/7",
+	number: 7,
+	state: "open",
+	ci: "pending",
+	review: "pending",
+	mergeability: "unknown",
+	reviewComments: false,
+	updatedAt: "2026-07-15T10:02:00Z",
+} as const;
+
 function renderBoard(sessions: WorkspaceSession[], daemonReady = false) {
 	return render(
 		<QueryClientProvider client={new QueryClient()}>
@@ -93,10 +105,13 @@ describe("review selection and translation", () => {
 			worker(),
 			worker({ id: "working", status: "working" }),
 			worker({ id: "ci", status: "ci_failed" }),
+			worker({ id: "draft", status: "draft", prs: [{ ...openPr, state: "draft" }] }),
+			worker({ id: "open", status: "pr_open", prs: [openPr] }),
+			worker({ id: "stale-draft", status: "draft", prs: [] }),
 			worker({ id: "helper", issueId: `${REVIEW_TRANSLATOR_ISSUE_PREFIX}abc` }),
 		]);
 
-		expect(candidates.map((candidate) => candidate.id)).toEqual(["worker-1", "ci"]);
+		expect(candidates.map((candidate) => candidate.id)).toEqual(["worker-1", "ci", "draft", "open"]);
 	});
 
 	it("parses the latest valid bounded response from the small review agent", () => {
@@ -118,11 +133,38 @@ describe("review selection and translation", () => {
 		]);
 	});
 
+	it("reflows visual terminal wrapping inside the helper's JSON", () => {
+		const lines = [
+			"AO_REVIEW_BOARD_deadbeef_START",
+			'{"items":[{"sessionId":"worker-',
+			'  1","summary":"The agent needs',
+			'  a cache choice.","question":"Which cache',
+			'  should it use?"}]}',
+			"AO_REVIEW_BOARD_deadbeef_END",
+		];
+
+		expect(parseReviewTranslations(lines, "deadbeef")).toEqual([
+			{
+				sessionId: "worker-1",
+				summary: "The agent needs a cache choice.",
+				question: "Which cache should it use?",
+			},
+		]);
+	});
+
 	it("gives the helper a translation-only, no-edit brief", () => {
 		const prompt = reviewAgentPrompt([worker()], "deadbeef");
 		expect(prompt).toContain("do not implement work, edit files, run commands, or spawn agents");
 		expect(prompt).toContain("one direct question");
 		expect(prompt).toContain('"sessionId":"worker-1"');
+	});
+
+	it("keeps a review batch stable across database-only timestamp refreshes", () => {
+		const original = worker({ prs: [openPr] });
+		const refreshed = worker({ prs: [openPr], updatedAt: "2026-07-15T11:30:00Z" });
+
+		expect(reviewBatchId([original], 0)).toBe(reviewBatchId([refreshed], 0));
+		expect(reviewBatchId([original], 0)).not.toBe(reviewBatchId([worker({ status: "ci_failed", prs: [openPr] })], 0));
 	});
 });
 
@@ -131,7 +173,9 @@ describe("review board", () => {
 		const user = userEvent.setup();
 		renderBoard([worker()]);
 
-		expect(screen.getByText("This agent has paused because it needs a decision or more direction.")).toBeInTheDocument();
+		expect(
+			screen.getByText("This agent has paused because it needs a decision or more direction."),
+		).toBeInTheDocument();
 		expect(screen.getAllByText("What should this agent do next?").length).toBeGreaterThan(0);
 
 		await user.click(screen.getByRole("button", { name: "Flip Choose cache policy to answer" }));
@@ -147,7 +191,7 @@ describe("review board", () => {
 		expect(await screen.findByText("Answer sent")).toBeInTheDocument();
 	});
 
-	it("starts one low-effort review helper without changing the orchestrator conversation", async () => {
+	it("starts one low-effort helper with the project's worker agent without changing the orchestrator conversation", async () => {
 		renderBoard([worker()], true);
 
 		await waitFor(() => expect(postMock).toHaveBeenCalled());
@@ -156,10 +200,17 @@ describe("review board", () => {
 			body: {
 				projectId: "proj-1",
 				kind: "worker",
-				harness: "claude-code",
 				displayName: "Review helper",
 				agentConfig: { reasoningEffort: "low" },
 			},
 		});
+		expect(postMock.mock.calls[0]?.[1]?.body).not.toHaveProperty("harness");
+	});
+
+	it("explains an open draft in plain English while the helper is still working", () => {
+		renderBoard([worker({ status: "draft", prs: [{ ...openPr, state: "draft" }] })]);
+
+		expect(screen.getByText("This agent has opened draft work that is ready for a human pass.")).toBeInTheDocument();
+		expect(screen.getAllByText("Would you like to review it now, or leave it as a draft?").length).toBeGreaterThan(0);
 	});
 });

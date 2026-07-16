@@ -510,11 +510,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			lastTranscript = serialized;
 			callbacksRef.current.onTranscriptChange(bounded);
 		};
-		const transcriptRender = term.onRender(() => {
+		const scheduleTranscript = () => {
 			if (!callbacksRef.current.onTranscriptChange) return;
 			if (transcriptTimer !== null) window.clearTimeout(transcriptTimer);
 			transcriptTimer = window.setTimeout(emitTranscript, TRANSCRIPT_DEBOUNCE_MS);
-		});
+		};
+		const transcriptRender = term.onRender(scheduleTranscript);
+		// Offscreen terminals (such as the review translator bridge) may parse a
+		// complete PTY replay without producing visible render frames. Follow the
+		// parser event too so transcript consumers still receive the active buffer.
+		const transcriptWrite = term.onWriteParsed(scheduleTranscript);
 
 		// OS window resize and monitor/DPR changes also alter the true cell box
 		// without touching the host's height:100% box, so the ResizeObserver above
@@ -660,6 +665,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			observer.disconnect();
 			stabilizer.dispose();
 			transcriptRender.dispose();
+			transcriptWrite.dispose();
 			if (transcriptTimer !== null) window.clearTimeout(transcriptTimer);
 			window.removeEventListener("resize", fitTerminal);
 			host.removeEventListener("copy", copyInput);
