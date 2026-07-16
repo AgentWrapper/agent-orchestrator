@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -97,32 +98,33 @@ func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
 	}
 }
 
-func TestSessionsAPI_ActivityThreadsAgentSessionIDWithoutState(t *testing.T) {
+func TestSessionsAPI_ActivityAcceptsMetadataOnlyAgentSessionID(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
-		`{"event":"session-start","agentSessionId":"codex-native-1"}`)
+		`{"event":"session-start","agentSessionId":"native-session-1"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
-	want := ports.ActivitySignal{Valid: false, Event: "session-start", AgentSessionID: "codex-native-1"}
+	want := ports.ActivitySignal{Event: "session-start", AgentSessionID: "native-session-1"}
 	if rec.gotSignal != want {
 		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
 	}
 }
 
-func TestSessionsAPI_ActivityThreadsWhitespaceAgentSessionID(t *testing.T) {
+func TestSessionsAPI_ActivityThreadsAgentSessionIDWithState(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
-		`{"state":"active","agentSessionId":"   "}`)
+		`{"state":"idle","event":"stop","agentSessionId":"native-session-1"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
-	if rec.gotSignal.AgentSessionID != "   " {
-		t.Fatalf("AgentSessionID = %q, want raw whitespace before lifecycle trim", rec.gotSignal.AgentSessionID)
+	want := ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Event: "stop", AgentSessionID: "native-session-1"}
+	if rec.gotSignal != want {
+		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
 	}
 }
 
@@ -158,6 +160,30 @@ func TestSessionsAPI_ActivityRejectsUnknownState(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_ACTIVITY_STATE")
 	if rec.calls != 0 {
 		t.Fatalf("recorder should not be called for an invalid state; calls=%d", rec.calls)
+	}
+}
+
+func TestSessionsAPI_ActivityRejectsEmptyMetadataOnlyRequest(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"event":"session-start"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "ACTIVITY_OR_SESSION_ID_REQUIRED")
+	if rec.calls != 0 {
+		t.Fatalf("recorder should not be called for an empty metadata request; calls=%d", rec.calls)
+	}
+}
+
+func TestSessionsAPI_ActivityRejectsOverlongMetadataOnlySessionID(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+	longID := strings.Repeat("a", 300)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"event":"session-start","agentSessionId":"`+longID+`"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "ACTIVITY_OR_SESSION_ID_REQUIRED")
+	if rec.calls != 0 {
+		t.Fatalf("recorder should not be called for an overlong session id; calls=%d", rec.calls)
 	}
 }
 

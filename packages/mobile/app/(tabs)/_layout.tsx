@@ -1,12 +1,14 @@
 import { Feather } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { haptics } from "../../lib/haptics";
 import { theme } from "../../lib/theme";
 
 export default function TabsLayout() {
 	const insets = useSafeAreaInsets();
 	return (
 		<Tabs
+			screenListeners={{ tabPress: () => haptics.select() }}
 			screenOptions={{
 				headerShown: false,
 				tabBarActiveTintColor: theme.blue,

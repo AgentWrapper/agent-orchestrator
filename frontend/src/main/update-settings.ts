@@ -19,6 +19,11 @@ export interface UpdateStatus {
 	version?: string;
 	percent?: number;
 	message?: string;
+	// Present only when state === "downloaded".
+	// stagedAt: epoch ms when the update finished downloading.
+	// escalated: true when per-channel rules say the user should be nudged harder.
+	stagedAt?: number;
+	escalated?: boolean;
 }
 
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */

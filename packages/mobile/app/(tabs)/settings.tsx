@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { pingServer } from "../../lib/api";
 import { DEFAULT_CONFIG, loadConfig, saveConfig, type ServerConfig } from "../../lib/config";
+import { haptics } from "../../lib/haptics";
 import { useApp } from "../../lib/store";
 import { theme } from "../../lib/theme";
 import { Button, ConnectionPill, ScreenHeader } from "../../lib/ui";
@@ -68,9 +69,11 @@ export default function SettingsScreen() {
 		try {
 			await saveConfig(target);
 			const count = await pingServer(target);
+			haptics.success();
 			setResult({ ok: true, msg: `Connected — ${count} session(s) found.` });
 			await reloadConfig();
 		} catch (e) {
+			haptics.error();
 			const msg = e instanceof Error ? e.message : "Could not reach server.";
 			setResult({ ok: false, msg });
 			// Wrong/missing password — reopen the prompt instead of leaving the

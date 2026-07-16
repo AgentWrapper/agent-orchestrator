@@ -209,10 +209,15 @@ function annotatePreloadPath(): string {
 // uses the .app bundle's .icns instead. Packaged: shipped via extraResource to
 // resources/icon.png; dev: the source asset under frontend/assets.
 function windowIconPath(): string | undefined {
+	const iconFile = process.platform === "win32" ? "icon.ico" : "icon.png";
 	const candidate = app.isPackaged
+		? path.join(process.resourcesPath, iconFile)
+		: path.join(__dirname, `../../assets/${iconFile}`);
+	if (existsSync(candidate)) return candidate;
+	const fallback = app.isPackaged
 		? path.join(process.resourcesPath, "icon.png")
 		: path.join(__dirname, "../../assets/icon.png");
-	return existsSync(candidate) ? candidate : undefined;
+	return existsSync(fallback) ? fallback : undefined;
 }
 
 function applyRuntimeAppIcon(): void {

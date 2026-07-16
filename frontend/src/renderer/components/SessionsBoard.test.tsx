@@ -80,6 +80,40 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("Idle")).toBeInTheDocument();
 	});
 
+	it("renders idle activity in the working column with passive styling", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "brand-font-pipeline",
+							provider: "claude-code",
+							branch: "ao/radic-5",
+							status: "working",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getAllByText("Working").length).toBeGreaterThan(0);
+		const badge = screen.getByText("Idle").closest("span");
+		expect(badge).toHaveClass("text-passive");
+		expect(badge).not.toHaveClass("text-working");
+	});
+
 	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],

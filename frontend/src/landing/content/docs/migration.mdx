@@ -9,6 +9,10 @@ import { Callout } from "fumadocs-ui/components/callout";
 	AO is in active development and follows semver pre-1.0. Breaking changes are called out here with migration steps.
 </Callout>
 
+## npm is frozen and no longer recommended
+
+npm still works, but it is no longer the recommended way to install AO. `0.10.0` is the final version published to npm, and the `@aoagents/ao` package is frozen and will not receive further updates. Move to the [desktop app](https://ao-agents.com/docs/installation), which auto-updates and owns the daemon. Existing CLI users can run `ao start` to fetch and open the desktop build; the npm `ao` command stays available as that one-time bridge.
+
 ## From `@composio/agent-orchestrator` to `@aoagents/ao`
 
 The npm scope moved to `@aoagents/ao`. If you installed under the old name:

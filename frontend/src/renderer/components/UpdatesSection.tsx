@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
+import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateStatus } from "../../main/update-settings";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -116,20 +117,8 @@ export function UpdatesSection() {
 // an Update button that downloads then installs. It works even when automatic
 // updates are off, so users who never opted in can still pull the latest build.
 function UpdateActions() {
-	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
+	const status = useUpdateStatus();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
-
-	useEffect(() => {
-		let live = true;
-		void aoBridge.updates.getStatus().then((s) => {
-			if (live) setStatus(s);
-		});
-		const off = aoBridge.updates.onStatus(setStatus);
-		return () => {
-			live = false;
-			off?.();
-		};
-	}, []);
 
 	const checking = status.state === "checking";
 	const downloading = status.state === "downloading";

@@ -24,8 +24,11 @@ type RuntimeFacts struct {
 	Probe      ProbeResult
 }
 
-// ActivitySignal is pushed by the agent hooks. Only a Valid signal is
+// ActivitySignal is pushed by the agent hooks. Only a Valid activity state is
 // authoritative; a stale/absent one is ignored rather than read as idleness.
+// AgentSessionID may be supplied independently by metadata-only hooks such as
+// SessionStart, allowing lifecycle to persist the native resume handle without
+// inventing an activity transition.
 //
 // Event/ToolName/ToolUseID are optional correlation facts: the AO hook
 // sub-command that produced the state and, for tool-use hooks, the native

@@ -602,6 +602,9 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 }
 
 function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
+	if (session.status === "working" && session.activity?.state === "idle") {
+		return { label: "Idle", className: "text-passive" };
+	}
 	switch (session.status) {
 		case "needs_input":
 			return { label: "Input needed", className: "text-warning" };

@@ -55,7 +55,8 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
-const OPEN_MODAL_SELECTOR = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]';
+const OPEN_MODAL_SELECTOR =
+	'[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]';
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -358,8 +359,12 @@ export function useBrowserView({
 	const withView = useCallback(async (fn: (id: string) => Promise<BrowserNavState | void>) => {
 		const id = viewIdRef.current;
 		if (!id) return;
-		const next = await fn(id);
-		if (next) setNavState(next);
+		try {
+			const next = await fn(id);
+			if (next) setNavState(next);
+		} catch {
+			// navigation errors are handled by the did-fail-load event channel
+		}
 	}, []);
 
 	const setAnnotationMode = useCallback(

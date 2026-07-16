@@ -2783,13 +2783,14 @@ components:
     SetActivityRequest:
       properties:
         agentSessionId:
-          description: Native agent session id used for transcript resume.
+          description: Native agent session identifier used to resume its transcript.
           type: string
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string
         state:
-          description: Agent activity state reported by an agent hook.
+          description: Agent activity state reported by an agent hook. Optional for
+            metadata-only hooks.
           enum:
           - active
           - idle

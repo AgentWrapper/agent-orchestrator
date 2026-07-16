@@ -190,12 +190,12 @@ export function ShellTopbar() {
 									disabled={isProjectRestarting}
 									onClick={openNewTask}
 									style={noDragStyle}
-									variant="primary"
+									variant="accent"
 								>
 									<Plus className="size-icon-md" aria-hidden="true" />
 									New task
 								</TopbarButton>
-								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="accent">
+								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="primary">
 									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
 									Kanban
 								</TopbarButton>
