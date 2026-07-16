@@ -11,6 +11,22 @@ import (
 	"time"
 )
 
+const acquireSCMConnectionWriteLock = `-- name: AcquireSCMConnectionWriteLock :exec
+UPDATE scm_connections
+SET updated_at = updated_at
+WHERE scm_connections.id = (
+    SELECT candidate.id
+    FROM scm_connections AS candidate
+    ORDER BY candidate.id
+    LIMIT 1
+)
+`
+
+func (q *Queries) AcquireSCMConnectionWriteLock(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, acquireSCMConnectionWriteLock)
+	return err
+}
+
 const createSCMConnection = `-- name: CreateSCMConnection :exec
 INSERT INTO scm_connections (
     id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at

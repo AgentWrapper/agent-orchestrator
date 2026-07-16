@@ -72,24 +72,35 @@ func (s *Store) DeleteSCMConnection(ctx context.Context, id string) (bool, error
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	rows, err := s.qw.DeleteUnreferencedSCMConnection(ctx, gen.DeleteUnreferencedSCMConnectionParams{
-		ID:     id,
-		Config: sql.NullString{String: id, Valid: true},
+	deleted := false
+	err := s.inTx(ctx, "delete SCM connection "+id, func(q *gen.Queries) error {
+		if err := q.AcquireSCMConnectionWriteLock(ctx); err != nil {
+			return fmt.Errorf("acquire write lock: %w", err)
+		}
+		rows, err := q.DeleteUnreferencedSCMConnection(ctx, gen.DeleteUnreferencedSCMConnectionParams{
+			ID:     id,
+			Config: sql.NullString{String: id, Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		if rows > 0 {
+			deleted = true
+			return nil
+		}
+		_, err = q.GetSCMConnection(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("classify zero-row delete: %w", err)
+		}
+		return ErrSCMConnectionReferenced
 	})
 	if err != nil {
-		return false, fmt.Errorf("delete SCM connection %s: %w", id, err)
+		return false, err
 	}
-	if rows > 0 {
-		return true, nil
-	}
-	_, err = s.qw.GetSCMConnection(ctx, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("classify SCM connection %s delete: %w", id, err)
-	}
-	return false, ErrSCMConnectionReferenced
+	return deleted, nil
 }
 
 func createSCMConnectionParams(connection domain.SCMConnection) gen.CreateSCMConnectionParams {

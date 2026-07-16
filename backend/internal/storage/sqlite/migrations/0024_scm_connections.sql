@@ -228,6 +228,10 @@ END;
 CREATE TRIGGER projects_scm_connection_guard_insert
 BEFORE INSERT ON projects
 WHEN COALESCE(json_extract(NEW.config, '$.scm.connectionId'), '') <> ''
+    AND NOT (
+        json_extract(NEW.config, '$.scm.connectionId') = 'github-default'
+        AND COALESCE(json_extract(NEW.config, '$.scm.provider'), 'github') = 'github'
+    )
     AND NOT EXISTS (
         SELECT 1 FROM scm_connections
         WHERE id = json_extract(NEW.config, '$.scm.connectionId')
@@ -239,6 +243,10 @@ END;
 CREATE TRIGGER projects_scm_connection_guard_update
 BEFORE UPDATE OF config ON projects
 WHEN COALESCE(json_extract(NEW.config, '$.scm.connectionId'), '') <> ''
+    AND NOT (
+        json_extract(NEW.config, '$.scm.connectionId') = 'github-default'
+        AND COALESCE(json_extract(NEW.config, '$.scm.provider'), 'github') = 'github'
+    )
     AND NOT EXISTS (
         SELECT 1 FROM scm_connections
         WHERE id = json_extract(NEW.config, '$.scm.connectionId')

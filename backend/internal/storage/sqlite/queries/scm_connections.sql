@@ -31,3 +31,13 @@ WHERE scm_connections.id = ?
       FROM projects
       WHERE json_extract(config, '$.scm.connectionId') = ?
   );
+
+-- name: AcquireSCMConnectionWriteLock :exec
+UPDATE scm_connections
+SET updated_at = updated_at
+WHERE scm_connections.id = (
+    SELECT candidate.id
+    FROM scm_connections AS candidate
+    ORDER BY candidate.id
+    LIMIT 1
+);

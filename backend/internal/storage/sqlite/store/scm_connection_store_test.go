@@ -4,18 +4,29 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	modernsqlite "modernc.org/sqlite"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	sqlitestore "github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
+
+var deleteLockBarrier struct {
+	register sync.Once
+	mu       sync.Mutex
+	entered  chan struct{}
+	release  chan struct{}
+}
 
 func testSCMConnection() domain.SCMConnection {
 	now := time.Date(2026, 7, 16, 8, 0, 0, 0, time.UTC)
@@ -145,9 +156,173 @@ func TestSCMConnectionDeleteAcrossStoresPreservesReferenceIntegrity(t *testing.T
 	})
 }
 
+func TestSCMConnectionProjectGuardsHonorVirtualGitHubDefault(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := testSCMConnection().CreatedAt
+	project := func(id string, scm domain.SCMProjectConfig) domain.ProjectRecord {
+		return domain.ProjectRecord{
+			ID: id, Path: "/tmp/" + id, RegisteredAt: now,
+			Config: domain.ProjectConfig{SCM: scm},
+		}
+	}
+	githubDefault := domain.SCMProjectConfig{
+		Provider: domain.SCMProviderGitHub, ConnectionID: "github-default",
+	}
+	gitlabDefault := domain.SCMProjectConfig{
+		Provider: domain.SCMProviderGitLab, ConnectionID: "github-default",
+	}
+
+	if err := s.UpsertProject(ctx, project("github-insert", githubDefault)); err != nil {
+		t.Fatalf("insert virtual GitHub default: %v", err)
+	}
+	if err := s.UpsertProject(ctx, project("github-update", domain.SCMProjectConfig{})); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertProject(ctx, project("github-update", githubDefault)); err != nil {
+		t.Fatalf("update to virtual GitHub default: %v", err)
+	}
+
+	if err := s.UpsertProject(ctx, project("gitlab-insert", gitlabDefault)); err == nil {
+		t.Fatal("GitLab insert using virtual github-default committed")
+	}
+	if err := s.UpsertProject(ctx, project("gitlab-update", domain.SCMProjectConfig{})); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertProject(ctx, project("gitlab-update", gitlabDefault)); err == nil {
+		t.Fatal("GitLab update using virtual github-default committed")
+	}
+	if err := s.UpsertProject(ctx, project("missing", domain.SCMProjectConfig{
+		Provider: domain.SCMProviderGitHub, ConnectionID: "missing",
+	})); err == nil {
+		t.Fatal("ordinary missing connection committed")
+	}
+}
+
+func TestSCMConnectionDeleteClassificationHoldsWriteLock(t *testing.T) {
+	installDeleteLockBarrier()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	deleteLockBarrier.mu.Lock()
+	deleteLockBarrier.entered = entered
+	deleteLockBarrier.release = release
+	deleteLockBarrier.mu.Unlock()
+
+	dir := t.TempDir()
+	first, second := openSharedTestStores(t, dir)
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		deleteLockBarrier.mu.Lock()
+		deleteLockBarrier.entered = nil
+		deleteLockBarrier.release = nil
+		deleteLockBarrier.mu.Unlock()
+	})
+	ctx := context.Background()
+	lockRow := testSCMConnection()
+	lockRow.ID = "lock-holder"
+	lockRow.CredentialRef = "scm/lock-holder"
+	if err := first.CreateSCMConnection(ctx, lockRow); err != nil {
+		t.Fatal(err)
+	}
+	before, err := first.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "ao.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`
+		CREATE TRIGGER test_scm_delete_lock_barrier
+		BEFORE UPDATE ON scm_connections
+		WHEN OLD.id = 'lock-holder'
+		BEGIN
+			SELECT ao_test_scm_delete_lock_barrier();
+		END;
+	`); err != nil {
+		t.Fatalf("create barrier trigger: %v", err)
+	}
+
+	type deleteResult struct {
+		deleted bool
+		err     error
+	}
+	deleteDone := make(chan deleteResult, 1)
+	go func() {
+		deleted, err := first.DeleteSCMConnection(ctx, "recreated")
+		deleteDone <- deleteResult{deleted: deleted, err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delete did not acquire the SQLite write-lock barrier")
+	}
+
+	recreated := testSCMConnection()
+	recreated.ID = "recreated"
+	recreated.CredentialRef = "scm/recreated"
+	createDone := make(chan error, 1)
+	go func() { createDone <- second.CreateSCMConnection(ctx, recreated) }()
+	select {
+	case err := <-createDone:
+		t.Fatalf("recreate completed before delete classification committed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+
+	result := <-deleteDone
+	if result.deleted || result.err != nil {
+		t.Fatalf("missing delete result = (%v, %v), want (false, nil)", result.deleted, result.err)
+	}
+	if err := <-createDone; err != nil {
+		t.Fatalf("recreate after classification: %v", err)
+	}
+	events, err := first.EventsAfter(ctx, before, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != cdc.EventSCMConnectionCreated {
+		t.Fatalf("events after lock + recreate = %#v, want one create event", events)
+	}
+}
+
+func installDeleteLockBarrier() {
+	deleteLockBarrier.register.Do(func() {
+		modernsqlite.MustRegisterScalarFunction(
+			"ao_test_scm_delete_lock_barrier",
+			0,
+			func(_ *modernsqlite.FunctionContext, _ []driver.Value) (driver.Value, error) {
+				deleteLockBarrier.mu.Lock()
+				entered := deleteLockBarrier.entered
+				release := deleteLockBarrier.release
+				deleteLockBarrier.entered = nil
+				deleteLockBarrier.mu.Unlock()
+				if entered != nil {
+					close(entered)
+				}
+				if release != nil {
+					<-release
+				}
+				return int64(0), nil
+			},
+		)
+	})
+}
+
 func newSharedTestStores(t *testing.T) (*sqlite.Store, *sqlite.Store) {
 	t.Helper()
 	dir := t.TempDir()
+	return openSharedTestStores(t, dir)
+}
+
+func openSharedTestStores(t *testing.T, dir string) (*sqlite.Store, *sqlite.Store) {
+	t.Helper()
 	first, err := sqlite.Open(dir)
 	if err != nil {
 		t.Fatalf("open first store: %v", err)

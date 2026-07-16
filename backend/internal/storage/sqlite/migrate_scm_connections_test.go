@@ -228,6 +228,21 @@ func TestMigration0024ProjectConnectionGuardsAllowLegacyConfigs(t *testing.T) {
 			t.Errorf("insert legacy project %q: %v", legacy.id, err)
 		}
 	}
+	virtualDefaults := []struct {
+		id     string
+		config string
+	}{
+		{id: "github-default", config: `{"scm":{"provider":"github","connectionId":"github-default"}}`},
+		{id: "legacy-default", config: `{"scm":{"connectionId":"github-default"}}`},
+	}
+	for _, project := range virtualDefaults {
+		if _, err := db.Exec(
+			`INSERT INTO projects (id, path, registered_at, config) VALUES (?, ?, '2026-07-16T00:00:00Z', ?)`,
+			project.id, "/tmp/"+project.id, project.config,
+		); err != nil {
+			t.Errorf("insert virtual GitHub default project %q: %v", project.id, err)
+		}
+	}
 
 	if _, err := db.Exec(
 		`INSERT INTO projects (id, path, registered_at, config)
@@ -237,11 +252,33 @@ func TestMigration0024ProjectConnectionGuardsAllowLegacyConfigs(t *testing.T) {
 		t.Fatal("explicit reference to missing SCM connection committed")
 	}
 	if _, err := db.Exec(
+		`INSERT INTO projects (id, path, registered_at, config)
+		 VALUES ('gitlab-default', '/tmp/gitlab-default', '2026-07-16T00:00:00Z',
+		         '{"scm":{"provider":"gitlab","connectionId":"github-default"}}')`,
+	); err == nil {
+		t.Fatal("GitLab project reference to virtual github-default committed")
+	}
+
+	if _, err := db.Exec(
+		`UPDATE projects
+		 SET config = '{"scm":{"provider":"github","connectionId":"github-default"}}'
+		 WHERE id = 'null-config'`,
+	); err != nil {
+		t.Fatalf("update project to virtual GitHub default: %v", err)
+	}
+	if _, err := db.Exec(
 		`UPDATE projects
 		 SET config = '{"scm":{"connectionId":"does-not-exist"}}'
-		 WHERE id = 'null-config'`,
+		 WHERE id = 'missing-scm'`,
 	); err == nil {
 		t.Fatal("project update to missing SCM connection committed")
+	}
+	if _, err := db.Exec(
+		`UPDATE projects
+		 SET config = '{"scm":{"provider":"gitlab","connectionId":"github-default"}}'
+		 WHERE id = 'empty-connection'`,
+	); err == nil {
+		t.Fatal("project update to GitLab github-default committed")
 	}
 }
 
