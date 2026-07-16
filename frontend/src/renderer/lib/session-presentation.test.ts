@@ -74,6 +74,14 @@ describe("session presentation", () => {
 		expect(getSessionStatusView(status).label).toBe(label);
 	});
 
+	it("uses distinct session-card tones for idle, no signal, and PR waiting states", () => {
+		expect(getSessionStatusView("idle").className).toBe("text-passive");
+		expect(getSessionStatusView("no_signal").className).toBe("text-warning");
+		expect(getSessionStatusView("draft").className).toBe("text-accent");
+		expect(getSessionStatusView("pr_open").className).toBe("text-accent");
+		expect(getSessionStatusView("review_pending").className).toBe("text-accent");
+	});
+
 	it.each([
 		["approved", "merge", "Ready to merge"],
 		["mergeable", "merge", "Ready to merge"],
