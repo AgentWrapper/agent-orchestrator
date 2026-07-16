@@ -38,6 +38,106 @@ func filesystemPath(path string) string {
 	return "/api/v1/filesystem/directories?" + url.Values{"path": {path}}.Encode()
 }
 
+func createDirectoryBody(parentPath, name string) string {
+	body, _ := json.Marshal(map[string]string{"parentPath": parentPath, "name": name})
+	return string(body)
+}
+
+func TestFilesystemAPI_CreateDirectory(t *testing.T) {
+	srv := newFilesystemTestServer(t)
+	parent := t.TempDir()
+	body, status, headers := doRequest(t, srv, http.MethodPost,
+		"/api/v1/filesystem/directories", createDirectoryBody(parent, "new-project"))
+	assertJSON(t, headers)
+	if status != http.StatusCreated {
+		t.Fatalf("POST directory = %d, want 201; body=%s", status, body)
+	}
+	var got struct{ Name, Path string }
+	mustJSON(t, body, &got)
+	want := filepath.Join(parent, "new-project")
+	if got.Name != "new-project" || got.Path != want {
+		t.Fatalf("response = %#v, want path %q", got, want)
+	}
+	info, err := os.Stat(want)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("created directory stat = (%v, %v)", info, err)
+	}
+}
+
+func TestFilesystemAPI_CreateDirectoryValidation(t *testing.T) {
+	srv := newFilesystemTestServer(t)
+	parent := t.TempDir()
+
+	existingFileParent := t.TempDir()
+	if err := os.WriteFile(filepath.Join(existingFileParent, "existing"), []byte("file"), 0o644); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+	existingDirectoryParent := t.TempDir()
+	if err := os.Mkdir(filepath.Join(existingDirectoryParent, "existing"), 0o755); err != nil {
+		t.Fatalf("mkdir existing directory: %v", err)
+	}
+	missingParent := filepath.Join(t.TempDir(), "missing")
+	fileParent := filepath.Join(t.TempDir(), "parent-file")
+	if err := os.WriteFile(fileParent, []byte("file"), 0o644); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	unknownBody, err := json.Marshal(map[string]any{
+		"parentPath": parent,
+		"name":       "unknown-field",
+		"unknown":    true,
+	})
+	if err != nil {
+		t.Fatalf("marshal unknown-field body: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "hidden", body: createDirectoryBody(parent, ".hidden"), wantStatus: http.StatusCreated},
+		{name: "invalid JSON", body: "{", wantStatus: http.StatusBadRequest, wantCode: "INVALID_JSON"},
+		{name: "unknown JSON field", body: string(unknownBody), wantStatus: http.StatusBadRequest, wantCode: "INVALID_JSON"},
+		{name: "trailing JSON", body: createDirectoryBody(parent, "trailing") + " {}", wantStatus: http.StatusBadRequest, wantCode: "INVALID_JSON"},
+		{name: "relative parent", body: createDirectoryBody("relative/path", "child"), wantStatus: http.StatusBadRequest, wantCode: "ABSOLUTE_PATH_REQUIRED"},
+		{name: "blank parent", body: createDirectoryBody("", "child"), wantStatus: http.StatusBadRequest, wantCode: "ABSOLUTE_PATH_REQUIRED"},
+		{name: "blank name", body: createDirectoryBody(parent, ""), wantStatus: http.StatusBadRequest, wantCode: "INVALID_DIRECTORY_NAME"},
+		{name: "whitespace name", body: createDirectoryBody(parent, " "), wantStatus: http.StatusBadRequest, wantCode: "INVALID_DIRECTORY_NAME"},
+		{name: "dot name", body: createDirectoryBody(parent, "."), wantStatus: http.StatusBadRequest, wantCode: "INVALID_DIRECTORY_NAME"},
+		{name: "dot dot name", body: createDirectoryBody(parent, ".."), wantStatus: http.StatusBadRequest, wantCode: "INVALID_DIRECTORY_NAME"},
+		{name: "slash name", body: createDirectoryBody(parent, "nested/name"), wantStatus: http.StatusBadRequest, wantCode: "INVALID_DIRECTORY_NAME"},
+		{name: "backslash name", body: createDirectoryBody(parent, `nested\name`), wantStatus: http.StatusBadRequest, wantCode: "INVALID_DIRECTORY_NAME"},
+		{name: "NUL name", body: createDirectoryBody(parent, "nul\x00name"), wantStatus: http.StatusBadRequest, wantCode: "INVALID_DIRECTORY_NAME"},
+		{name: "existing file", body: createDirectoryBody(existingFileParent, "existing"), wantStatus: http.StatusConflict, wantCode: "DIRECTORY_ALREADY_EXISTS"},
+		{name: "existing directory", body: createDirectoryBody(existingDirectoryParent, "existing"), wantStatus: http.StatusConflict, wantCode: "DIRECTORY_ALREADY_EXISTS"},
+		{name: "missing parent", body: createDirectoryBody(missingParent, "child"), wantStatus: http.StatusNotFound, wantCode: "DIRECTORY_NOT_FOUND"},
+		{name: "file parent", body: createDirectoryBody(fileParent, "child"), wantStatus: http.StatusUnprocessableEntity, wantCode: "NOT_A_DIRECTORY"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, status, headers := doRequest(t, srv, http.MethodPost, "/api/v1/filesystem/directories", tt.body)
+			assertJSON(t, headers)
+			if tt.wantStatus == http.StatusCreated {
+				if status != tt.wantStatus {
+					t.Fatalf("POST directory = %d, want %d; body=%s", status, tt.wantStatus, body)
+				}
+				var got struct{ Name, Path string }
+				mustJSON(t, body, &got)
+				if got.Name != ".hidden" || got.Path != filepath.Join(parent, ".hidden") {
+					t.Fatalf("response = %#v, want hidden directory under %q", got, parent)
+				}
+				info, err := os.Stat(got.Path)
+				if err != nil || !info.IsDir() {
+					t.Fatalf("created hidden directory stat = (%v, %v)", info, err)
+				}
+				return
+			}
+			assertErrorCode(t, body, status, tt.wantStatus, tt.wantCode)
+		})
+	}
+}
+
 func TestFilesystemAPI_ListDirectories(t *testing.T) {
 	srv := newFilesystemTestServer(t)
 	base := t.TempDir()

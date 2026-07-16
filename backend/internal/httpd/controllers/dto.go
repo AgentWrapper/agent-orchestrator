@@ -488,6 +488,12 @@ type ListDirectoriesQuery struct {
 	Path string `query:"path,omitempty" description:"Absolute server directory path. Defaults to the daemon user's home directory."`
 }
 
+// CreateDirectoryRequest is the body of POST /api/v1/filesystem/directories.
+type CreateDirectoryRequest struct {
+	ParentPath string `json:"parentPath"`
+	Name       string `json:"name"`
+}
+
 // DirectoryEntry is one child directory visible from the requested server path.
 type DirectoryEntry struct {
 	Name string `json:"name"`

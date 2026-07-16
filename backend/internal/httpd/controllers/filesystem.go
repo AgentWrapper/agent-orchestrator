@@ -15,12 +15,41 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 )
 
-// FilesystemController owns the read-only /filesystem routes.
+// FilesystemController owns the /filesystem routes.
 type FilesystemController struct{}
 
-// Register mounts the remote directory browsing route on the supplied router.
+// Register mounts the remote directory routes on the supplied router.
 func (c *FilesystemController) Register(r chi.Router) {
 	r.Get("/filesystem/directories", c.listDirectories)
+	r.Post("/filesystem/directories", c.createDirectory)
+}
+
+func (c *FilesystemController) createDirectory(w http.ResponseWriter, r *http.Request) {
+	var in CreateDirectoryRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if !filepath.IsAbs(in.ParentPath) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ABSOLUTE_PATH_REQUIRED", "Parent path must be absolute", nil)
+		return
+	}
+	if !validDirectoryName(in.Name) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_DIRECTORY_NAME", "Directory name is invalid", nil)
+		return
+	}
+	parent := filepath.Clean(in.ParentPath)
+	target := filepath.Join(parent, in.Name)
+	if err := os.Mkdir(target, 0o755); err != nil {
+		writeDirectoryCreateError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, DirectoryEntry{Name: in.Name, Path: target})
+}
+
+func validDirectoryName(name string) bool {
+	return name != "" && strings.TrimSpace(name) == name && name != "." && name != ".." &&
+		!strings.ContainsRune(name, 0) && !strings.ContainsAny(name, `/\\`)
 }
 
 func (c *FilesystemController) listDirectories(w http.ResponseWriter, r *http.Request) {
@@ -91,5 +120,20 @@ func writeFilesystemError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOT_A_DIRECTORY", "Path is not a directory", nil)
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "DIRECTORY_READ_FAILED", "Directory read failed", nil)
+	}
+}
+
+func writeDirectoryCreateError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, fs.ErrExist):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "DIRECTORY_ALREADY_EXISTS", "Directory already exists", nil)
+	case errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.EROFS):
+		envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "DIRECTORY_PERMISSION_DENIED", "Directory permission denied", nil)
+	case errors.Is(err, fs.ErrNotExist):
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "DIRECTORY_NOT_FOUND", "Directory not found", nil)
+	case errors.Is(err, syscall.ENOTDIR):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOT_A_DIRECTORY", "Path is not a directory", nil)
+	default:
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "DIRECTORY_CREATE_FAILED", "Directory create failed", nil)
 	}
 }
