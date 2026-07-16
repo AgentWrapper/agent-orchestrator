@@ -492,6 +492,9 @@ func TestModelAvailabilityClassifiesProbeResults(t *testing.T) {
 	if fugu.Status != ModelStatusUnknown || !strings.Contains(fugu.Reason, "codex exec usage error") {
 		t.Fatalf("fugu model = %#v, want unknown with probe-unavailable reason", fugu)
 	}
+	if fugu.ReasonCode != ModelReasonProbeUnavailable {
+		t.Fatalf("fugu reasonCode = %q, want probe-unavailable", fugu.ReasonCode)
+	}
 	// The known-set baseline (fugu) is listed but unprobed: truthfully unknown,
 	// never fabricated healthy.
 	baseline, ok := findModel(byHarness[string(domain.HarnessCodexFugu)].Models, "fugu")
@@ -500,6 +503,35 @@ func TestModelAvailabilityClassifiesProbeResults(t *testing.T) {
 	}
 	if baseline.Status != ModelStatusUnknown {
 		t.Fatalf("fugu baseline = %#v, want unknown (unprobed)", baseline)
+	}
+	if baseline.ReasonCode != ModelReasonNotProbed {
+		t.Fatalf("fugu baseline reasonCode = %q, want not-probed", baseline.ReasonCode)
+	}
+}
+
+func TestModelAvailabilityClassifiesNoCapabilityHarness(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAgent(string(domain.HarnessClaudeCode), "Claude Code", nil),
+	})
+
+	got, err := svc.ModelAvailability(context.Background(), ModelAvailabilityRequest{
+		Pins: []ModelPin{{Harness: domain.HarnessClaudeCode, Model: "claude-custom"}},
+	})
+	if err != nil {
+		t.Fatalf("ModelAvailability: %v", err)
+	}
+	model, ok := findModel(got.Harnesses[0].Models, "claude-custom")
+	if !ok {
+		t.Fatalf("models = %#v, want configured pin", got.Harnesses[0].Models)
+	}
+	if model.Status != ModelStatusUnknown {
+		t.Fatalf("model = %#v, want unknown no-capability", model)
+	}
+	if model.ReasonCode != ModelReasonNoCapability {
+		t.Fatalf("reasonCode = %q, want no-capability", model.ReasonCode)
+	}
+	if model.Reason != noModelDiscoveryCapabilityReason {
+		t.Fatalf("reason = %q, want neutral no-capability reason", model.Reason)
 	}
 }
 
@@ -571,6 +603,9 @@ func TestModelAvailabilityUsesCatalogAndFallsBackToKnownSet(t *testing.T) {
 	if byHarness[string(domain.HarnessCodex)].Models[0].Status != ModelStatusUnknown {
 		t.Fatalf("codex model = %#v, want unprobed adapter row marked unknown", byHarness[string(domain.HarnessCodex)].Models[0])
 	}
+	if byHarness[string(domain.HarnessCodex)].Models[0].ReasonCode != ModelReasonNotProbed {
+		t.Fatalf("codex model = %#v, want not-probed reason code", byHarness[string(domain.HarnessCodex)].Models[0])
+	}
 	claude := byHarness[string(domain.HarnessClaudeCode)]
 	if claude.CatalogSource != ModelCatalogKnownSet {
 		t.Fatalf("claude catalog source = %q, want known-set", claude.CatalogSource)
@@ -622,6 +657,9 @@ func TestModelAvailabilityClassifiesRawContextProbeErrorAsUnknown(t *testing.T) 
 	}
 	if model.Status != ModelStatusUnknown {
 		t.Fatalf("model = %#v, want raw context probe error classified unknown", model)
+	}
+	if model.ReasonCode != ModelReasonProbeUnavailable {
+		t.Fatalf("model = %#v, want probe-unavailable reason code", model)
 	}
 }
 

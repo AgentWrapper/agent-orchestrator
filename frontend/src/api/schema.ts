@@ -894,6 +894,8 @@ export interface components {
             model: string;
             reason?: string;
             /** @enum {string} */
+            reasonCode?: "not-probed" | "probe-unavailable" | "no-capability";
+            /** @enum {string} */
             status: "reachable" | "unreachable" | "unknown";
         };
         AgentModelAvailabilityResponse: {

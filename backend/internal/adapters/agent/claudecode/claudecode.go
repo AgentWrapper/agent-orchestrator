@@ -20,10 +20,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +79,7 @@ func (p *Plugin) EmitsBlockedActivity() bool { return true }
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentModelValidator = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -333,6 +337,107 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
+}
+
+const claudeProbeWaitDelay = 2 * time.Second
+
+func (p *Plugin) probeArgs(model string) []string {
+	return []string{
+		"--print",
+		"--model", model,
+		"--permission-mode", "dontAsk",
+		"--no-session-persistence",
+		"--strict-mcp-config",
+		"--mcp-config", "{}",
+		"--disallowedTools", "Task,Bash,Edit,MultiEdit,Write,Read,Glob,Grep,WebFetch,WebSearch,TodoWrite,NotebookEdit",
+		"Reply exactly OK. Do not use tools.",
+	}
+}
+
+// ValidateModel performs a bounded non-interactive Claude Code call with the
+// requested model. Only an explicit model/provider rejection is a hard verdict;
+// startup, usage, timeout, auth, network, and other non-verdict failures are
+// ProbeUnavailable so config writes remain fail-open.
+func (p *Plugin) ValidateModel(ctx context.Context, model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	binary, err := p.claudeBinary(ctx)
+	if err != nil {
+		return &ports.ProbeUnavailableError{Reason: "claude binary not resolvable", Err: err}
+	}
+	cmd := exec.CommandContext(ctx, binary, p.probeArgs(model)...)
+	cmd.WaitDelay = claudeProbeWaitDelay
+	configureProbeProcessGroup(cmd)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return &ports.ProbeUnavailableError{Reason: "model probe timed out", Err: ctx.Err()}
+	}
+	if err == nil {
+		return nil
+	}
+	if unavailable := classifyClaudeProbeFailure(err, out); unavailable != nil {
+		return unavailable
+	}
+	return fmt.Errorf("model probe failed: %w%s", err, formatClaudeProbeOutput(out))
+}
+
+func classifyClaudeProbeFailure(err error, out []byte) *ports.ProbeUnavailableError {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return &ports.ProbeUnavailableError{Reason: "claude probe did not start", Err: err}
+	}
+	if exitErr.ExitCode() < 0 {
+		return &ports.ProbeUnavailableError{Reason: "claude probe was killed by a signal", Err: err}
+	}
+	if !claudeProbeSawModelRejection(out) {
+		return &ports.ProbeUnavailableError{
+			Reason: "claude probe failed without a provider verdict on the model" + formatClaudeProbeOutput(out),
+			Err:    err,
+		}
+	}
+	return nil
+}
+
+var (
+	claudeProbeStatusJSONRe  = regexp.MustCompile(`"status"\s*:\s*(\d{3})`)
+	claudeProbeStatusPlainRe = regexp.MustCompile(`(?im)^\s*(?:api\s+)?error:\s*(\d{3})\b`)
+)
+
+func claudeProbeSawModelRejection(out []byte) bool {
+	text := string(out)
+	statuses := make([]int, 0, 4)
+	for _, re := range []*regexp.Regexp{claudeProbeStatusJSONRe, claudeProbeStatusPlainRe} {
+		for _, m := range re.FindAllStringSubmatch(text, -1) {
+			if code, err := strconv.Atoi(m[1]); err == nil {
+				statuses = append(statuses, code)
+			}
+		}
+	}
+	rejected := false
+	for _, code := range statuses {
+		switch {
+		case code >= 500, code == 429, code == 408:
+			return false
+		case code == 400, code == 404, code == 422:
+			rejected = true
+		}
+	}
+	return rejected
+}
+
+func formatClaudeProbeOutput(out []byte) string {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return ""
+	}
+	const maxProbeOutputRunes = 500
+	runes := []rune(text)
+	if len(runes) > maxProbeOutputRunes {
+		text = string(runes[:maxProbeOutputRunes]) + "...[truncated]"
+	}
+	return ": " + text
 }
 
 func claudeAuthStatusFromOutput(out []byte) (ports.AgentAuthStatus, bool) {

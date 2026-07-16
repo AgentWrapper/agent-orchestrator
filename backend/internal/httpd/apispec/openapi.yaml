@@ -2282,6 +2282,12 @@ components:
           type: string
         reason:
           type: string
+        reasonCode:
+          enum:
+          - not-probed
+          - probe-unavailable
+          - no-capability
+          type: string
         status:
           enum:
           - reachable

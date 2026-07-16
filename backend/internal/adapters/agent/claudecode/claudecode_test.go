@@ -6,13 +6,25 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func writeFakeClaudeScript(t *testing.T, body string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
 
 func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
@@ -613,6 +625,176 @@ func TestGetLaunchCommandRejectsInvalidConfig(t *testing.T) {
 func TestManifestID(t *testing.T) {
 	if got := New().Manifest().ID; got != "claude-code" {
 		t.Fatalf("manifest id = %q, want claude-code", got)
+	}
+}
+
+func TestValidateModelRunsBoundedPrintProbe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+printf '%s\n' "$@" > "$AO_CLAUDE_ARGS_FILE"
+exit 0
+`)
+	t.Setenv("AO_CLAUDE_ARGS_FILE", argsFile)
+
+	plugin := &Plugin{resolvedBinary: bin}
+	if err := plugin.ValidateModel(context.Background(), "claude-opus-4-5"); err != nil {
+		t.Fatalf("ValidateModel: %v", err)
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for _, want := range [][]string{
+		{"--print"},
+		{"--model", "claude-opus-4-5"},
+		{"--permission-mode", "dontAsk"},
+		{"--no-session-persistence"},
+		{"--strict-mcp-config"},
+		{"--mcp-config", "{}"},
+		{"--disallowedTools"},
+	} {
+		if !containsSubsequence(args, want) {
+			t.Fatalf("probe args %#v missing %#v", args, want)
+		}
+	}
+}
+
+func TestValidateModelClassifiesClaudeProviderRejection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+echo 'API Error: 404 {"type":"not_found_error","message":"model: invalid-model"}' >&2
+exit 1
+`)
+
+	err := (&Plugin{resolvedBinary: bin}).ValidateModel(context.Background(), "invalid-model")
+	if err == nil {
+		t.Fatal("ValidateModel err = nil, want provider rejection")
+	}
+	if ports.ProbeUnavailable(err) {
+		t.Fatalf("provider rejection must not be ProbeUnavailable: %v", err)
+	}
+}
+
+func TestValidateModelClassifiesClaudeNonVerdictFailureUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+echo "Error: network temporarily unavailable" >&2
+exit 1
+`)
+
+	err := (&Plugin{resolvedBinary: bin}).ValidateModel(context.Background(), "claude-opus-4-5")
+	if err == nil {
+		t.Fatal("ValidateModel err = nil, want non-verdict failure")
+	}
+	if !ports.ProbeUnavailable(err) {
+		t.Fatalf("non-verdict failure must be ProbeUnavailable: %v", err)
+	}
+}
+
+func TestValidateModelDoesNotTreatNonModelErrorsAsClaudeRejection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "mcp error mentions model but carries no provider status",
+			output: `Error: model claude-opus-4-5: unknown MCP server "foo"`,
+		},
+		{
+			name:   "stack trace line has incidental column-like status",
+			output: `Error: connection reset\n    at request (/tmp/cli.js:12:404)`,
+		},
+		{
+			name:   "rate limit prose has incidental retry number",
+			output: `Error: rate limit exceeded, retry in 400 seconds`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := writeFakeClaudeScript(t, `#!/bin/sh
+printf '%b\n' "$AO_CLAUDE_PROBE_OUTPUT" >&2
+exit 1
+`)
+			t.Setenv("AO_CLAUDE_PROBE_OUTPUT", tt.output)
+
+			err := (&Plugin{resolvedBinary: bin}).ValidateModel(context.Background(), "claude-opus-4-5")
+			if err == nil {
+				t.Fatal("ValidateModel err = nil, want non-verdict failure")
+			}
+			if !ports.ProbeUnavailable(err) {
+				t.Fatalf("non-model failure must be ProbeUnavailable: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateModelTreatsStatusLineAsClaudeProviderRejection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+echo 'API Error: 404 model not found' >&2
+exit 1
+`)
+
+	err := (&Plugin{resolvedBinary: bin}).ValidateModel(context.Background(), "invalid-model")
+	if err == nil {
+		t.Fatal("ValidateModel err = nil, want provider rejection")
+	}
+	if ports.ProbeUnavailable(err) {
+		t.Fatalf("provider rejection must not be ProbeUnavailable: %v", err)
+	}
+}
+
+func TestValidateModelClassifiesClaudeTimeoutUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+sleep 5
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err := (&Plugin{resolvedBinary: bin}).ValidateModel(ctx, "claude-opus-4-5")
+	if err == nil {
+		t.Fatal("ValidateModel err = nil, want timeout")
+	}
+	if !ports.ProbeUnavailable(err) {
+		t.Fatalf("timeout must be ProbeUnavailable: %v", err)
+	}
+}
+
+func TestValidateModelClassifiesMissingClaudeBinaryUnavailable(t *testing.T) {
+	err := (&Plugin{resolvedBinary: filepath.Join(t.TempDir(), "missing-claude")}).ValidateModel(context.Background(), "claude-opus-4-5")
+	if err == nil {
+		t.Fatal("ValidateModel err = nil, want missing binary")
+	}
+	if !ports.ProbeUnavailable(err) {
+		t.Fatalf("missing binary must be ProbeUnavailable: %v", err)
+	}
+}
+
+func TestFormatClaudeProbeOutputCapsOnRuneBoundary(t *testing.T) {
+	got := formatClaudeProbeOutput([]byte(strings.Repeat("å", 501)))
+	if !strings.HasSuffix(got, "...[truncated]") {
+		t.Fatalf("formatted output = %q, want truncation marker", got)
+	}
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Fatalf("formatted output split a UTF-8 rune: %q", got)
 	}
 }
 

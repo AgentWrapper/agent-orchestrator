@@ -63,6 +63,24 @@ const (
 	ModelStatusUnknown ModelStatus = "unknown"
 )
 
+// ModelReasonCode is the machine-readable explanation for an unknown model
+// status. Human-facing Reason text is intentionally not parsed by clients.
+type ModelReasonCode string
+
+const (
+	// ModelReasonNotProbed means AO listed the model as a candidate but did not
+	// run a live reachability probe for that row.
+	ModelReasonNotProbed ModelReasonCode = "not-probed"
+	// ModelReasonProbeUnavailable means AO attempted or prepared a probe, but
+	// the probe produced no provider verdict.
+	ModelReasonProbeUnavailable ModelReasonCode = "probe-unavailable"
+	// ModelReasonNoCapability means this adapter exposes no model discovery or
+	// reachability capability. Configured pins still fail open.
+	ModelReasonNoCapability ModelReasonCode = "no-capability"
+)
+
+const noModelDiscoveryCapabilityReason = "This harness has no model discovery capability; configured pins are accepted without live validation."
+
 // ModelCatalogSource describes where a harness's candidate model list came from.
 type ModelCatalogSource string
 
@@ -93,9 +111,10 @@ type ModelAvailabilityRequest struct {
 
 // ModelAvailability is one model candidate and its latest reachability verdict.
 type ModelAvailability struct {
-	Model  string      `json:"model"`
-	Status ModelStatus `json:"status" enum:"reachable,unreachable,unknown"`
-	Reason string      `json:"reason,omitempty"`
+	Model      string          `json:"model"`
+	Status     ModelStatus     `json:"status" enum:"reachable,unreachable,unknown"`
+	Reason     string          `json:"reason,omitempty"`
+	ReasonCode ModelReasonCode `json:"reasonCode,omitempty" enum:"not-probed,probe-unavailable,no-capability"`
 }
 
 // HarnessModels is the availability list for one harness.
@@ -343,6 +362,7 @@ func (s *Service) ValidateModel(ctx context.Context, harness domain.AgentHarness
 		}
 		validator, ok := item.Agent.(ports.AgentModelValidator)
 		if !ok {
+			s.recordPinVerdict(harness, model, pinVerdict{status: ModelStatusUnknown, reason: noModelDiscoveryCapabilityReason})
 			return nil
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, agentModelProbeTimeout)
@@ -662,7 +682,8 @@ func (s *Service) classifyModel(ctx context.Context, item agentregistry.HarnessA
 	}
 	validator, ok := item.Agent.(ports.AgentModelValidator)
 	if !ok {
-		row.Reason = "harness has no model reachability probe"
+		row.Reason = noModelDiscoveryCapabilityReason
+		row.ReasonCode = ModelReasonNoCapability
 		s.recordPinVerdict(item.Harness, model, pinVerdict{status: row.Status, reason: row.Reason})
 		return row
 	}
@@ -670,6 +691,7 @@ func (s *Service) classifyModel(ctx context.Context, item agentregistry.HarnessA
 		// A dead request context is not a provider verdict; do not record it over
 		// a previously recorded real verdict.
 		row.Reason = "model probe context already done: " + err.Error()
+		row.ReasonCode = ModelReasonProbeUnavailable
 		return row
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, agentModelProbeTimeout)
@@ -683,8 +705,10 @@ func (s *Service) classifyModel(ctx context.Context, item agentregistry.HarnessA
 	row.Reason = err.Error()
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		row.Status = ModelStatusUnknown
+		row.ReasonCode = ModelReasonProbeUnavailable
 	} else if ports.ProbeUnavailable(err) {
 		row.Status = ModelStatusUnknown
+		row.ReasonCode = ModelReasonProbeUnavailable
 	} else {
 		row.Status = ModelStatusUnreachable
 	}
@@ -698,6 +722,7 @@ func modelAvailabilityRow(model string) ModelAvailability {
 		return row
 	}
 	row.Reason = "not probed; only configured pins are live-validated"
+	row.ReasonCode = ModelReasonNotProbed
 	return row
 }
 

@@ -97,8 +97,13 @@ function modelOptions(
 	return out.sort((a, b) => a.model.localeCompare(b.model));
 }
 
-export function modelAvailabilityStatusLabel(model: Pick<AgentModelAvailability, "status" | "reason">): string {
+export function modelAvailabilityStatusLabel(
+	model: Pick<AgentModelAvailability, "status" | "reason" | "reasonCode">,
+): string {
 	if (model.status === "reachable") return "";
-	if (model.status === "unknown" && model.reason?.startsWith("not probed;")) return "";
+	if (model.status === "unknown" && (model.reasonCode === "not-probed" || model.reason?.startsWith("not probed;"))) {
+		return "";
+	}
+	if (model.status === "unknown" && model.reasonCode === "no-capability") return "no discovery";
 	return model.status;
 }

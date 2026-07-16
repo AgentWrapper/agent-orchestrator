@@ -201,8 +201,9 @@ func TestRecordPinVerdict_EvictionSparesConfiguredRejections(t *testing.T) {
 	}
 }
 
-// A harness with no model validator records unknown and fails open.
-func TestValidateSpawnModel_NoValidatorFailsOpen(t *testing.T) {
+// A harness with no model validator records a no-capability unknown verdict and
+// still fails open at spawn time.
+func TestValidateSpawnModel_NoCapabilityVerdictFailsOpen(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		{
 			Harness:  domain.HarnessClaudeCode,
@@ -210,8 +211,10 @@ func TestValidateSpawnModel_NoValidatorFailsOpen(t *testing.T) {
 			Agent:    fakeAgent{},
 		},
 	})
+	primePinVerdict(t, svc, domain.HarnessClaudeCode, "claude-custom")
+
 	err := svc.ValidateSpawnModel(context.Background(), domain.HarnessClaudeCode, "claude-custom")
-	if err != nil && !ports.ProbeUnavailable(err) {
-		t.Fatalf("a harness with no validator must not hard-block a spawn, got %v", err)
+	if err == nil || !ports.ProbeUnavailable(err) {
+		t.Fatalf("a no-capability verdict must fail open as probe-unavailable, got %v", err)
 	}
 }
