@@ -254,7 +254,6 @@ async function repositorySetupRequired(path: string): Promise<"NOT_A_GIT_REPO" |
 const SCANNABLE_CREATE_FAILURE_CODES = new Set([
 	"PATH_REQUIRED",
 	"INVALID_PATH",
-	"INVALID_PROJECT_CONFIG",
 	"NOT_A_GIT_REPO",
 	"PROJECT_UNBORN",
 	"PROJECT_BARE_REPOSITORY",

@@ -34,9 +34,9 @@ export function formatDateTime(
 	locale: SupportedLocale = currentLocale(),
 	options: Intl.DateTimeFormatOptions = {},
 ): string {
-	if (!isoDate) return justNow(locale);
+	if (!isoDate) return "";
 	const timestamp = Date.parse(isoDate);
-	if (!Number.isFinite(timestamp)) return justNow(locale);
+	if (!Number.isFinite(timestamp)) return "";
 	return new Intl.DateTimeFormat(locale, {
 		dateStyle: "medium",
 		timeStyle: "short",

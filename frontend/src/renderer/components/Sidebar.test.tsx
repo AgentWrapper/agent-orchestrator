@@ -478,7 +478,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi
 			.fn()
-			.mockRejectedValue(codedError("工作区配置无效", "INVALID_PROJECT_CONFIG")) as CreateProjectHandler;
+			.mockRejectedValue(codedError("工作区仓库缺少远程地址", "WORKSPACE_CHILD_ORIGIN_REQUIRED")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/Users/test/dev/acme");
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/Users/test/dev/acme",
@@ -514,7 +514,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
-		expect(screen.getByText("工作区配置无效")).toBeInTheDocument();
+		expect(screen.getByText("工作区仓库缺少远程地址")).toBeInTheDocument();
 		expect(screen.getByText("web")).toBeInTheDocument();
 		expect(screen.getByText("Origin remote is required.")).toBeInTheDocument();
 		expect(screen.getByText("api")).toBeInTheDocument();
@@ -566,6 +566,26 @@ describe("Sidebar", () => {
 			expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
 		},
 	);
+
+	it("does not rescan the broad INVALID_PROJECT_CONFIG error", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi
+			.fn()
+			.mockRejectedValue(codedError("项目配置无效", "INVALID_PROJECT_CONFIG")) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({ path: "/repo/workspace", repos: [] });
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		expect(await screen.findByText("项目配置无效")).toBeInTheDocument();
+		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
+	});
 
 	it("opens global settings from the footer menu when no project is selected", async () => {
 		const user = userEvent.setup();

@@ -307,7 +307,23 @@ describe("apiErrorMessage", () => {
 	});
 
 	it("localizes every explicitly mapped daemon code in both locales", async () => {
-		expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(120);
+		expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(132);
+		expect(Object.keys(ERROR_CODE_KEYS)).toEqual(
+			expect.arrayContaining([
+				"INVALID_BODY",
+				"PR_REQUIRED",
+				"INVALID_PR_REF",
+				"PR_NOT_OPEN",
+				"PR_CLAIMED_BY_ACTIVE_SESSION",
+				"SESSION_NOT_CLAIMABLE",
+				"SESSION_NO_WORKSPACE",
+				"PR_PROJECT_MISMATCH",
+				"SCM_UNAVAILABLE",
+				"INVALID_ACTIVITY_STATE",
+				"SSE_UNSUPPORTED",
+				"INVALID_AFTER",
+			]),
+		);
 
 		for (const locale of ["en", "zh-CN"] as const) {
 			await i18n.changeLanguage(locale);
@@ -367,5 +383,32 @@ describe("apiErrorMessage", () => {
 		} else {
 			expect(message).toBe("Could not continue");
 		}
+	});
+
+	it.each([
+		"access_token=review-secret",
+		"accessToken: review-secret",
+		"refresh_token=review-secret",
+		"refreshToken: review-secret",
+		"credential=review-secret",
+		"credentials: review-secret",
+		"client_secret=review-secret",
+		"clientSecret: review-secret",
+		"secret=review-secret",
+		"passphrase: review-secret",
+		"oauth-token=review-secret",
+		"oauthToken: review-secret",
+		"api_key=review-secret",
+		"apiKey: review-secret",
+		"private-token=review-secret",
+		"privateToken: review-secret",
+		"private_key=review-secret",
+		"privateKey: review-secret",
+	])("rejects unknown envelope details containing credential marker %s", async (detail) => {
+		await i18n.changeLanguage("en");
+
+		expect(apiErrorMessage({ error: "Conflict", code: "FUTURE_CODE", message: detail }, "Could not continue")).toBe(
+			"Could not continue",
+		);
 	});
 });

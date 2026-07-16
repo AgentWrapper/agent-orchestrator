@@ -245,6 +245,9 @@ const STABLE_API_ERROR_CODES = [
 	"NOT_IMPLEMENTED",
 	"INTERNAL_ERROR",
 	"INVALID_JSON",
+	"INVALID_BODY",
+	"INVALID_AFTER",
+	"SSE_UNSUPPORTED",
 	"ABSOLUTE_PATH_REQUIRED",
 	"INVALID_DIRECTORY_NAME",
 	"DIRECTORY_ALREADY_EXISTS",
@@ -294,6 +297,7 @@ const STABLE_API_ERROR_CODES = [
 	"WORKSPACE_PARENT_INDEX_FAILED",
 	"WORKSPACE_PARENT_GITLINK",
 	"PROJECT_ID_REQUIRED",
+	"PR_REQUIRED",
 	"PROMPT_TOO_LONG",
 	"DISPLAY_NAME_TOO_LONG",
 	"BRANCH_CHECKED_OUT_ELSEWHERE",
@@ -316,6 +320,13 @@ const STABLE_API_ERROR_CODES = [
 	"NO_PREVIEW_ENTRY",
 	"PREVIEW_FILE_NOT_FOUND",
 	"INVALID_QUERY",
+	"INVALID_ACTIVITY_STATE",
+	"INVALID_PR_REF",
+	"PR_NOT_OPEN",
+	"PR_CLAIMED_BY_ACTIVE_SESSION",
+	"SESSION_NOT_CLAIMABLE",
+	"SESSION_NO_WORKSPACE",
+	"PR_PROJECT_MISMATCH",
 	"SCM_CONNECTIONS_LIST_FAILED",
 	"RESERVED_SCM_CONNECTION_ID",
 	"SCM_CONNECTION_CREATE_FAILED",
@@ -343,6 +354,7 @@ const STABLE_API_ERROR_CODES = [
 	"SCM_RATE_LIMITED",
 	"SCM_REPO_NOT_FOUND",
 	"SCM_WRITE_SCOPE_MISSING",
+	"SCM_UNAVAILABLE",
 	"PR_NOT_FOUND",
 	"PR_NOT_MERGEABLE",
 	"PR_PRECONDITIONS_UNMET",
@@ -366,10 +378,19 @@ export const ERROR_CODE_KEYS = Object.fromEntries(
 	STABLE_API_ERROR_CODES.map((code) => [code, `errors.codes.${code}`]),
 ) as Record<StableAPIErrorCode, ErrorCodeKey>;
 
-const CREDENTIAL_PATTERN =
-	/\b(?:authorization|bearer|password|passwd|token|private[-_ ]?token|api[-_ ]?key|client[-_ ]?secret)\b\s*(?:[:=]\s*)?\S*/i;
 const URL_CREDENTIAL_PATTERN = /:\/\/[^/\s:]+:[^@/\s]+@/;
 const TOKEN_VALUE_PATTERN = /\b(?:glpat-[\w-]+|github_pat_[\w-]+|gh[pousr]_[\w-]+|sk-[\w-]{16,})\b/i;
+const NORMALIZED_CREDENTIAL_MARKER =
+	/(?:token|credential|secret|passphrase|password|passwd|authorization|bearer|apikey|privatekey|oauthkey)/;
+
+function containsCredential(message: string): boolean {
+	const normalized = message.toLowerCase().replace(/[^a-z0-9]/g, "");
+	return (
+		NORMALIZED_CREDENTIAL_MARKER.test(normalized) ||
+		URL_CREDENTIAL_PATTERN.test(message) ||
+		TOKEN_VALUE_PATTERN.test(message)
+	);
+}
 
 function structuredAPIMessage(error: unknown): string | undefined {
 	if (typeof error !== "object" || error === null) return undefined;
@@ -385,9 +406,7 @@ function structuredAPIMessage(error: unknown): string | undefined {
 		return undefined;
 	}
 	const message = body.message.trim();
-	if (CREDENTIAL_PATTERN.test(message) || URL_CREDENTIAL_PATTERN.test(message) || TOKEN_VALUE_PATTERN.test(message)) {
-		return undefined;
-	}
+	if (containsCredential(message)) return undefined;
 	return message;
 }
 

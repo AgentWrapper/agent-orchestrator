@@ -26,6 +26,11 @@ describe("formatTimeCompact", () => {
 });
 
 describe("formatDateTime", () => {
+	it.each([undefined, null, "", "not-a-date"])("returns an empty value for missing or invalid dates (%s)", (value) => {
+		expect(formatDateTime(value, "en", { timeZone: "UTC" })).toBe("");
+		expect(formatDateTime(value, "zh-CN", { timeZone: "UTC" })).toBe("");
+	});
+
 	it("formats an absolute date and time using the selected locale", () => {
 		const options = { timeZone: "UTC" } as const;
 		expect(formatDateTime("2026-07-17T10:15:00Z", "en", options)).toContain("Jul 17, 2026");
