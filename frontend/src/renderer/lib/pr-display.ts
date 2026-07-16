@@ -51,6 +51,22 @@ export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSumma
 	return prStateRank[a.state] - prStateRank[b.state] || a.number - b.number;
 }
 
+export function changeRequestShortLabel(pr: Pick<SessionPRSummary, "provider">): "PR" | "MR" {
+	return pr.provider === "gitlab" ? "MR" : "PR";
+}
+
+export function changeRequestName(pr: Pick<SessionPRSummary, "provider">, plural = false): string {
+	if (pr.provider === "gitlab") return plural ? "Merge requests" : "Merge request";
+	return plural ? "Pull requests" : "Pull request";
+}
+
+export function changeRequestCollectionName(prs: Pick<SessionPRSummary, "provider">[]): string {
+	const providers = new Set(prs.map((pr) => pr.provider));
+	if (providers.size === 1 && providers.has("gitlab")) return prs.length === 1 ? "Merge request" : "Merge requests";
+	if (providers.size <= 1) return prs.length === 1 ? "Pull request" : "Pull requests";
+	return "Pull / merge requests";
+}
+
 export function prBrowserUrl(pr: SessionPRSummary): string {
 	return prBaseUrl(pr) ?? pr.htmlUrl ?? pr.url;
 }
@@ -59,13 +75,22 @@ export function sessionPRDisplaySummaries(
 	session: WorkspaceSession,
 	summaries: SessionPRSummary[] = [],
 ): SessionPRSummary[] {
-	const summariesByNumber = new Map(summaries.map((summary) => [summary.number, summary]));
-	const seen = new Set<number>();
+	const summariesByURL = new Map(summaries.map((summary) => [summary.url, summary]));
+	const summariesByNumber = new Map<number, SessionPRSummary[]>();
+	for (const summary of summaries) {
+		const matching = summariesByNumber.get(summary.number);
+		if (matching) matching.push(summary);
+		else summariesByNumber.set(summary.number, [summary]);
+	}
+	const seen = new Set<string>();
 	const fromFacts = sortedPRs(session).map((pr) => {
-		seen.add(pr.number);
-		return summariesByNumber.get(pr.number) ?? sessionPRFactToSummary(session, pr);
+		const exact = summariesByURL.get(pr.url);
+		const numberMatches = summariesByNumber.get(pr.number);
+		const matched = exact ?? (numberMatches?.length === 1 ? numberMatches[0] : undefined);
+		seen.add(matched?.url ?? pr.url);
+		return matched ?? sessionPRFactToSummary(session, pr);
 	});
-	const summaryOnly = summaries.filter((summary) => !seen.has(summary.number));
+	const summaryOnly = summaries.filter((summary) => !seen.has(summary.url));
 	return [...fromFacts, ...summaryOnly].sort(comparePRDisplaySummaries);
 }
 
@@ -76,7 +101,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		number: pr.number,
 		title: session.title,
 		state: pr.state,
-		provider: "github",
+		provider: pr.url.includes("/-/merge_requests/") ? "gitlab" : "github",
 		repo: session.workspaceName,
 		author: "",
 		sourceBranch: session.branch,
@@ -193,7 +218,7 @@ function reviewSummary(pr: SessionPRSummary): string | undefined {
 		return undefined;
 	}
 	if (pr.state === "draft") {
-		return "Draft PR · Not ready for review";
+		return `Draft ${changeRequestShortLabel(pr)} · Not ready for review`;
 	}
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
 		return reviewLinks(pr).length === 0 ? "Requested changes still active" : undefined;
@@ -213,7 +238,11 @@ function reviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
 	}
 	const links = pr.review.unresolvedBy.slice(0, 3).map((reviewer) => reviewAttentionLink(pr, reviewer));
 	if (links.length === 0 && pr.review.decision === "changes_requested") {
-		links.push({ label: "PR", href: prBrowserUrl(pr), title: "Open pull request" });
+		links.push({
+			label: changeRequestShortLabel(pr),
+			href: prBrowserUrl(pr),
+			title: `Open ${changeRequestName(pr).toLowerCase()}`,
+		});
 	}
 	return links;
 }
@@ -500,7 +529,7 @@ function reviewAttentionLink(
 	return {
 		label: reviewerLabel(reviewer),
 		href: prBrowserUrl(pr),
-		title: `Open pull request for ${reviewerDisplayName(reviewer)}`,
+		title: `Open ${changeRequestName(pr).toLowerCase()} for ${reviewerDisplayName(reviewer)}`,
 	};
 }
 

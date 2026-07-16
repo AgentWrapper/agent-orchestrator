@@ -254,6 +254,48 @@ func TestProjectSCMResolverUsesThePolledProject(t *testing.T) {
 	}
 }
 
+func TestSessionReviewPublisherResolverUsesTheWorkerProject(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	project := domain.ProjectRecord{
+		ID:   "gitlab-project",
+		Path: "/repo/gitlab-project",
+		Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+			Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-main",
+		}},
+	}
+	now := time.Now().UTC()
+	if err := store.CreateSCMConnection(ctx, domain.SCMConnection{
+		ID: "gitlab-main", Provider: domain.SCMProviderGitLab, DisplayName: "GitLab",
+		WebBaseURL: "https://gitlab.example.com", APIBaseURL: "https://gitlab.example.com/api/v4",
+		CredentialRef: "test-ref", Status: domain.SCMConnectionStatusUnknown, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := store.CreateSession(ctx, domain.SessionRecord{ProjectID: domain.ProjectID(project.ID), Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publisher := &wiringReviewPublisher{}
+	providers := &recordingProviderResolverWithBundle{bundle: scmregistry.ProviderBundle{ReviewPublisher: publisher}}
+	got, err := (sessionReviewPublisherResolver{store: store, providers: providers}).ResolveReviewPublisher(ctx, worker.ID)
+	if err != nil {
+		t.Fatalf("ResolveReviewPublisher() error = %v", err)
+	}
+	if got != publisher || len(providers.projects) != 1 || providers.projects[0].ID != project.ID {
+		t.Fatalf("ResolveReviewPublisher() publisher/project = %T/%+v", got, providers.projects)
+	}
+}
+
 type recordingProviderResolverWithBundle struct {
 	projects []domain.ProjectRecord
 	bundle   scmregistry.ProviderBundle
@@ -298,6 +340,12 @@ func (*wiringSCMProvider) FetchFailedCheckLogTail(context.Context, ports.SCMRepo
 }
 func (*wiringSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	return ports.SCMReviewObservation{}, nil
+}
+
+type wiringReviewPublisher struct{}
+
+func (*wiringReviewPublisher) PublishReview(context.Context, ports.SCMPRRef, ports.ReviewPublication) (ports.ReviewPublicationResult, error) {
+	return ports.ReviewPublicationResult{}, nil
 }
 
 func TestWiring_ProjectProviderResolverCachesLegacyBundleAcrossConsumers(t *testing.T) {

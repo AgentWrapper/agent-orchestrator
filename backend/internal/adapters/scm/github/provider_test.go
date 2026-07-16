@@ -106,6 +106,46 @@ func newProviderForTest(t *testing.T, f *fakeGH) *Provider {
 
 func ctx() context.Context { return context.Background() }
 
+func TestClassifyErrorDoesNotExposeProviderResponseBody(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		header http.Header
+	}{
+		{name: "not found", status: http.StatusNotFound},
+		{name: "unauthorized", status: http.StatusUnauthorized},
+		{name: "rate limited", status: http.StatusForbidden, header: http.Header{"X-Ratelimit-Remaining": {"0"}}},
+		{name: "server error", status: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := classifyError(&http.Response{StatusCode: tc.status, Header: tc.header}, []byte(`{"message":"Authorization: Bearer provider-secret"}`))
+			if strings.Contains(err.Error(), "provider-secret") || strings.Contains(err.Error(), "Authorization") {
+				t.Fatalf("error leaked provider response body: %v", err)
+			}
+		})
+	}
+}
+
+func TestClassifyGraphQLErrorDoesNotExposeProviderMessage(t *testing.T) {
+	for _, tc := range []struct {
+		message string
+		want    error
+	}{
+		{message: "Bad credentials Authorization: Bearer provider-secret", want: ErrAuthFailed},
+		{message: "API rate limit exceeded provider-secret", want: ErrRateLimited},
+		{message: "Could not resolve provider-secret", want: ErrNotFound},
+		{message: "unexpected provider-secret", want: nil},
+	} {
+		err := classifyGraphQLError(tc.message)
+		if tc.want != nil && !errors.Is(err, tc.want) {
+			t.Fatalf("error = %v, want %v", err, tc.want)
+		}
+		if strings.Contains(err.Error(), "provider-secret") {
+			t.Fatalf("error leaked provider message: %v", err)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Fixture builders. Each test composes a REST pull + GraphQL response so
 // it can pin the exact shape it cares about without sharing global state

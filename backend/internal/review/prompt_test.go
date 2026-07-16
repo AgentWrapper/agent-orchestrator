@@ -21,19 +21,24 @@ func TestReviewTextsIncludesMultiPRQueue(t *testing.T) {
 	prompt, _ := reviewTexts(spec)
 	for _, want := range []string{
 		"AO created 2 review tasks",
-		"Review every queued PR, then submit all results together",
+		"Review every queued change, then publish all results together",
 		"Complete every review task in the queue autonomously",
-		"Do not ask the user whether to continue to the next PR",
+		"Do not ask the user whether to continue to the next change",
 		"* 1. https://github.com/o/r/pull/1 (head commit sha1, run run-1)",
 		"* 2. https://github.com/o/r/pull/2 (head commit sha2, run run-2)",
-		"After every PR has its own GitHub review from step 1",
 		"printf '%s'",
 		"do not use a heredoc",
-		"ao review submit --session mer-1 --reviews -",
+		"ao review publish --session mer-1 --reviews -",
 		`"reviews": [`,
+		`"findings": [`,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, unwanted := range []string{"gh api", "glab", "ao review submit", "githubReviewId"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt contains provider-specific or legacy command %q:\n%s", unwanted, prompt)
 		}
 	}
 }

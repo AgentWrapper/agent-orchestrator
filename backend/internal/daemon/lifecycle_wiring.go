@@ -39,6 +39,7 @@ type lifecycleStack struct {
 	reaperDone  <-chan struct{}
 	scmDone     <-chan struct{}
 	trackerDone <-chan struct{}
+	wakeDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -60,6 +61,9 @@ func (l *lifecycleStack) Stop() {
 	}
 	if l.trackerDone != nil {
 		<-l.trackerDone
+	}
+	if l.wakeDone != nil {
+		<-l.wakeDone
 	}
 }
 
@@ -123,9 +127,8 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		SignalCapable: activitydispatch.SupportsHarness,
 	})
 	// Triggering a review spawns a reviewer over the worker's worktree, resolved
-	// from the reviewer registry (distinct from the worker agent set). The
-	// reviewer posts its review to the PR itself, so the service needs no SCM
-	// writer.
+	// from the reviewer registry (distinct from the worker agent set). Review
+	// publication is routed through the worker project's configured provider.
 	reviewers, err := reviewer.NewResolver()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
@@ -137,7 +140,12 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	reviewSvc := reviewsvc.New(
+		reviewEngine,
+		store,
+		reviewsvc.WithLifecycleReducer(lcm),
+		reviewsvc.WithPublisherResolver(sessionReviewPublisherResolver{store: store, providers: providers}),
+	)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 

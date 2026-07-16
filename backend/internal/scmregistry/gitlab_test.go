@@ -27,7 +27,7 @@ func TestGitLabFactoryBuildsCurrentBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.SCM == nil || bundle.Tracker == nil {
+	if bundle.SCM == nil || bundle.Tracker == nil || bundle.ReviewPublisher == nil {
 		t.Fatalf("GitLab bundle = %#v", bundle)
 	}
 	if bundle.Writer != nil {
@@ -44,6 +44,8 @@ func TestGitLabFactoryTestsNestedRepositoryCapabilities(t *testing.T) {
 			_, _ = w.Write([]byte(`{"username":"alice","name":"Alice Example"}`))
 		case "/projects/group%2Fsubgroup%2Frepo":
 			_, _ = w.Write([]byte(`{"permissions":{"project_access":{"access_level":30}}}`))
+		case "/personal_access_tokens/self":
+			_, _ = w.Write([]byte(`{"scopes":["api"]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -61,7 +63,7 @@ func TestGitLabFactoryTestsNestedRepositoryCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tokens) != 2 || tokens[0] != "gitlab-test-token" || tokens[1] != "gitlab-test-token" {
+	if len(tokens) != 3 || tokens[0] != "gitlab-test-token" || tokens[1] != "gitlab-test-token" || tokens[2] != "gitlab-test-token" {
 		t.Fatalf("PRIVATE-TOKEN = %v", tokens)
 	}
 	if result.Status != scmconnection.StatusConnected || result.Identity.Username != "alice" || result.Identity.DisplayName != "Alice Example" {
@@ -72,6 +74,37 @@ func TestGitLabFactoryTestsNestedRepositoryCapabilities(t *testing.T) {
 	}
 }
 
+func TestGitLabFactoryReportsReadOnlyTokenWithoutFailing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.EscapedPath() {
+		case "/user":
+			_, _ = w.Write([]byte(`{"username":"alice"}`))
+		case "/personal_access_tokens/self":
+			_, _ = w.Write([]byte(`{"scopes":["read_api"]}`))
+		case "/projects/group%2Frepo":
+			_, _ = w.Write([]byte(`{"permissions":{"project_access":{"access_level":30}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := NewGitLabFactory(GitLabFactoryOptions{HTTPClient: server.Client()}).Test(
+		context.Background(),
+		scmconnection.ConnectionTestConfig{
+			ID: "gitlab-readonly", Provider: domain.SCMProviderGitLab,
+			WebBaseURL: server.URL, APIBaseURL: server.URL, Repository: "group/repo",
+		},
+		[]byte("token"),
+	)
+	if err != nil {
+		t.Fatalf("read-only connection test: %v", err)
+	}
+	if result.Status != scmconnection.StatusConnected || !result.Capabilities.Read || result.Capabilities.Write {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestGitLabFactoryTestsRepositoryCapabilities(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -79,7 +112,6 @@ func TestGitLabFactoryTestsRepositoryCapabilities(t *testing.T) {
 		repoBody   string
 		wantKind   scmconnection.TestFailureKind
 	}{
-		{name: "write scope missing", repoStatus: http.StatusOK, repoBody: `{"permissions":{"project_access":{"access_level":20}}}`, wantKind: scmconnection.TestFailureWriteScopeMissing},
 		{name: "repository missing", repoStatus: http.StatusNotFound, repoBody: `{}`, wantKind: scmconnection.TestFailureRepoNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

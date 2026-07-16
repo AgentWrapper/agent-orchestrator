@@ -77,9 +77,10 @@ const agentCatalogResponse = {
 	error: undefined,
 };
 
-function mockProject(project: Record<string, unknown>) {
+function mockProject(project: Record<string, unknown>, connections: Record<string, unknown>[] = []) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
+		if (path === "/api/v1/scm/connections") return { data: { connections }, error: undefined };
 		return {
 			data: {
 				status: "ok",
@@ -314,10 +315,8 @@ describe("ProjectSettingsForm", () => {
 	});
 
 	it("preserves project-level GitLab intake and previews subgroup repositories", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
+		mockProject(
+			{
 					id: "proj-1",
 					name: "Project One",
 					kind: "single_repo",
@@ -335,10 +334,33 @@ describe("ProjectSettingsForm", () => {
 							labels: ["ready", "backend"],
 						},
 					},
-				},
 			},
-			error: undefined,
-		});
+			[
+				{
+					id: "gitlab-main",
+					provider: "gitlab",
+					displayName: "GitLab Main",
+					webBaseUrl: "https://gitlab.example.com",
+					apiBaseUrl: "https://gitlab.example.com/api/v4",
+					credentialConfigured: true,
+					status: "unknown",
+				},
+			],
+		);
+		postMock.mockImplementation(async (path: string) =>
+			path === "/api/v1/scm/connections/{id}/test"
+				? {
+						data: {
+							result: {
+								status: "connected",
+								identity: { username: "alice" },
+								capabilities: { read: true, write: true },
+							},
+						},
+						error: undefined,
+					}
+				: { data: { orchestrator: { id: "proj-1-orch-2" } }, error: undefined, response: { status: 200 } },
+		);
 
 		renderSettings();
 
@@ -348,8 +370,18 @@ describe("ProjectSettingsForm", () => {
 		);
 		expect(screen.getByLabelText("Labels")).toHaveValue("ready, backend");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		expect(await screen.findByText("Test the source control connection before saving.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+
+		await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
+		expect(await screen.findByText("Connected as alice")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0]?.[1]?.body.config.scm).toEqual({
+			provider: "gitlab",
+			connectionId: "gitlab-main",
+		});
 		expect(putMock.mock.calls[0]?.[1]?.body.config.trackerIntake).toEqual({
 			enabled: true,
 			provider: "gitlab",
@@ -385,6 +417,28 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findAllByText("Enabling intake requires an assignee.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("persists the project-level coordinator auto-wake setting", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+		await userEvent.click(await screen.findByLabelText("Automatically wake idle coordinator"));
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0]?.[1]?.body.config.coordinator).toEqual({ autoWake: true });
 	});
 
 	it("restarts when the saved orchestrator agent already differs from the running orchestrator", async () => {

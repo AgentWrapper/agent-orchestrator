@@ -49,9 +49,10 @@ type FactoryConfig struct {
 // ProviderBundle groups the connection-scoped collaborators used by current
 // SCM observation, tracker, and writer paths.
 type ProviderBundle struct {
-	SCM     scmobserve.Provider
-	Tracker ports.Tracker
-	Writer  ports.SCMWriter
+	SCM             scmobserve.Provider
+	Tracker         ports.Tracker
+	Writer          ports.SCMWriter
+	ReviewPublisher ports.SCMReviewPublisher
 }
 
 // ProviderFactory constructs and tests one provider implementation.

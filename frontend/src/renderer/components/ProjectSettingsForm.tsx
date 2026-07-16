@@ -17,6 +17,7 @@ import {
 	type IntakeForm,
 	intakeNeedsRule,
 } from "./IntakeFields";
+import { SCMConnectionFields, scmSelectionConfig, type SCMSelection } from "./SCMConnectionFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -83,7 +84,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
-	const intakeProvider = config.scm?.provider ?? intake.provider ?? "github";
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -92,11 +92,18 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		coordinatorAutoWake: config.coordinator?.autoWake ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
 		intakeLabels: intake.labels?.join(", ") ?? "",
+		scmProvider: config.scm?.provider ?? "github",
+		scmConnectionId: config.scm?.connectionId ?? "github-default",
+		scmRepo: config.scm?.repo ?? "",
 	});
+	const [scmValidated, setSCMValidated] = useState(
+		form.scmProvider === "github" && form.scmConnectionId === "github-default",
+	);
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
@@ -109,10 +116,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 
-	// The Electron app only registers git projects today, so the daemon always has a usable
-	// git origin to derive a provider-native repository path when
-	// trackerIntake.repo is unset — there's no manual override input here. This mirrors that
-	// same derivation client-side purely for display (a link to the repo being polled).
+	const intakeProvider = form.scmProvider;
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
 		provider: intakeProvider,
@@ -129,7 +133,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			intakeLabels: patch.labels ?? f.intakeLabels,
 		}));
 	const effectiveIntakeRepo =
-		config.scm?.repo?.trim() || form.intakeRepo.trim() || deriveProviderRepo(project.repo, intakeProvider);
+		form.scmRepo.trim() || form.intakeRepo.trim() || deriveProviderRepo(project.repo, intakeProvider);
 	const intakeRepoHref = deriveRepositoryHref(project.repo, effectiveIntakeRepo);
 	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
@@ -150,6 +154,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+				coordinator: blankToUndefined({
+					...config.coordinator,
+					autoWake: form.coordinatorAutoWake || undefined,
+				}),
+				scm: scmSelectionConfig({
+					provider: form.scmProvider,
+					connectionId: form.scmConnectionId,
+					repo: form.scmRepo,
+				}),
 				trackerIntake: buildIntake(intakeForm),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
@@ -199,6 +212,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					setValidationError("Enabling intake requires an assignee.");
 					return;
 				}
+				if (!scmValidated) {
+					setValidationError("Test the source control connection before saving.");
+					return;
+				}
 				setValidationError(null);
 				mutation.mutate();
 			}}
@@ -212,6 +229,32 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<ReadonlyRow label="kind" value={project.kind === "workspace" ? "workspace" : "single repo"} />
 					<ReadonlyRow label="path" value={project.path} />
 					<ReadonlyRow label="repo" value={project.repo || "—"} />
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-control">Source control</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<SCMConnectionFields
+						value={{
+							provider: form.scmProvider,
+							connectionId: form.scmConnectionId,
+							repo: form.scmRepo,
+						}}
+						origin={project.repo}
+						onValidationChange={setSCMValidated}
+						onChange={(next: SCMSelection) => {
+							setSCMValidated(next.provider === "github" && next.connectionId === "github-default");
+							setForm((current) => ({
+								...current,
+								scmProvider: next.provider,
+								scmConnectionId: next.connectionId,
+								scmRepo: next.repo,
+							}));
+						}}
+					/>
 				</CardContent>
 			</Card>
 
@@ -296,6 +339,17 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						invalid={validationError !== null && form.orchestratorAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 					/>
+					<label className="flex items-center gap-2.5 text-control text-foreground">
+						<input
+							type="checkbox"
+							className="size-icon-base accent-accent"
+							checked={form.coordinatorAutoWake}
+							onChange={(event) =>
+								setForm((current) => ({ ...current, coordinatorAutoWake: event.target.checked }))
+							}
+						/>
+						Automatically wake idle coordinator
+					</label>
 					<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
 						<span>Agent availability is cached.</span>
 						<button

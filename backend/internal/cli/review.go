@@ -54,6 +54,26 @@ type submitReviewRequest struct {
 	Reviews        []submitReviewItem `json:"reviews,omitempty"`
 }
 
+// publishReviewFinding mirrors controllers.PublishReviewFinding.
+type publishReviewFinding struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Body string `json:"body"`
+}
+
+// publishReviewItem mirrors controllers.PublishReviewItem.
+type publishReviewItem struct {
+	RunID    string                 `json:"runId"`
+	Verdict  string                 `json:"verdict"`
+	Body     string                 `json:"body,omitempty"`
+	Findings []publishReviewFinding `json:"findings,omitempty"`
+}
+
+// publishReviewsRequest mirrors controllers.PublishReviewsInput.
+type publishReviewsRequest struct {
+	Reviews []publishReviewItem `json:"reviews"`
+}
+
 type reviewSubmitOptions struct {
 	session  string
 	runID    string
@@ -63,12 +83,33 @@ type reviewSubmitOptions struct {
 	reviews  string
 }
 
+type reviewPublishOptions struct {
+	session string
+	reviews string
+}
+
 func newReviewCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Manage AO code reviews of a worker's PR",
 	}
 	cmd.AddCommand(newReviewSubmitCommand(ctx))
+	cmd.AddCommand(newReviewPublishCommand(ctx))
+	return cmd
+}
+
+func newReviewPublishCommand(ctx *commandContext) *cobra.Command {
+	var opts reviewPublishOptions
+	cmd := &cobra.Command{
+		Use:   "publish",
+		Short: "Publish reviews through a worker project's SCM provider",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.publishReviews(cmd, opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (required)")
+	cmd.Flags().StringVar(&opts.reviews, "reviews", "", "JSON review publications: a path, or - to read from stdin (required)")
 	return cmd
 }
 
@@ -183,6 +224,60 @@ func readReviewItems(cmd *cobra.Command, path string) ([]submitReviewItem, error
 	}
 	if len(reviews) == 0 {
 		return nil, usageError{errors.New("usage: --reviews requires at least one review result")}
+	}
+	return reviews, nil
+}
+
+func (c *commandContext) publishReviews(cmd *cobra.Command, opts reviewPublishOptions) error {
+	session := strings.TrimSpace(opts.session)
+	if session == "" {
+		return usageError{errors.New("usage: --session is required")}
+	}
+	path := strings.TrimSpace(opts.reviews)
+	if path == "" {
+		return usageError{errors.New("usage: --reviews is required")}
+	}
+	reviews, err := readPublishReviewItems(cmd, path)
+	if err != nil {
+		return err
+	}
+	var res reviewRunResponse
+	requestPath := "sessions/" + url.PathEscape(session) + "/reviews/publish"
+	if err := c.postJSON(cmd.Context(), requestPath, publishReviewsRequest{Reviews: reviews}, &res); err != nil {
+		return err
+	}
+	count := len(res.Reviews)
+	if count == 0 {
+		count = len(reviews)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "published %d review(s) for %s\n", count, session)
+	return err
+}
+
+func readPublishReviewItems(cmd *cobra.Command, path string) ([]publishReviewItem, error) {
+	var raw []byte
+	var err error
+	if path == "-" {
+		raw, err = io.ReadAll(cmd.InOrStdin())
+	} else {
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, usageError{fmt.Errorf("read review publications: %w", err)}
+	}
+	var req publishReviewsRequest
+	if err := json.Unmarshal(raw, &req); err == nil {
+		if len(req.Reviews) == 0 {
+			return nil, usageError{errors.New("usage: --reviews requires at least one review")}
+		}
+		return req.Reviews, nil
+	}
+	var reviews []publishReviewItem
+	if err := json.Unmarshal(raw, &reviews); err != nil {
+		return nil, usageError{fmt.Errorf("decode review publications JSON: %w", err)}
+	}
+	if len(reviews) == 0 {
+		return nil, usageError{errors.New("usage: --reviews requires at least one review")}
 	}
 	return reviews, nil
 }

@@ -52,7 +52,7 @@ func (f *githubFactory) Build(_ context.Context, config FactoryConfig) (Provider
 	if err != nil {
 		return ProviderBundle{}, err
 	}
-	return ProviderBundle{SCM: scmProvider, Tracker: tracker}, nil
+	return ProviderBundle{SCM: scmProvider, Tracker: tracker, ReviewPublisher: scmProvider}, nil
 }
 
 func (f *githubFactory) Test(ctx context.Context, config scmconnection.ConnectionTestConfig, token []byte) (scmconnection.TestResult, error) {
@@ -105,9 +105,6 @@ func (f *githubFactory) Test(ctx context.Context, config scmconnection.Connectio
 	}
 	result.Capabilities.Read = true
 	result.Capabilities.Write = repository.Permissions.Push || repository.Permissions.Admin || repository.Permissions.Maintain
-	if !result.Capabilities.Write {
-		return result, githubTestFailure(scmconnection.TestFailureWriteScopeMissing)
-	}
 	return result, nil
 }
 

@@ -52,8 +52,13 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	if agent.got.Permissions != ports.PermissionModeAuto {
 		t.Fatalf("reviewer must launch in auto permission mode; got %q", agent.got.Permissions)
 	}
-	if !contains(agent.got.AllowedTools, "Read") || !contains(agent.got.AllowedTools, "Bash(ao review submit:*)") {
+	if !contains(agent.got.AllowedTools, "Read") || !contains(agent.got.AllowedTools, "Bash(ao review publish:*)") {
 		t.Fatalf("allowlist missing read-only review tools: %#v", agent.got.AllowedTools)
+	}
+	for _, unwanted := range []string{"Bash(gh:*)", "Bash(glab:*)", "Bash(ao review submit:*)"} {
+		if contains(agent.got.AllowedTools, unwanted) {
+			t.Fatalf("allowlist contains obsolete provider command %q: %#v", unwanted, agent.got.AllowedTools)
+		}
 	}
 	for _, denied := range []string{"Edit", "Write", "Bash(git push:*)", "Bash(git commit:*)"} {
 		if !contains(agent.got.DisallowedTools, denied) {
@@ -80,8 +85,7 @@ func TestAllowlistCoversPromptRequiredPipedCommands(t *testing.T) {
 	}
 
 	for _, cmd := range []string{
-		"printf '%s' '{ \"event\": \"COMMENT\", \"body\": \"x\" }' | gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'",
-		"printf '%s' '{ \"reviews\": [] }' | ao review submit --session sess-1 --reviews -",
+		"printf '%s' '{ \"reviews\": [] }' | ao review publish --session sess-1 --reviews -",
 	} {
 		if !compoundCommandCovered(agent.got.AllowedTools, cmd) {
 			t.Fatalf("allowlist does not cover prompt-required command %q with tools %#v", cmd, agent.got.AllowedTools)
@@ -91,6 +95,15 @@ func TestAllowlistCoversPromptRequiredPipedCommands(t *testing.T) {
 	disallowed := "printf x | rm -rf /"
 	if compoundCommandCovered(agent.got.AllowedTools, disallowed) {
 		t.Fatalf("allowlist unexpectedly covers disallowed command %q with tools %#v", disallowed, agent.got.AllowedTools)
+	}
+	for _, disallowed := range []string{
+		"printf '%s' '{}' | gh api --method POST repos/o/r/pulls/1/reviews --input -",
+		"printf '%s' '{}' | glab api projects/o%2Fr/merge_requests/1/notes",
+		"printf '%s' '{}' | ao review submit --session sess-1 --reviews -",
+	} {
+		if compoundCommandCovered(agent.got.AllowedTools, disallowed) {
+			t.Fatalf("allowlist unexpectedly covers obsolete command %q with tools %#v", disallowed, agent.got.AllowedTools)
+		}
 	}
 }
 

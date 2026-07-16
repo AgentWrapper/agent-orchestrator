@@ -44,53 +44,7 @@ export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 
 // deriveProviderRepo mirrors the daemon's provider-neutral origin parsing for
 // display only. GitLab preserves nested group paths; GitHub uses owner/repo.
-export function deriveProviderRepo(remote: string | undefined, provider: "github" | "gitlab"): string | undefined {
-	const trimmed = remote?.trim();
-	if (!trimmed) return undefined;
-	let path: string | undefined;
-	if (trimmed.startsWith("git@")) {
-		path = trimmed.split(":")[1];
-	} else {
-		try {
-			path = new URL(trimmed).pathname;
-		} catch {
-			path = trimmed;
-		}
-	}
-	if (!path) return undefined;
-	const parts = path
-		.replace(/\.git$/, "")
-		.replace(/^\/+|\/+$/g, "")
-		.split("/");
-	if (parts.length < 2) return undefined;
-	const cleaned = parts.map((part) => part.trim()).filter(Boolean);
-	if (cleaned.length < 2) return undefined;
-	return (provider === "github" ? cleaned.slice(-2) : cleaned).join("/");
-}
-
-export function deriveRepositoryHref(remote?: string, repo?: string): string | undefined {
-	const trimmed = remote?.trim();
-	if (!trimmed) return undefined;
-	if (trimmed.startsWith("git@")) {
-		const match = trimmed.match(/^git@([^:]+):(.+)$/);
-		if (!match) return undefined;
-		const path = repo?.trim() || match[2];
-		return `https://${match[1]}/${path.replace(/\.git$/, "").replace(/^\/+|\/+$/g, "")}`;
-	}
-	try {
-		const url = new URL(trimmed);
-		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-		url.username = "";
-		url.password = "";
-		url.search = "";
-		url.hash = "";
-		const path = repo?.trim() || url.pathname;
-		url.pathname = `/${path.replace(/^\/+/, "")}`.replace(/\.git$/, "").replace(/\/+$/, "");
-		return url.toString().replace(/\/$/, "");
-	} catch {
-		return undefined;
-	}
-}
+export { deriveProviderRepo, deriveRepositoryHref } from "../lib/scm-repo";
 
 // IntakeFields renders the shared "Tracker intake" controls: an enable checkbox
 // that reveals the eligibility inputs. It is deliberately card-agnostic (no

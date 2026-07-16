@@ -6,22 +6,28 @@ import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
+import { SCMConnectionFields, scmSelectionConfig, type SCMSelection } from "./SCMConnectionFields";
 import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
+type SCMProjectConfig = components["schemas"]["DomainSCMProjectConfig"];
+type CoordinatorConfig = components["schemas"]["DomainCoordinatorConfig"];
 
 type AgentInfo = components["schemas"]["AgentInfo"];
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
+	coordinator?: CoordinatorConfig;
+	scm?: SCMProjectConfig;
 	trackerIntake?: TrackerIntakeConfig;
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, provider: "github", repo: "", assignee: "", labels: "" };
+const DEFAULT_SCM: SCMSelection = { provider: "github", connectionId: "github-default", repo: "" };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
@@ -112,17 +118,29 @@ export function CreateProjectAgentSheet({
 		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const [coordinatorAutoWake, setCoordinatorAutoWake] = useState(false);
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
+	const [scm, setSCM] = useState<SCMSelection>(DEFAULT_SCM);
+	const [scmValidated, setSCMValidated] = useState(true);
 	const intakeIncomplete = intakeNeedsRule(intake);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isBusy && !isLoadingAgents;
+	const canSubmit =
+		workerAgent !== "" &&
+		orchestratorAgent !== "" &&
+		!intakeIncomplete &&
+		scmValidated &&
+		!isBusy &&
+		!isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
 
 	useEffect(() => {
 		if (!open) {
 			setWorkerAgent("");
 			setOrchestratorAgent("");
+			setCoordinatorAutoWake(false);
 			setIntake(EMPTY_INTAKE);
+			setSCM(DEFAULT_SCM);
+			setSCMValidated(true);
 		}
 	}, [open, path]);
 
@@ -130,7 +148,7 @@ export function CreateProjectAgentSheet({
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay max-h-[calc(100vh-2rem)] w-dialog-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-foreground">
@@ -156,7 +174,14 @@ export function CreateProjectAgentSheet({
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!canSubmit) return;
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) });
+							const scmConfig = scmSelectionConfig(scm);
+							void onSubmit({
+								workerAgent,
+								orchestratorAgent,
+								...(coordinatorAutoWake ? { coordinator: { autoWake: true } } : {}),
+								...(scmConfig ? { scm: scmConfig } : {}),
+								trackerIntake: buildIntake(intake),
+							});
 						}}
 					>
 						<div className="grid gap-3 sm:grid-cols-2">
@@ -183,6 +208,16 @@ export function CreateProjectAgentSheet({
 								onChange={setOrchestratorAgent}
 							/>
 						</div>
+
+						<label className="flex items-center gap-2.5 text-control text-foreground">
+							<input
+								type="checkbox"
+								className="size-icon-base accent-accent"
+								checked={coordinatorAutoWake}
+								onChange={(event) => setCoordinatorAutoWake(event.target.checked)}
+							/>
+							Automatically wake idle coordinator
+						</label>
 
 						{isLoadingAgents && <p className="text-xs leading-row text-muted-foreground">Loading agents...</p>}
 
@@ -211,6 +246,20 @@ export function CreateProjectAgentSheet({
 								</button>
 							</div>
 						)}
+
+						<div className="border-t border-border pt-4">
+							<p className="mb-3 text-xs font-medium text-muted-foreground">Source control</p>
+							<SCMConnectionFields
+								compact
+								value={scm}
+								onValidationChange={setSCMValidated}
+								onChange={(next) => {
+									setSCM(next);
+									setSCMValidated(next.provider === "github" && next.connectionId === "github-default");
+									setIntake((current) => ({ ...current, provider: next.provider }));
+								}}
+							/>
+						</div>
 
 						<div className="border-t border-border pt-4">
 							<IntakeFields form={intake} onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))} compact />

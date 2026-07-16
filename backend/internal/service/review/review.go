@@ -7,6 +7,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -29,15 +30,17 @@ type Manager interface {
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
+	PublishMany(ctx context.Context, workerID domain.SessionID, reviews []PublishReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
 }
 
 // Service is the API-facing review service. It delegates to the core engine.
 type Service struct {
-	engine    *reviewcore.Engine
-	store     Store
-	lifecycle Reducer
-	clock     func() time.Time
+	engine     *reviewcore.Engine
+	store      Store
+	lifecycle  Reducer
+	publishers PublisherResolver
+	clock      func() time.Time
 }
 
 var _ Manager = (*Service)(nil)
@@ -57,12 +60,23 @@ type Reducer interface {
 	ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
+// PublisherResolver resolves the project-scoped SCM connection for one worker.
+type PublisherResolver interface {
+	ResolveReviewPublisher(ctx context.Context, workerID domain.SessionID) (ports.SCMReviewPublisher, error)
+}
+
 // Option customizes the review service.
 type Option func(*Service)
 
 // WithLifecycleReducer wires post-submit review delivery through lifecycle.
 func WithLifecycleReducer(r Reducer) Option {
 	return func(s *Service) { s.lifecycle = r }
+}
+
+// WithPublisherResolver wires provider-neutral review publication through the
+// worker project's configured SCM connection.
+func WithPublisherResolver(r PublisherResolver) Option {
+	return func(s *Service) { s.publishers = r }
 }
 
 // WithClock overrides the service clock for tests.
@@ -99,6 +113,14 @@ type SubmittedReview struct {
 	Verdict        domain.ReviewVerdict
 	Body           string
 	GithubReviewID string
+}
+
+// PublishReview is one provider review and its AO review-run identity.
+type PublishReview struct {
+	RunID    string
+	Verdict  domain.ReviewVerdict
+	Body     string
+	Findings []ports.ReviewFinding
 }
 
 // Submit records a reviewer's result for a specific worker review pass.
@@ -139,6 +161,174 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 		}
 		runs = append(runs, run)
 	}
+	return s.finishSubmitted(ctx, workerID, runs)
+}
+
+// PublishMany publishes reviews through the worker project's SCM provider and
+// records each successful publication through the existing submit workflow.
+func (s *Service) PublishMany(ctx context.Context, workerID domain.SessionID, reviews []PublishReview) ([]domain.ReviewRun, error) {
+	if workerID == "" {
+		return nil, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	if len(reviews) == 0 {
+		return nil, fmt.Errorf("%w: at least one review result is required", ErrInvalid)
+	}
+	if s.store == nil {
+		return nil, fmt.Errorf("review service store is not configured")
+	}
+	if s.publishers == nil {
+		return nil, fmt.Errorf("review publisher resolver is not configured")
+	}
+
+	prs, err := s.store.ListPRsBySession(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	prsByURL := make(map[string]domain.PullRequest, len(prs))
+	for _, pr := range prs {
+		prsByURL[pr.URL] = pr
+	}
+
+	runsByID := make(map[string]domain.ReviewRun, len(reviews))
+	seen := make(map[string]struct{}, len(reviews))
+	needsPublisher := false
+	for _, review := range reviews {
+		if err := validatePublishReview(review); err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[review.RunID]; duplicate {
+			return nil, fmt.Errorf("%w: duplicate review run id %q", ErrInvalid, review.RunID)
+		}
+		seen[review.RunID] = struct{}{}
+		run, ok, err := s.store.GetReviewRun(ctx, review.RunID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w: review run %q", ErrNotFound, review.RunID)
+		}
+		if run.SessionID != workerID {
+			return nil, fmt.Errorf("%w: review run %q does not belong to worker %q", ErrInvalid, review.RunID, workerID)
+		}
+		if err := validatePublishRun(run, review); err != nil {
+			return nil, err
+		}
+		if run.Status == domain.ReviewRunRunning {
+			pr, ok := prsByURL[run.PRURL]
+			if !ok {
+				return nil, fmt.Errorf("%w: pull request for review run %q", ErrNotFound, review.RunID)
+			}
+			if pr.HeadSHA != run.TargetSHA {
+				return nil, fmt.Errorf("%w: review run %q targets stale head %q", ErrInvalid, review.RunID, run.TargetSHA)
+			}
+			if _, err := reviewPRRef(pr); err != nil {
+				return nil, err
+			}
+			needsPublisher = true
+		}
+		runsByID[review.RunID] = run
+	}
+
+	var publisher ports.SCMReviewPublisher
+	if needsPublisher {
+		publisher, err = s.publishers.ResolveReviewPublisher(ctx, workerID)
+		if err != nil {
+			return nil, err
+		}
+		if publisher == nil {
+			return nil, fmt.Errorf("review publisher is not configured")
+		}
+	}
+
+	runs := make([]domain.ReviewRun, 0, len(reviews))
+	for _, review := range reviews {
+		run := runsByID[review.RunID]
+		reference := ""
+		if run.Status == domain.ReviewRunRunning {
+			ref, err := reviewPRRef(prsByURL[run.PRURL])
+			if err != nil {
+				return nil, err
+			}
+			result, err := publisher.PublishReview(ctx, ref, ports.ReviewPublication{
+				TargetSHA: run.TargetSHA,
+				Verdict:   string(review.Verdict),
+				Body:      review.Body,
+				Findings:  append([]ports.ReviewFinding(nil), review.Findings...),
+			})
+			if err != nil {
+				return nil, err
+			}
+			reference = result.Reference
+		}
+		recorded, err := s.submitOne(ctx, workerID, SubmittedReview{
+			RunID:          review.RunID,
+			Verdict:        review.Verdict,
+			Body:           review.Body,
+			GithubReviewID: reference,
+		})
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, recorded)
+	}
+	return s.finishSubmitted(ctx, workerID, runs)
+}
+
+func validatePublishReview(review PublishReview) error {
+	if review.RunID == "" {
+		return fmt.Errorf("%w: review run id is required", ErrInvalid)
+	}
+	if !review.Verdict.Valid() {
+		return fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
+	}
+	if strings.TrimSpace(review.Body) == "" {
+		return fmt.Errorf("%w: review body is required for publication", ErrInvalid)
+	}
+	for i, finding := range review.Findings {
+		if strings.TrimSpace(finding.Path) == "" || finding.Line <= 0 || strings.TrimSpace(finding.Body) == "" {
+			return fmt.Errorf("%w: finding %d requires path, positive line, and body", ErrInvalid, i+1)
+		}
+	}
+	return nil
+}
+
+func validatePublishRun(run domain.ReviewRun, review PublishReview) error {
+	switch run.Status {
+	case domain.ReviewRunRunning:
+		return nil
+	case domain.ReviewRunComplete, domain.ReviewRunDelivered:
+		if run.Verdict != review.Verdict {
+			return fmt.Errorf("%w: review run %q already recorded verdict %q", ErrInvalid, run.ID, run.Verdict)
+		}
+		if review.Body != "" && run.Body != review.Body {
+			return fmt.Errorf("%w: review run %q already recorded a different body", ErrInvalid, run.ID)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: review run %q is not running", ErrInvalid, run.ID)
+	}
+}
+
+func reviewPRRef(pr domain.PullRequest) (ports.SCMPRRef, error) {
+	repo := strings.Trim(strings.TrimSpace(pr.Repo), "/")
+	cut := strings.LastIndexByte(repo, '/')
+	if strings.TrimSpace(pr.Provider) == "" || strings.TrimSpace(pr.Host) == "" || cut <= 0 || cut == len(repo)-1 || pr.Number <= 0 {
+		return ports.SCMPRRef{}, fmt.Errorf("%w: persisted pull request %q has incomplete provider identity", ErrInvalid, pr.URL)
+	}
+	return ports.SCMPRRef{
+		Repo: ports.SCMRepo{
+			Provider: pr.Provider,
+			Host:     pr.Host,
+			Owner:    repo[:cut],
+			Name:     repo[cut+1:],
+			Repo:     repo,
+		},
+		Number: pr.Number,
+		URL:    pr.URL,
+	}, nil
+}
+
+func (s *Service) finishSubmitted(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {
 	if s.lifecycle == nil {
 		return runs, nil
 	}

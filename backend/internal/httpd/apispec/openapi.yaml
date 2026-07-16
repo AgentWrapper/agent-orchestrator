@@ -1756,6 +1756,57 @@ paths:
       summary: Cancel a running code review
       tags:
       - reviews
+  /api/v1/sessions/{sessionId}/reviews/publish:
+    post:
+      operationId: publishReviews
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishReviewsInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRunResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Publish reviews through the worker project's SCM provider
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/reviews/submit:
     post:
       operationId: submitReview
@@ -2688,6 +2739,54 @@ components:
       - kind
       - sessionPrefix
       type: object
+    PublishReviewFinding:
+      properties:
+        body:
+          description: Inline finding text.
+          type: string
+        line:
+          description: One-based line in the change head.
+          minimum: 1
+          type: integer
+        path:
+          description: Repository-relative file path.
+          type: string
+      required:
+      - path
+      - line
+      - body
+      type: object
+    PublishReviewItem:
+      properties:
+        body:
+          description: Non-empty review summary published through the configured provider.
+          type: string
+        findings:
+          description: Line-specific review findings.
+          items:
+            $ref: '#/components/schemas/PublishReviewFinding'
+          type: array
+        runId:
+          description: Review run id being published and completed.
+          type: string
+        verdict:
+          description: 'Review verdict: approved or changes_requested.'
+          type: string
+      required:
+      - runId
+      - verdict
+      - body
+      type: object
+    PublishReviewsInput:
+      properties:
+        reviews:
+          description: Reviews to publish and record in one command.
+          items:
+            $ref: '#/components/schemas/PublishReviewItem'
+          type: array
+      required:
+      - reviews
+      type: object
     RemoveProjectResult:
       properties:
         projectId:
@@ -3111,6 +3210,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string

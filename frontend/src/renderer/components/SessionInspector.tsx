@@ -6,7 +6,12 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import {
+	changeRequestCollectionName,
+	changeRequestShortLabel,
+	prBrowserUrl,
+	sessionPRDisplaySummaries,
+} from "../lib/pr-display";
 import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -222,7 +227,8 @@ function Section({
 function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
-	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
+	const requestCollectionName = changeRequestCollectionName(prSummaries);
+	const prSectionTitle = prSummaries.length > 1 ? `${requestCollectionName} (${prSummaries.length})` : requestCollectionName;
 	const branchLabel = session.branch || `session/${session.id}`;
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
@@ -230,18 +236,18 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 		<div role="tabpanel">
 			<Section title={prSectionTitle}>
 				{prSummaries.length === 0 ? (
-					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
+					<p className={inspectorEmptyClass}>No pull or merge request opened yet.</p>
 				) : (
 					<div className="flex flex-col gap-2">
 						{prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.number} pr={pr} />
+							<PRSummaryCard key={pr.url} pr={pr} />
 						))}
 					</div>
 				)}
 			</Section>
 
 			<Section title="Activity">
-				<ActivityTimeline session={session} />
+				<ActivityTimeline session={session} summaries={prSummaries} />
 			</Section>
 
 			<Section className="border-t border-border pt-5" title="Overview">
@@ -262,7 +268,9 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 		<div className="rounded-md border border-border bg-surface px-3 py-2.5">
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
+				<span className="text-md-sm font-medium text-foreground">
+					{changeRequestShortLabel(pr)} #{pr.number}
+				</span>
 				<Badge variant="outline" className={cn("h-5 px-1.5 text-micro font-medium", prStateTone[pr.state])}>
 					{pr.state}
 				</Badge>
@@ -292,8 +300,12 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 	warn: "bg-warning shadow-timeline-dot",
 };
 
-function ActivityTimeline({ session }: { session: WorkspaceSession }) {
+function ActivityTimeline({ session, summaries }: { session: WorkspaceSession; summaries: SessionPRSummary[] }) {
 	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+	const requestLabel = (url: string) =>
+		changeRequestShortLabel(
+			summaries.find((summary) => summary.url === url) ?? { provider: url.includes("/-/merge_requests/") ? "gitlab" : "github" },
+		);
 
 	events.push({
 		tone: "neutral",
@@ -307,7 +319,7 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 			tone: "neutral",
 			node: (
 				<>
-					Draft <b>PR #{pr.number}</b>
+					Draft <b>{requestLabel(pr.url)} #{pr.number}</b>
 				</>
 			),
 			ts: null,
@@ -319,7 +331,7 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 			tone: "neutral",
 			node: (
 				<>
-					Opened <b>PR #{pr.number}</b>
+					Opened <b>{requestLabel(pr.url)} #{pr.number}</b>
 				</>
 			),
 			ts: null,
@@ -353,7 +365,7 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 			tone: "good",
 			node: (
 				<>
-					Merged <b>PR #{pr.number}</b>
+					Merged <b>{requestLabel(pr.url)} #{pr.number}</b>
 				</>
 			),
 			ts: null,
@@ -641,7 +653,7 @@ function ReviewPanel({
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
 	if (sortedPRs(session).length === 0) {
-		return <p className={inspectorEmptyClass}>No pull request opened yet.</p>;
+		return <p className={inspectorEmptyClass}>No pull or merge request opened yet.</p>;
 	}
 	if (isLoading) {
 		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
@@ -687,7 +699,9 @@ function ReviewPanel({
 			</div>
 			<div className="flex flex-col gap-3 overflow-hidden rounded-lg border border-border bg-surface p-3 @max-[300px]/inspector:overflow-hidden">
 				<div className="flex min-w-0 items-center justify-between gap-2.5 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start">
-					<span className="min-w-0 truncate text-xs font-semibold text-muted-foreground">Pull requests</span>
+					<span className="min-w-0 truncate text-xs font-semibold text-muted-foreground">
+						Pull / merge requests
+					</span>
 					<span
 						className={cn(
 							"inline-flex h-control-xs max-w-inspector-status-chip shrink-0 items-center gap-1 overflow-hidden truncate rounded-md px-2 text-2xs font-semibold leading-none @max-[300px]/inspector:max-w-full",
@@ -699,7 +713,7 @@ function ReviewPanel({
 				</div>
 				<div className="flex flex-col gap-0 overflow-hidden rounded-md border border-border bg-surface-faint">
 					{openReviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "p-3")}>No open pull requests to review.</p>
+						<p className={cn(inspectorEmptyClass, "p-3")}>No open pull or merge requests to review.</p>
 					) : null}
 					{openReviewStates.map((reviewState) => (
 						<ReviewStateRow key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />

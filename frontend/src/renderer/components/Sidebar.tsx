@@ -375,7 +375,7 @@ export function Sidebar({
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onSelect={selection.goPrs}>
 								<GitPullRequest aria-hidden="true" />
-								Pull requests
+								Pull / merge requests
 							</DropdownMenuItem>
 							<DropdownMenuItem disabled>
 								<Search aria-hidden="true" />
@@ -445,7 +445,7 @@ export function Sidebar({
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onSelect={selection.goPrs}>
 								<GitPullRequest aria-hidden="true" />
-								Pull requests
+								Pull / merge requests
 							</DropdownMenuItem>
 							<DropdownMenuItem disabled>
 								<Search aria-hidden="true" />

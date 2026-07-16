@@ -130,6 +130,54 @@ func TestReviewSubmitBatchReadsReviewsFromStdin(t *testing.T) {
 	}
 }
 
+func TestReviewPublishReadsProviderNeutralReviewsFromStdin(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"reviews":[{"id":"run-1","verdict":"changes_requested"},{"id":"run-2","verdict":"approved"}]}`)
+	writeRunFileFor(t, cfg, srv)
+
+	deps := aliveDeps()
+	deps.In = strings.NewReader(`{"reviews":[{"runId":"run-1","verdict":"changes_requested","body":"fix auth","findings":[{"path":"auth.go","line":42,"body":"nil dereference"}]},{"runId":"run-2","verdict":"approved","body":"ready"}]}`)
+	out, errOut, err := executeCLI(t, deps, "review", "publish", "--session", "mer-1", "--reviews", "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "published 2 review(s) for mer-1") {
+		t.Fatalf("stdout = %q", out)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/mer-1/reviews/publish" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	var req publishReviewsRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(req.Reviews) != 2 || req.Reviews[0].RunID != "run-1" || len(req.Reviews[0].Findings) != 1 || req.Reviews[0].Findings[0].Path != "auth.go" || req.Reviews[1].Verdict != "approved" {
+		t.Fatalf("request = %+v", req)
+	}
+}
+
+func TestReviewPublishMissingArgumentsAreUsageErrors(t *testing.T) {
+	tests := [][]string{
+		{"review", "publish", "--reviews", "-"},
+		{"review", "publish", "--session", "mer-1"},
+	}
+	for _, args := range tests {
+		setConfigEnv(t)
+		if _, _, err := executeCLI(t, aliveDeps(), args...); ExitCode(err) != 2 {
+			t.Fatalf("args %v exit = %d, want 2; err=%v", args, ExitCode(err), err)
+		}
+	}
+}
+
+func TestReviewPublishRejectsEmptyReviewsBeforeRequest(t *testing.T) {
+	setConfigEnv(t)
+	deps := aliveDeps()
+	deps.In = strings.NewReader(`{"reviews":[]}`)
+	if _, _, err := executeCLI(t, deps, "review", "publish", "--session", "mer-1", "--reviews", "-"); ExitCode(err) != 2 {
+		t.Fatalf("exit = %d, want 2; err=%v", ExitCode(err), err)
+	}
+}
+
 func TestReviewSubmitUsesSessionFlag(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"approved"}}`)

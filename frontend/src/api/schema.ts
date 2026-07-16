@@ -610,6 +610,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/reviews/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish reviews through the worker project's SCM provider */
+        post: operations["publishReviews"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/reviews/submit": {
         parameters: {
             query?: never;
@@ -972,6 +989,28 @@ export interface components {
             resolveError?: string;
             sessionPrefix: string;
         };
+        PublishReviewFinding: {
+            /** @description Inline finding text. */
+            body: string;
+            /** @description One-based line in the change head. */
+            line: number;
+            /** @description Repository-relative file path. */
+            path: string;
+        };
+        PublishReviewItem: {
+            /** @description Non-empty review summary published through the configured provider. */
+            body: string;
+            /** @description Line-specific review findings. */
+            findings?: components["schemas"]["PublishReviewFinding"][];
+            /** @description Review run id being published and completed. */
+            runId: string;
+            /** @description Review verdict: approved or changes_requested. */
+            verdict: string;
+        };
+        PublishReviewsInput: {
+            /** @description Reviews to publish and record in one command. */
+            reviews: components["schemas"]["PublishReviewItem"][];
+        };
         RemoveProjectResult: {
             projectId: string;
             removedStorageDir: boolean;
@@ -1129,7 +1168,7 @@ export interface components {
             /** Format: date-time */
             observedAt?: string;
             /** @enum {string} */
-            provider: "github";
+            provider: "github" | "gitlab";
             repo: string;
             review: components["schemas"]["SessionPRReviewSummary"];
             /** Format: date-time */
@@ -3519,6 +3558,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CancelReviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    publishReviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishReviewsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewRunResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */

@@ -5,6 +5,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
@@ -55,6 +56,36 @@ func (r projectSCMResolver) ResolveSCM(ctx context.Context, project domain.Proje
 		Provider:     bundle.SCM,
 		ConnectionID: project.Config.SCM.WithDefaults().ConnectionID,
 	}, nil
+}
+
+type sessionReviewPublisherResolver struct {
+	store     *sqlite.Store
+	providers scmregistry.ProjectProviderResolver
+}
+
+func (r sessionReviewPublisherResolver) ResolveReviewPublisher(ctx context.Context, workerID domain.SessionID) (ports.SCMReviewPublisher, error) {
+	worker, ok, err := r.store.GetSession(ctx, workerID)
+	if err != nil {
+		return nil, fmt.Errorf("load review worker: %w", err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("review worker %s not found", workerID)
+	}
+	project, ok, err := r.store.GetProject(ctx, string(worker.ProjectID))
+	if err != nil {
+		return nil, fmt.Errorf("load review project: %w", err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("review project %s not found", worker.ProjectID)
+	}
+	bundle, err := r.providers.Resolve(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if bundle.ReviewPublisher == nil {
+		return nil, fmt.Errorf("review publisher is unavailable for project %s", project.ID)
+	}
+	return bundle.ReviewPublisher, nil
 }
 
 // startSCMObserver resolves each active project's provider during discovery so

@@ -93,6 +93,12 @@ func (*stubWriter) WriteSCMObservation(context.Context, domain.PullRequest, []do
 	return nil
 }
 
+type stubReviewPublisher struct{ id string }
+
+func (*stubReviewPublisher) PublishReview(context.Context, ports.SCMPRRef, ports.ReviewPublication) (ports.ReviewPublicationResult, error) {
+	return ports.ReviewPublicationResult{}, nil
+}
+
 type fakeFactory struct {
 	builds []FactoryConfig
 	tests  []scmconnection.ConnectionTestConfig
@@ -147,7 +153,10 @@ func (f *fakeFactory) Build(ctx context.Context, cfg FactoryConfig) (ProviderBun
 	f.builds = append(f.builds, cfg)
 	f.tokens = append(f.tokens, token)
 	id := fmt.Sprintf("%s-%d", cfg.ConnectionID, len(f.builds))
-	return ProviderBundle{SCM: &stubSCM{id: id}, Tracker: &stubTracker{id: id}, Writer: &stubWriter{id: id}}, nil
+	return ProviderBundle{
+		SCM: &stubSCM{id: id}, Tracker: &stubTracker{id: id}, Writer: &stubWriter{id: id},
+		ReviewPublisher: &stubReviewPublisher{id: id},
+	}, nil
 }
 
 func (f *fakeFactory) Test(_ context.Context, cfg scmconnection.ConnectionTestConfig, token []byte) (scmconnection.TestResult, error) {
@@ -207,7 +216,7 @@ func TestResolverLegacyProjectUsesVirtualGitHubDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.SCM == nil || bundle.Tracker == nil || bundle.Writer == nil {
+	if bundle.SCM == nil || bundle.Tracker == nil || bundle.Writer == nil || bundle.ReviewPublisher == nil {
 		t.Fatalf("bundle = %#v", bundle)
 	}
 	if len(store.calls) != 0 {
@@ -569,7 +578,7 @@ func TestGitHubFactoryBuildIsLazyAndReturnsCurrentBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.SCM == nil || bundle.Tracker == nil {
+	if bundle.SCM == nil || bundle.Tracker == nil || bundle.ReviewPublisher == nil {
 		t.Fatalf("GitHub bundle = %#v", bundle)
 	}
 	if bundle.Writer != nil {
@@ -614,6 +623,30 @@ func TestGitHubFactoryTestsConnection(t *testing.T) {
 	}
 }
 
+func TestGitHubFactoryReportsReadOnlyRepositoryWithoutFailing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/user":
+			_, _ = w.Write([]byte(`{"login":"alice"}`))
+		case "/repos/octocat/hello-world":
+			_, _ = w.Write([]byte(`{"permissions":{"pull":true}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := NewGitHubFactory(GitHubFactoryOptions{HTTPClient: server.Client()}).Test(context.Background(), scmconnection.ConnectionTestConfig{
+		ID: "github-readonly", Provider: domain.SCMProviderGitHub, APIBaseURL: server.URL, Repository: "octocat/hello-world",
+	}, []byte("token"))
+	if err != nil {
+		t.Fatalf("read-only connection test: %v", err)
+	}
+	if result.Status != scmconnection.StatusConnected || !result.Capabilities.Read || result.Capabilities.Write {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestGitHubFactoryTestsRepositoryCapabilities(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -621,7 +654,6 @@ func TestGitHubFactoryTestsRepositoryCapabilities(t *testing.T) {
 		repoBody   string
 		wantKind   scmconnection.TestFailureKind
 	}{
-		{name: "write scope missing", repoStatus: http.StatusOK, repoBody: `{"permissions":{"pull":true}}`, wantKind: scmconnection.TestFailureWriteScopeMissing},
 		{name: "repository missing", repoStatus: http.StatusNotFound, repoBody: `{}`, wantKind: scmconnection.TestFailureRepoNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -683,3 +715,4 @@ func TestGitHubFactoryTestFailureIsRedacted(t *testing.T) {
 var _ scm.Provider = (*stubSCM)(nil)
 var _ ports.Tracker = (*stubTracker)(nil)
 var _ ports.SCMWriter = (*stubWriter)(nil)
+var _ ports.SCMReviewPublisher = (*stubReviewPublisher)(nil)

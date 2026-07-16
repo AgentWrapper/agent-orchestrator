@@ -325,21 +325,27 @@ func (c *Client) doGraphQL(ctx context.Context, query string, variables map[stri
 		return nil, fmt.Errorf("github scm: decode graphql response: %w", err)
 	}
 	if len(decoded.Errors) > 0 {
-		msg := decoded.Errors[0].Message
-		low := strings.ToLower(msg)
-		switch {
-		case strings.Contains(low, "rate limit") || strings.Contains(low, "abuse"):
-			return decoded.Data, &RateLimitError{Message: msg}
-		case strings.Contains(low, "bad credentials") || strings.Contains(low, "credentials"):
+		err := classifyGraphQLError(decoded.Errors[0].Message)
+		if errors.Is(err, ErrAuthFailed) {
 			c.invalidateToken()
-			return decoded.Data, fmt.Errorf("%w: %s", ErrAuthFailed, msg)
-		case strings.Contains(low, "could not resolve") || strings.Contains(low, "not found"):
-			return decoded.Data, fmt.Errorf("%w: %s", ErrNotFound, msg)
-		default:
-			return decoded.Data, fmt.Errorf("github scm: graphql error: %s", msg)
 		}
+		return decoded.Data, err
 	}
 	return decoded.Data, nil
+}
+
+func classifyGraphQLError(message string) error {
+	low := strings.ToLower(message)
+	switch {
+	case strings.Contains(low, "rate limit") || strings.Contains(low, "abuse"):
+		return &RateLimitError{}
+	case strings.Contains(low, "bad credentials") || strings.Contains(low, "credentials"):
+		return ErrAuthFailed
+	case strings.Contains(low, "could not resolve") || strings.Contains(low, "not found"):
+		return ErrNotFound
+	default:
+		return errors.New("github scm: GraphQL request failed")
+	}
 }
 
 // fetchPlainText is a small REST helper used for the job-log endpoint,
@@ -437,11 +443,11 @@ func classifyError(resp *http.Response, body []byte) error {
 	msg := githubMessage(body)
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return fmt.Errorf("%w: %s", ErrNotFound, msg)
+		return ErrNotFound
 	case http.StatusTooManyRequests:
-		return rateLimited(resp, msg)
+		return rateLimited(resp, "")
 	case http.StatusUnauthorized:
-		return fmt.Errorf("%w: %s", ErrAuthFailed, msg)
+		return ErrAuthFailed
 	case http.StatusForbidden:
 		// GitHub returns 403 for primary rate-limit exhaustion, for
 		// secondary/abuse limits, and for genuine auth/permission failures.
@@ -450,11 +456,11 @@ func classifyError(resp *http.Response, body []byte) error {
 		// header); either case mentions "rate limit" / "abuse" in the body.
 		// Everything else is an auth/permission failure.
 		if isRateLimited(resp, msg) {
-			return rateLimited(resp, msg)
+			return rateLimited(resp, "")
 		}
-		return fmt.Errorf("%w: %s", ErrAuthFailed, msg)
+		return ErrAuthFailed
 	}
-	return fmt.Errorf("github scm: %d %s", resp.StatusCode, msg)
+	return fmt.Errorf("github scm: unexpected HTTP status %d", resp.StatusCode)
 }
 
 func isRateLimited(resp *http.Response, msg string) bool {

@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,8 @@ type fakeReviewService struct {
 	cancel     reviewcore.CancelResult
 	list       reviewcore.SessionReviews
 	submitted  []reviewsvc.SubmittedReview
+	published  []reviewsvc.PublishReview
+	publishErr error
 }
 
 func (f *fakeReviewService) Trigger(context.Context, domain.SessionID) (reviewcore.TriggerResult, error) {
@@ -53,6 +56,18 @@ func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, re
 	runs := make([]domain.ReviewRun, 0, len(reviews))
 	for _, review := range reviews {
 		runs = append(runs, domain.ReviewRun{ID: review.RunID, Verdict: review.Verdict, Body: review.Body, GithubReviewID: review.GithubReviewID})
+	}
+	return runs, nil
+}
+
+func (f *fakeReviewService) PublishMany(_ context.Context, _ domain.SessionID, reviews []reviewsvc.PublishReview) ([]domain.ReviewRun, error) {
+	if f.publishErr != nil {
+		return nil, f.publishErr
+	}
+	f.published = append([]reviewsvc.PublishReview(nil), reviews...)
+	runs := make([]domain.ReviewRun, 0, len(reviews))
+	for _, review := range reviews {
+		runs = append(runs, domain.ReviewRun{ID: review.RunID, Verdict: review.Verdict, Body: review.Body})
 	}
 	return runs, nil
 }
@@ -171,5 +186,35 @@ func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
+	}
+}
+
+func TestReviewsPublishAcceptsProviderNeutralBatch(t *testing.T) {
+	svc := &fakeReviewService{}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/publish", `{"reviews":[{"runId":"run-1","verdict":"changes_requested","body":"fix auth","findings":[{"path":"auth.go","line":42,"body":"nil dereference"}]},{"runId":"run-2","verdict":"approved","body":"ready"}]}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if len(svc.published) != 2 || svc.published[0].RunID != "run-1" || svc.published[0].Verdict != domain.VerdictChangesRequested || len(svc.published[0].Findings) != 1 || svc.published[0].Findings[0].Line != 42 || svc.published[1].Verdict != domain.VerdictApproved {
+		t.Fatalf("published = %+v", svc.published)
+	}
+	for _, want := range []string{`"reviews"`, `"run-1"`, `"run-2"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestReviewsPublishHidesUnexpectedProviderFailure(t *testing.T) {
+	srv := newReviewTestServer(t, &fakeReviewService{publishErr: errors.New("provider echoed bearer-secret")})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/publish", `{"reviews":[{"runId":"run-1","verdict":"approved","body":"ready"}]}`)
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusInternalServerError, "INTERNAL_ERROR")
+	if strings.Contains(string(body), "provider") || strings.Contains(string(body), "secret") {
+		t.Fatalf("response leaked provider failure: %s", body)
 	}
 }

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prBrowserUrl, prDiffSummary, prStatusRows, prSummaryParts } from "./pr-display";
+import type { PullRequestFacts, WorkspaceSession } from "../types/workspace";
+import {
+	changeRequestShortLabel,
+	prBrowserUrl,
+	prDiffSummary,
+	prStatusRows,
+	prSummaryParts,
+	sessionPRDisplaySummaries,
+} from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -25,6 +33,53 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	ciObservedAt: "2026-06-15T00:00:00Z",
 	reviewObservedAt: "2026-06-15T00:00:00Z",
 	...overrides,
+});
+
+const facts = (url: string, number = 7): PullRequestFacts => ({
+	url,
+	number,
+	state: "open",
+	ci: "passing",
+	review: "approved",
+	mergeability: "mergeable",
+	reviewComments: false,
+	updatedAt: "2026-06-15T00:00:00Z",
+});
+
+const workspaceSession = (prs: PullRequestFacts[]): WorkspaceSession => ({
+	id: "worker-1",
+	workspaceId: "project-1",
+	workspaceName: "acme/repo",
+	title: "Worker",
+	provider: "codex",
+	branch: "feature",
+	status: "working",
+	updatedAt: "2026-06-15T00:00:00Z",
+	prs,
+});
+
+describe("sessionPRDisplaySummaries", () => {
+	it("does not collapse same-number GitHub and GitLab changes", () => {
+		const githubURL = "https://github.com/acme/repo/pull/7";
+		const gitlabURL = "https://gitlab.example.com/group/app/-/merge_requests/7";
+		const result = sessionPRDisplaySummaries(workspaceSession([facts(githubURL), facts(gitlabURL)]), [
+			summary({ url: githubURL, htmlUrl: githubURL }),
+			summary({ provider: "gitlab", url: gitlabURL, htmlUrl: gitlabURL, repo: "group/app" }),
+		]);
+
+		expect(result.map((item) => [item.provider, item.url])).toEqual([
+			["github", githubURL],
+			["gitlab", gitlabURL],
+		]);
+	});
+
+	it("recognizes a GitLab merge request when enriched summaries are unavailable", () => {
+		const gitlabURL = "https://gitlab.example.com/group/app/-/merge_requests/7";
+		const [result] = sessionPRDisplaySummaries(workspaceSession([facts(gitlabURL)]));
+
+		expect(result.provider).toBe("gitlab");
+		expect(changeRequestShortLabel(result)).toBe("MR");
+	});
 });
 
 describe("prStatusRows", () => {
@@ -72,6 +127,21 @@ describe("prBrowserUrl", () => {
 describe("prSummaryParts", () => {
 	it("always returns CI, Merge, and Review parts", () => {
 		expect(prSummaryParts(summary()).map((part) => part.label)).toEqual(["CI", "Merge", "Review"]);
+	});
+
+	it("uses GitLab merge-request wording for provider-specific review links", () => {
+		const gitlab = summary({
+			provider: "gitlab",
+			url: "https://gitlab.example.com/group/app/-/merge_requests/7",
+			htmlUrl: "https://gitlab.example.com/group/app/-/merge_requests/7",
+			state: "draft",
+			review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+		});
+
+		expect(changeRequestShortLabel(gitlab)).toBe("MR");
+		expect(prSummaryParts(gitlab).find((part) => part.key === "review")?.summary).toBe(
+			"Draft MR · Not ready for review",
+		);
 	});
 
 	it("details active CI, merge, and review blockers under their parts", () => {

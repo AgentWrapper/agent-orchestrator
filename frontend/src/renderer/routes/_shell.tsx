@@ -78,6 +78,8 @@ function ShellLayout() {
 			path: string;
 			workerAgent: string;
 			orchestratorAgent: string;
+			coordinator?: components["schemas"]["DomainCoordinatorConfig"];
+			scm?: components["schemas"]["DomainSCMProjectConfig"];
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
 		}) => {
@@ -98,6 +100,8 @@ function ShellLayout() {
 					config: {
 						worker: { agent: input.workerAgent },
 						orchestrator: { agent: input.orchestratorAgent },
+						coordinator: input.coordinator,
+						scm: input.scm,
 						trackerIntake: input.trackerIntake,
 					},
 				},

@@ -61,8 +61,13 @@ func TestReviewCommandUsesReadOnlyPermissionPolicy(t *testing.T) {
 		t.Fatalf("permission policy = %#v", permission)
 	}
 	bash := permission["bash"].(map[string]any)
-	if bash["*"] != "deny" || bash["gh api *"] != "allow" || bash["ao review submit *"] != "allow" {
+	if bash["*"] != "deny" || bash["ao review publish *"] != "allow" {
 		t.Fatalf("bash policy = %#v", bash)
+	}
+	for _, unwanted := range []string{"gh api *", "glab *", "ao review submit *"} {
+		if _, ok := bash[unwanted]; ok {
+			t.Fatalf("bash policy contains obsolete provider command %q: %#v", unwanted, bash)
+		}
 	}
 }
 
@@ -75,14 +80,24 @@ func TestBashAllowlistCoversPromptRequiredCommands(t *testing.T) {
 		allowed bool
 	}{
 		{
-			name:    "github review creation",
-			command: `printf '%s' '{ "event": "COMMENT", "body": "x" }' | gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'`,
+			name:    "provider-neutral review publication",
+			command: `printf '%s' '{ "reviews": [] }' | ao review publish --session sess-1 --reviews -`,
 			allowed: true,
 		},
 		{
-			name:    "local review submit",
+			name:    "github provider CLI",
+			command: `printf '%s' '{}' | gh api --method POST repos/o/r/pulls/1/reviews --input -`,
+			allowed: false,
+		},
+		{
+			name:    "gitlab provider CLI",
+			command: `printf '%s' '{}' | glab api projects/o%2Fr/merge_requests/1/notes`,
+			allowed: false,
+		},
+		{
+			name:    "legacy local review submit",
 			command: `printf '%s' '{ "reviews": [] }' | ao review submit --session sess-1 --reviews -`,
-			allowed: true,
+			allowed: false,
 		},
 		{
 			name:    "arbitrary shell command",

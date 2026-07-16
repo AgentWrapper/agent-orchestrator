@@ -38,20 +38,18 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 // system entirely and ignores allow/deny rules — it launches in the default
 // mode where these rules are honored: allow rules auto-approve without
 // prompting, so the reviewer can read the checkout and run the few commands it
-// needs (git diff/log/show to inspect the PR, printf to pipe review JSON into
-// the downstream commands without writing a worktree file, gh to post the
-// review, and `ao review submit` to record the verdict) without stalling.
+// needs (git diff/log/show to inspect the change and printf to pipe review JSON
+// into `ao review publish` without writing a worktree file) without stalling.
 var reviewerAllowedTools = []string{
 	"Read",
 	"Grep",
 	"Glob",
 	"Bash(printf:*)",
-	"Bash(gh:*)",
 	"Bash(git diff:*)",
 	"Bash(git log:*)",
 	"Bash(git show:*)",
 	"Bash(git status:*)",
-	"Bash(ao review submit:*)",
+	"Bash(ao review publish:*)",
 }
 
 // reviewerDisallowedTools hard-denies the write paths as defense in depth, so a

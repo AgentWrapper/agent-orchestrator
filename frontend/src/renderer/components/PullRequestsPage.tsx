@@ -52,19 +52,19 @@ export function PullRequestsPage() {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<DashboardSubhead
-				title="Pull requests"
-				subtitle="Open PRs across every agent session, ready to resolve and merge."
+				title="Pull / merge requests"
+				subtitle="Open pull and merge requests across every agent session."
 				count={rows.length}
 			/>
 
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				{rows.length === 0 ? (
-					<p className="py-10 text-center text-xs text-passive">No open pull requests.</p>
+					<p className="py-10 text-center text-xs text-passive">No open pull or merge requests.</p>
 				) : (
 					<Table>
 						<TableHeader>
 							<TableRow>
-								<TableHead className="w-pr-col-number">PR</TableHead>
+								<TableHead className="w-pr-col-number">PR / MR</TableHead>
 								<TableHead>Worker</TableHead>
 								<TableHead className="w-pr-col-state">State</TableHead>
 								<TableHead className="w-pr-table-actions text-right">Actions</TableHead>
@@ -73,7 +73,7 @@ export function PullRequestsPage() {
 						<TableBody>
 							{rows.map((row) => (
 								<PRRowView
-									key={`${row.session.id}-${row.pr.number}`}
+									key={`${row.session.id}-${row.pr.url}`}
 									row={row}
 									onOpen={() =>
 										void navigate({

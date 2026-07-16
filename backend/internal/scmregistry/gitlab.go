@@ -55,7 +55,7 @@ func (f *gitLabFactory) Build(_ context.Context, config FactoryConfig) (Provider
 	if err != nil {
 		return ProviderBundle{}, err
 	}
-	return ProviderBundle{SCM: provider, Tracker: tracker}, nil
+	return ProviderBundle{SCM: provider, Tracker: tracker, ReviewPublisher: provider}, nil
 }
 
 func (f *gitLabFactory) Test(ctx context.Context, config scmconnection.ConnectionTestConfig, token []byte) (scmconnection.TestResult, error) {
@@ -109,9 +109,16 @@ func (f *gitLabFactory) Test(ctx context.Context, config scmconnection.Connectio
 	if repository.Permissions.GroupAccess != nil && repository.Permissions.GroupAccess.AccessLevel > accessLevel {
 		accessLevel = repository.Permissions.GroupAccess.AccessLevel
 	}
-	result.Capabilities.Write = accessLevel >= gitLabDeveloperAccessLevel
-	if !result.Capabilities.Write {
-		return result, gitLabTestFailure(scmconnection.TestFailureWriteScopeMissing)
+	var tokenInfo struct {
+		Scopes []string `json:"scopes"`
+	}
+	if _, err := client.DoJSON(ctx, http.MethodGet, "/personal_access_tokens/self", nil, nil, &tokenInfo); err == nil {
+		for _, scope := range tokenInfo.Scopes {
+			if scope == "api" {
+				result.Capabilities.Write = accessLevel >= gitLabDeveloperAccessLevel
+				break
+			}
+		}
 	}
 	return result, nil
 }

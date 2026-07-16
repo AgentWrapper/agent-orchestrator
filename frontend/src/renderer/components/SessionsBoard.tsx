@@ -21,7 +21,7 @@ import { NewTaskDialog } from "./NewTaskDialog";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
-import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { changeRequestShortLabel, prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 
@@ -372,11 +372,11 @@ function ZoneColumn({
 }
 
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
-	const badge = sessionBadge(session);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const badge = sessionBadge(session, prSummaries[0]);
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (event.currentTarget !== event.target) return;
 		if (event.key !== "Enter" && event.key !== " ") return;
@@ -419,7 +419,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 				onClick={(event) => event.stopPropagation()}
 			>
 				{prSummaries.length === 0 ? (
-					"no PR yet"
+					"no change request yet"
 				) : (
 					<div className="flex flex-col gap-1">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
@@ -436,14 +436,16 @@ type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; c
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group }: { group: BoardPRGroup }) {
+	const labels = new Set(group.prs.map(changeRequestShortLabel));
+	const requestLabel = labels.size === 1 ? labels.values().next().value : "PR/MR";
 	return (
 		<span
 			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
 			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
 		>
-			<span>PR</span>
+			<span>{requestLabel}</span>
 			{group.prs.map((pr, index) => (
-				<span key={pr.number}>
+				<span key={pr.url}>
 					<a
 						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
 						href={prBrowserUrl(pr)}
@@ -501,7 +503,11 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 	}
 }
 
-function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
+function sessionBadge(
+	session: WorkspaceSession,
+	change?: Pick<SessionPRSummary, "provider">,
+): { label: string; className: string } {
+	const requestLabel = change ? changeRequestShortLabel(change) : "PR";
 	switch (session.status) {
 		case "needs_input":
 			return { label: "Input needed", className: "text-warning" };
@@ -514,9 +520,9 @@ function sessionBadge(session: WorkspaceSession): { label: string; className: st
 		case "review_pending":
 			return { label: "Review pending", className: "text-muted-foreground" };
 		case "draft":
-			return { label: "Draft PR", className: "text-muted-foreground" };
+			return { label: `Draft ${requestLabel}`, className: "text-muted-foreground" };
 		case "pr_open":
-			return { label: "PR open", className: "text-muted-foreground" };
+			return { label: `${requestLabel} open`, className: "text-muted-foreground" };
 		case "approved":
 			return { label: "Approved", className: "text-success" };
 		case "mergeable":

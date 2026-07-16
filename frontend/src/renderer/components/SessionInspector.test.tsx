@@ -156,9 +156,49 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
 	});
 
+	it("uses merge-request wording for an enriched GitLab summary", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return {
+					data: {
+						prs: [
+							{
+								url: "https://gitlab.example.com/group/app/-/merge_requests/7",
+								htmlUrl: "https://gitlab.example.com/group/app/-/merge_requests/7",
+								number: 7,
+								title: "Fix app",
+								state: "open",
+								provider: "gitlab",
+								repo: "group/app",
+								author: "alice",
+								sourceBranch: "fix/app",
+								targetBranch: "main",
+								headSha: "abc",
+								additions: 2,
+								deletions: 1,
+								changedFiles: 1,
+								ci: { state: "passing", failingChecks: [] },
+								review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+								mergeability: { state: "mergeable", reasons: [], prUrl: "" },
+								updatedAt: "2026-06-15T00:00:00Z",
+							},
+						],
+					},
+					error: undefined,
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+
+		expect(await screen.findByText("Merge request")).toBeInTheDocument();
+		expect(prSection("Merge request").getByText("MR #7")).toBeInTheDocument();
+	});
+
 	it("shows the empty state when there are no PRs", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
-		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
+		expect(screen.getByText("No pull or merge request opened yet.")).toBeInTheDocument();
 	});
 
 	it("links each PR to its url", () => {
@@ -434,7 +474,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
-		expect(screen.getByText("Pull requests")).toBeInTheDocument();
+		expect(screen.getByText("Pull / merge requests")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
@@ -536,6 +576,6 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 		await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
 
-		expect(await screen.findByText("No pull request opened yet.")).toBeInTheDocument();
+		expect(await screen.findByText("No pull or merge request opened yet.")).toBeInTheDocument();
 	});
 });

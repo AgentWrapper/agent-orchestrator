@@ -208,6 +208,9 @@ var schemaNames = map[string]string{
 	"ControllersCancelReviewResponse":  "CancelReviewResponse",
 	"ControllersSubmitReviewItem":      "SubmitReviewItem",
 	"ControllersSubmitReviewInput":     "SubmitReviewInput",
+	"ControllersPublishReviewFinding":  "PublishReviewFinding",
+	"ControllersPublishReviewItem":     "PublishReviewItem",
+	"ControllersPublishReviewsInput":   "PublishReviewsInput",
 	// domain review entities
 	"DomainReviewRun":     "ReviewRun",
 	"ReviewPRReviewState": "PRReviewState",
@@ -594,6 +597,19 @@ func reviewOperations() []operation {
 			summary:    "Record a reviewer's result for a worker's PR",
 			pathParams: []any{controllers.SessionIDParam{}},
 			reqBody:    controllers.SubmitReviewInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ReviewRunResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/publish", id: "publishReviews", tag: "reviews",
+			summary:    "Publish reviews through the worker project's SCM provider",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.PublishReviewsInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ReviewRunResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},

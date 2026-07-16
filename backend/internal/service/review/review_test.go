@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type fakeStore struct {
@@ -99,6 +100,30 @@ type fakeReducer struct {
 	got        lifecycle.ReviewResult
 	gotBatchID string
 	gotBatch   []lifecycle.ReviewResult
+}
+
+type fakePublisher struct {
+	result       ports.ReviewPublicationResult
+	err          error
+	refs         []ports.SCMPRRef
+	publications []ports.ReviewPublication
+}
+
+func (f *fakePublisher) PublishReview(_ context.Context, ref ports.SCMPRRef, publication ports.ReviewPublication) (ports.ReviewPublicationResult, error) {
+	f.refs = append(f.refs, ref)
+	f.publications = append(f.publications, publication)
+	return f.result, f.err
+}
+
+type fakePublisherResolver struct {
+	publisher ports.SCMReviewPublisher
+	err       error
+	workers   []domain.SessionID
+}
+
+func (f *fakePublisherResolver) ResolveReviewPublisher(_ context.Context, workerID domain.SessionID) (ports.SCMReviewPublisher, error) {
+	f.workers = append(f.workers, workerID)
+	return f.publisher, f.err
 }
 
 func (f *fakeReducer) ApplyReviewResult(_ context.Context, _ domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
@@ -276,5 +301,128 @@ func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
 				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
 			}
 		})
+	}
+}
+
+func TestPublishManyPublishesThenRecordsProviderReference(t *testing.T) {
+	st := &fakeStore{
+		ok: true,
+		run: domain.ReviewRun{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://gitlab.example.com/group/subgroup/repo/-/merge_requests/7",
+			TargetSHA: "head-7", Status: domain.ReviewRunRunning,
+		},
+		prs: []domain.PullRequest{{
+			URL: "https://gitlab.example.com/group/subgroup/repo/-/merge_requests/7", Number: 7,
+			Provider: "gitlab", Host: "gitlab.example.com", Repo: "group/subgroup/repo", HeadSHA: "head-7",
+		}},
+	}
+	publisher := &fakePublisher{result: ports.ReviewPublicationResult{Reference: "discussion-42"}}
+	resolver := &fakePublisherResolver{publisher: publisher}
+	svc := New(nil, st, WithPublisherResolver(resolver))
+
+	runs, err := svc.PublishMany(context.Background(), "mer-1", []PublishReview{{
+		RunID: "run-1", Verdict: domain.VerdictChangesRequested, Body: "fix auth",
+		Findings: []ports.ReviewFinding{{Path: "auth.go", Line: 42, Body: "nil dereference"}},
+	}})
+	if err != nil {
+		t.Fatalf("PublishMany: %v", err)
+	}
+	if len(resolver.workers) != 1 || resolver.workers[0] != "mer-1" {
+		t.Fatalf("resolved workers = %v", resolver.workers)
+	}
+	if len(publisher.refs) != 1 {
+		t.Fatalf("publish calls = %d, want 1", len(publisher.refs))
+	}
+	ref := publisher.refs[0]
+	if ref.Repo.Provider != "gitlab" || ref.Repo.Host != "gitlab.example.com" || ref.Repo.Owner != "group/subgroup" || ref.Repo.Name != "repo" || ref.Repo.Repo != "group/subgroup/repo" || ref.Number != 7 || ref.URL != st.run.PRURL {
+		t.Fatalf("publish ref = %+v", ref)
+	}
+	publication := publisher.publications[0]
+	if publication.TargetSHA != "head-7" || publication.Verdict != "changes_requested" || publication.Body != "fix auth" || len(publication.Findings) != 1 || publication.Findings[0].Path != "auth.go" {
+		t.Fatalf("publication = %+v", publication)
+	}
+	if len(runs) != 1 || runs[0].Status != domain.ReviewRunComplete || runs[0].GithubReviewID != "discussion-42" || st.updateCalls != 1 {
+		t.Fatalf("runs/store = %+v updateCalls=%d", runs, st.updateCalls)
+	}
+}
+
+func TestPublishManyProviderFailureLeavesRunRunning(t *testing.T) {
+	publishErr := errors.New("provider unavailable")
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", Number: 1, Provider: "github", Host: "github.com", Repo: "o/r", HeadSHA: "sha1"}},
+	}
+	publisher := &fakePublisher{err: publishErr}
+	svc := New(nil, st, WithPublisherResolver(&fakePublisherResolver{publisher: publisher}))
+
+	_, err := svc.PublishMany(context.Background(), "mer-1", []PublishReview{{RunID: "run-1", Verdict: domain.VerdictApproved, Body: "ready"}})
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("err = %v, want publishErr", err)
+	}
+	if st.run.Status != domain.ReviewRunRunning || st.updateCalls != 0 {
+		t.Fatalf("failed publication changed run: %+v updateCalls=%d", st.run, st.updateCalls)
+	}
+}
+
+func TestPublishManyRejectsEmptyReviewBodyBeforeResolvingProvider(t *testing.T) {
+	resolver := &fakePublisherResolver{publisher: &fakePublisher{}}
+	svc := New(nil, &fakeStore{}, WithPublisherResolver(resolver))
+
+	_, err := svc.PublishMany(context.Background(), "mer-1", []PublishReview{{
+		RunID: "run-1", Verdict: domain.VerdictApproved, Body: "  ",
+	}})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if len(resolver.workers) != 0 {
+		t.Fatalf("provider resolved for invalid review: %v", resolver.workers)
+	}
+}
+
+func TestPublishManyRetryDoesNotRepublishRecordedRun(t *testing.T) {
+	st := &fakeStore{
+		ok: true,
+		run: domain.ReviewRun{
+			ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete,
+			Verdict: domain.VerdictChangesRequested, Body: "fix it", GithubReviewID: "review-7",
+		},
+		prs: []domain.PullRequest{{URL: "pr1", Number: 1, Provider: "github", Host: "github.com", Repo: "o/r", HeadSHA: "sha1"}},
+	}
+	publisher := &fakePublisher{}
+	svc := New(nil, st, WithPublisherResolver(&fakePublisherResolver{publisher: publisher}))
+
+	runs, err := svc.PublishMany(context.Background(), "mer-1", []PublishReview{{RunID: "run-1", Verdict: domain.VerdictChangesRequested, Body: "fix it"}})
+	if err != nil {
+		t.Fatalf("PublishMany retry: %v", err)
+	}
+	if len(publisher.refs) != 0 || st.updateCalls != 0 || len(runs) != 1 || runs[0].GithubReviewID != "review-7" {
+		t.Fatalf("retry republished or rewrote: calls=%d update=%d runs=%+v", len(publisher.refs), st.updateCalls, runs)
+	}
+}
+
+func TestPublishManyValidatesWholeBatchBeforePublishing(t *testing.T) {
+	st := &fakeStore{
+		batchRuns: []domain.ReviewRun{
+			{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+			{ID: "run-2", SessionID: "mer-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, Body: "recorded"},
+		},
+		prs: []domain.PullRequest{
+			{URL: "pr1", Number: 1, Provider: "github", Host: "github.com", Repo: "o/r", HeadSHA: "sha1"},
+			{URL: "pr2", Number: 2, Provider: "github", Host: "github.com", Repo: "o/r", HeadSHA: "sha2"},
+		},
+	}
+	publisher := &fakePublisher{}
+	svc := New(nil, st, WithPublisherResolver(&fakePublisherResolver{publisher: publisher}))
+
+	_, err := svc.PublishMany(context.Background(), "mer-1", []PublishReview{
+		{RunID: "run-1", Verdict: domain.VerdictApproved, Body: "ready"},
+		{RunID: "run-2", Verdict: domain.VerdictChangesRequested, Body: "different"},
+	})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if len(publisher.refs) != 0 || st.updateCalls != 0 {
+		t.Fatalf("invalid batch published or recorded: calls=%d update=%d", len(publisher.refs), st.updateCalls)
 	}
 }

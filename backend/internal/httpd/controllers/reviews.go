@@ -10,6 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
@@ -61,6 +62,27 @@ type SubmitReviewInput struct {
 	Reviews        []SubmitReviewItem `json:"reviews,omitempty" description:"Batched review results recorded by one reviewer CLI command."`
 }
 
+// PublishReviewFinding is one line-specific finding to publish through the
+// worker project's configured SCM provider.
+type PublishReviewFinding struct {
+	Path string `json:"path" description:"Repository-relative file path."`
+	Line int    `json:"line" minimum:"1" description:"One-based line in the change head."`
+	Body string `json:"body" description:"Inline finding text."`
+}
+
+// PublishReviewItem is one provider-neutral review publication.
+type PublishReviewItem struct {
+	RunID    string                 `json:"runId" description:"Review run id being published and completed."`
+	Verdict  string                 `json:"verdict" description:"Review verdict: approved or changes_requested."`
+	Body     string                 `json:"body" description:"Non-empty review summary published through the configured provider."`
+	Findings []PublishReviewFinding `json:"findings,omitempty" description:"Line-specific review findings."`
+}
+
+// PublishReviewsInput is the body of POST /api/v1/sessions/{sessionId}/reviews/publish.
+type PublishReviewsInput struct {
+	Reviews []PublishReviewItem `json:"reviews" description:"Reviews to publish and record in one command."`
+}
+
 // ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
 type ReviewsController struct {
 	Svc reviewsvc.Manager
@@ -72,6 +94,7 @@ func (c *ReviewsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
 	r.Post("/sessions/{sessionId}/reviews/cancel", c.cancel)
 	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
+	r.Post("/sessions/{sessionId}/reviews/publish", c.publish)
 }
 
 func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +200,41 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: first, Reviews: runs})
 }
 
+func (c *ReviewsController) publish(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/publish")
+		return
+	}
+	var in PublishReviewsInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BODY", "Invalid request body", nil)
+		return
+	}
+	reviews := make([]reviewsvc.PublishReview, 0, len(in.Reviews))
+	for _, item := range in.Reviews {
+		findings := make([]ports.ReviewFinding, 0, len(item.Findings))
+		for _, finding := range item.Findings {
+			findings = append(findings, ports.ReviewFinding{Path: finding.Path, Line: finding.Line, Body: finding.Body})
+		}
+		reviews = append(reviews, reviewsvc.PublishReview{
+			RunID:    item.RunID,
+			Verdict:  domain.ReviewVerdict(item.Verdict),
+			Body:     item.Body,
+			Findings: findings,
+		})
+	}
+	runs, err := c.Svc.PublishMany(r.Context(), sessionID(r), reviews)
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	first := domain.ReviewRun{}
+	if len(runs) > 0 {
+		first = runs[0]
+	}
+	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: first, Reviews: runs})
+}
+
 func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, reviewsvc.ErrInvalid):
@@ -186,6 +244,6 @@ func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, reviewsvc.ErrAgentBinaryNotFound):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "REVIEWER_BINARY_NOT_FOUND", err.Error(), nil)
 	default:
-		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "REVIEW_OPERATION_FAILED", "Review operation failed", nil)
+		envelope.WriteError(w, r, err)
 	}
 }

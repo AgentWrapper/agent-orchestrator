@@ -90,6 +90,7 @@ describe("PullRequestsPage", () => {
 	it("shows an empty state when no session has a PR", () => {
 		setWorkspaces([session("idle", [])]);
 		renderPage();
-		expect(screen.getByText("No open pull requests.")).toBeInTheDocument();
+		expect(screen.getByText("Pull / merge requests")).toBeInTheDocument();
+		expect(screen.getByText("No open pull or merge requests.")).toBeInTheDocument();
 	});
 });
