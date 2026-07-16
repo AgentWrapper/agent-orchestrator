@@ -1379,3 +1379,63 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 		t.Fatalf("waiting-input session emitted ready notification: %+v", sink.intents)
 	}
 }
+
+func TestRuntimeObservation_DeadProbeTerminatesBlockedSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityBlocked
+	rec.Activity.LastActivityAt = time.Now()
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got isTerminated=%v state=%q", got.IsTerminated, got.Activity.State)
+	}
+}
+
+func TestRuntimeObservation_DeadProbeTerminatesWaitingInputSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityWaitingInput
+	rec.Activity.LastActivityAt = time.Now()
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got isTerminated=%v state=%q", got.IsTerminated, got.Activity.State)
+	}
+}
+
+func TestRuntimeObservation_FailedProbeDoesNotTerminateBlockedSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityBlocked
+	rec.Activity.LastActivityAt = time.Now()
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated {
+		t.Fatalf("failed probe must not terminate blocked session, got isTerminated=%v", got.IsTerminated)
+	}
+}
+
+func TestRuntimeObservation_AliveProbeDoesNotTerminateWaitingInputSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityWaitingInput
+	rec.Activity.LastActivityAt = time.Now()
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeAlive}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated {
+		t.Fatalf("alive probe must not terminate waiting_input session, got isTerminated=%v", got.IsTerminated)
+	}
+}

@@ -23,8 +23,13 @@ func hasRecentActivity(a domain.Activity, now time.Time, window time.Duration) b
 }
 
 func runtimeClearlyDead(f ports.RuntimeFacts, activity domain.Activity, now time.Time, window time.Duration) bool {
-	observedAt := timeOr(f.ObservedAt, now)
-	return f.Probe == ports.ProbeDead && !hasRecentActivity(activity, observedAt, window)
+	if f.Probe != ports.ProbeDead {
+		return false
+	}
+	if activity.State.IsSticky() {
+		return true
+	}
+	return !hasRecentActivity(activity, timeOr(f.ObservedAt, now), window)
 }
 
 func timeOr(t, fallback time.Time) time.Time {
