@@ -137,3 +137,5 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 
 - For remote-client deployments, preserve the daemon wire protocol and business services; prefer an Electron-local authenticated forwarding proxy over changing REST, SSE, WebSocket, or terminal transports.
 - SCM provider, repository, and connection selection are project-level settings; never model one globally active repository provider for the daemon.
+- For full-scope implementation, batch execution and review by dependency phase; do not create review-gated microtasks unless the user requests them.
+- Implement coordinator self-wake by reusing existing event/session state; do not add a durable queue, leases, ACKs, retries, or dead letters unless crash-safe delivery is explicitly required.
