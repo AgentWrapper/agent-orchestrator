@@ -124,15 +124,7 @@ function useSelection() {
 // scanned without opening the project board.
 function SessionDot({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionDotView(session);
-	return (
-		<span
-			aria-hidden="true"
-			className={cn(
-				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				dot.className,
-			)}
-		/>
-	);
+	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
