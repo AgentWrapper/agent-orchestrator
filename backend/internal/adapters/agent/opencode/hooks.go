@@ -49,10 +49,10 @@ const (
 	// alone is invisible to that discovery path.
 	opencodeSkillSubDir = "skills"
 
-	// opencodeSkillMarkerFile marks a skill directory as AO-managed. Install
-	// overwrites and uninstall deletes only when this marker is present, so a
-	// user-authored skill at the same path is never clobbered or removed.
-	opencodeSkillMarkerFile = ".ao-managed"
+	// opencodeSkillMarkerFile lives beside the skill directory (not inside it) so
+	// Materialize's RemoveAll of using-ao/ cannot erase ownership mid-install.
+	// Install overwrites and uninstall deletes only when this marker is present.
+	opencodeSkillMarkerFile = ".using-ao.ao-managed"
 
 	// opencodeSkillSentinel is written into the marker file. Keep it distinct
 	// from the plugin sentinel so ownership checks stay file-specific.
@@ -83,7 +83,7 @@ var opencodeManagedEvents = []string{"session-start", "user-prompt-submit", "sto
 // refuses to overwrite a file that is NOT AO-managed (no sentinel), so a user
 // plugin that happens to occupy our path is never silently destroyed — install
 // fails loudly instead. The skill install uses the same ownership guard via a
-// marker file inside the skill directory.
+// marker file beside the skill directory (written before Materialize runs).
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -177,8 +177,12 @@ func opencodeSkillDir(workspacePath string) string {
 	return filepath.Join(workspacePath, opencodePluginDirName, opencodeSkillSubDir, skillassets.SkillName)
 }
 
+func opencodeSkillsDir(workspacePath string) string {
+	return filepath.Join(workspacePath, opencodePluginDirName, opencodeSkillSubDir)
+}
+
 func opencodeSkillMarkerPath(workspacePath string) string {
-	return filepath.Join(opencodeSkillDir(workspacePath), opencodeSkillMarkerFile)
+	return filepath.Join(opencodeSkillsDir(workspacePath), opencodeSkillMarkerFile)
 }
 
 // installUsingAOSkill materializes the embedded using-ao skill into
@@ -201,14 +205,23 @@ func installUsingAOSkill(workspacePath string) error {
 		return fmt.Errorf("stat skill dir: %w", err)
 	}
 
-	if err := skillassets.Materialize(skillDir); err != nil {
-		return fmt.Errorf("materialize using-ao skill: %w", err)
+	skillsParent := opencodeSkillsDir(workspacePath)
+	if err := os.MkdirAll(skillsParent, 0o750); err != nil {
+		return fmt.Errorf("create skills dir: %w", err)
 	}
+	// Write ownership before Materialize clobbers using-ao/, so a crash mid-tree
+	// write leaves a marker that allows the next install attempt to recover.
 	if err := hookutil.AtomicWriteFile(opencodeSkillMarkerPath(workspacePath), []byte(opencodeSkillSentinel+"\n"), 0o600); err != nil {
 		return fmt.Errorf("write skill marker: %w", err)
 	}
+	if err := skillassets.Materialize(skillDir); err != nil {
+		return fmt.Errorf("materialize using-ao skill: %w", err)
+	}
 	if err := ensureSkillTreeGitignored(skillDir); err != nil {
 		return fmt.Errorf("skill gitignore: %w", err)
+	}
+	if err := hookutil.EnsureWorkspaceGitignore(skillsParent, opencodeSkillMarkerFile); err != nil {
+		return fmt.Errorf("skill marker gitignore: %w", err)
 	}
 	return nil
 }
@@ -253,6 +266,10 @@ func uninstallUsingAOSkill(workspacePath string) error {
 	if err := os.RemoveAll(opencodeSkillDir(workspacePath)); err != nil {
 		return fmt.Errorf("remove skill dir: %w", err)
 	}
+	markerPath := opencodeSkillMarkerPath(workspacePath)
+	if err := os.Remove(markerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove skill marker: %w", err)
+	}
 	return nil
 }
 
@@ -269,8 +286,8 @@ func isAOManagedPlugin(path string) (bool, error) {
 	return strings.Contains(string(data), opencodePluginSentinel), nil
 }
 
-// isAOManagedSkill reports whether the using-ao skill directory exists and
-// carries the AO marker. A missing directory yields (false, nil).
+// isAOManagedSkill reports whether the AO ownership marker beside the skill
+// directory exists. A missing marker yields (false, nil).
 func isAOManagedSkill(workspacePath string) (bool, error) {
 	data, err := os.ReadFile(opencodeSkillMarkerPath(workspacePath)) //nolint:gosec // path built from caller-owned workspace dir
 	if errors.Is(err, os.ErrNotExist) {

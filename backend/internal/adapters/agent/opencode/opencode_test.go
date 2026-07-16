@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -566,8 +567,36 @@ func TestUninstallHooksRemovesPlugin(t *testing.T) {
 	if _, err := os.Stat(opencodeSkillDir(workspace)); !os.IsNotExist(err) {
 		t.Fatalf("AO using-ao skill still present after uninstall: err=%v", err)
 	}
+	if _, err := os.Stat(opencodeSkillMarkerPath(workspace)); !os.IsNotExist(err) {
+		t.Fatalf("AO skill marker still present after uninstall: err=%v", err)
+	}
 	if _, err := os.Stat(userPlugin); err != nil {
 		t.Fatalf("user plugin removed by uninstall: %v", err)
+	}
+}
+
+func TestGetAgentHooksRecoversPartialSkillInstall(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+	workspace := t.TempDir()
+	ctx := context.Background()
+
+	skillDir := opencodeSkillDir(workspace)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a crash after the marker was written but before Materialize finished.
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# partial\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := hookutil.AtomicWriteFile(opencodeSkillMarkerPath(workspace), []byte(opencodeSkillSentinel+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(ctx, ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatalf("GetAgentHooks: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "commands", "spawn.md")); err != nil {
+		t.Fatalf("recovered install missing commands/spawn.md: %v", err)
 	}
 }
 
