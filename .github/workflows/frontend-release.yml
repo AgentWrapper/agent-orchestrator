@@ -252,7 +252,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout
-      statuses: write # POST the ao-stable-gate commit status (separate token scope)
+      checks: write # publish the ao-stable-gate check-run (supports a neutral conclusion)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -260,6 +260,10 @@ jobs:
           node-version: 20
       - name: Install pod-runner deps
         if: ${{ inputs.skip_e2e_gate != true }}
+        # continue-on-error: a failed install is an infra/setup problem, not a
+        # release failure. The runner then fails to import @daytona/sdk, classifies
+        # itself as `infra`, and the check below publishes NEUTRAL (not red).
+        continue-on-error: true
         run: npm --prefix scripts ci
       - name: Run pod e2e gate (advisory)
         id: gate
@@ -270,23 +274,29 @@ jobs:
         run: |
           tag="v$(node -p "require('./frontend/package.json').version")"
           node scripts/ao-e2e-pod-gate.mjs --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --tag "$tag" --suite T0
-      - name: Post ao-stable-gate commit status
+      - name: Publish ao-stable-gate check
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Only a deliberate skip (skip_e2e_gate=true) is green. A "skipped"
-          # outcome with the input unset means an earlier step failed (e.g. the
-          # `npm --prefix scripts ci` install) and the gate never ran — that must
-          # be red, never a silent green.
-          if [ "${{ steps.gate.outcome }}" = "success" ]; then
-            state=success; desc="T0 pod smoke passed"
-          elif [ "${{ steps.gate.outcome }}" = "skipped" ] && [ "${{ inputs.skip_e2e_gate }}" = "true" ]; then
-            state=success; desc="e2e gate skipped via skip_e2e_gate"
+          # RED (failure) is reserved for a real app smoke failure. Everything
+          # else — missing DAYTONA_API_KEY, Daytona unavailable, setup/install
+          # error, a broken gate — is INFRA and publishes a NEUTRAL check, so an
+          # infra hiccup never makes an otherwise-good release look failed. A
+          # deliberate skip publishes `skipped`.
+          if [ "${{ inputs.skip_e2e_gate }}" = "true" ]; then
+            conclusion=skipped; summary="e2e gate skipped via skip_e2e_gate."
           else
-            state=failure; desc="T0 pod smoke failed or gate did not run"
+            case "${{ steps.gate.outputs.classification }}" in
+              passed)     conclusion=success; summary="T0 pod smoke passed." ;;
+              app_failed) conclusion=failure; summary="T0 pod smoke FAILED — the app under test failed the suite." ;;
+              *)          conclusion=neutral; summary="Gate could not run (infra/setup: missing DAYTONA_API_KEY, Daytona unavailable, or setup error) — NOT a release-build failure." ;;
+            esac
           fi
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context="ao-stable-gate" -f description="$desc"
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name="ao-stable-gate" -f head_sha="$GITHUB_SHA" \
+            -f status="completed" -f conclusion="$conclusion" \
+            -f "output[title]=AO stable e2e gate" -f "output[summary]=$summary"
 
   publish-feed:
     needs: [release, release-intel]

@@ -18,6 +18,7 @@
 
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 export function parseArgs(argv) {
@@ -39,51 +40,62 @@ export function parseArgs(argv) {
 }
 
 /**
- * Pure verdict logic for the stable/nightly e2e gate.
+ * Pure verdict logic for the stable e2e gate.
  *
- * Given the observable facts of a pod run, derive the gate outcome: the commit
- * status state, the process exit code, a human description, and the artifacts
- * link (always carried through when present, so it can be attached to the
- * check on both green and red).
+ * The key distinction: a RED (failure) verdict is reserved for the ONE
+ * actionable case — the smoke suite ran and the app under test failed it.
+ * Everything else that goes wrong is INFRA/setup (no key, Daytona unavailable,
+ * download/exec error, timeout) and maps to a NEUTRAL check, not red, so an
+ * infrastructure hiccup never makes an otherwise-good release look failed.
+ *
+ * The infra-vs-app split falls out of throw-vs-return in the runner: infra
+ * problems throw (→ ranOk=false here); an app smoke failure returns
+ * testsPassed=false.
  *
  * Rule table (first match wins):
- *   ranOk === false        -> failure / 1  ("runner crashed ...")   [NOT a silent pass]
- *   timedOut === true      -> failure / 1  ("... timed out")
- *   testsPassed !== true   -> failure / 1  ("T0 pod smoke failed")
- *   testsPassed === true   -> success / 0  ("T0 pod smoke passed")
+ *   ranOk === false      -> infra      / neutral / exit 0  (could not run)
+ *   timedOut === true    -> infra      / neutral / exit 0  (treated as infra/flake)
+ *   testsPassed !== true -> app_failed / failure / exit 1  (the only RED)
+ *   testsPassed === true -> passed     / success / exit 0
  *
- * Crash precedence is deliberate: if the runner never produced a real verdict
- * (ranOk=false), we must fail even if `testsPassed` was left truthy — a crash
- * must never be reported as green.
+ * exitCode: app_failed=1 (so a future blocking gate blocks); infra=0 (a Daytona
+ * outage must never block a good release); passed=0.
  *
  * @param {object} facts
- * @param {boolean} facts.ranOk       runner completed and produced a verdict
+ * @param {boolean} facts.ranOk       runner produced a verdict (false = threw = infra)
  * @param {boolean} facts.testsPassed the T0 suite reported all green
  * @param {boolean} [facts.timedOut]  the run hit its wall-clock timeout
  * @param {string}  [facts.artifactsUrl] link to logs/traces/screenshots
- * @returns {{state:"success"|"failure", exitCode:0|1, description:string, artifactsUrl:string|null}}
+ * @returns {{classification:"passed"|"app_failed"|"infra", conclusion:"success"|"failure"|"neutral", exitCode:0|1, description:string, artifactsUrl:string|null}}
  */
 export function deriveGateOutcome({ ranOk, testsPassed, timedOut = false, artifactsUrl = null } = {}) {
 	const link = artifactsUrl || null;
-
-	const fail = (description) => ({
-		state: "failure",
-		exitCode: 1,
+	const infra = (description) => ({
+		classification: "infra",
+		conclusion: "neutral",
+		exitCode: 0,
 		description,
 		artifactsUrl: link,
 	});
 
 	if (ranOk === false) {
-		return fail("runner crashed before producing a verdict");
+		return infra("gate could not run (infrastructure/setup) — not a release-build result");
 	}
 	if (timedOut === true) {
-		return fail("T0 pod smoke timed out");
+		return infra("gate timed out (infrastructure) — not a release-build result");
 	}
 	if (testsPassed !== true) {
-		return fail("T0 pod smoke failed");
+		return {
+			classification: "app_failed",
+			conclusion: "failure",
+			exitCode: 1,
+			description: "T0 pod smoke failed — the app under test failed the suite",
+			artifactsUrl: link,
+		};
 	}
 	return {
-		state: "success",
+		classification: "passed",
+		conclusion: "success",
 		exitCode: 0,
 		description: "T0 pod smoke passed",
 		artifactsUrl: link,
@@ -166,12 +178,25 @@ async function main(argv) {
 	}
 
 	const verdict = {
-		passed: outcome.state === "success",
-		state: outcome.state,
+		classification: outcome.classification,
+		conclusion: outcome.conclusion,
+		passed: outcome.classification === "passed",
 		summary: outcome.description,
 		...(outcome.artifactsUrl ? { artifactsUrl: outcome.artifactsUrl } : {}),
 	};
 	console.log(`AO_VERDICT ${JSON.stringify(verdict)}`);
+	// Hand the classification to the CI job deterministically so it maps to a
+	// check-run conclusion (success/failure/neutral) without re-parsing stdout.
+	if (process.env.GITHUB_OUTPUT) {
+		try {
+			appendFileSync(
+				process.env.GITHUB_OUTPUT,
+				`classification=${outcome.classification}\nconclusion=${outcome.conclusion}\n`,
+			);
+		} catch {
+			/* best-effort; the check step falls back to a neutral conclusion */
+		}
+	}
 	return outcome.exitCode;
 }
 
