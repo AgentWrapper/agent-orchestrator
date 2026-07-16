@@ -38,8 +38,8 @@ func TestMigration0024PreservesCDCAndAddsGlobalSCMConnectionEvents(t *testing.T)
 			t.Errorf("pre-0024 trigger %q definition changed\nbefore: %s\nafter:  %s", name, beforeTriggerSQL[name], afterSQL)
 		}
 	}
-	if len(afterTriggers) != len(beforeTriggers)+3 {
-		t.Errorf("trigger count after 0024 = %d, want %d existing + 3 connection triggers", len(afterTriggers), len(beforeTriggers))
+	if len(afterTriggers) != len(beforeTriggers)+5 {
+		t.Errorf("trigger count after 0024 = %d, want %d existing + 3 connection + 2 project guard triggers", len(afterTriggers), len(beforeTriggers))
 	}
 
 	var priorCount int
@@ -201,6 +201,47 @@ func TestMigration0024DownRestoresLegacyCDCTriggers(t *testing.T) {
 		if gotSQL[name] != wantSQL {
 			t.Errorf("legacy trigger %q definition changed after down\nbefore: %s\nafter:  %s", name, wantSQL, gotSQL[name])
 		}
+	}
+}
+
+func TestMigration0024ProjectConnectionGuardsAllowLegacyConfigs(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/ao.db"+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 24)
+
+	legacyConfigs := []struct {
+		id     string
+		config any
+	}{
+		{id: "null-config", config: nil},
+		{id: "missing-scm", config: `{"defaultBranch":"main"}`},
+		{id: "empty-connection", config: `{"scm":{"connectionId":""}}`},
+	}
+	for _, legacy := range legacyConfigs {
+		if _, err := db.Exec(
+			`INSERT INTO projects (id, path, registered_at, config) VALUES (?, ?, '2026-07-16T00:00:00Z', ?)`,
+			legacy.id, "/tmp/"+legacy.id, legacy.config,
+		); err != nil {
+			t.Errorf("insert legacy project %q: %v", legacy.id, err)
+		}
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO projects (id, path, registered_at, config)
+		 VALUES ('missing-connection', '/tmp/missing-connection', '2026-07-16T00:00:00Z',
+		         '{"scm":{"connectionId":"does-not-exist"}}')`,
+	); err == nil {
+		t.Fatal("explicit reference to missing SCM connection committed")
+	}
+	if _, err := db.Exec(
+		`UPDATE projects
+		 SET config = '{"scm":{"connectionId":"does-not-exist"}}'
+		 WHERE id = 'null-config'`,
+	); err == nil {
+		t.Fatal("project update to missing SCM connection committed")
 	}
 }
 

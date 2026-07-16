@@ -23,10 +23,11 @@ UPDATE scm_connections SET
     updated_at = ?
 WHERE id = ?;
 
--- name: CountProjectsReferencingSCMConnection :one
-SELECT COUNT(*)
-FROM projects
-WHERE json_extract(config, '$.scm.connectionId') = ?;
-
--- name: DeleteSCMConnection :execrows
-DELETE FROM scm_connections WHERE id = ?;
+-- name: DeleteUnreferencedSCMConnection :execrows
+DELETE FROM scm_connections
+WHERE scm_connections.id = ?
+  AND NOT EXISTS (
+      SELECT 1
+      FROM projects
+      WHERE json_extract(config, '$.scm.connectionId') = ?
+  );

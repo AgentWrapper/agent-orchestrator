@@ -106,6 +106,84 @@ func TestSCMConnectionStoreRejectsReferencedDelete(t *testing.T) {
 	}
 }
 
+func TestSCMConnectionDeleteAcrossStoresPreservesReferenceIntegrity(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("reference commits first", func(t *testing.T) {
+		first, second := newSharedTestStores(t)
+		conn := testSCMConnection()
+		if err := first.CreateSCMConnection(ctx, conn); err != nil {
+			t.Fatal(err)
+		}
+		if err := second.UpsertProject(ctx, referencedProject(conn)); err != nil {
+			t.Fatalf("commit project reference: %v", err)
+		}
+
+		deleted, err := first.DeleteSCMConnection(ctx, conn.ID)
+		if deleted || !errors.Is(err, sqlitestore.ErrSCMConnectionReferenced) {
+			t.Fatalf("delete after reference commit: deleted=%v err=%v", deleted, err)
+		}
+		assertNoDanglingProjectConnection(t, first, conn.ID, "ao")
+	})
+
+	t.Run("delete commits first", func(t *testing.T) {
+		first, second := newSharedTestStores(t)
+		conn := testSCMConnection()
+		if err := first.CreateSCMConnection(ctx, conn); err != nil {
+			t.Fatal(err)
+		}
+		if deleted, err := first.DeleteSCMConnection(ctx, conn.ID); err != nil || !deleted {
+			t.Fatalf("delete before reference: deleted=%v err=%v", deleted, err)
+		}
+
+		if err := second.UpsertProject(ctx, referencedProject(conn)); err == nil {
+			t.Fatal("project reference to deleted connection committed")
+		}
+		if _, exists, err := first.GetProject(ctx, "ao"); err != nil || exists {
+			t.Fatalf("dangling project exists=%v err=%v", exists, err)
+		}
+	})
+}
+
+func newSharedTestStores(t *testing.T) (*sqlite.Store, *sqlite.Store) {
+	t.Helper()
+	dir := t.TempDir()
+	first, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatalf("open first store: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatalf("open second store: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	return first, second
+}
+
+func referencedProject(conn domain.SCMConnection) domain.ProjectRecord {
+	return domain.ProjectRecord{
+		ID: "ao", Path: "/tmp/ao", RegisteredAt: conn.CreatedAt,
+		Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+			Provider: domain.SCMProviderGitLab, ConnectionID: conn.ID,
+		}},
+	}
+}
+
+func assertNoDanglingProjectConnection(t *testing.T, s *sqlite.Store, connectionID, projectID string) {
+	t.Helper()
+	project, exists, err := s.GetProject(context.Background(), projectID)
+	if err != nil || !exists {
+		t.Fatalf("get referenced project: exists=%v err=%v", exists, err)
+	}
+	if project.Config.SCM.ConnectionID != connectionID {
+		t.Fatalf("project connection = %q, want %q", project.Config.SCM.ConnectionID, connectionID)
+	}
+	if _, exists, err := s.GetSCMConnection(context.Background(), connectionID); err != nil || !exists {
+		t.Fatalf("referenced connection exists=%v err=%v", exists, err)
+	}
+}
+
 func TestSCMConnectionStoreEmitsGlobalCDC(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -141,6 +219,31 @@ func TestSCMConnectionStoreEmitsGlobalCDC(t *testing.T) {
 		if bytes.Contains(event.Payload, []byte(conn.CredentialRef)) {
 			t.Fatalf("event[%d] leaked credential ref: %s", i, event.Payload)
 		}
+	}
+}
+
+func TestSCMConnectionStoreUpdatedAtOnlyEmitsCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	conn := testSCMConnection()
+	if err := s.CreateSCMConnection(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn.UpdatedAt = conn.UpdatedAt.Add(time.Minute)
+	if updated, err := s.UpdateSCMConnection(ctx, conn); err != nil || !updated {
+		t.Fatalf("updated-at-only update: updated=%v err=%v", updated, err)
+	}
+	events, err := s.EventsAfter(ctx, before, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != cdc.EventSCMConnectionUpdated {
+		t.Fatalf("updated-at-only events = %#v, want one scm_connection_updated", events)
 	}
 }
 

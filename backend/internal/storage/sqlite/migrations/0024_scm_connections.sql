@@ -204,6 +204,7 @@ WHEN OLD.provider <> NEW.provider
     OR OLD.web_base_url <> NEW.web_base_url
     OR OLD.api_base_url <> NEW.api_base_url
     OR OLD.credential_ref <> NEW.credential_ref
+    OR OLD.updated_at <> NEW.updated_at
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NULL, NULL, 'scm_connection_updated',
@@ -221,8 +222,37 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- Explicit project connection references must resolve at commit time. Legacy
+-- NULL, absent, and empty connection IDs remain valid.
+-- +goose StatementBegin
+CREATE TRIGGER projects_scm_connection_guard_insert
+BEFORE INSERT ON projects
+WHEN COALESCE(json_extract(NEW.config, '$.scm.connectionId'), '') <> ''
+    AND NOT EXISTS (
+        SELECT 1 FROM scm_connections
+        WHERE id = json_extract(NEW.config, '$.scm.connectionId')
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'scm connection not found');
+END;
+
+CREATE TRIGGER projects_scm_connection_guard_update
+BEFORE UPDATE OF config ON projects
+WHEN COALESCE(json_extract(NEW.config, '$.scm.connectionId'), '') <> ''
+    AND NOT EXISTS (
+        SELECT 1 FROM scm_connections
+        WHERE id = json_extract(NEW.config, '$.scm.connectionId')
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'scm connection not found');
+END;
+
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
+DROP TRIGGER IF EXISTS projects_scm_connection_guard_update;
+DROP TRIGGER IF EXISTS projects_scm_connection_guard_insert;
 DROP TRIGGER IF EXISTS scm_connections_cdc_delete;
 DROP TRIGGER IF EXISTS scm_connections_cdc_update;
 DROP TRIGGER IF EXISTS scm_connections_cdc_insert;

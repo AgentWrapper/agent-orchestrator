@@ -11,19 +11,6 @@ import (
 	"time"
 )
 
-const countProjectsReferencingSCMConnection = `-- name: CountProjectsReferencingSCMConnection :one
-SELECT COUNT(*)
-FROM projects
-WHERE json_extract(config, '$.scm.connectionId') = ?
-`
-
-func (q *Queries) CountProjectsReferencingSCMConnection(ctx context.Context, config sql.NullString) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countProjectsReferencingSCMConnection, config)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createSCMConnection = `-- name: CreateSCMConnection :exec
 INSERT INTO scm_connections (
     id, provider, display_name, web_base_url, api_base_url, credential_ref, created_at, updated_at
@@ -55,12 +42,23 @@ func (q *Queries) CreateSCMConnection(ctx context.Context, arg CreateSCMConnecti
 	return err
 }
 
-const deleteSCMConnection = `-- name: DeleteSCMConnection :execrows
-DELETE FROM scm_connections WHERE id = ?
+const deleteUnreferencedSCMConnection = `-- name: DeleteUnreferencedSCMConnection :execrows
+DELETE FROM scm_connections
+WHERE scm_connections.id = ?
+  AND NOT EXISTS (
+      SELECT 1
+      FROM projects
+      WHERE json_extract(config, '$.scm.connectionId') = ?
+  )
 `
 
-func (q *Queries) DeleteSCMConnection(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteSCMConnection, id)
+type DeleteUnreferencedSCMConnectionParams struct {
+	ID     string
+	Config sql.NullString
+}
+
+func (q *Queries) DeleteUnreferencedSCMConnection(ctx context.Context, arg DeleteUnreferencedSCMConnectionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteUnreferencedSCMConnection, arg.ID, arg.Config)
 	if err != nil {
 		return 0, err
 	}

@@ -72,18 +72,24 @@ func (s *Store) DeleteSCMConnection(ctx context.Context, id string) (bool, error
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	references, err := s.qw.CountProjectsReferencingSCMConnection(ctx, sql.NullString{String: id, Valid: true})
-	if err != nil {
-		return false, fmt.Errorf("check SCM connection %s references: %w", id, err)
-	}
-	if references > 0 {
-		return false, ErrSCMConnectionReferenced
-	}
-	rows, err := s.qw.DeleteSCMConnection(ctx, id)
+	rows, err := s.qw.DeleteUnreferencedSCMConnection(ctx, gen.DeleteUnreferencedSCMConnectionParams{
+		ID:     id,
+		Config: sql.NullString{String: id, Valid: true},
+	})
 	if err != nil {
 		return false, fmt.Errorf("delete SCM connection %s: %w", id, err)
 	}
-	return rows > 0, nil
+	if rows > 0 {
+		return true, nil
+	}
+	_, err = s.qw.GetSCMConnection(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("classify SCM connection %s delete: %w", id, err)
+	}
+	return false, ErrSCMConnectionReferenced
 }
 
 func createSCMConnectionParams(connection domain.SCMConnection) gen.CreateSCMConnectionParams {
