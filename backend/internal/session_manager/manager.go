@@ -391,7 +391,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (out domain.
 
 func runtimeCreateError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("%w: terminal runtime was slow to create a session; retry the spawn, run `ao doctor`, and check for stale tmux sessions if this keeps happening: %v", ErrRuntimeStartTimeout, err)
+		return fmt.Errorf("%w: terminal runtime was slow to create a session; retry the spawn, run `ao doctor`, and check for stale tmux sessions if this keeps happening: %w", ErrRuntimeStartTimeout, err)
 	}
 	return err
 }
@@ -586,8 +586,7 @@ func sessionPrefix(project domain.ProjectRecord) string {
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
 // A phantom half-spawned row is worse than a terminal one; we only delete the
-// row when nothing observable has landed yet (seed state) via rollbackSpawn or
-// rollbackSpawnSeedRow.
+// row when nothing observable has landed yet (seed state) via rollbackSpawn.
 func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
 	_ = m.lcm.MarkTerminated(ctx, id)
 	m.cleanupSystemPromptDir(id)
@@ -612,19 +611,6 @@ func (m *Manager) clearSpawnLaunchMetadata(ctx context.Context, id domain.Sessio
 	rec.Metadata.RuntimeHandleID = ""
 	rec.Metadata.AgentSessionID = ""
 	_ = m.store.UpdateSession(ctx, rec)
-}
-
-// rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
-// before anything observable (worktree, runtime) was built, so failed spawns
-// don't accumulate terminated rows in session lists. DeleteSession only removes
-// rows still in seed state; if the row has progressed or the delete itself
-// fails, fall back to parking it terminated so a phantom row never looks live.
-func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
-	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
-		m.cleanupSystemPromptDir(id)
-		return
-	}
-	m.markSpawnFailedTerminated(ctx, id)
 }
 
 // rollbackSpawn deletes a session row when it is still in seed state — used
