@@ -193,7 +193,7 @@ describe("SessionInspector Activity section", () => {
 		expect(activitySection().getByText(label)).toBeInTheDocument();
 	});
 
-	it("renders unknown activity as unavailable instead of leaking the internal enum", () => {
+	it("renders unknown activity through the shared activity label", () => {
 		renderWithQuery(
 			<SessionInspector
 				session={session([], {
@@ -203,14 +203,14 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		expect(activitySection().getByText("Activity Unavailable")).toBeInTheDocument();
-		expect(activitySection().queryByText("Unknown")).not.toBeInTheDocument();
+		expect(activitySection().getByText("Unknown")).toBeInTheDocument();
+		expect(activitySection().queryByText("Activity Unavailable")).not.toBeInTheDocument();
 	});
 
-	it("falls back to unavailable when no activity has been reported", () => {
+	it("falls back to unknown when no activity has been reported", () => {
 		renderWithQuery(<SessionInspector session={session([], { status: "working" })} />);
 
-		expect(activitySection().getByText("Activity Unavailable")).toBeInTheDocument();
+		expect(activitySection().getByText("Unknown")).toBeInTheDocument();
 	});
 
 	it("keeps the last known activity visible when the daemon reports no signal", () => {

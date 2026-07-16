@@ -903,7 +903,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders a calm non-pulsing dot for an idle session and a pulsing one for a working session", () => {
+	it("renders the same attention-zone dot for idle and working sessions", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -917,14 +917,13 @@ describe("Sidebar", () => {
 		});
 
 		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-passive");
-		expect(idleDot).not.toHaveClass("animate-status-pulse");
+		expect(idleDot).toHaveClass("animate-status-pulse", "bg-working");
 
 		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
 		expect(workingDot).toHaveClass("animate-status-pulse", "bg-working");
 	});
 
-	it("renders a calm non-pulsing dot for idle activity even when the session is in the working zone", () => {
+	it("does not mix raw idle activity into the sidebar attention dot", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -943,9 +942,7 @@ describe("Sidebar", () => {
 		});
 
 		const idleDot = screen.getByLabelText("Open idle activity task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-passive");
-		expect(idleDot).not.toHaveClass("animate-status-pulse");
-		expect(idleDot).not.toHaveClass("bg-working");
+		expect(idleDot).toHaveClass("animate-status-pulse", "bg-working");
 	});
 
 	it("does not render the restart-to-update row unless an update is downloaded", async () => {

@@ -19,13 +19,13 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
-	attentionZone,
 	newestActiveOrchestrator,
 	sessionIsActive,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
+import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -123,19 +123,13 @@ function useSelection() {
 // 6px session dot: mirrors the board's status language so the sidebar can be
 // scanned without opening the project board.
 function SessionDot({ session }: { session: WorkspaceSession }) {
-	const zone = attentionZone(session);
-	const isIdle = session.status === "idle" || (session.status === "working" && session.activity?.state === "idle");
+	const dot = getSessionDotView(session);
 	return (
 		<span
 			aria-hidden="true"
 			className={cn(
 				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				zone === "working" && isIdle && "bg-passive",
-				zone === "working" && !isIdle && "animate-status-pulse bg-working",
-				zone === "action" && (session.status === "ci_failed" ? "bg-error" : "bg-warning"),
-				zone === "pending" && "bg-passive",
-				zone === "merge" && "bg-success",
-				zone === "done" && "bg-passive",
+				dot.className,
 			)}
 		/>
 	);
