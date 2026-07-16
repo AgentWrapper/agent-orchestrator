@@ -13,7 +13,7 @@ export function coerceLocalePreference(raw: unknown): LocalePreference {
 }
 
 export function resolveSupportedLocale(raw: string | undefined): SupportedLocale {
-	return /^zh(?:-|_|$)/i.test(raw ?? "") ? "zh-CN" : "en";
+	return (raw ?? "").toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 }
 
 export function resolveLocaleSnapshot(raw: unknown, osLocale: string): LocaleSnapshot {
