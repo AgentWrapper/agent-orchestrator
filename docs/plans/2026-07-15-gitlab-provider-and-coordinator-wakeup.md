@@ -796,6 +796,9 @@ cd frontend && npm run build
 - Create: `backend/internal/ports/credentials.go`
 - Create: `backend/internal/adapters/credentials/keyring/store.go`
 - Create: `backend/internal/adapters/credentials/keyring/store_test.go`
+- Create: `docs/adr/0002-os-credential-vault.md`
+- Modify: `backend/go.mod`
+- Modify: `backend/go.sum`
 - Modify generated sqlc files only through `npm run sqlc`
 
 **Produces:** metadata-only SCM connection storage and `CredentialStore.Put/Get/Delete`. SQLite stores only `credential_ref`; secrets use the OS credential vault. Headless GitLab can resolve `AO_GITLAB_TOKEN` without persisting it.
@@ -803,7 +806,7 @@ cd frontend && npm run build
 - [ ] Write failing migration/store tests for CRUD, CDC triggers, reference conflicts, and proof that token bytes never enter SQLite.
 - [ ] Write failing credential adapter tests using an injected vault backend; cover put/get/delete, missing values, and redacted errors.
 - [ ] Run the focused tests and confirm expected failures.
-- [ ] Add migration `0024`, queries, store, credential port/adapter, run `npm run sqlc`, then re-run focused tests and commit as `feat: persist SCM connection metadata`.
+- [ ] Add the credential-vault ADR, use `github.com/zalando/go-keyring` behind an injected backend for macOS Keychain/Linux Secret Service/Windows Credential Manager, add migration `0024`, queries, store and credential port/adapter, run `npm run sqlc`, then re-run focused tests and commit as `feat: persist SCM connection metadata`.
 
 ### Task 3: SCM connection service and HTTP API
 
