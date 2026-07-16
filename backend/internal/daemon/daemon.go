@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/credentials/keyring"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -28,6 +29,7 @@ import (
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	scmconnectionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/scmconnection"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -166,6 +168,7 @@ func Run() error {
 		Activity:           lcStack.LCM,
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
+		SCMConnections:     scmconnectionsvc.New(scmconnectionsvc.Deps{Store: store, Credentials: keyring.New()}),
 	})
 	if err != nil {
 		stop()

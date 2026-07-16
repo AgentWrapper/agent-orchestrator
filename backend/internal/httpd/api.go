@@ -15,6 +15,7 @@ import (
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	scmconnectionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/scmconnection"
 )
 
 // APIDeps bundles every service the API layer's controllers depend on.
@@ -32,20 +33,22 @@ type APIDeps struct {
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
+	SCMConnections     scmconnectionsvc.Manager
 }
 
 // API owns one controller per resource and is the single Register call the
 // router invokes to mount the /api/v1 surface.
 type API struct {
-	cfg           config.Config
-	agents        *controllers.AgentsController
-	projects      *controllers.ProjectsController
-	sessions      *controllers.SessionsController
-	prs           *controllers.PRsController
-	reviews       *controllers.ReviewsController
-	notifications *controllers.NotificationsController
-	imports       *controllers.ImportController
-	events        *EventsController
+	cfg            config.Config
+	agents         *controllers.AgentsController
+	projects       *controllers.ProjectsController
+	sessions       *controllers.SessionsController
+	prs            *controllers.PRsController
+	reviews        *controllers.ReviewsController
+	notifications  *controllers.NotificationsController
+	imports        *controllers.ImportController
+	scmConnections *controllers.SCMConnectionsController
+	events         *EventsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -64,11 +67,12 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Svc:      deps.Sessions,
 			Activity: deps.Activity,
 		},
-		prs:           &controllers.PRsController{Svc: deps.PRs},
-		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
-		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
-		imports:       &controllers.ImportController{Svc: deps.Import},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		prs:            &controllers.PRsController{Svc: deps.PRs},
+		reviews:        &controllers.ReviewsController{Svc: deps.Reviews},
+		notifications:  &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
+		imports:        &controllers.ImportController{Svc: deps.Import},
+		scmConnections: &controllers.SCMConnectionsController{Svc: deps.SCMConnections},
+		events:         &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
 
@@ -93,6 +97,7 @@ func (a *API) Register(root chi.Router) {
 			a.reviews.Register(r)
 			a.notifications.Register(r)
 			a.imports.Register(r)
+			a.scmConnections.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.

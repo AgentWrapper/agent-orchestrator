@@ -838,6 +838,242 @@ paths:
       summary: Resolve review threads on a pull request
       tags:
       - prs
+  /api/v1/scm/connections:
+    get:
+      operationId: listSCMConnections
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSCMConnectionsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List global SCM connections without credential material
+      tags:
+      - scm-connections
+    post:
+      operationId: createSCMConnection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSCMConnectionRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SCMConnectionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Create an SCM connection and optionally store a write-only token
+      tags:
+      - scm-connections
+  /api/v1/scm/connections/{id}:
+    delete:
+      operationId: deleteSCMConnection
+      parameters:
+      - description: SCM connection identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: SCM connection identifier.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Delete an unreferenced SCM connection and its credential
+      tags:
+      - scm-connections
+    get:
+      operationId: getSCMConnection
+      parameters:
+      - description: SCM connection identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: SCM connection identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SCMConnectionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get one SCM connection without credential material
+      tags:
+      - scm-connections
+    put:
+      operationId: updateSCMConnection
+      parameters:
+      - description: SCM connection identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: SCM connection identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSCMConnectionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SCMConnectionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Replace SCM connection metadata and optionally retain, replace, or
+        remove its token
+      tags:
+      - scm-connections
+  /api/v1/scm/connections/{id}/test:
+    post:
+      operationId: testSCMConnection
+      parameters:
+      - description: SCM connection identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: SCM connection identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SCMConnectionTestResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Test an SCM connection and return normalized identity and capabilities
+      tags:
+      - scm-connections
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -1907,6 +2143,31 @@ components:
       - status
       - prs
       type: object
+    CreateSCMConnectionRequest:
+      properties:
+        apiBaseUrl:
+          type: string
+        displayName:
+          type: string
+        id:
+          type: string
+        provider:
+          enum:
+          - github
+          - gitlab
+          type: string
+        token:
+          type:
+          - "null"
+          - string
+          writeOnly: true
+        webBaseUrl:
+          type: string
+      required:
+      - id
+      - provider
+      - displayName
+      type: object
     DegradedProject:
       properties:
         id:
@@ -1937,12 +2198,29 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainCoordinatorConfig:
+      properties:
+        autoWake:
+          type: boolean
+      type: object
     DomainReviewerConfig:
       properties:
         harness:
           type: string
       required:
       - harness
+      type: object
+    DomainSCMProjectConfig:
+      properties:
+        connectionId:
+          type: string
+        provider:
+          enum:
+          - github
+          - gitlab
+          type: string
+        repo:
+          type: string
       type: object
     ImportReport:
       properties:
@@ -2058,6 +2336,15 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    ListSCMConnectionsResponse:
+      properties:
+        connections:
+          items:
+            $ref: '#/components/schemas/SCMConnection'
+          type: array
+      required:
+      - connections
       type: object
     ListSessionPRsResponse:
       properties:
@@ -2286,6 +2573,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        coordinator:
+          $ref: '#/components/schemas/DomainCoordinatorConfig'
         defaultBranch:
           type: string
         env:
@@ -2304,6 +2593,8 @@ components:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'
           type: array
+        scm:
+          $ref: '#/components/schemas/DomainSCMProjectConfig'
         sessionPrefix:
           type: string
         symlinks:
@@ -2498,6 +2789,99 @@ components:
       required:
       - ok
       - sessionId
+      type: object
+    SCMConnection:
+      properties:
+        apiBaseUrl:
+          type: string
+        credentialConfigured:
+          type: boolean
+        displayName:
+          type: string
+        id:
+          type: string
+        provider:
+          enum:
+          - github
+          - gitlab
+          type: string
+        status:
+          enum:
+          - unknown
+          - connected
+          - missing_credential
+          - unauthorized
+          - forbidden
+          - unreachable
+          - tls_error
+          - rate_limited
+          type: string
+        username:
+          type: string
+        webBaseUrl:
+          type: string
+      required:
+      - id
+      - provider
+      - displayName
+      - webBaseUrl
+      - apiBaseUrl
+      - credentialConfigured
+      - status
+      type: object
+    SCMConnectionCapabilities:
+      properties:
+        read:
+          type: boolean
+        write:
+          type: boolean
+      required:
+      - read
+      - write
+      type: object
+    SCMConnectionIdentity:
+      properties:
+        displayName:
+          type: string
+        username:
+          type: string
+      required:
+      - username
+      type: object
+    SCMConnectionResponse:
+      properties:
+        connection:
+          $ref: '#/components/schemas/SCMConnection'
+      required:
+      - connection
+      type: object
+    SCMConnectionTestResponse:
+      properties:
+        result:
+          $ref: '#/components/schemas/SCMConnectionTestResult'
+      required:
+      - result
+      type: object
+    SCMConnectionTestResult:
+      properties:
+        capabilities:
+          $ref: '#/components/schemas/SCMConnectionCapabilities'
+        identity:
+          $ref: '#/components/schemas/SCMConnectionIdentity'
+        status:
+          enum:
+          - connected
+          - missing_credential
+          - unauthorized
+          - forbidden
+          - unreachable
+          - tls_error
+          - rate_limited
+          type: string
+      required:
+      - status
+      - identity
+      - capabilities
       type: object
     SendSessionMessageRequest:
       properties:
@@ -2941,6 +3325,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
@@ -2956,6 +3341,28 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    UpdateSCMConnectionRequest:
+      properties:
+        apiBaseUrl:
+          type: string
+        displayName:
+          type: string
+        provider:
+          enum:
+          - github
+          - gitlab
+          type: string
+        token:
+          type:
+          - "null"
+          - string
+          writeOnly: true
+        webBaseUrl:
+          type: string
+      required:
+      - provider
+      - displayName
       type: object
     WorkspaceRepo:
       properties:
@@ -2989,3 +3396,5 @@ tags:
   name: import
 - description: Connect Mobile LAN bridge control (loopback/desktop only)
   name: mobile
+- description: Global SCM provider connections and credential testing
+  name: scm-connections

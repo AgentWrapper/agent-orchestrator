@@ -365,6 +365,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scm/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List global SCM connections without credential material */
+        get: operations["listSCMConnections"];
+        put?: never;
+        /** Create an SCM connection and optionally store a write-only token */
+        post: operations["createSCMConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scm/connections/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one SCM connection without credential material */
+        get: operations["getSCMConnection"];
+        /** Replace SCM connection metadata and optionally retain, replace, or remove its token */
+        put: operations["updateSCMConnection"];
+        post?: never;
+        /** Delete an unreferenced SCM connection and its credential */
+        delete: operations["deleteSCMConnection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scm/connections/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test an SCM connection and return normalized identity and capabilities */
+        post: operations["testSCMConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions": {
         parameters: {
             query?: never;
@@ -720,6 +774,15 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        CreateSCMConnectionRequest: {
+            apiBaseUrl?: string;
+            displayName: string;
+            id: string;
+            /** @enum {string} */
+            provider: "github" | "gitlab";
+            token?: null | string;
+            webBaseUrl?: string;
+        };
         DegradedProject: {
             id: string;
             kind: string;
@@ -732,8 +795,17 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainCoordinatorConfig: {
+            autoWake?: boolean;
+        };
         DomainReviewerConfig: {
             harness: string;
+        };
+        DomainSCMProjectConfig: {
+            connectionId?: string;
+            /** @enum {string} */
+            provider?: "github" | "gitlab";
+            repo?: string;
         };
         ImportReport: {
             dryRun: boolean;
@@ -776,6 +848,9 @@ export interface components {
         ListReviewsResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        ListSCMConnectionsResponse: {
+            connections: components["schemas"]["SCMConnection"][];
         };
         ListSessionPRsResponse: {
             prs: components["schemas"]["SessionPRSummary"][];
@@ -864,6 +939,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            coordinator?: components["schemas"]["DomainCoordinatorConfig"];
             defaultBranch?: string;
             env?: {
                 [key: string]: string;
@@ -872,6 +948,7 @@ export interface components {
             orchestratorRules?: string;
             postCreate?: string[];
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
+            scm?: components["schemas"]["DomainSCMProjectConfig"];
             sessionPrefix?: string;
             symlinks?: string[];
             trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
@@ -947,6 +1024,38 @@ export interface components {
             killed?: boolean;
             ok: boolean;
             sessionId: string;
+        };
+        SCMConnection: {
+            apiBaseUrl: string;
+            credentialConfigured: boolean;
+            displayName: string;
+            id: string;
+            /** @enum {string} */
+            provider: "github" | "gitlab";
+            /** @enum {string} */
+            status: "unknown" | "connected" | "missing_credential" | "unauthorized" | "forbidden" | "unreachable" | "tls_error" | "rate_limited";
+            username?: string;
+            webBaseUrl: string;
+        };
+        SCMConnectionCapabilities: {
+            read: boolean;
+            write: boolean;
+        };
+        SCMConnectionIdentity: {
+            displayName?: string;
+            username: string;
+        };
+        SCMConnectionResponse: {
+            connection: components["schemas"]["SCMConnection"];
+        };
+        SCMConnectionTestResponse: {
+            result: components["schemas"]["SCMConnectionTestResult"];
+        };
+        SCMConnectionTestResult: {
+            capabilities: components["schemas"]["SCMConnectionCapabilities"];
+            identity: components["schemas"]["SCMConnectionIdentity"];
+            /** @enum {string} */
+            status: "connected" | "missing_credential" | "unauthorized" | "forbidden" | "unreachable" | "tls_error" | "rate_limited";
         };
         SendSessionMessageRequest: {
             message: string;
@@ -1118,12 +1227,20 @@ export interface components {
             assignee?: string;
             enabled?: boolean;
             /** @enum {string} */
-            provider?: "github";
+            provider?: "github" | "gitlab";
             repo?: string;
         };
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        UpdateSCMConnectionRequest: {
+            apiBaseUrl?: string;
+            displayName: string;
+            /** @enum {string} */
+            provider: "github" | "gitlab";
+            token?: null | string;
+            webBaseUrl?: string;
         };
         WorkspaceRepo: {
             name: string;
@@ -2243,6 +2360,324 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSCMConnections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSCMConnectionsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    createSCMConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSCMConnectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMConnectionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSCMConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description SCM connection identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMConnectionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    updateSCMConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description SCM connection identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSCMConnectionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMConnectionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    deleteSCMConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description SCM connection identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    testSCMConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description SCM connection identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMConnectionTestResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

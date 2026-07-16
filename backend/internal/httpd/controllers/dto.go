@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	scmconnectionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/scmconnection"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
@@ -30,6 +31,26 @@ type ProjectIDParam struct {
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.
 type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
+}
+
+// SCMConnectionIDParam is the {id} path parameter for one SCM connection.
+type SCMConnectionIDParam struct {
+	ID string `path:"id" description:"SCM connection identifier."`
+}
+
+// ListSCMConnectionsResponse is the body of GET /api/v1/scm/connections.
+type ListSCMConnectionsResponse struct {
+	Connections []scmconnectionsvc.Connection `json:"connections"`
+}
+
+// SCMConnectionResponse is the read-only connection envelope for create/get/update.
+type SCMConnectionResponse struct {
+	Connection scmconnectionsvc.Connection `json:"connection"`
+}
+
+// SCMConnectionTestResponse is the normalized connection-test envelope.
+type SCMConnectionTestResponse struct {
+	Result scmconnectionsvc.TestResult `json:"result"`
 }
 
 // ListProjectsResponse is the body of GET /api/v1/projects.

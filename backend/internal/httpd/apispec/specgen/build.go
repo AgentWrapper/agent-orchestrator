@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	scmconnectionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/scmconnection"
 )
 
 // Build reflects the Go contract types and the operation registry below into
@@ -73,6 +74,8 @@ func Build() ([]byte, error) {
 			"Legacy AO project import (availability probe and run)"),
 		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
+		*(&openapi31.Tag{Name: "scm-connections"}).WithDescription(
+			"Global SCM provider connections and credential testing"),
 	}
 
 	for _, op := range operations() {
@@ -187,6 +190,10 @@ var schemaNames = map[string]string{
 	"ControllersMarkNotificationReadRequest":      "MarkNotificationReadRequest",
 	"ControllersNotificationEnvelope":             "NotificationEnvelope",
 	"ControllersMarkAllNotificationsReadResponse": "MarkAllNotificationsReadResponse",
+	"ControllersSCMConnectionIDParam":             "SCMConnectionIDParam",
+	"ControllersListSCMConnectionsResponse":       "ListSCMConnectionsResponse",
+	"ControllersSCMConnectionResponse":            "SCMConnectionResponse",
+	"ControllersSCMConnectionTestResponse":        "SCMConnectionTestResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -218,6 +225,13 @@ var schemaNames = map[string]string{
 	"ProjectRemoveResult":               "RemoveProjectResult",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
+	// service/scmconnection entities + DTOs
+	"ScmconnectionConnection":   "SCMConnection",
+	"ScmconnectionCreateInput":  "CreateSCMConnectionRequest",
+	"ScmconnectionUpdateInput":  "UpdateSCMConnectionRequest",
+	"ScmconnectionIdentity":     "SCMConnectionIdentity",
+	"ScmconnectionCapabilities": "SCMConnectionCapabilities",
+	"ScmconnectionTestResult":   "SCMConnectionTestResult",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -300,7 +314,78 @@ func operations() []operation {
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, importOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, scmConnectionOperations()...)
 	return ops
+}
+
+func scmConnectionOperations() []operation {
+	id := []any{controllers.SCMConnectionIDParam{}}
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/scm/connections", id: "listSCMConnections", tag: "scm-connections",
+			summary: "List global SCM connections without credential material",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListSCMConnectionsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/scm/connections", id: "createSCMConnection", tag: "scm-connections",
+			summary: "Create an SCM connection and optionally store a write-only token",
+			reqBody: scmconnectionsvc.CreateInput{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.SCMConnectionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/scm/connections/{id}", id: "getSCMConnection", tag: "scm-connections",
+			summary: "Get one SCM connection without credential material", pathParams: id,
+			resps: []respUnit{
+				{http.StatusOK, controllers.SCMConnectionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/scm/connections/{id}", id: "updateSCMConnection", tag: "scm-connections",
+			summary: "Replace SCM connection metadata and optionally retain, replace, or remove its token", pathParams: id,
+			reqBody: scmconnectionsvc.UpdateInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SCMConnectionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/scm/connections/{id}", id: "deleteSCMConnection", tag: "scm-connections",
+			summary: "Delete an unreferenced SCM connection and its credential", pathParams: id,
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/scm/connections/{id}/test", id: "testSCMConnection", tag: "scm-connections",
+			summary: "Test an SCM connection and return normalized identity and capabilities", pathParams: id,
+			resps: []respUnit{
+				{http.StatusOK, controllers.SCMConnectionTestResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func agentOperations() []operation {
