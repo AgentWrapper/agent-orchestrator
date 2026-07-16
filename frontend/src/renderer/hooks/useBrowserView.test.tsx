@@ -193,6 +193,62 @@ describe("useBrowserView", () => {
 		);
 	});
 
+	it("hides the native view while a foreign element is fullscreen, then restores it on exit", async () => {
+		vi.useFakeTimers();
+		try {
+			const bridge = setupBridge();
+			const slot = createSlot();
+			const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+			await act(async () => {
+				await Promise.resolve();
+			});
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+			act(() => result.current.slotRef(slot));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }));
+
+			// The terminal pane enters fullscreen (CenterPane's requestFullscreen). It
+			// does not contain the slot, and the native overlay paints above it, so the
+			// preview must hide until fullscreen exits.
+			const fsElement = document.createElement("div");
+			document.body.appendChild(fsElement);
+			Object.defineProperty(document, "fullscreenElement", { configurable: true, value: fsElement });
+			bridge.setBounds.mockClear();
+			act(() => document.dispatchEvent(new Event("fullscreenchange")));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 0, y: 0, width: 0, height: 0 },
+				visible: false,
+			});
+
+			// Exiting fullscreen restores the overlay to its slot bounds.
+			Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+			bridge.setBounds.mockClear();
+			act(() => document.dispatchEvent(new Event("fullscreenchange")));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }));
+		} finally {
+			Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+			vi.useRealTimers();
+		}
+	});
+
 	it("re-measures after a layout transition settles, catching a position-only shift", async () => {
 		// A ResizeObserver fires on size changes only; entering pop-out / opening the
 		// inspector moves the slot to a new x without resizing it, so the transition

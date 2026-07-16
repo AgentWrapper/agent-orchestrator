@@ -135,7 +135,14 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current) {
+		// The native overlay paints above the whole window, so a foreign fullscreen
+		// element (the terminal pane's `requestFullscreen`, CenterPane) would leave
+		// the preview spilling across the fullscreen terminal. Hide while anything
+		// that does not contain the slot is fullscreen; the fullscreenchange
+		// listener re-measures so exiting restores it.
+		const fullscreen = document.fullscreenElement;
+		const coveredByFullscreen = Boolean(fullscreen && node && !fullscreen.contains(node));
+		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current || coveredByFullscreen) {
 			sendHiddenBounds(id);
 			return;
 		}
@@ -352,16 +359,22 @@ export function useBrowserView({
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
+		// Element fullscreen (the terminal pane) need not resize the window, so the
+		// resize listener alone can miss it. Settle-measure through the transition
+		// so the overlay hides on enter and returns to its slot on exit.
+		const handleFullscreen = () => scheduleSettleMeasure();
 		window.addEventListener("resize", handle);
 		window.addEventListener("scroll", handle, true);
+		document.addEventListener("fullscreenchange", handleFullscreen);
 		return () => {
 			window.removeEventListener("resize", handle);
 			window.removeEventListener("scroll", handle, true);
+			document.removeEventListener("fullscreenchange", handleFullscreen);
 			observerRef.current?.disconnect();
 			cancelScheduledMeasure();
 			if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
 		};
-	}, [cancelScheduledMeasure, scheduleMeasure]);
+	}, [cancelScheduledMeasure, scheduleMeasure, scheduleSettleMeasure]);
 
 	const withView = useCallback(async (fn: (id: string) => Promise<BrowserNavState | void>) => {
 		const id = viewIdRef.current;
