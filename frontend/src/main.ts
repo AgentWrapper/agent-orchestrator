@@ -62,7 +62,7 @@ import {
 	writeRemoteServerConfig,
 	type ConfigCrypto,
 } from "./main/remote-server-config";
-import { resolveRemoteClientBuild } from "./main/remote-client-build";
+import { resolveRemoteClientBuild, resolveRemoteClientIdentity } from "./main/remote-client-build";
 import { createUpdateIpcHandlers } from "./main/update-ipc";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -81,15 +81,22 @@ const ignoreStdStreamError = (err: NodeJS.ErrnoException): void => {
 process.stdout.on("error", ignoreStdStreamError);
 process.stderr.on("error", ignoreStdStreamError);
 
+const isRemoteClientBuild = resolveRemoteClientBuild({
+	isPackaged: app.isPackaged,
+	envOverride: process.env.AO_REMOTE_CLIENT === "1",
+	markerExists: app.isPackaged && existsSync(path.join(process.resourcesPath, "remote-client.json")),
+});
+const clientIdentity = resolveRemoteClientIdentity(isRemoteClientBuild);
+
 // Must run before app ready so the About panel and default-menu role labels use it.
-app.setName("Agent Orchestrator");
+app.setName(clientIdentity.productName);
 
 // Windows shows native toasts only when the app declares an AppUserModelID that
 // matches its installer shortcut (the NSIS maker's appId). Without it,
 // Notification.isSupported() still returns true but show() silently drops the
 // toast, so notifications never appear. No-op on macOS/Linux.
 if (process.platform === "win32") {
-	app.setAppUserModelId("dev.agent-orchestrator.desktop");
+	app.setAppUserModelId(clientIdentity.appBundleId);
 }
 
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
@@ -98,7 +105,7 @@ if (process.platform === "win32") {
 // inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
 // crashDumps derive from userData, so this one override reparents them all.
 // Must run before app ready.
-app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+app.setPath("userData", path.join(os.homedir(), ".ao", clientIdentity.userDataDirectoryName));
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
@@ -146,11 +153,6 @@ const IMPORT_SCAN_SKIP_DIRS = new Set([
 ]);
 
 const isDev = !app.isPackaged;
-const isRemoteClientBuild = resolveRemoteClientBuild({
-	isPackaged: app.isPackaged,
-	envOverride: process.env.AO_REMOTE_CLIENT === "1",
-	markerExists: app.isPackaged && existsSync(path.join(process.resourcesPath, "remote-client.json")),
-});
 
 // Dev mode uses a separate port and state subdirectory so it never collides with
 // a concurrently running installed-app daemon. The subdir also isolates supervise.sock

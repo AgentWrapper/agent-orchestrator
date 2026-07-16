@@ -3,6 +3,7 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerAppImage from "./makers/maker-appimage";
 import { rmSync, writeFileSync } from "node:fs";
+import { resolveRemoteClientIdentity } from "./src/main/remote-client-build";
 
 // Default GitHub release target (production). aoagents was the temporary rewrite
 // home; releases land on AgentWrapper (spec §1.1).
@@ -12,9 +13,9 @@ const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
 // names the exe/ELF from this, and the NSIS + deb makers must point their
 // shortcut/launcher at the SAME name. Drift here means a broken Start menu
 // shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
-const EXECUTABLE_NAME = "agent-orchestrator";
 const REMOTE_CLIENT_BUILD = process.env.AO_REMOTE_CLIENT === "1";
 const REMOTE_CLIENT_MARKER = "remote-client.json";
+const CLIENT_IDENTITY = resolveRemoteClientIdentity(REMOTE_CLIENT_BUILD);
 
 // parseReleaseRepo turns an "owner/repo" string (from AO_RELEASE_REPO) into the
 // publisher-github { owner, name } shape, falling back to the production default
@@ -31,9 +32,9 @@ function parseReleaseRepo(value: string | undefined): { owner: string; name: str
 const config: ForgeConfig = {
 	packagerConfig: {
 		asar: true,
-		appBundleId: "dev.agent-orchestrator.desktop",
-		name: "Agent Orchestrator",
-		executableName: EXECUTABLE_NAME,
+		appBundleId: CLIENT_IDENTITY.appBundleId,
+		name: CLIENT_IDENTITY.productName,
+		executableName: CLIENT_IDENTITY.executableName,
 		appCategoryType: "public.app-category.developer-tools",
 		// App icon. electron-packager appends the per-platform extension
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
@@ -100,11 +101,11 @@ const config: ForgeConfig = {
 		// custom install dir or proper uninstaller (issue #401).
 		new MakerNSIS(
 			{
-				appId: "dev.agent-orchestrator.desktop",
-				productName: "Agent Orchestrator",
+				appId: CLIENT_IDENTITY.appBundleId,
+				productName: CLIENT_IDENTITY.productName,
 				// Match the packaged binary name so the Start menu shortcut targets
 				// the real "agent-orchestrator.exe" (not "Agent Orchestrator.exe").
-				executableName: EXECUTABLE_NAME,
+				executableName: CLIENT_IDENTITY.executableName,
 				icon: "assets/icon.ico",
 			},
 			["win32"],
@@ -116,8 +117,8 @@ const config: ForgeConfig = {
 		// prefer a system package.
 		new MakerAppImage(
 			{
-				appId: "dev.agent-orchestrator.desktop",
-				productName: "Agent Orchestrator",
+				appId: CLIENT_IDENTITY.appBundleId,
+				productName: CLIENT_IDENTITY.productName,
 				icon: "assets/icon.png",
 			},
 			["linux"],
@@ -129,7 +130,7 @@ const config: ForgeConfig = {
 					// Must match packagerConfig.executableName, or the deb maker
 					// looks for the package name and fails with "could not find
 					// the Electron app binary". (Both are "agent-orchestrator".)
-					bin: EXECUTABLE_NAME,
+					bin: CLIENT_IDENTITY.executableName,
 					icon: "assets/icon.png",
 					maintainer: "Agent Orchestrator",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
