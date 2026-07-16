@@ -124,6 +124,34 @@ describe("SessionsBoard", () => {
 		});
 	});
 
+	it("keeps other restore buttons hidden while one session is restoring", async () => {
+		let finishRestore: ((value: { data: Record<string, never> }) => void) | undefined;
+		postMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishRestore = resolve;
+			}),
+		);
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession(), terminatedSession({ id: "s-other", title: "other worker" })])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
+		const otherButton = screen.getByRole("button", { name: "Restore other worker" });
+		expect(restoringButton).toHaveClass("opacity-100");
+		expect(otherButton).toBeDisabled();
+		expect(otherButton).toHaveClass("opacity-0");
+		expect(otherButton.className).not.toContain("disabled:opacity-50");
+
+		finishRestore?.({ data: {} });
+	});
+
 	it("opens the restore-unavailable dialog when a session is not resumable", async () => {
 		postMock.mockResolvedValueOnce({ error: { code: "SESSION_NOT_RESUMABLE" } });
 		workspaceQueryMock.mockReturnValue({
@@ -183,7 +211,7 @@ function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {
 	};
 }
 
-function terminatedSession(): WorkspaceSession {
+function terminatedSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
 	return {
 		id: "s-dead",
 		workspaceId: "p1",
@@ -207,5 +235,6 @@ function terminatedSession(): WorkspaceSession {
 				updatedAt: "2026-01-01T00:00:00Z",
 			},
 		],
+		...overrides,
 	};
 }

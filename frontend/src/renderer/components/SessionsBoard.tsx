@@ -514,7 +514,7 @@ function SessionCard({
 					aria-label={`Restore ${session.title}`}
 					title={`Restore ${session.title}`}
 					className={cn(
-						"absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-accent bg-accent px-2.5 text-2xs font-semibold text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out hover:opacity-90 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-50 group-hover:opacity-100 group-focus-within:opacity-100",
+						"absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-accent bg-accent px-2.5 text-2xs font-semibold text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out hover:opacity-90 focus:opacity-100 disabled:cursor-not-allowed group-hover:opacity-100 group-focus-within:opacity-100",
 						isRestoring && "opacity-100",
 					)}
 					disabled={isRestoreDisabled}
