@@ -58,7 +58,7 @@ func TestSCMConnectionValidationPersistsAcrossRestartAndEmitsCDC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated, err := s.UpdateSCMConnectionValidation(ctx, conn.ID, domain.SCMConnectionStatusConnected, "alice"); err != nil || !updated {
+	if updated, err := s.UpdateSCMConnectionValidation(ctx, conn.ID, conn.UpdatedAt, domain.SCMConnectionStatusConnected, "alice"); err != nil || !updated {
 		t.Fatalf("update validation: updated=%v err=%v", updated, err)
 	}
 	if err := s.Close(); err != nil {
@@ -86,6 +86,42 @@ func TestSCMConnectionValidationPersistsAcrossRestartAndEmitsCDC(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Type != cdc.EventSCMConnectionUpdated {
 		t.Fatalf("validation events = %#v, want one connection update", events)
+	}
+}
+
+func TestSCMConnectionValidationUsesConfigurationRevisionCAS(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	conn := testSCMConnection()
+	if err := s.CreateSCMConnection(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+
+	newer := conn
+	newer.DisplayName = "Renamed"
+	newer.UpdatedAt = conn.UpdatedAt.Add(time.Minute)
+	if updated, err := s.UpdateSCMConnection(ctx, newer); err != nil || !updated {
+		t.Fatalf("update configuration: updated=%v err=%v", updated, err)
+	}
+	if updated, err := s.UpdateSCMConnectionValidation(ctx, conn.ID, conn.UpdatedAt, domain.SCMConnectionStatusConnected, "stale"); err != nil || updated {
+		t.Fatalf("stale validation CAS: updated=%v err=%v", updated, err)
+	}
+	got, ok, err := s.GetSCMConnection(ctx, conn.ID)
+	if err != nil || !ok {
+		t.Fatalf("get after stale CAS: ok=%v err=%v", ok, err)
+	}
+	if got.Status != domain.SCMConnectionStatusUnknown || got.Username != "" || !got.UpdatedAt.Equal(newer.UpdatedAt) {
+		t.Fatalf("stale validation changed row: %#v", got)
+	}
+	if updated, err := s.UpdateSCMConnectionValidation(ctx, conn.ID, newer.UpdatedAt, domain.SCMConnectionStatusConnected, "alice"); err != nil || !updated {
+		t.Fatalf("current validation CAS: updated=%v err=%v", updated, err)
+	}
+	got, _, err = s.GetSCMConnection(ctx, conn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.SCMConnectionStatusConnected || got.Username != "alice" || !got.UpdatedAt.Equal(newer.UpdatedAt) {
+		t.Fatalf("current validation result = %#v", got)
 	}
 }
 

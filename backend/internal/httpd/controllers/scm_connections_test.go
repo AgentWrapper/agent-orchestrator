@@ -114,11 +114,6 @@ func TestSCMConnectionTestRouteReturnsNormalizedStatuses(t *testing.T) {
 	statuses := []string{
 		scmconnectionsvc.StatusConnected,
 		scmconnectionsvc.StatusMissingCredential,
-		scmconnectionsvc.StatusUnauthorized,
-		scmconnectionsvc.StatusForbidden,
-		scmconnectionsvc.StatusUnreachable,
-		scmconnectionsvc.StatusTLSError,
-		scmconnectionsvc.StatusRateLimited,
 	}
 	for _, testStatus := range statuses {
 		t.Run(testStatus, func(t *testing.T) {
@@ -180,6 +175,10 @@ func TestSCMConnectionRoutesStrictJSONAndErrorMapping(t *testing.T) {
 	if strings.Contains(string(body), "provider body") {
 		t.Fatalf("provider response leaked: %s", body)
 	}
+
+	mgr.err = apierr.Conflict("SCM_CONNECTION_TEST_STALE", "SCM connection changed while the test was running", nil)
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/scm/connections/x/test", "")
+	assertErrorCode(t, body, status, http.StatusConflict, "SCM_CONNECTION_TEST_STALE")
 
 	for _, tc := range []struct {
 		name   string

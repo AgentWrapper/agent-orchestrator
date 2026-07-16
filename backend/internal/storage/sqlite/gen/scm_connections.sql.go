@@ -156,8 +156,8 @@ UPDATE scm_connections SET
     web_base_url = ?,
     api_base_url = ?,
     credential_ref = ?,
-	status = ?,
-	username = ?,
+    status = ?,
+    username = ?,
     updated_at = ?
 WHERE id = ?
 `
@@ -194,19 +194,26 @@ func (q *Queries) UpdateSCMConnection(ctx context.Context, arg UpdateSCMConnecti
 
 const updateSCMConnectionValidation = `-- name: UpdateSCMConnectionValidation :execrows
 UPDATE scm_connections SET
-	status = ?,
-	username = ?
+    status = ?,
+    username = ?
 WHERE id = ?
+  AND updated_at = ?4
 `
 
 type UpdateSCMConnectionValidationParams struct {
-	Status   string
-	Username string
-	ID       string
+	Status            string
+	Username          string
+	ID                string
+	ExpectedUpdatedAt time.Time
 }
 
 func (q *Queries) UpdateSCMConnectionValidation(ctx context.Context, arg UpdateSCMConnectionValidationParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateSCMConnectionValidation, arg.Status, arg.Username, arg.ID)
+	result, err := q.db.ExecContext(ctx, updateSCMConnectionValidation,
+		arg.Status,
+		arg.Username,
+		arg.ID,
+		arg.ExpectedUpdatedAt,
+	)
 	if err != nil {
 		return 0, err
 	}

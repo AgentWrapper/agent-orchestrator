@@ -1055,7 +1055,7 @@ export interface components {
             capabilities: components["schemas"]["SCMConnectionCapabilities"];
             identity: components["schemas"]["SCMConnectionIdentity"];
             /** @enum {string} */
-            status: "connected" | "missing_credential" | "unauthorized" | "forbidden" | "unreachable" | "tls_error" | "rate_limited";
+            status: "connected" | "missing_credential";
         };
         SendSessionMessageRequest: {
             message: string;
@@ -2687,6 +2687,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

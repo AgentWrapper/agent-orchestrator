@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -68,13 +69,14 @@ func (s *Store) UpdateSCMConnection(ctx context.Context, connection domain.SCMCo
 }
 
 // UpdateSCMConnectionValidation persists test metadata without advancing the configuration revision.
-func (s *Store) UpdateSCMConnectionValidation(ctx context.Context, id string, status domain.SCMConnectionStatus, username string) (bool, error) {
+func (s *Store) UpdateSCMConnectionValidation(ctx context.Context, id string, expectedUpdatedAt time.Time, status domain.SCMConnectionStatus, username string) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.UpdateSCMConnectionValidation(ctx, gen.UpdateSCMConnectionValidationParams{
-		Status:   string(status),
-		Username: username,
-		ID:       id,
+		Status:            string(status),
+		Username:          username,
+		ID:                id,
+		ExpectedUpdatedAt: expectedUpdatedAt,
 	})
 	if err != nil {
 		return false, fmt.Errorf("update SCM connection %s validation: %w", id, err)

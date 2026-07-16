@@ -386,6 +386,7 @@ func scmConnectionOperations() []operation {
 				{http.StatusUnauthorized, envelope.APIError{}},
 				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusTooManyRequests, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},

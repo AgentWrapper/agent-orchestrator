@@ -78,15 +78,23 @@ type Capabilities struct {
 
 // TestResult is the bounded, provider-neutral result of testing a connection.
 type TestResult struct {
-	Status       string       `json:"status" enum:"connected,missing_credential,unauthorized,forbidden,unreachable,tls_error,rate_limited"`
+	Status       string       `json:"status" enum:"connected,missing_credential"`
 	Identity     Identity     `json:"identity"`
 	Capabilities Capabilities `json:"capabilities"`
+}
+
+// ConnectionTestConfig contains only provider-facing test inputs.
+type ConnectionTestConfig struct {
+	ID         string
+	Provider   domain.SCMProvider
+	WebBaseURL string
+	APIBaseURL string
 }
 
 // ConnectionTester probes one provider connection using a credential supplied
 // only for the duration of the call. Implementations return normalized data.
 type ConnectionTester interface {
-	Test(ctx context.Context, connection domain.SCMConnection, token []byte) (TestResult, error)
+	Test(ctx context.Context, config ConnectionTestConfig, token []byte) (TestResult, error)
 }
 
 // Store is the metadata persistence surface used by Service.
@@ -95,7 +103,7 @@ type Store interface {
 	GetSCMConnection(ctx context.Context, id string) (domain.SCMConnection, bool, error)
 	ListSCMConnections(ctx context.Context) ([]domain.SCMConnection, error)
 	UpdateSCMConnection(ctx context.Context, connection domain.SCMConnection) (bool, error)
-	UpdateSCMConnectionValidation(ctx context.Context, id string, status domain.SCMConnectionStatus, username string) (bool, error)
+	UpdateSCMConnectionValidation(ctx context.Context, id string, expectedUpdatedAt time.Time, status domain.SCMConnectionStatus, username string) (bool, error)
 	DeleteSCMConnection(ctx context.Context, id string) (bool, error)
 }
 
@@ -235,6 +243,15 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 	if err != nil {
 		return Connection{}, err
 	}
+	var oldSecret []byte
+	var oldConfigured bool
+	if in.Token.Present {
+		oldSecret, oldConfigured, err = s.credentials.Get(ctx, original.CredentialRef)
+		if err != nil {
+			return Connection{}, credentialError()
+		}
+		defer zero(oldSecret)
+	}
 	replacement.CreatedAt = original.CreatedAt
 	replacement.UpdatedAt = s.clock().UTC()
 	replacement.CredentialRef = original.CredentialRef
@@ -280,15 +297,29 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 		return Connection{}, errors.Join(primaryErr, cleanupErr)
 	}
 	if rotated {
-		if err := s.deleteCredential(ctx, original.CredentialRef); err != nil {
-			if rollbackErr := s.rollbackMetadata(ctx, original); rollbackErr != nil {
-				return Connection{}, errors.Join(rollbackErr, err)
+		cleanupCtx, cancel := newCleanupContext(ctx)
+		defer cancel()
+		if err := s.credentials.Delete(cleanupCtx, original.CredentialRef); err != nil {
+			primaryErr := error(credentialError())
+			if oldConfigured {
+				if restoreErr := s.credentials.Put(cleanupCtx, original.CredentialRef, oldSecret); restoreErr != nil {
+					return Connection{}, errors.Join(primaryErr, credentialError())
+				}
+			}
+			ok, rollbackErr := s.store.UpdateSCMConnection(cleanupCtx, original)
+			if rollbackErr != nil || !ok {
+				return Connection{}, errors.Join(
+					apierr.Internal("SCM_CONNECTION_UPDATE_FAILED", "Failed to roll back SCM connection"),
+					primaryErr,
+				)
 			}
 			var cleanupErr error
 			if configured {
-				cleanupErr = s.cleanupCredential(ctx, replacement.CredentialRef)
+				if err := s.credentials.Delete(cleanupCtx, replacement.CredentialRef); err != nil {
+					cleanupErr = apierr.Internal("SCM_CREDENTIAL_CLEANUP_FAILED", "Failed to clean up SCM credential")
+				}
 			}
-			return Connection{}, errors.Join(err, cleanupErr)
+			return Connection{}, errors.Join(primaryErr, cleanupErr)
 		}
 	}
 	return connectionView(replacement, configured), nil
@@ -313,23 +344,31 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if !deleted {
 		return notFoundError()
 	}
-	secret, configured, err := s.credentials.Get(ctx, row.CredentialRef)
+	cleanupCtx, cancel := newCleanupContext(ctx)
+	defer cancel()
+	secret, configured, err := s.credentials.Get(cleanupCtx, row.CredentialRef)
 	if err != nil {
-		if restoreErr := s.store.CreateSCMConnection(ctx, row); restoreErr != nil {
-			return apierr.Internal("SCM_CONNECTION_DELETE_FAILED", "Failed to delete SCM connection")
+		primaryErr := error(credentialError())
+		if restoreErr := s.store.CreateSCMConnection(cleanupCtx, row); restoreErr != nil {
+			return errors.Join(primaryErr, apierr.Internal("SCM_CONNECTION_DELETE_FAILED", "Failed to restore SCM connection"))
 		}
-		return credentialError()
+		return primaryErr
 	}
 	defer zero(secret)
-	if err := s.credentials.Delete(ctx, row.CredentialRef); err != nil {
-		restoreErr := s.store.CreateSCMConnection(ctx, row)
-		if restoreErr == nil && configured {
-			restoreErr = s.credentials.Put(ctx, row.CredentialRef, secret)
+	if err := s.credentials.Delete(cleanupCtx, row.CredentialRef); err != nil {
+		primaryErr := error(apierr.Internal("SCM_CONNECTION_DELETE_FAILED", "Failed to delete SCM connection"))
+		metadataErr := s.store.CreateSCMConnection(cleanupCtx, row)
+		var credentialRestoreErr error
+		if configured {
+			credentialRestoreErr = s.credentials.Put(cleanupCtx, row.CredentialRef, secret)
 		}
-		if restoreErr != nil {
-			return apierr.Internal("SCM_CONNECTION_DELETE_FAILED", "Failed to delete SCM connection")
+		if metadataErr != nil {
+			metadataErr = apierr.Internal("SCM_CONNECTION_DELETE_FAILED", "Failed to restore SCM connection")
 		}
-		return apierr.Internal("SCM_CONNECTION_DELETE_FAILED", "Failed to delete SCM connection")
+		if credentialRestoreErr != nil {
+			credentialRestoreErr = credentialError()
+		}
+		return errors.Join(primaryErr, metadataErr, credentialRestoreErr)
 	}
 	return nil
 }
@@ -346,7 +385,7 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 	}
 	if !ok {
 		result := TestResult{Status: StatusMissingCredential}
-		if err := s.persistValidation(ctx, row.ID, domain.SCMConnectionStatusMissingCredential, ""); err != nil {
+		if err := s.persistValidation(ctx, row, domain.SCMConnectionStatusMissingCredential, ""); err != nil {
 			return TestResult{}, err
 		}
 		return result, nil
@@ -355,22 +394,24 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 	if s.tester == nil {
 		return TestResult{}, apierr.Internal("SCM_CONNECTION_TEST_UNAVAILABLE", "SCM connection testing is unavailable")
 	}
-	result, err := s.tester.Test(ctx, row, token)
+	result, err := s.tester.Test(ctx, ConnectionTestConfig{
+		ID: row.ID, Provider: row.Provider, WebBaseURL: row.WebBaseURL, APIBaseURL: row.APIBaseURL,
+	}, token)
 	if err != nil {
 		status, username, mapped := mapTestFailure(result, err)
-		if persistErr := s.persistValidation(ctx, row.ID, status, username); persistErr != nil {
+		if persistErr := s.persistValidation(ctx, row, status, username); persistErr != nil {
 			return TestResult{}, errors.Join(persistErr, mapped)
 		}
 		return TestResult{}, mapped
 	}
-	if !validTestStatus(result.Status) {
+	if result.Status != StatusConnected {
 		mapped := apierr.Internal("SCM_CONNECTION_TEST_FAILED", "Failed to test SCM connection")
-		if persistErr := s.persistValidation(ctx, row.ID, domain.SCMConnectionStatusUnknown, ""); persistErr != nil {
+		if persistErr := s.persistValidation(ctx, row, domain.SCMConnectionStatusUnknown, ""); persistErr != nil {
 			return TestResult{}, errors.Join(persistErr, mapped)
 		}
 		return TestResult{}, mapped
 	}
-	if persistErr := s.persistValidation(ctx, row.ID, domain.SCMConnectionStatus(result.Status), result.Identity.Username); persistErr != nil {
+	if persistErr := s.persistValidation(ctx, row, domain.SCMConnectionStatus(result.Status), result.Identity.Username); persistErr != nil {
 		return TestResult{}, persistErr
 	}
 	return result, nil
@@ -396,16 +437,19 @@ func (s *Service) credentialConfigured(ctx context.Context, ref string) (bool, e
 	return ok, nil
 }
 
-func (s *Service) persistValidation(ctx context.Context, id string, status domain.SCMConnectionStatus, username string) error {
-	ok, err := s.store.UpdateSCMConnectionValidation(ctx, id, status, username)
-	if err != nil || !ok {
+func (s *Service) persistValidation(ctx context.Context, row domain.SCMConnection, status domain.SCMConnectionStatus, username string) error {
+	ok, err := s.store.UpdateSCMConnectionValidation(ctx, row.ID, row.UpdatedAt, status, username)
+	if err != nil {
 		return apierr.Internal("SCM_CONNECTION_TEST_STATUS_SAVE_FAILED", "Failed to save SCM connection test status")
+	}
+	if !ok {
+		return apierr.Conflict("SCM_CONNECTION_TEST_STALE", "SCM connection changed while the test was running", nil)
 	}
 	return nil
 }
 
 func (s *Service) cleanupCredential(ctx context.Context, ref string) error {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	cleanupCtx, cancel := newCleanupContext(ctx)
 	defer cancel()
 	if err := s.credentials.Delete(cleanupCtx, ref); err != nil {
 		return apierr.Internal("SCM_CREDENTIAL_CLEANUP_FAILED", "Failed to clean up SCM credential")
@@ -413,23 +457,8 @@ func (s *Service) cleanupCredential(ctx context.Context, ref string) error {
 	return nil
 }
 
-func (s *Service) deleteCredential(ctx context.Context, ref string) error {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
-	defer cancel()
-	if err := s.credentials.Delete(cleanupCtx, ref); err != nil {
-		return credentialError()
-	}
-	return nil
-}
-
-func (s *Service) rollbackMetadata(ctx context.Context, original domain.SCMConnection) error {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
-	defer cancel()
-	ok, err := s.store.UpdateSCMConnection(cleanupCtx, original)
-	if err != nil || !ok {
-		return apierr.Internal("SCM_CONNECTION_UPDATE_FAILED", "Failed to roll back SCM connection")
-	}
-	return nil
+func newCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 }
 
 func normalizeCreate(in CreateInput, allowLoopbackHTTP bool) (domain.SCMConnection, error) {
@@ -549,16 +578,6 @@ func mapTestFailure(result TestResult, err error) (domain.SCMConnectionStatus, s
 		return domain.SCMConnectionStatusConnected, result.Identity.Username, apierr.New(apierr.KindForbidden, "SCM_WRITE_SCOPE_MISSING", "SCM credential lacks write access", nil)
 	default:
 		return domain.SCMConnectionStatusUnknown, "", apierr.Internal("SCM_CONNECTION_TEST_FAILED", "Failed to test SCM connection")
-	}
-}
-
-func validTestStatus(status string) bool {
-	switch status {
-	case StatusConnected, StatusMissingCredential, StatusUnauthorized, StatusForbidden,
-		StatusUnreachable, StatusTLSError, StatusRateLimited:
-		return true
-	default:
-		return false
 	}
 }
 

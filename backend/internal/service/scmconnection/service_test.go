@@ -14,23 +14,30 @@ import (
 )
 
 type fakeStore struct {
-	rows          map[string]domain.SCMConnection
-	createErr     error
-	updateErr     error
-	updateErrs    []error
-	deleteErr     error
-	validationErr error
-	updateOK      bool
-	deleteOK      bool
-	createCall    []domain.SCMConnection
-	updateCall    []domain.SCMConnection
+	rows           map[string]domain.SCMConnection
+	createErr      error
+	updateErr      error
+	updateErrs     []error
+	deleteErr      error
+	validationErr  error
+	updateOK       bool
+	deleteOK       bool
+	createCall     []domain.SCMConnection
+	updateCall     []domain.SCMConnection
+	deleteHook     func()
+	respectContext bool
+	createCtxErrs  []error
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{rows: map[string]domain.SCMConnection{}, updateOK: true, deleteOK: true}
 }
 
-func (f *fakeStore) CreateSCMConnection(_ context.Context, row domain.SCMConnection) error {
+func (f *fakeStore) CreateSCMConnection(ctx context.Context, row domain.SCMConnection) error {
+	f.createCtxErrs = append(f.createCtxErrs, ctx.Err())
+	if f.respectContext && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	f.createCall = append(f.createCall, row)
 	if f.createErr != nil {
 		err := f.createErr
@@ -81,12 +88,12 @@ func (f *fakeStore) UpdateSCMConnection(_ context.Context, row domain.SCMConnect
 	return true, nil
 }
 
-func (f *fakeStore) UpdateSCMConnectionValidation(_ context.Context, id string, status domain.SCMConnectionStatus, username string) (bool, error) {
+func (f *fakeStore) UpdateSCMConnectionValidation(_ context.Context, id string, expectedUpdatedAt time.Time, status domain.SCMConnectionStatus, username string) (bool, error) {
 	if f.validationErr != nil {
 		return false, f.validationErr
 	}
 	row, ok := f.rows[id]
-	if !ok {
+	if !ok || !row.UpdatedAt.Equal(expectedUpdatedAt) {
 		return false, nil
 	}
 	row.Status = status
@@ -108,24 +115,40 @@ func (f *fakeStore) DeleteSCMConnection(_ context.Context, id string) (bool, err
 		return false, nil
 	}
 	delete(f.rows, id)
+	if f.deleteHook != nil {
+		f.deleteHook()
+	}
 	return true, nil
 }
 
 type fakeCredentials struct {
-	secrets       map[string][]byte
-	putErr        error
-	getErr        error
-	deleteErr     error
-	puts          []string
-	deletes       []string
-	deleteCtxErrs []error
-	lastGet       []byte
+	secrets              map[string][]byte
+	putErr               error
+	getErr               error
+	deleteErr            error
+	puts                 []string
+	deletes              []string
+	deleteCtxErrs        []error
+	getCtxErrs           []error
+	putCtxErrs           []error
+	lastGet              []byte
+	respectContext       bool
+	deleteRemovesOnError bool
+	putErrByRef          map[string]error
 }
 
 func newFakeCredentials() *fakeCredentials { return &fakeCredentials{secrets: map[string][]byte{}} }
 
-func (f *fakeCredentials) Put(_ context.Context, ref string, secret []byte) error {
+func (f *fakeCredentials) Put(ctx context.Context, ref string, secret []byte) error {
 	f.puts = append(f.puts, ref)
+	f.putCtxErrs = append(f.putCtxErrs, ctx.Err())
+	if f.respectContext && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err := f.putErrByRef[ref]; err != nil {
+		delete(f.putErrByRef, ref)
+		return err
+	}
 	if f.putErr != nil {
 		err := f.putErr
 		f.putErr = nil
@@ -135,7 +158,11 @@ func (f *fakeCredentials) Put(_ context.Context, ref string, secret []byte) erro
 	return nil
 }
 
-func (f *fakeCredentials) Get(_ context.Context, ref string) ([]byte, bool, error) {
+func (f *fakeCredentials) Get(ctx context.Context, ref string) ([]byte, bool, error) {
+	f.getCtxErrs = append(f.getCtxErrs, ctx.Err())
+	if f.respectContext && ctx.Err() != nil {
+		return nil, false, ctx.Err()
+	}
 	if f.getErr != nil {
 		return nil, false, f.getErr
 	}
@@ -151,6 +178,9 @@ func (f *fakeCredentials) Delete(ctx context.Context, ref string) error {
 	if f.deleteErr != nil {
 		err := f.deleteErr
 		f.deleteErr = nil
+		if f.deleteRemovesOnError {
+			delete(f.secrets, ref)
+		}
 		return err
 	}
 	delete(f.secrets, ref)
@@ -158,17 +188,23 @@ func (f *fakeCredentials) Delete(ctx context.Context, ref string) error {
 }
 
 type fakeTester struct {
-	result TestResult
-	err    error
-	row    domain.SCMConnection
-	token  []byte
-	calls  int
+	result  TestResult
+	err     error
+	config  ConnectionTestConfig
+	token   []byte
+	calls   int
+	entered chan struct{}
+	release chan struct{}
 }
 
-func (f *fakeTester) Test(_ context.Context, row domain.SCMConnection, token []byte) (TestResult, error) {
+func (f *fakeTester) Test(_ context.Context, config ConnectionTestConfig, token []byte) (TestResult, error) {
 	f.calls++
-	f.row = row
+	f.config = config
 	f.token = append([]byte(nil), token...)
+	if f.entered != nil {
+		close(f.entered)
+		<-f.release
+	}
 	return f.result, f.err
 }
 
@@ -455,6 +491,53 @@ func TestMutationCompensation(t *testing.T) {
 		}
 	})
 
+	t.Run("destructive old delete is restored before rollback", func(t *testing.T) {
+		st, creds := seededConnection()
+		creds.deleteErr = errors.New("vault unavailable")
+		creds.deleteRemovesOnError = true
+		_, err := newTestService(st, creds, nil).Update(context.Background(), "gitlab-work", UpdateInput{
+			Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", Token: tokenInput("new"),
+		})
+		assertAPIError(t, err, "SCM_CREDENTIAL_STORE_FAILED")
+		row := st.rows["gitlab-work"]
+		if row.CredentialRef != "scm/gitlab-work/old" || string(creds.secrets[row.CredentialRef]) != "old" {
+			t.Fatalf("destructive delete rollback diverged: row=%#v credentials=%#v", row, creds.secrets)
+		}
+		if _, exists := creds.secrets["scm/gitlab-work/new"]; exists {
+			t.Fatalf("replacement credential survived successful rollback: %#v", creds.secrets)
+		}
+	})
+
+	t.Run("old secret restore failure keeps replacement state", func(t *testing.T) {
+		st, creds := seededConnection()
+		creds.deleteErr = errors.New("vault unavailable")
+		creds.deleteRemovesOnError = true
+		creds.putErrByRef = map[string]error{"scm/gitlab-work/old": errors.New("restore unavailable")}
+		_, err := newTestService(st, creds, nil).Update(context.Background(), "gitlab-work", UpdateInput{
+			Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", Token: tokenInput("new"),
+		})
+		assertAPIError(t, err, "SCM_CREDENTIAL_STORE_FAILED")
+		row := st.rows["gitlab-work"]
+		if row.CredentialRef != "scm/gitlab-work/new" || string(creds.secrets[row.CredentialRef]) != "new" {
+			t.Fatalf("restore failure diverged replacement state: row=%#v credentials=%#v", row, creds.secrets)
+		}
+	})
+
+	t.Run("rollback failure after old restore keeps replacement state", func(t *testing.T) {
+		st, creds := seededConnection()
+		st.updateErrs = []error{nil, errors.New("rollback unavailable")}
+		creds.deleteErr = errors.New("vault unavailable")
+		creds.deleteRemovesOnError = true
+		_, err := newTestService(st, creds, nil).Update(context.Background(), "gitlab-work", UpdateInput{
+			Provider: domain.SCMProviderGitLab, DisplayName: "Renamed", Token: tokenInput("new"),
+		})
+		assertAPIError(t, err, "SCM_CONNECTION_UPDATE_FAILED")
+		row := st.rows["gitlab-work"]
+		if row.CredentialRef != "scm/gitlab-work/new" || string(creds.secrets[row.CredentialRef]) != "new" || string(creds.secrets["scm/gitlab-work/old"]) != "old" {
+			t.Fatalf("rollback failure state = row=%#v credentials=%#v", row, creds.secrets)
+		}
+	})
+
 	t.Run("create cleanup survives cancellation and surfaces cleanup failure", func(t *testing.T) {
 		st, creds := newFakeStore(), newFakeCredentials()
 		st.createErr = errors.New("db unavailable")
@@ -504,6 +587,42 @@ func TestMutationCompensation(t *testing.T) {
 		}
 	})
 
+	t.Run("delete cleanup survives cancellation after metadata commit", func(t *testing.T) {
+		st, creds := seededConnection()
+		st.respectContext = true
+		creds.respectContext = true
+		ctx, cancel := context.WithCancel(context.Background())
+		st.deleteHook = cancel
+		if err := newTestService(st, creds, nil).Delete(ctx, "gitlab-work"); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := st.rows["gitlab-work"]; exists || len(creds.secrets) != 0 {
+			t.Fatalf("successful canceled delete left state: rows=%#v credentials=%#v", st.rows, creds.secrets)
+		}
+		assertContextErrorsNil(t, creds.getCtxErrs, creds.deleteCtxErrs)
+	})
+
+	t.Run("delete vault failure after cancellation restores metadata and secret", func(t *testing.T) {
+		st, creds := seededConnection()
+		st.respectContext = true
+		creds.respectContext = true
+		creds.deleteErr = errors.New("vault unavailable")
+		creds.deleteRemovesOnError = true
+		ctx, cancel := context.WithCancel(context.Background())
+		st.deleteHook = cancel
+		err := newTestService(st, creds, nil).Delete(ctx, "gitlab-work")
+		assertAPIError(t, err, "SCM_CONNECTION_DELETE_FAILED")
+		row, exists := st.rows["gitlab-work"]
+		if !exists || string(creds.secrets[row.CredentialRef]) != "old" {
+			t.Fatalf("failed canceled delete was not restored: rows=%#v credentials=%#v", st.rows, creds.secrets)
+		}
+		if len(creds.deletes) != 1 {
+			t.Fatalf("vault delete calls = %v, want one", creds.deletes)
+		}
+		assertContextErrorsNil(t, creds.getCtxErrs, creds.deleteCtxErrs, creds.putCtxErrs)
+		assertContextErrorsNil(t, st.createCtxErrs)
+	})
+
 	t.Run("delete zeros loaded credential bytes", func(t *testing.T) {
 		st, creds := seededConnection()
 		if err := newTestService(st, creds, nil).Delete(context.Background(), "gitlab-work"); err != nil {
@@ -544,8 +663,18 @@ func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, tester.result) {
 		t.Fatalf("test = (%#v, %v)", got, err)
 	}
-	if tester.calls != 1 || string(tester.token) != "old" || tester.row.CredentialRef == "" {
-		t.Fatalf("tester call = %#v token=%q", tester.row, tester.token)
+	if tester.calls != 1 || string(tester.token) != "old" || tester.config != (ConnectionTestConfig{
+		ID: "gitlab-work", Provider: domain.SCMProviderGitLab,
+		WebBaseURL: "https://gitlab.com", APIBaseURL: "https://gitlab.com/api/v4",
+	}) {
+		t.Fatalf("tester call = %#v token=%q", tester.config, tester.token)
+	}
+	configType := reflect.TypeOf(tester.config)
+	for i := 0; i < configType.NumField(); i++ {
+		name := strings.ToLower(configType.Field(i).Name)
+		if strings.Contains(name, "credential") || strings.Contains(name, "ref") {
+			t.Fatalf("tester config exposes persistence detail %q", configType.Field(i).Name)
+		}
 	}
 	if row := st.rows["gitlab-work"]; row.Status != domain.SCMConnectionStatusConnected || row.Username != "alice" {
 		t.Fatalf("persisted successful validation = (%q, %q)", row.Status, row.Username)
@@ -603,6 +732,63 @@ func TestConnectionTestMapsAndPersistsStructuredFailures(t *testing.T) {
 				t.Fatalf("persisted failure = (%q,%q), want (%q,%q)", row.Status, row.Username, tc.wantStatus, tc.wantUser)
 			}
 		})
+	}
+}
+
+func TestConnectionTestRejectsNilErrorNonSuccessResults(t *testing.T) {
+	for _, status := range []string{
+		"", StatusMissingCredential, StatusUnauthorized, StatusForbidden,
+		StatusUnreachable, StatusTLSError, StatusRateLimited,
+	} {
+		t.Run(status, func(t *testing.T) {
+			st, creds := seededConnection()
+			st.rows["gitlab-work"] = func() domain.SCMConnection {
+				row := st.rows["gitlab-work"]
+				row.Status = domain.SCMConnectionStatusConnected
+				row.Username = "previous"
+				return row
+			}()
+			tester := &fakeTester{result: TestResult{Status: status}}
+			_, err := newTestService(st, creds, tester).Test(context.Background(), "gitlab-work")
+			assertAPIError(t, err, "SCM_CONNECTION_TEST_FAILED")
+			row := st.rows["gitlab-work"]
+			if row.Status != domain.SCMConnectionStatusUnknown || row.Username != "" {
+				t.Fatalf("contract violation persisted (%q,%q), want unknown", row.Status, row.Username)
+			}
+		})
+	}
+}
+
+func TestConnectionTestCannotOverwriteNewerConfigurationValidation(t *testing.T) {
+	st, creds := seededConnection()
+	tester := &fakeTester{
+		result:  connectedTestResult("alice"),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := newTestService(st, creds, tester)
+
+	testErr := make(chan error, 1)
+	go func() {
+		_, err := svc.Test(context.Background(), "gitlab-work")
+		testErr <- err
+	}()
+	<-tester.entered
+
+	updated, err := svc.Update(context.Background(), "gitlab-work", UpdateInput{
+		Provider: domain.SCMProviderGitLab, DisplayName: "Renamed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(tester.release)
+	assertAPIError(t, <-testErr, "SCM_CONNECTION_TEST_STALE")
+
+	row := st.rows["gitlab-work"]
+	if row.UpdatedAt.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) ||
+		row.Status != domain.SCMConnectionStatusUnknown || row.Username != "" ||
+		updated.Status != StatusUnknown {
+		t.Fatalf("stale validation overwrote newer configuration: response=%#v row=%#v", updated, row)
 	}
 }
 
@@ -679,6 +865,17 @@ func assertJoinedAPIErrorCodes(t *testing.T, err error, codes ...string) {
 	for _, code := range codes {
 		if !got[code] {
 			t.Fatalf("error codes = %v, want %q in %v", got, code, err)
+		}
+	}
+}
+
+func assertContextErrorsNil(t *testing.T, groups ...[]error) {
+	t.Helper()
+	for _, group := range groups {
+		for _, err := range group {
+			if err != nil {
+				t.Fatalf("cleanup context error = %v, want nil", err)
+			}
 		}
 	}
 }

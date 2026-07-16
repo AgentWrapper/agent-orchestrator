@@ -29,7 +29,8 @@ WHERE id = ?;
 UPDATE scm_connections SET
     status = ?,
     username = ?
-WHERE id = ?;
+WHERE id = ?
+  AND updated_at = sqlc.arg(expected_updated_at);
 
 -- name: DeleteUnreferencedSCMConnection :execrows
 DELETE FROM scm_connections
