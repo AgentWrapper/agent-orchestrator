@@ -4,8 +4,9 @@
 **Scope:** Single operator, pure-cloud execution. Prove the cloud-agent loop with the least moving parts.
 
 > **v4 adds** an **Agent authentication** section — per-harness credential modes for **Claude Code**
-> (API key + `setup-token`) and **Codex** (API key + device login) — and wires it into Phase D.
-> **v3 added** the Runtime model section. Build phases are otherwise unchanged from v1.
+> (API key + `setup-token`) and **Codex** (API key + device login) — plus the **egress-IP / proxy**
+> mitigation for subscription modes, wired into Phases B/D. **v3 added** the Runtime model section.
+> Build phases are otherwise unchanged from v1.
 >
 > This plan reflects decisions made in planning and **supersedes the rev3 design doc** where they
 > conflict. The design doc specifies Postgres + an `ssh`-to-VM provider + mandatory auth; v1 below
@@ -127,6 +128,24 @@ and reported enforcement targets **account-sharing and harness-spoofing**, not r
 client on a cloud box. *(OpenAI ToS verbatim unverified — fetch was blocked; confirm before relying
 on the Codex-subscription path.)*
 
+**Egress IP & the ban risk (subscription modes only):** each Daytona sandbox egresses from a
+**different** IP, and managed Daytona gives **no static egress IP** (its allowlists gate the
+*destination*, not the *source*). Consumer/subscription anti-fraud flags "many changing datacenter
+IPs + concurrency" as account-sharing — **no published threshold, so don't design around one.**
+API-key modes are IP-agnostic and avoid this entirely.
+
+**Fix — single egress proxy (only if using a subscription mode):** run a **forward proxy**
+(Squid/tinyproxy) on the **coordinator VM** (static public IP) in **`CONNECT` pass-through** mode —
+it tunnels the encrypted connection, so **TLS stays end-to-end and the token/payload are never seen**
+(no MITM, no certs). Inject `HTTPS_PROXY=http://user:pass@<coordinator-ip>:3128` into each sandbox →
+**all model-API calls egress from the one proxy IP**, regardless of the sandboxes' own IPs.
+**Secure it (must, or it's an open relay):** proxy basic-auth (or bind to the tailnet) + a `CONNECT`
+allowlist to only `api.anthropic.com`/`api.openai.com`, paired with Daytona `domainAllowList` so
+sandboxes can reach only the proxy + GitHub. **Caveats:** shared chokepoint / SPOF + bandwidth
+through the VM (fine solo; move to its own VM at scale); latency negligible. *(Advanced: point
+`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` at a coordinator relay that injects the auth header — same
+single-IP benefit, and the token never enters the sandbox — but it's provider-specific and more code.)*
+
 ---
 
 ## Phase A — Prep
@@ -154,7 +173,7 @@ on the Codex-subscription path.)*
 5. `az vm create -g ao-rg -n ao-coordinator --image Ubuntu2204 --size Standard_B2s --generate-ssh-keys --public-ip-sku Standard`.
 6. Install **Go** on the VM; `git clone` the repo to `/opt/ao/agent-orchestrator`.
 7. `ao.service` systemd unit → `ao daemon`, `Restart=always`, `EnvironmentFile=/opt/ao/.env` (`DAYTONA_API_KEY`, `GITHUB_TOKEN`, agent credential(s), `AO_AUTH_TOKEN`), `HOME=/home/azureuser`. `systemctl enable --now ao`.
-
+8. *(Only if using a subscription auth mode)* install + configure the **egress proxy** under systemd — Squid/tinyproxy, `CONNECT` pass-through, basic-auth + a `CONNECT` allowlist to only `api.anthropic.com`/`api.openai.com`. See *Agent authentication → Egress IP*.
 
 ---
 
@@ -185,9 +204,9 @@ on the Codex-subscription path.)*
 ## Phase D — Daytona integration *(core code)*
 
 12. Thin **`ports.SandboxProvider`** (one implementation — always Daytona, no placement logic).
-13. **`RemoteWorkspace`** on Daytona: `Create` = new sandbox + `git clone` the repo inside it + **install the AO hook config into the workspace via Daytona's fs** (the adapter's hook installer writes through Daytona, not local disk); `Destroy` = terminate.
+13. **`RemoteWorkspace`** on Daytona: `Create` = new sandbox + `git clone` **the user-supplied GitHub repo URL (+ branch)** inside it (private repos use the injected `GITHUB_TOKEN`) + **install the AO hook config into the workspace via Daytona's fs** (the adapter's hook installer writes through Daytona, not local disk); `Destroy` = terminate.
 14. **`RemoteRuntime`** on Daytona: `Create` = start the agent process (Daytona process/PTY) → relay PTY to SSE; `Destroy` = kill.
-15. Route all spawns to the Daytona adapters (`runtimeselect`); at sandbox create inject (env/secrets, never in the image): `GITHUB_TOKEN`, **the selected agent credential** (per Agent authentication — `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` or `OPENAI_API_KEY`/`CODEX_API_KEY`; or trigger `codex login --device-auth` in-sandbox), and the coordinator URL + `AO_AUTH_TOKEN` so the in-sandbox `ao hooks` POST activity to the coordinator (not a loopback run-file).
+15. Route all spawns to the Daytona adapters (`runtimeselect`); at sandbox create inject (env/secrets, never in the image): `GITHUB_TOKEN`, **the selected agent credential** (per Agent authentication — `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` or `OPENAI_API_KEY`/`CODEX_API_KEY`; or trigger `codex login --device-auth` in-sandbox), and the coordinator URL + `AO_AUTH_TOKEN` so the in-sandbox `ao hooks` POST activity to the coordinator (not a loopback run-file); **and — if a subscription auth mode — `HTTPS_PROXY` pointing at the coordinator's egress proxy** (see Agent authentication → Egress IP).
 16. `sandboxes` table (session_id → Daytona sandbox id, status).
 17. **Reconcile on boot: re-attach to still-running Daytona sandboxes** (read `sandboxes`, reconnect streams) so redeploys/restarts don't orphan running work. Distinguish *stopped-but-not-destroyed* (Daytona auto-stop → restart + re-attach) from *terminated* (mark dead).
 18. Build + register the **sandbox image** in Daytona (contents per Phase A note).
@@ -211,6 +230,8 @@ on the Codex-subscription path.)*
 ---
 
 ## Phase F — Electron app changes *(client side)*
+
+> **New-session flow:** the user enters a **GitHub repo URL (+ branch)** to work on; the app sends it to the coordinator at spawn, which clones it into the sandbox (private repos use the injected `GITHUB_TOKEN`). This repo URL is a required field of the "new session" form.
 
 21. **Add remote-daemon config** — read `AO_REMOTE_DAEMON_URL` + `AO_AUTH_TOKEN` (env for v1; a "connect to server" settings screen later).
 22. **Gate the daemon spawn** (`frontend/src/main.ts`, spawn logic ~623–922): if the remote URL is set, **don't launch a local daemon**, and **relax the daemon identity check** (`daemonIdentityError` / `resolveDaemonFromPort`) so a remote binary isn't rejected as foreign.
@@ -238,9 +259,10 @@ on the Codex-subscription path.)*
 29. Trigger a cron redeploy mid-session → daemon restarts, re-attaches to the running sandbox, live view resumes; a bad build rolls back.
 30. **Orphan/cost check:** kill the coordinator mid-session, restart → the boot sweep terminates any Daytona sandbox whose `sandboxes` row has no live session (remote sandboxes cost money).
 31. **Auth check:** spawn a Claude Code session with `ANTHROPIC_API_KEY`, then one with a `setup-token`; spawn a Codex session with `OPENAI_API_KEY`, then one via `codex login --device-auth`. Confirm each authenticates and (API-key modes) two sandboxes run concurrently on the same key.
+32. *(If a subscription mode)* confirm all agent model-API calls **egress from the proxy's one IP** (check the proxy access log), and that a sandbox **cannot reach `api.anthropic.com`/`api.openai.com` directly** (Daytona `domainAllowList` in force).
 
 ---
 
 ## Deferred (not v1)
 
-Conversation persistence (rich history replay), queue + autoscaling, Postgres, **DB backup (Litestream / off-box)**, real email/Google auth, Tailscale, laptop-local execution, mid-session local↔cloud switching.
+Conversation persistence (rich history replay), queue + autoscaling, Postgres, **DB backup (Litestream / off-box)**, real email/Google auth, Tailscale, laptop-local execution, mid-session local↔cloud switching, **BYOC / own-tenancy sandboxes** (heavier alternative to the egress proxy for IP control at scale).
