@@ -903,27 +903,34 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders the same attention-zone dot for idle and working sessions", () => {
+	it("distinguishes idle and active working session dots", () => {
 		renderSidebar({
 			workspaces: [
 				{
 					...workspace,
 					sessions: [
 						{ ...session, id: "proj-1-idle", title: "idle task", status: "idle" },
-						{ ...session, id: "proj-1-work", title: "working task", status: "working" },
+						{
+							...session,
+							id: "proj-1-work",
+							title: "working task",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
 					],
 				},
 			],
 		});
 
 		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("animate-status-pulse", "bg-working");
+		expect(idleDot).toHaveClass("bg-passive");
+		expect(idleDot).not.toHaveClass("animate-status-pulse");
 
 		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
 		expect(workingDot).toHaveClass("animate-status-pulse", "bg-working");
 	});
 
-	it("does not mix raw idle activity into the sidebar attention dot", () => {
+	it("renders idle activity as quiet while preserving PR status color", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -936,13 +943,25 @@ describe("Sidebar", () => {
 							status: "working",
 							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
 						},
+						{
+							...session,
+							id: "proj-1-idle-draft",
+							title: "idle draft task",
+							status: "draft",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
 					],
 				},
 			],
 		});
 
 		const idleDot = screen.getByLabelText("Open idle activity task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("animate-status-pulse", "bg-working");
+		expect(idleDot).toHaveClass("bg-passive");
+		expect(idleDot).not.toHaveClass("animate-status-pulse");
+
+		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector('span[aria-hidden="true"]');
+		expect(idleDraftDot).toHaveClass("bg-accent-dim");
+		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("does not render the restart-to-update row unless an update is downloaded", async () => {

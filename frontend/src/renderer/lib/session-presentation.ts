@@ -72,7 +72,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 		dot: "var(--color-working)",
 		dotGlow: true,
 		titleClassName: "text-working",
-		dotClassName: "animate-status-pulse motion-reduce:animate-none bg-working",
+		dotClassName: "bg-working",
 	},
 	action: {
 		zone: "action",
@@ -86,11 +86,11 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 	pending: {
 		zone: "pending",
 		label: "In review",
-		glow: "var(--color-overlay-faint)",
-		dot: "var(--color-text-muted)",
+		glow: "color-mix(in srgb, var(--color-accent) 5%, transparent)",
+		dot: "var(--color-accent-dim)",
 		dotGlow: false,
-		titleClassName: "text-muted-foreground",
-		dotClassName: "bg-passive",
+		titleClassName: "text-accent",
+		dotClassName: "bg-accent-dim",
 	},
 	merge: {
 		zone: "merge",
@@ -157,11 +157,20 @@ export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneV
 	return attentionZoneViews[zone];
 }
 
-export function getSessionDotView(session: Pick<WorkspaceSession, "status">): { className: string } {
+export function getSessionDotView(session: Pick<WorkspaceSession, "status" | "activity">): { className: string } {
 	if (session.status === "ci_failed") {
-		return { className: "bg-error" };
+		return {
+			className: ["bg-error", session.activity?.state === "active" && "animate-status-pulse motion-reduce:animate-none"]
+				.filter(Boolean)
+				.join(" "),
+		};
 	}
-	return { className: getAttentionZoneView(session.status).dotClassName };
+	const dotClassName = isSessionInIdleStack(session) ? "bg-passive" : getAttentionZoneView(session.status).dotClassName;
+	const pulseClassName =
+		!isSessionInIdleStack(session) && session.activity?.state === "active"
+			? "animate-status-pulse motion-reduce:animate-none"
+			: "";
+	return { className: [pulseClassName, dotClassName].filter(Boolean).join(" ") };
 }
 
 export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;

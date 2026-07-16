@@ -94,18 +94,46 @@ describe("session presentation", () => {
 		expect(getAttentionZoneView(status)).toMatchObject({ zone, label });
 	});
 
-	it("uses attention zone only for sidebar dots", () => {
-		const workingDotClass = getSessionDotView(
+	it("uses activity for sidebar dot motion and status for sidebar dot color", () => {
+		const activeWorkingDotClass = getSessionDotView(
+			sessionWith({
+				status: "working",
+				activity: { state: "active", lastActivityAt: "" },
+			}),
+		).className;
+		const idleDotClass = getSessionDotView(sessionWith({ status: "idle" })).className;
+		const idleWorkingDotClass = getSessionDotView(
 			sessionWith({
 				status: "working",
 				activity: { state: "idle", lastActivityAt: "" },
 			}),
 		).className;
+		const idleDraftDotClass = getSessionDotView(
+			sessionWith({
+				status: "draft",
+				activity: { state: "idle", lastActivityAt: "" },
+			}),
+		).className;
 
-		expect(workingDotClass).toContain("bg-working");
-		expect(workingDotClass).toContain("motion-reduce:animate-none");
+		expect(activeWorkingDotClass).toContain("bg-working");
+		expect(activeWorkingDotClass).toContain("animate-status-pulse");
+		expect(activeWorkingDotClass).toContain("motion-reduce:animate-none");
+		expect(idleDotClass).toContain("bg-passive");
+		expect(idleDotClass).not.toContain("animate-status-pulse");
+		expect(idleWorkingDotClass).toContain("bg-passive");
+		expect(idleWorkingDotClass).not.toContain("animate-status-pulse");
+		expect(idleDraftDotClass).toContain("bg-accent-dim");
+		expect(idleDraftDotClass).not.toContain("animate-status-pulse");
 		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-error");
 		expect(getSessionDotView(sessionWith({ status: "unknown" })).className).toContain("bg-warning");
+	});
+
+	it("uses a muted accent treatment for In Review instead of idle gray", () => {
+		expect(getAttentionZoneView("review_pending")).toMatchObject({
+			dot: "var(--color-accent-dim)",
+			titleClassName: "text-accent",
+			dotClassName: "bg-accent-dim",
+		});
 	});
 
 	it("separates idle sessions inside the Working board column", () => {
