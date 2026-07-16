@@ -22,6 +22,7 @@ func newProjectProviderResolver(store scmregistry.ConnectionStore, credentials p
 		Credentials: credentials,
 		Factories: map[domain.SCMProvider]scmregistry.ProviderFactory{
 			domain.SCMProviderGitHub: scmregistry.NewGitHubFactory(scmregistry.GitHubFactoryOptions{Logger: logger}),
+			domain.SCMProviderGitLab: scmregistry.NewGitLabFactory(scmregistry.GitLabFactoryOptions{Logger: logger}),
 		},
 		GitHubFallback:          &scmgithub.GHTokenSource{},
 		SkipCredentialPreflight: true,
@@ -53,5 +54,5 @@ func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.M
 }
 
 func logSCMProviderDisabled(logger *slog.Logger, err error) {
-	logger.Warn("scm observer disabled: GitHub provider setup failed", "err", err)
+	logger.Warn("scm observer disabled: provider setup failed", "err", err)
 }

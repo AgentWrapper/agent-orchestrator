@@ -375,6 +375,39 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	_, _ = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"})
 }
 
+func TestNewProjectProviderResolverRegistersGitLab(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	if err := store.CreateSCMConnection(ctx, domain.SCMConnection{
+		ID: "gitlab-work", Provider: domain.SCMProviderGitLab, DisplayName: "Work GitLab",
+		WebBaseURL: "https://gitlab.example.com", APIBaseURL: "https://gitlab.example.com/api/v4",
+		CredentialRef: "scm/gitlab-work", Status: domain.SCMConnectionStatusUnknown,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("CreateSCMConnection: %v", err)
+	}
+
+	resolver := newProjectProviderResolver(store, wiringCredentials{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	bundle, err := resolver.Resolve(ctx, domain.ProjectRecord{Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+		Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-work", Repo: "group/subgroup/repo",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.SCM == nil || bundle.Tracker == nil {
+		t.Fatalf("GitLab bundle = %#v", bundle)
+	}
+	if repo, ok := bundle.SCM.ParseRepository("https://gitlab.example.com/group/subgroup/repo.git"); !ok || repo.Repo != "group/subgroup/repo" {
+		t.Fatalf("ParseRepository = %#v, %v", repo, ok)
+	}
+}
+
 // TestStartTrackerIntake_RunsEvenWithoutEnabledProjects is a regression test:
 // startTrackerIntake used to scan projects once at call time and skip starting
 // the observer loop entirely when none had intake enabled yet. Poll() itself
