@@ -28,6 +28,9 @@ const (
 	EventPRSessionChanged       EventType = "pr_session_changed"
 	EventPRReviewThreadAdded    EventType = "pr_review_thread_added"
 	EventPRReviewThreadResolved EventType = "pr_review_thread_resolved"
+	EventSCMConnectionCreated   EventType = "scm_connection_created"
+	EventSCMConnectionUpdated   EventType = "scm_connection_updated"
+	EventSCMConnectionDeleted   EventType = "scm_connection_deleted"
 )
 
 // Event is one CDC change read from change_log. Seq is the monotonic ordering +

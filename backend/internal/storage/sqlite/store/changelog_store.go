@@ -34,10 +34,12 @@ func (s *Store) LatestSeq(ctx context.Context) (int64, error) {
 func changeLogEventFromGen(r gen.ChangeLog) cdc.Event {
 	e := cdc.Event{
 		Seq:       r.Seq,
-		ProjectID: string(r.ProjectID),
 		Type:      r.EventType,
 		Payload:   json.RawMessage(r.Payload),
 		CreatedAt: r.CreatedAt,
+	}
+	if r.ProjectID != nil {
+		e.ProjectID = string(*r.ProjectID)
 	}
 	if r.SessionID != nil {
 		e.SessionID = string(*r.SessionID)

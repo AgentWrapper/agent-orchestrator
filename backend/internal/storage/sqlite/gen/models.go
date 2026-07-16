@@ -14,7 +14,7 @@ import (
 
 type ChangeLog struct {
 	Seq       int64
-	ProjectID domain.ProjectID
+	ProjectID *domain.ProjectID
 	SessionID *domain.SessionID
 	EventType cdc.EventType
 	Payload   string
@@ -158,6 +158,17 @@ type ReviewRun struct {
 	GithubReviewID string
 	DeliveredAt    sql.NullTime
 	BatchID        string
+}
+
+type SCMConnection struct {
+	ID            string
+	Provider      string
+	DisplayName   string
+	WebBaseURL    string
+	APIBaseURL    string
+	CredentialRef string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type Session struct {
