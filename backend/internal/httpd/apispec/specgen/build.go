@@ -62,7 +62,7 @@ func Build() ([]byte, error) {
 		*(&openapi31.Tag{Name: "agents"}).WithDescription(
 			"Supported and locally runnable agent adapters"),
 		*(&openapi31.Tag{Name: "filesystem"}).WithDescription(
-			"Read-only server filesystem directory browsing"),
+			"Server filesystem directory browsing and creation"),
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
@@ -149,6 +149,7 @@ var schemaNames = map[string]string{
 	"ControllersProjectResponse":                  "ProjectResponse",
 	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersListDirectoriesQuery":             "ListDirectoriesQuery",
+	"ControllersCreateDirectoryRequest":           "CreateDirectoryRequest",
 	"ControllersDirectoryEntry":                   "DirectoryEntry",
 	"ControllersListDirectoriesResponse":          "ListDirectoriesResponse",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
@@ -420,6 +421,20 @@ func filesystemOperations() []operation {
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/filesystem/directories", id: "createDirectory", tag: "filesystem",
+			summary: "Create one child directory using daemon-user permissions",
+			reqBody: controllers.CreateDirectoryRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.DirectoryEntry{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},

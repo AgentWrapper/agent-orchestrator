@@ -192,6 +192,60 @@ paths:
       summary: ""
       tags:
       - filesystem
+    post:
+      operationId: createDirectory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDirectoryRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryEntry'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Create one child directory using daemon-user permissions
+      tags:
+      - filesystem
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -2282,6 +2336,16 @@ components:
       - status
       - prs
       type: object
+    CreateDirectoryRequest:
+      properties:
+        name:
+          type: string
+        parentPath:
+          type: string
+      required:
+      - parentPath
+      - name
+      type: object
     CreateSCMConnectionRequest:
       properties:
         apiBaseUrl:
@@ -3599,7 +3663,7 @@ components:
 tags:
 - description: Supported and locally runnable agent adapters
   name: agents
-- description: Read-only server filesystem directory browsing
+- description: Server filesystem directory browsing and creation
   name: filesystem
 - description: Project registry, configuration, and lifecycle administration
   name: projects
