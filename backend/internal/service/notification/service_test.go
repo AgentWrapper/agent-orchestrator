@@ -12,6 +12,7 @@ import (
 
 type fakeStore struct {
 	rows        []domain.NotificationRecord
+	recentRows  []domain.NotificationRecord
 	markRow     domain.NotificationRecord
 	markOK      bool
 	markAllRows []domain.NotificationRecord
@@ -24,6 +25,10 @@ func (f *fakeStore) CreateNotification(context.Context, domain.NotificationRecor
 
 func (f *fakeStore) ListUnreadNotifications(_ context.Context, _ int) ([]domain.NotificationRecord, error) {
 	return f.rows, f.err
+}
+
+func (f *fakeStore) ListRecentNotifications(_ context.Context, _ int) ([]domain.NotificationRecord, error) {
+	return f.recentRows, f.err
 }
 
 func (f *fakeStore) MarkNotificationRead(_ context.Context, _ string) (domain.NotificationRecord, bool, error) {
@@ -40,12 +45,27 @@ func TestListUnreadAddsTargets(t *testing.T) {
 		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 	}}
 	mgr := New(Deps{Store: st})
-	got, err := mgr.ListUnread(context.Background(), ListFilter{Limit: 10})
+	got, err := mgr.List(context.Background(), ListFilter{Status: ListStatusUnread, Limit: 10})
 	if err != nil {
-		t.Fatalf("ListUnread: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" {
 		t.Fatalf("targets = %+v", got)
+	}
+}
+
+func TestListAllAddsTargets(t *testing.T) {
+	st := &fakeStore{recentRows: []domain.NotificationRecord{
+		{ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationRead, CreatedAt: time.Now()},
+		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: time.Now()},
+	}}
+	mgr := New(Deps{Store: st})
+	got, err := mgr.List(context.Background(), ListFilter{Status: ListStatusAll, Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got[0].Status != domain.NotificationRead || got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR {
+		t.Fatalf("notifications = %+v", got)
 	}
 }
 
@@ -90,8 +110,8 @@ func TestMarkAllReadAddsTargets(t *testing.T) {
 	}
 }
 
-func TestListUnreadRequiresStore(t *testing.T) {
-	_, err := New(Deps{}).ListUnread(context.Background(), ListFilter{})
+func TestListRequiresStore(t *testing.T) {
+	_, err := New(Deps{}).List(context.Background(), ListFilter{})
 	if err == nil {
 		t.Fatal("want missing store error")
 	}

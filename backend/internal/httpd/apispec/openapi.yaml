@@ -287,13 +287,16 @@ paths:
     get:
       operationId: listNotifications
       parameters:
-      - description: Notification status filter. V1 supports only unread.
+      - description: Notification status filter. Defaults to unread; all returns recent
+          read and unread notifications.
         in: query
         name: status
         schema:
-          description: Notification status filter. V1 supports only unread.
+          description: Notification status filter. Defaults to unread; all returns
+            recent read and unread notifications.
           enum:
           - unread
+          - all
           type: string
       - description: Maximum notifications to return. Defaults to 50; capped at 100.
         in: query

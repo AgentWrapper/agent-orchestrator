@@ -90,6 +90,13 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	if _, inserted, err := s.CreateNotification(ctx, again); err != nil || !inserted {
 		t.Fatalf("CreateNotification after read inserted=%v err=%v", inserted, err)
 	}
+	recent, err := s.ListRecentNotifications(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListRecentNotifications: %v", err)
+	}
+	if len(recent) != 2 || recent[0].ID != "ntf_2" || recent[1].ID != "ntf_1" || recent[1].Status != domain.NotificationRead {
+		t.Fatalf("recent = %+v", recent)
+	}
 }
 
 func TestNotificationStore_MarkReadMissing(t *testing.T) {

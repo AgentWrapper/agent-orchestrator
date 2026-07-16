@@ -30,13 +30,22 @@ func New(d Deps) *Manager {
 	return &Manager{store: d.Store}
 }
 
-// ListUnread returns unread notifications newest-first.
-func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notification, error) {
+// List returns notifications newest-first.
+func (m *Manager) List(ctx context.Context, filter ListFilter) ([]Notification, error) {
 	if m == nil || m.store == nil {
 		return nil, errors.New("notification: store is required")
 	}
 	limit := normalizeLimit(filter.Limit)
-	rows, err := m.store.ListUnreadNotifications(ctx, limit)
+	var (
+		rows []domain.NotificationRecord
+		err  error
+	)
+	switch normalizeStatus(filter.Status) {
+	case ListStatusAll:
+		rows, err = m.store.ListRecentNotifications(ctx, limit)
+	default:
+		rows, err = m.store.ListUnreadNotifications(ctx, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -45,6 +54,12 @@ func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notifica
 		out = append(out, notificationFromRecord(row))
 	}
 	return out, nil
+}
+
+// ListUnread returns unread notifications newest-first.
+func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notification, error) {
+	filter.Status = ListStatusUnread
+	return m.List(ctx, filter)
 }
 
 // MarkRead marks one unread notification read.
@@ -89,6 +104,13 @@ func normalizeLimit(limit int) int {
 		return MaxListLimit
 	}
 	return limit
+}
+
+func normalizeStatus(status ListStatus) ListStatus {
+	if status == ListStatusAll {
+		return ListStatusAll
+	}
+	return ListStatusUnread
 }
 
 func notificationFromRecord(rec domain.NotificationRecord) Notification {

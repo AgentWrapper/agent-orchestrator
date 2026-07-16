@@ -464,7 +464,7 @@ type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
+	Status string `query:"status,omitempty" enum:"unread,all" description:"Notification status filter. Defaults to unread; all returns recent read and unread notifications."`
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
 }
 

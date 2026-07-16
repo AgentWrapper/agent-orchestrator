@@ -62,6 +62,24 @@ func (s *Store) ListUnreadNotifications(ctx context.Context, limit int) ([]domai
 	return notificationsFromGen(rows), nil
 }
 
+// ListRecentNotifications returns recent notifications newest-first.
+func (s *Store) ListRecentNotifications(ctx context.Context, limit int) ([]domain.NotificationRecord, error) {
+	rows, err := s.readDB.QueryContext(ctx, `
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+FROM notifications
+ORDER BY created_at DESC
+LIMIT ?
+`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent notifications: %w", err)
+	}
+	out, err := scanNotificationRows(rows)
+	if err != nil {
+		return nil, fmt.Errorf("list recent notifications: %w", err)
+	}
+	return out, nil
+}
+
 // MarkNotificationRead marks one unread notification read.
 func (s *Store) MarkNotificationRead(ctx context.Context, id string) (domain.NotificationRecord, bool, error) {
 	s.writeMu.Lock()
@@ -127,4 +145,34 @@ func notificationsFromGen(rows []gen.Notification) []domain.NotificationRecord {
 		out = append(out, notificationFromGen(row))
 	}
 	return out
+}
+
+func scanNotificationRows(rows *sql.Rows) (_ []domain.NotificationRecord, err error) {
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	out := []domain.NotificationRecord{}
+	for rows.Next() {
+		var rec domain.NotificationRecord
+		if err := rows.Scan(
+			&rec.ID,
+			&rec.SessionID,
+			&rec.ProjectID,
+			&rec.PRURL,
+			&rec.Type,
+			&rec.Title,
+			&rec.Body,
+			&rec.Status,
+			&rec.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

@@ -5,14 +5,15 @@ import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "
 
 export type NotificationDTO = components["schemas"]["NotificationResponse"];
 
-export const unreadNotificationsQueryKey = ["notifications", "unread"] as const;
+export const notificationsQueryKey = ["notifications", "all"] as const;
+export const unreadNotificationsQueryKey = notificationsQueryKey;
 
 const SSE_RETRY_MS = 5_000;
 const EVENTSOURCE_CLOSED = 2;
 
-export async function fetchUnreadNotifications(): Promise<NotificationDTO[]> {
+export async function fetchNotifications(): Promise<NotificationDTO[]> {
 	const { data, error } = await apiClient.GET("/api/v1/notifications", {
-		params: { query: { status: "unread", limit: 100 } },
+		params: { query: { status: "all", limit: 100 } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, "Could not load notifications"));
 	return sortNotifications(data?.notifications ?? []);
@@ -36,7 +37,7 @@ export async function markAllNotificationsRead(): Promise<NotificationDTO[]> {
 
 export function mergeUnreadNotification(queryClient: QueryClient, notification: NotificationDTO): boolean {
 	let inserted = false;
-	queryClient.setQueryData<NotificationDTO[]>(unreadNotificationsQueryKey, (current = []) => {
+	queryClient.setQueryData<NotificationDTO[]>(notificationsQueryKey, (current = []) => {
 		if (current.some((item) => item.id === notification.id)) return current;
 		inserted = true;
 		return sortNotifications([notification, ...current]);
@@ -44,14 +45,17 @@ export function mergeUnreadNotification(queryClient: QueryClient, notification: 
 	return inserted;
 }
 
-export function removeUnreadNotification(queryClient: QueryClient, id: string): void {
-	queryClient.setQueryData<NotificationDTO[]>(unreadNotificationsQueryKey, (current = []) =>
-		current.filter((item) => item.id !== id),
+export function markCachedNotificationRead(queryClient: QueryClient, notification: NotificationDTO): void {
+	queryClient.setQueryData<NotificationDTO[]>(notificationsQueryKey, (current = []) =>
+		sortNotifications(current.map((item) => (item.id === notification.id ? notification : item))),
 	);
 }
 
-export function clearUnreadNotifications(queryClient: QueryClient): void {
-	queryClient.setQueryData<NotificationDTO[]>(unreadNotificationsQueryKey, []);
+export function markCachedNotificationsRead(queryClient: QueryClient, notifications: NotificationDTO[]): void {
+	const readByID = new Map(notifications.map((notification) => [notification.id, notification]));
+	queryClient.setQueryData<NotificationDTO[]>(notificationsQueryKey, (current = []) =>
+		sortNotifications(current.map((item) => readByID.get(item.id) ?? item)),
+	);
 }
 
 export function createNotificationsTransport(queryClient: QueryClient) {
@@ -61,8 +65,8 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
 
-			const invalidateUnread = () => {
-				void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
+			const invalidateNotifications = () => {
+				void queryClient.invalidateQueries({ queryKey: notificationsQueryKey });
 			};
 
 			const scheduleRetry = () => {
@@ -82,7 +86,7 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 				sourceBaseUrl = baseUrl;
 				try {
 					source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/notifications/stream`);
-					source.onopen = invalidateUnread;
+					source.onopen = invalidateNotifications;
 					source.onerror = () => {
 						if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
 					};
@@ -105,11 +109,11 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 
 			const removeDaemonListener = aoBridge.daemon.onStatus(() => {
 				connectSource();
-				invalidateUnread();
+				invalidateNotifications();
 			});
 			const removeBaseUrlListener = subscribeApiBaseUrl(() => {
 				connectSource();
-				invalidateUnread();
+				invalidateNotifications();
 			});
 			connectSource();
 

@@ -17,7 +17,7 @@ import (
 
 // NotificationService is the controller-facing notification service contract.
 type NotificationService interface {
-	ListUnread(ctx context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error)
+	List(ctx context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error)
 	MarkRead(ctx context.Context, id string) (notificationsvc.Notification, bool, error)
 	MarkAllRead(ctx context.Context) ([]notificationsvc.Notification, error)
 }
@@ -55,7 +55,7 @@ func (c *NotificationsController) list(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_QUERY", err.Error(), nil)
 		return
 	}
-	notifications, err := c.Svc.ListUnread(r.Context(), filter)
+	notifications, err := c.Svc.List(r.Context(), filter)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -150,9 +150,9 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 	q := r.URL.Query()
 	status := q.Get("status")
 	if status == "" {
-		status = "unread"
+		status = string(notificationsvc.ListStatusUnread)
 	}
-	if status != "unread" {
+	if status != string(notificationsvc.ListStatusUnread) && status != string(notificationsvc.ListStatusAll) {
 		return notificationsvc.ListFilter{}, errNotificationStatusUnsupported
 	}
 	limit := notificationsvc.DefaultListLimit
@@ -166,11 +166,11 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 	if limit > notificationsvc.MaxListLimit {
 		limit = notificationsvc.MaxListLimit
 	}
-	return notificationsvc.ListFilter{Limit: limit}, nil
+	return notificationsvc.ListFilter{Status: notificationsvc.ListStatus(status), Limit: limit}, nil
 }
 
 var (
-	errNotificationStatusUnsupported = notificationQueryError("status must be unread")
+	errNotificationStatusUnsupported = notificationQueryError("status must be unread or all")
 	errNotificationLimitInvalid      = notificationQueryError("limit must be a positive integer")
 )
 
