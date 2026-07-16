@@ -60,6 +60,31 @@ function isSyntheticBranch(session: WorkspaceSession): boolean {
 	return session.branch === `session/${session.id}`;
 }
 
+type SessionCommandGroup = Extract<CommandGroupId, "attention" | "sessions">;
+
+const SESSION_ID_PREFIX: Record<SessionCommandGroup, string> = { attention: "attention", sessions: "session" };
+
+function sessionCommand(
+	workspace: WorkspaceSummary,
+	session: WorkspaceSession,
+	group: SessionCommandGroup,
+): CommandItem {
+	return {
+		id: `${SESSION_ID_PREFIX[group]}:${session.id}`,
+		group,
+		title: session.title,
+		subtitle: workspace.name,
+		keywords: [workspace.name, session.branch, session.issueId ?? ""],
+		action: {
+			kind: "navigate",
+			target: {
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: workspace.id, sessionId: session.id },
+			},
+		},
+	};
+}
+
 function findSession(workspaces: WorkspaceSummary[], sessionId: string): WorkspaceSession | undefined {
 	for (const workspace of workspaces) {
 		const match = workspace.sessions.find((session) => session.id === sessionId);
@@ -142,20 +167,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	const attentionIds = new Set(attentionSessions.map(({ session }) => session.id));
 
 	for (const { workspace, session } of attentionSessions) {
-		items.push({
-			id: `attention:${session.id}`,
-			group: "attention",
-			title: session.title,
-			subtitle: workspace.name,
-			keywords: [workspace.name, session.branch, session.issueId ?? ""],
-			action: {
-				kind: "navigate",
-				target: {
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: workspace.id, sessionId: session.id },
-				},
-			},
-		});
+		items.push(sessionCommand(workspace, session, "attention"));
 	}
 
 	for (const workspace of workspaces) {
@@ -172,21 +184,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		for (const session of workerSessions(workspace.sessions).filter(
 			(session) => !attentionIds.has(session.id) && session.id !== currentSessionId,
 		)) {
-			items.push({
-				id: `session:${session.id}`,
-				group: "sessions",
-				title: session.title,
-				subtitle: workspace.name,
-				keywords: [workspace.name, session.branch, session.issueId ?? ""],
-				searchOnly: !sessionIsActive(session),
-				action: {
-					kind: "navigate",
-					target: {
-						to: "/projects/$projectId/sessions/$sessionId",
-						params: { projectId: workspace.id, sessionId: session.id },
-					},
-				},
-			});
+			items.push({ ...sessionCommand(workspace, session, "sessions"), searchOnly: !sessionIsActive(session) });
 		}
 	}
 

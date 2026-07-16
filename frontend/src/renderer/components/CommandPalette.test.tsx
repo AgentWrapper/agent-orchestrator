@@ -42,6 +42,18 @@ const ctx = vi.hoisted(() => {
 					prs: [],
 				},
 				{
+					id: "w-archived",
+					workspaceId: "proj-1",
+					workspaceName: "app",
+					title: "archived cleanup",
+					provider: "codex",
+					kind: "worker",
+					branch: "feature/archived",
+					status: "terminated",
+					updatedAt: "2026-06-10T00:00:00Z",
+					prs: [],
+				},
+				{
 					id: "orch",
 					workspaceId: "proj-1",
 					workspaceName: "app",
@@ -161,20 +173,20 @@ describe("CommandPalette gating", () => {
 	});
 });
 
-describe("CommandPalette shortcut", () => {
-	it("opens on Cmd+K and toggles closed on a second Cmd+K", async () => {
+describe("CommandPalette shortcut (Windows/Linux)", () => {
+	it("opens on Ctrl+K and toggles closed on a second Ctrl+K", async () => {
 		renderPalette();
-		pressKey({ key: "k", metaKey: true });
+		pressKey({ key: "k", ctrlKey: true });
 		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
-		pressKey({ key: "k", metaKey: true });
+		pressKey({ key: "k", ctrlKey: true });
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
-	it("opens on Cmd+K even when a terminal is focused", async () => {
+	it("ignores Cmd+K off macOS (the opening modifier is platform-gated)", () => {
 		renderPalette();
-		focusTerminal();
-		pressKey({ key: "k", metaKey: true });
-		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+		const event = pressKey({ key: "k", metaKey: true });
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		expect(event.defaultPrevented).toBe(false);
 	});
 
 	it("yields Ctrl+K to a focused terminal (does not open, does not preventDefault)", () => {
@@ -210,6 +222,80 @@ describe("CommandPalette shortcut", () => {
 		renderPalette();
 		const event = pressKey({ key: "1", metaKey: true });
 		expect(event.defaultPrevented).toBe(false);
+	});
+});
+
+describe("CommandPalette shortcut (macOS)", () => {
+	beforeEach(() => {
+		vi.stubGlobal("navigator", {
+			...globalThis.navigator,
+			userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+		});
+	});
+
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("opens on Cmd+K", async () => {
+		renderPalette();
+		pressKey({ key: "k", metaKey: true });
+		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+	});
+
+	it("opens on Cmd+K even when a terminal is focused", async () => {
+		renderPalette();
+		focusTerminal();
+		pressKey({ key: "k", metaKey: true });
+		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+	});
+
+	it("ignores Ctrl+K on macOS, leaving the system kill-to-end-of-line binding alone", () => {
+		renderPalette();
+		const event = pressKey({ key: "k", ctrlKey: true });
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		expect(event.defaultPrevented).toBe(false);
+	});
+});
+
+describe("CommandPalette search + Enter", () => {
+	it("jumps to a session by typing a query and pressing Enter", async () => {
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+
+		fireEvent.change(input, { target: { value: "ship" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("ship banner");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "w-merge" },
+		});
+		await waitFor(() => expect(paletteInput()).toBeNull());
+	});
+
+	it("jumps to an archived (terminated) session via search + Enter", async () => {
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+
+		expect(screen.queryByText("archived cleanup")).toBeNull();
+
+		fireEvent.change(input, { target: { value: "archived" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("archived cleanup");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "w-archived" },
+		});
 	});
 });
 

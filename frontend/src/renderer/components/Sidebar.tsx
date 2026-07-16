@@ -26,8 +26,9 @@ import {
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
+import { aoBridge } from "../lib/bridge";
 import { isCommandPaletteEnabled, isNightlyBuild } from "../lib/build-channel";
-import { isAnyModalOpen } from "../lib/dom-selectors";
+import { isDialogOrMenuOpen } from "../lib/dom-selectors";
 import { useAppVersion } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -149,7 +150,7 @@ function CommandPaletteSearchItem({ enabled, onOpen }: { enabled: boolean; onOpe
 		<DropdownMenuItem
 			onSelect={() =>
 				setTimeout(() => {
-					if (isAnyModalOpen()) return;
+					if (isDialogOrMenuOpen()) return;
 					onOpen();
 				}, 0)
 			}

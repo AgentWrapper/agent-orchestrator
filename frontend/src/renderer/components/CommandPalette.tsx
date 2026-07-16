@@ -11,7 +11,7 @@ import {
 	type CommandItem as CommandItemModel,
 	type NavigateTarget,
 } from "../lib/command-palette";
-import { isAnyModalOpen } from "../lib/dom-selectors";
+import { isDialogOrMenuOpen } from "../lib/dom-selectors";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
 import { findProjectOrchestrator } from "../types/workspace";
@@ -19,6 +19,10 @@ import { useUiStore } from "../stores/ui-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
+
+function isMacPlatform(): boolean {
+	return typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+}
 
 function terminalHasFocus(): boolean {
 	if (typeof document === "undefined") return false;
@@ -77,7 +81,7 @@ export function CommandPalette() {
 		setError(null);
 	}, [setOpen]);
 
-	const go = useCallback(
+	const navigateToTarget = useCallback(
 		(target: NavigateTarget) => {
 			switch (target.to) {
 				case "/prs":
@@ -100,24 +104,30 @@ export function CommandPalette() {
 		[navigate],
 	);
 
+	const blockedByRestart = useCallback((projectId: string) => {
+		if (!useUiStore.getState().restartingProjectIds.has(projectId)) return false;
+		setError("Orchestrator is restarting");
+		return true;
+	}, []);
+
 	const openOrchestrator = useCallback(
 		async (projectId: string) => {
-			if (useUiStore.getState().restartingProjectIds.has(projectId)) {
-				setError("Orchestrator is restarting");
-				return;
-			}
+			if (blockedByRestart(projectId)) return;
 			const orchestrator = findProjectOrchestrator(workspaces, projectId);
 			if (orchestrator) {
-				go({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId: orchestrator.id } });
+				navigateToTarget({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId, sessionId: orchestrator.id },
+				});
 				closePalette();
 				return;
 			}
 			const sessionId = await spawnOrchestrator(projectId, "command_palette");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			go({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
+			navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
 			closePalette();
 		},
-		[workspaces, go, queryClient, closePalette],
+		[workspaces, navigateToTarget, queryClient, closePalette, blockedByRestart],
 	);
 
 	const runAction = useCallback(
@@ -130,7 +140,7 @@ export function CommandPalette() {
 			try {
 				switch (action.kind) {
 					case "navigate":
-						go(action.target);
+						navigateToTarget(action.target);
 						closePalette();
 						break;
 					case "toggle-theme":
@@ -142,10 +152,7 @@ export function CommandPalette() {
 						closePalette();
 						break;
 					case "open-new-task":
-						if (useUiStore.getState().restartingProjectIds.has(action.projectId)) {
-							setError("Orchestrator is restarting");
-							break;
-						}
+						if (blockedByRestart(action.projectId)) break;
 						setNewTaskProjectId(action.projectId);
 						setIsNewTaskOpen(true);
 						closePalette();
@@ -165,7 +172,7 @@ export function CommandPalette() {
 				setPendingId(null);
 			}
 		},
-		[go, closePalette, toggleTheme, openOrchestrator],
+		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart],
 	);
 
 	const onSelectItem = useCallback(
@@ -192,20 +199,26 @@ export function CommandPalette() {
 	useEffect(() => {
 		if (!enabled) return;
 		const handleKeyDown = (event: KeyboardEvent) => {
-			const mod = event.metaKey || event.ctrlKey;
-			if (isOpen && mod && /^[1-9]$/.test(event.key)) {
+			if (isOpen && (event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
 				event.preventDefault();
 				event.stopPropagation();
 				return;
 			}
-			if (!mod || event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
+
+			if (event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
+
+			const isMac = isMacPlatform();
+			const paletteModifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+			if (!paletteModifier) return;
+
 			if (isOpen) {
 				event.preventDefault();
 				closePalette();
 				return;
 			}
-			if (event.ctrlKey && !event.metaKey && terminalHasFocus()) return;
-			if (isAnyModalOpen()) return;
+			// Returns without preventDefault so a focused terminal keeps Ctrl+K for readline's kill-to-end-of-line.
+			if (!isMac && terminalHasFocus()) return;
+			if (isDialogOrMenuOpen()) return;
 			event.preventDefault();
 			setOpen(true);
 		};

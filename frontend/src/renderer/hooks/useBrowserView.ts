@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
-import { OPEN_MODAL_SELECTOR } from "../lib/dom-selectors";
+import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
 
@@ -307,7 +307,7 @@ export function useBrowserView({
 			mirrorTimerRef.current = null;
 		};
 		const update = () => {
-			const open = document.querySelector(OPEN_MODAL_SELECTOR) !== null;
+			const open = document.querySelector(OPEN_DIALOG_OR_MENU_SELECTOR) !== null;
 			if (open === modalOpenRef.current) return;
 			modalOpenRef.current = open;
 			if (open) {
