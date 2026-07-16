@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 )
 
@@ -11,12 +12,6 @@ import (
 // legacy agent-orchestrator.yaml `projects.<id>` block. It is persisted as one
 // JSON blob per project and resolved at spawn. Each field is typed and
 // validated; there is no free-form map.
-//
-// Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
-// PostCreate, AgentConfig, prompt rules, and the role overrides are consumed at
-// spawn; SessionPrefix feeds the display prefix. Settings whose consumers do not
-// yet exist (tracker/SCM per-project config) are intentionally absent and land in
-// focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -55,6 +50,66 @@ type ProjectConfig struct {
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// SCM selects the provider, connection, and optional repository override for
+	// this project. Provider selection is never daemon-global.
+	SCM SCMProjectConfig `json:"scm,omitempty"`
+	// Coordinator controls project Coordinator behavior.
+	Coordinator CoordinatorConfig `json:"coordinator,omitempty"`
+}
+
+// SCMProvider identifies an SCM provider implementation.
+type SCMProvider string
+
+// Supported SCM providers.
+const (
+	SCMProviderGitHub SCMProvider = "github"
+	SCMProviderGitLab SCMProvider = "gitlab"
+)
+
+// SCMProjectConfig selects the SCM connection and optional repository override
+// for one project.
+type SCMProjectConfig struct {
+	Provider     SCMProvider `json:"provider,omitempty" enum:"github,gitlab"`
+	ConnectionID string      `json:"connectionId,omitempty"`
+	Repo         string      `json:"repo,omitempty"`
+}
+
+// CoordinatorConfig controls automatic Coordinator wake-up for one project.
+type CoordinatorConfig struct {
+	AutoWake bool `json:"autoWake,omitempty"`
+}
+
+// IsKnown reports whether p names a supported SCM provider.
+func (p SCMProvider) IsKnown() bool {
+	return p == SCMProviderGitHub || p == SCMProviderGitLab
+}
+
+// WithDefaults resolves the legacy empty SCM config to the built-in GitHub
+// connection without changing the stored config.
+func (c SCMProjectConfig) WithDefaults() SCMProjectConfig {
+	if c.Provider == "" {
+		c.Provider = SCMProviderGitHub
+	}
+	if c.ConnectionID == "" && c.Provider == SCMProviderGitHub {
+		c.ConnectionID = "github-default"
+	}
+	return c
+}
+
+// Validate rejects unknown providers, unsafe connection IDs, and repository
+// paths that the selected provider cannot parse.
+func (c SCMProjectConfig) Validate() error {
+	if !c.Provider.IsKnown() {
+		return fmt.Errorf("scm.provider: unsupported provider %q", c.Provider)
+	}
+	if err := validateIDComponent("scm.connectionId", c.ConnectionID); err != nil {
+		return err
+	}
+	if err := validateSCMRepo(c.Provider, c.Repo); err != nil {
+		return fmt.Errorf("scm.repo %q: %w", c.Repo, err)
+	}
+	return nil
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -91,12 +146,13 @@ type RoleOverride struct {
 // DefaultBranchName is the base branch used when a project configures none.
 const DefaultBranchName = "main"
 
-// DefaultProjectConfig returns the config a project has when it sets nothing:
-// branch "main". Every other field defaults to its zero value (no
-// env/symlinks/post-create, agent + role defaults).
+// DefaultProjectConfig returns the resolved config a project has when it sets
+// nothing: branch "main" and the built-in GitHub SCM connection. Every other
+// field defaults to its zero value.
 func DefaultProjectConfig() ProjectConfig {
 	return ProjectConfig{
 		DefaultBranch: DefaultBranchName,
+		SCM:           (SCMProjectConfig{}).WithDefaults(),
 	}
 }
 
@@ -107,7 +163,8 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
 	}
-	c.TrackerIntake = c.TrackerIntake.WithDefaults()
+	c.SCM = c.SCM.WithDefaults()
+	c.TrackerIntake = c.TrackerIntake.withDefaults(c.SCM.Provider)
 	return c
 }
 
@@ -120,6 +177,10 @@ func (c ProjectConfig) IsZero() bool {
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than surfacing at spawn.
 func (c ProjectConfig) Validate() error {
+	scm := c.SCM.WithDefaults()
+	if err := scm.Validate(); err != nil {
+		return err
+	}
 	if err := c.AgentConfig.Validate(); err != nil {
 		return err
 	}
@@ -147,8 +208,40 @@ func (c ProjectConfig) Validate() error {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
 	}
-	if err := c.TrackerIntake.Validate(); err != nil {
+	if err := c.TrackerIntake.validate(scm.Provider); err != nil {
 		return err
+	}
+	return nil
+}
+
+var idComponentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+func validateIDComponent(name, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s: is required", name)
+	}
+	if strings.Contains(value, "..") || !idComponentPattern.MatchString(value) {
+		return fmt.Errorf("%s: must be a safe ID component", name)
+	}
+	return nil
+}
+
+func validateSCMRepo(provider SCMProvider, repo string) error {
+	if repo == "" {
+		return nil
+	}
+	if strings.TrimSpace(repo) != repo || strings.ContainsAny(repo, "\\:#?\t\n\r ") {
+		return fmt.Errorf("must be a repository path")
+	}
+	path := strings.TrimSuffix(repo, ".git")
+	parts := strings.Split(path, "/")
+	if (provider == SCMProviderGitHub && len(parts) != 2) || (provider == SCMProviderGitLab && len(parts) < 2) {
+		return fmt.Errorf("must be a valid %s repository path", provider)
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return fmt.Errorf("must be a valid %s repository path", provider)
+		}
 	}
 	return nil
 }

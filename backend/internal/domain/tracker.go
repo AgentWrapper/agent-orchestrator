@@ -8,8 +8,11 @@ import (
 // TrackerProvider identifies an issue-tracker provider implementation.
 type TrackerProvider string
 
-// TrackerProviderGitHub is the only supported issue-tracker provider.
-const TrackerProviderGitHub TrackerProvider = "github"
+// Supported issue-tracker providers.
+const (
+	TrackerProviderGitHub TrackerProvider = "github"
+	TrackerProviderGitLab TrackerProvider = "gitlab"
+)
 
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub) and is parsed by the adapter.
@@ -83,33 +86,45 @@ type ListFilter struct {
 // cannot accidentally drain an entire issue backlog.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
-	// Provider defaults to github when Enabled is true.
-	Provider TrackerProvider `json:"provider,omitempty" enum:"github"`
-	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
-	// intake loop derives it from the project's repo origin URL. GitHub only.
+	// Provider inherits the project's SCM provider when Enabled is true.
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github,gitlab"`
+	// Repo is the provider-native repository key. When empty, the intake loop
+	// derives it from the project's repo origin URL.
 	Repo string `json:"repo,omitempty"`
 	// Assignee narrows eligible issues to one assignee. Provider-specific values
 	// such as "*" are passed through unchanged.
 	Assignee string `json:"assignee,omitempty"`
 }
 
-// WithDefaults fills the provider only when intake is enabled. Disabled intake
-// leaves the zero value untouched so empty project configs still store as NULL.
+// WithDefaults preserves the legacy GitHub default for callers without project
+// SCM context.
 func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
+	return c.withDefaults(SCMProviderGitHub)
+}
+
+func (c TrackerIntakeConfig) withDefaults(scmProvider SCMProvider) TrackerIntakeConfig {
 	if c.Enabled && c.Provider == "" {
-		c.Provider = TrackerProviderGitHub
+		c.Provider = TrackerProvider(scmProvider)
 	}
 	return c
 }
 
-// Validate rejects accidental broad intake and unknown providers.
+// Validate preserves the legacy GitHub default for callers without project SCM
+// context.
 func (c TrackerIntakeConfig) Validate() error {
+	return c.validate(SCMProviderGitHub)
+}
+
+func (c TrackerIntakeConfig) validate(scmProvider SCMProvider) error {
 	if !c.Enabled {
 		return nil
 	}
-	c = c.WithDefaults()
-	if c.Enabled && c.Provider != TrackerProviderGitHub {
+	c = c.withDefaults(scmProvider)
+	if c.Provider != TrackerProviderGitHub && c.Provider != TrackerProviderGitLab {
 		return fmt.Errorf("trackerIntake.provider: unsupported provider %q", c.Provider)
+	}
+	if SCMProvider(c.Provider) != scmProvider {
+		return fmt.Errorf("trackerIntake.provider: must match scm.provider %q", scmProvider)
 	}
 	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
 		return err

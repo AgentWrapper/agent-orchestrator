@@ -36,6 +36,20 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
 		{"tracker intake assignee rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}, false},
 		{"tracker intake explicit github", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitHub, Assignee: "alice"}}, false},
+		{"github scm defaults", ProjectConfig{SCM: SCMProjectConfig{}}, false},
+		{"explicit gitlab scm", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr", Repo: "group/subgroup/project"}}, false},
+		{"gitlab repo with dot git suffix", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr", Repo: "group/subgroup/project.git"}}, false},
+		{"unknown scm provider", ProjectConfig{SCM: SCMProjectConfig{Provider: "bitbucket", ConnectionID: "bitbucket-default"}}, true},
+		{"gitlab scm requires connection", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab}}, true},
+		{"connection id with slash", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab/team"}}, true},
+		{"connection id with whitespace", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: " gitlab-dzr"}}, true},
+		{"github repo has exactly two segments", ProjectConfig{SCM: SCMProjectConfig{Repo: "owner/subgroup/repo"}}, true},
+		{"gitlab repo allows subgroup segments", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr", Repo: "group/subgroup/repo"}}, false},
+		{"repo rejects empty segment", ProjectConfig{SCM: SCMProjectConfig{Repo: "owner//repo"}}, true},
+		{"repo rejects traversal segment", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr", Repo: "group/../repo"}}, true},
+		{"tracker inherits gitlab scm", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr"}, TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}, false},
+		{"tracker provider matches scm", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr"}, TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitLab, Assignee: "alice"}}, false},
+		{"tracker provider mismatches scm", ProjectConfig{SCM: SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr"}, TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitHub, Assignee: "alice"}}, true},
 		{"tracker intake no rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true}}, true},
 		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear", Assignee: "alice"}}, true},
 		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Assignee: "alice"}}, true},
@@ -53,14 +67,18 @@ func TestProjectConfigValidate(t *testing.T) {
 func TestDefaultProjectConfig(t *testing.T) {
 	def := DefaultProjectConfig()
 
-	// The one documented non-empty default.
+	// The documented non-empty defaults.
 	if def.DefaultBranch != "main" {
 		t.Fatalf("default DefaultBranch = %q, want main", def.DefaultBranch)
 	}
+	if def.SCM.Provider != SCMProviderGitHub || def.SCM.ConnectionID != "github-default" {
+		t.Fatalf("default SCM = %#v, want github/github-default", def.SCM)
+	}
 
 	// Every other field defaults to its zero value: clearing the documented
-	// default must leave the config completely empty.
+	// defaults must leave the config completely empty.
 	def.DefaultBranch = ""
+	def.SCM = SCMProjectConfig{}
 	if !def.IsZero() {
 		t.Fatalf("default config has unexpected non-zero fields: %#v", def)
 	}
@@ -71,6 +89,9 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	got := (ProjectConfig{}).WithDefaults()
 	if got.DefaultBranch != DefaultBranchName {
 		t.Fatalf("WithDefaults = %#v, want branch=main", got)
+	}
+	if got.SCM.Provider != SCMProviderGitHub || got.SCM.ConnectionID != "github-default" {
+		t.Fatalf("WithDefaults SCM = %#v, want github/github-default", got.SCM)
 	}
 
 	// Set fields are preserved, not overwritten.
@@ -83,6 +104,21 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 	if got.AgentConfig.Model != "m" {
 		t.Fatalf("WithDefaults dropped a set field: %#v", got.AgentConfig)
+	}
+
+	got = (ProjectConfig{
+		SCM:           SCMProjectConfig{Provider: SCMProviderGitLab, ConnectionID: "gitlab-dzr", Repo: "group/subgroup/project"},
+		Coordinator:   CoordinatorConfig{AutoWake: true},
+		TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"},
+	}).WithDefaults()
+	if got.SCM.Provider != SCMProviderGitLab || got.SCM.ConnectionID != "gitlab-dzr" || got.SCM.Repo != "group/subgroup/project" {
+		t.Fatalf("WithDefaults overwrote GitLab SCM: %#v", got.SCM)
+	}
+	if got.TrackerIntake.Provider != TrackerProviderGitLab {
+		t.Fatalf("TrackerIntake.Provider = %q, want %q", got.TrackerIntake.Provider, TrackerProviderGitLab)
+	}
+	if !got.Coordinator.AutoWake {
+		t.Fatal("WithDefaults cleared coordinator auto-wake")
 	}
 
 	got = (ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}).WithDefaults()
