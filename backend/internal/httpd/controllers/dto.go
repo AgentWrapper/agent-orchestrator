@@ -483,6 +483,24 @@ type ProbeAgentResponse = agentsvc.ProbeResult
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
+// ListDirectoriesQuery is the query string accepted by GET /api/v1/filesystem/directories.
+type ListDirectoriesQuery struct {
+	Path string `query:"path,omitempty" description:"Absolute server directory path. Defaults to the daemon user's home directory."`
+}
+
+// DirectoryEntry is one child directory visible from the requested server path.
+type DirectoryEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// ListDirectoriesResponse is the body of GET /api/v1/filesystem/directories.
+type ListDirectoriesResponse struct {
+	Path        string           `json:"path"`
+	Parent      *string          `json:"parent"`
+	Directories []DirectoryEntry `json:"directories"`
+}
+
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
 	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`

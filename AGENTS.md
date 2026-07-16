@@ -139,3 +139,5 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 - SCM provider, repository, and connection selection are project-level settings; never model one globally active repository provider for the daemon.
 - For full-scope implementation, batch execution and review by dependency phase; do not create review-gated microtasks unless the user requests them.
 - Implement coordinator self-wake by reusing existing event/session state; do not add a durable queue, leases, ACKs, retries, or dead letters unless crash-safe delivery is explicitly required.
+- In remote-client builds, project creation must accept a server-side absolute path and must never open the client's native folder picker.
+- Persisted credentials shown in editable settings must render masked with an explicit reveal control rather than as an empty field.

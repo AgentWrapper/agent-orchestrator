@@ -1,11 +1,12 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
+import { RemoteDirectoryPickerDialog } from "./RemoteDirectoryPickerDialog";
 import { Button } from "./ui/button";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
@@ -38,6 +39,19 @@ export function CreateProjectFlow({
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
+	const [remoteClient, setRemoteClient] = useState<boolean | null>(null);
+	const [remotePathDialogOpen, setRemotePathDialogOpen] = useState(false);
+
+	useEffect(() => {
+		let active = true;
+		const detect = aoBridge.remoteServer?.isRemoteClient?.() ?? Promise.resolve(false);
+		void detect.then((remote) => {
+			if (active) setRemoteClient(remote);
+		});
+		return () => {
+			active = false;
+		};
+	}, []);
 
 	const hasModePicker = mode === "choose";
 	const isBusy = isChoosingPath || isCreating || isInitializing;
@@ -53,6 +67,14 @@ export function CreateProjectFlow({
 		setValidationScan(null);
 		setRepositorySetup(null);
 		setSelectedKind(kind);
+		const isRemote = remoteClient ?? (await (aoBridge.remoteServer?.isRemoteClient?.() ?? Promise.resolve(false)));
+		if (remoteClient === null) setRemoteClient(isRemote);
+		if (isRemote) {
+			setModePickerOpen(false);
+			setFolderPickerOpen(false);
+			setRemotePathDialogOpen(true);
+			return;
+		}
 		setIsChoosingPath(true);
 		try {
 			const path = await aoBridge.app.chooseDirectory(
@@ -103,7 +125,7 @@ export function CreateProjectFlow({
 			const message = err instanceof Error ? err.message : "Could not add project";
 			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) setRepositorySetup(code);
 			setError(message);
-			if (hasModePicker) {
+			if (hasModePicker && !remoteClient) {
 				if (shouldScanCreateFailure(message)) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
@@ -177,6 +199,16 @@ export function CreateProjectFlow({
 					/>
 				</>
 			)}
+			<RemoteDirectoryPickerDialog
+				kind={selectedKind}
+				open={remotePathDialogOpen}
+				disabled={isBusy}
+				onOpenChange={(open) => !isBusy && setRemotePathDialogOpen(open)}
+				onSelect={(path) => {
+					setRemotePathDialogOpen(false);
+					setSelectedPath(path);
+				}}
+			/>
 			<CreateProjectAgentSheet
 				error={error}
 				isCreating={isCreating}

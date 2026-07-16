@@ -9,6 +9,7 @@ import {
 	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
+	safeStorage,
 	shell,
 	WebContentsView,
 	webContents,
@@ -26,7 +27,6 @@ import {
 	readUpdateSettings,
 	writeUpdateSettings,
 	type UpdateSettings,
-	type UpdateStatus,
 } from "./main/update-settings";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -54,6 +54,16 @@ import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { RemoteClientRuntime, probeRemoteForwarder } from "./main/remote-client-runtime";
+import type { RemoteServerConfigUpdate } from "./main/remote-client-runtime";
+import { startRemoteForwarder } from "./main/remote-forwarder";
+import {
+	readRemoteServerConfig,
+	writeRemoteServerConfig,
+	type ConfigCrypto,
+} from "./main/remote-server-config";
+import { resolveRemoteClientBuild } from "./main/remote-client-build";
+import { createUpdateIpcHandlers } from "./main/update-ipc";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -99,6 +109,7 @@ let daemonStatus: DaemonStatus = { state: "stopped" };
 let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
+let remoteClientRuntime: RemoteClientRuntime | null = null;
 
 const execFileAsync = promisify(execFile);
 
@@ -135,6 +146,11 @@ const IMPORT_SCAN_SKIP_DIRS = new Set([
 ]);
 
 const isDev = !app.isPackaged;
+const isRemoteClientBuild = resolveRemoteClientBuild({
+	isPackaged: app.isPackaged,
+	envOverride: process.env.AO_REMOTE_CLIENT === "1",
+	markerExists: app.isPackaged && existsSync(path.join(process.resourcesPath, "remote-client.json")),
+});
 
 // Dev mode uses a separate port and state subdirectory so it never collides with
 // a concurrently running installed-app daemon. The subdir also isolates supervise.sock
@@ -233,6 +249,24 @@ function applyRuntimeAppIcon(): void {
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
+}
+
+function createRemoteClientRuntime(): RemoteClientRuntime {
+	const stateDir = app.getPath("userData");
+	const crypto: ConfigCrypto = {
+		encrypt: (value) => {
+			if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable.");
+			return safeStorage.encryptString(value);
+		},
+		decrypt: (value) => safeStorage.decryptString(value),
+	};
+	return new RemoteClientRuntime({
+		readConfig: () => readRemoteServerConfig(stateDir, crypto),
+		writeConfig: (input) => writeRemoteServerConfig(stateDir, input, crypto),
+		startForwarder: startRemoteForwarder,
+		probe: probeRemoteForwarder,
+		onStatus: setDaemonStatus,
+	});
 }
 
 // Role-based menu installed on Windows where the native menu bar is hidden. The
@@ -599,6 +633,13 @@ async function inspectExistingDaemon(
 }
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
+	if (isRemoteClientBuild) {
+		return remoteClientRuntime?.getStatus() ?? {
+			state: "error",
+			code: "not_configured",
+			message: "Remote client runtime is not ready.",
+		};
+	}
 	if (daemonProcess) {
 		return daemonStatus;
 	}
@@ -627,6 +668,13 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 }
 
 async function startDaemon(): Promise<DaemonStatus> {
+	if (isRemoteClientBuild) {
+		if (!remoteClientRuntime) {
+			setDaemonStatus({ state: "error", code: "not_configured", message: "Remote client runtime is not ready." });
+			return daemonStatus;
+		}
+		return remoteClientRuntime.start();
+	}
 	if (daemonStartPromise) {
 		return daemonStartPromise;
 	}
@@ -940,7 +988,10 @@ function killDaemon(child: ChildProcessWithoutNullStreams): void {
 	}
 }
 
-function stopDaemon(): DaemonStatus {
+async function stopDaemon(): Promise<DaemonStatus> {
+	if (isRemoteClientBuild) {
+		return remoteClientRuntime?.stop() ?? { state: "stopped" };
+	}
 	daemonStartEpoch += 1;
 	daemonStartPromise = null;
 	if (!daemonProcess) {
@@ -962,6 +1013,15 @@ function stopDaemon(): DaemonStatus {
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("remoteServer:isRemoteClient", () => isRemoteClientBuild);
+ipcMain.handle("remoteServer:get", () => remoteClientRuntime?.getEditableConfig() ?? null);
+ipcMain.handle("remoteServer:revealPassword", () => remoteClientRuntime?.revealPassword() ?? null);
+ipcMain.handle("remoteServer:save", (_event, input: RemoteServerConfigUpdate) => {
+	if (!remoteClientRuntime) {
+		return { state: "error", code: "not_configured", message: "Remote client runtime is not ready." } satisfies DaemonStatus;
+	}
+	return remoteClientRuntime.saveConfig(input);
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1238,29 +1298,25 @@ ipcMain.handle("appState:setMigration", async (_event, migration: MigrationState
 	await updateMigration({ stateDir: path.dirname(runFile), migration, now: () => new Date() });
 });
 
-ipcMain.handle("updateSettings:get", async (): Promise<UpdateSettings> => {
-	const runFile = runFilePath();
-	if (!runFile) return { enabled: false, channel: "latest", nightlyAck: false };
-	return readUpdateSettings(path.dirname(runFile));
+const updateIpcHandlers = createUpdateIpcHandlers({
+	isRemoteClientBuild,
+	stateDir: () => {
+		const runFile = runFilePath();
+		return runFile ? path.dirname(runFile) : null;
+	},
+	readSettings: readUpdateSettings,
+	writeSettings: writeUpdateSettings,
+	getStatus: getUpdateStatus,
+	check: checkForUpdatesNow,
+	download: downloadUpdateNow,
+	install: quitAndInstallUpdate,
 });
-ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) => {
-	const runFile = runFilePath();
-	if (!runFile) return;
-	await writeUpdateSettings(path.dirname(runFile), settings);
-});
-
-ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
-ipcMain.handle("updates:check", async () => {
-	const runFile = runFilePath();
-	if (!runFile) return;
-	await checkForUpdatesNow(path.dirname(runFile));
-});
-ipcMain.handle("updates:download", async () => {
-	await downloadUpdateNow();
-});
-ipcMain.handle("updates:install", () => {
-	quitAndInstallUpdate();
-});
+ipcMain.handle("updateSettings:get", updateIpcHandlers.getSettings);
+ipcMain.handle("updateSettings:set", (_event, settings: UpdateSettings) => updateIpcHandlers.setSettings(settings));
+ipcMain.handle("updates:getStatus", updateIpcHandlers.getStatus);
+ipcMain.handle("updates:check", updateIpcHandlers.check);
+ipcMain.handle("updates:download", updateIpcHandlers.download);
+ipcMain.handle("updates:install", updateIpcHandlers.install);
 
 ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
 	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
@@ -1283,7 +1339,7 @@ ipcMain.handle("notifications:show", (_event, notification: { id: string; title:
 // A live updater additionally requires a signed + notarized build — see
 // frontend/docs/desktop-release.md.
 function initAutoUpdates(): void {
-	if (!app.isPackaged) return;
+	if (!app.isPackaged || isRemoteClientBuild) return;
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);
@@ -1336,6 +1392,9 @@ async function writeAppStateOnLaunch(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+	if (isRemoteClientBuild) {
+		remoteClientRuntime = createRemoteClientRuntime();
+	}
 	// Capture install provenance BEFORE relocation. moveToApplicationsFolder()
 	// relaunches from /Applications WITHOUT forwarding our --installed-via arg, and
 	// code past a successful move never runs in this instance, so a post-move-only
@@ -1390,6 +1449,7 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
 	browserViewHost?.dispose();
 	browserViewHost = null;
+	if (isRemoteClientBuild) void remoteClientRuntime?.stop();
 });
 
 // Last resort: if the OS-native supervisor link is not actually connected
@@ -1400,7 +1460,7 @@ app.on("before-quit", () => {
 // When the link IS connected we do nothing here and rely on the OS closing the
 // fd on exit, which covers crash and SIGKILL uniformly.
 process.on("exit", () => {
-	if (daemonProcess && !supervisorLink?.connected) {
+	if (!isRemoteClientBuild && daemonProcess && !supervisorLink?.connected) {
 		killDaemon(daemonProcess);
 	}
 });

@@ -9,6 +9,7 @@ import type {
 	BrowserAnnotationModeInput,
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
+import type { EditableRemoteServerConfig, RemoteServerConfigUpdate } from "./main/remote-client-runtime";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -75,6 +76,12 @@ const api = {
 				ipcRenderer.off("daemon:status", wrapped);
 			};
 		},
+	},
+	remoteServer: {
+		isRemoteClient: () => ipcRenderer.invoke("remoteServer:isRemoteClient") as Promise<boolean>,
+		get: () => ipcRenderer.invoke("remoteServer:get") as Promise<EditableRemoteServerConfig | null>,
+		revealPassword: () => ipcRenderer.invoke("remoteServer:revealPassword") as Promise<string | null>,
+		save: (input: RemoteServerConfigUpdate) => ipcRenderer.invoke("remoteServer:save", input) as Promise<DaemonStatus>,
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,

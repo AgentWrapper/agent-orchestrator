@@ -140,6 +140,58 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/filesystem/directories:
+    get:
+      operationId: listDirectories
+      parameters:
+      - description: Absolute server directory path. Defaults to the daemon user's
+          home directory.
+        in: query
+        name: path
+        schema:
+          description: Absolute server directory path. Defaults to the daemon user's
+            home directory.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDirectoriesResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: ""
+      tags:
+      - filesystem
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -2272,6 +2324,16 @@ components:
       - path
       - resolveError
       type: object
+    DirectoryEntry:
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+      required:
+      - name
+      - path
+      type: object
     DomainActivity:
       properties:
         lastActivityAt:
@@ -2391,6 +2453,23 @@ components:
       - supported
       - installed
       - authorized
+      type: object
+    ListDirectoriesResponse:
+      properties:
+        directories:
+          items:
+            $ref: '#/components/schemas/DirectoryEntry'
+          type: array
+        parent:
+          type:
+          - "null"
+          - string
+        path:
+          type: string
+      required:
+      - path
+      - parent
+      - directories
       type: object
     ListNotificationsResponse:
       properties:
@@ -3520,6 +3599,8 @@ components:
 tags:
 - description: Supported and locally runnable agent adapters
   name: agents
+- description: Read-only server filesystem directory browsing
+  name: filesystem
 - description: Project registry, configuration, and lifecycle administration
   name: projects
 - description: Agent session lifecycle and messaging

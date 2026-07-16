@@ -1,26 +1,29 @@
 # Remote Client and Headless Daemon Design
 
 Date: 2026-07-15
-Status: Approved for implementation
+Status: Implemented and deployed
 
 ## Goal
 
 Run the existing AO daemon persistently on the internal-network host available as
 `ssh claude`, while installing a desktop client on the local Mac that connects to
-that daemon through configurable host, port, and connection-password settings.
-Closing or powering off the local Mac must not stop the remote daemon or its agent
-sessions.
+that daemon through configurable host, port, and connection-password settings. The
+remote client must browse and select project directories on the daemon host instead
+of opening a local filesystem picker. Closing or powering off the local Mac must not
+stop the remote daemon or its agent sessions.
 
 The change must preserve the existing daemon REST, SSE, WebSocket, terminal, session,
-agent, workspace, storage, and mobile implementations. The desktop renderer must
-continue to communicate with what it sees as a loopback daemon.
+agent, workspace, storage, and mobile implementations except for one additive,
+read-only directory-listing route. The desktop renderer must continue to communicate
+with what it sees as a loopback daemon.
 
 ## Non-goals
 
-- Do not change daemon API routes, DTOs, SSE events, WebSocket frames, or terminal framing.
+- Do not change existing daemon API routes, DTOs, SSE events, WebSocket frames, or
+  terminal framing. Add only the directory-listing route defined below.
 - Do not change session, agent, Git worktree, preview, SQLite, or mobile behavior.
-- Do not add TLS, users, roles, device management, remote directory browsing, file
-  upload, preview proxying, or client/server version negotiation.
+- Do not add TLS, users, roles, device management, file upload, file content access,
+  preview proxying, or client/server version negotiation.
 - Do not expose the unauthenticated primary listener beyond `127.0.0.1`.
 - Do not change the default desktop release build. Add a separate remote-client build.
 
@@ -84,8 +87,11 @@ remain unchanged. The remote target:
 - never spawns a daemon process;
 - never opens a daemon supervisor link;
 - never calls the remote `/shutdown` route when the app exits; and
-- keeps local-only Electron features such as updates, notifications, clipboard,
-  external links, and BrowserView behavior.
+- keeps local-only Electron features such as notifications, clipboard, external links,
+  and BrowserView behavior; and
+- deliberately disables update initialization, settings, checks, downloads, and
+  installation until a separate remote-flavor update feed exists. The default local
+  desktop build and its canonical update feed remain unchanged.
 
 The remote mode is selected at build time, not by an end-user runtime toggle. The Mac
 installed for this task is built with remote mode enabled.
@@ -135,8 +141,12 @@ For HTTP and SSE requests, it:
 For WebSocket upgrades, it forwards the original upgrade request and injects the same
 bearer header before piping both sockets. It does not inspect WebSocket frames.
 
-The password is held only in the Electron main process. It is not exposed to the
-renderer, query parameters, telemetry, access logs, or error messages.
+The password is held in the Electron main process. Settings IPC returns only host,
+port, and whether a password is configured. The renderer displays a fixed masked
+placeholder and retrieves plaintext through a separate IPC call only when the user
+activates the explicit reveal control. Hiding, saving, or unmounting the form clears
+revealed saved plaintext from renderer state. The password is never exposed to query
+parameters, telemetry, access logs, local storage, or error messages.
 
 Changing configuration starts and validates a replacement proxy before stopping the
 current proxy. App shutdown closes only the proxy and its sockets.
@@ -148,6 +158,58 @@ desktop and daemon shared a filesystem or network namespace. Existing requests a
 responses continue unchanged. Features work when their existing server-side paths and
 preview addresses are valid from the deployed topology; no new compatibility layer is
 added in this task.
+
+Project and workspace creation are the required exception: a remote-client build
+replaces the native client folder picker with a server-side directory browser. The
+submitted path still uses the existing project API and existing server validation.
+
+## Remote Filesystem Browser
+
+The daemon adds one read-only app route:
+
+```text
+GET /api/v1/filesystem/directories?path=<absolute-path>
+```
+
+Omitting `path` starts at the daemon process user's home directory. An explicit path
+must be absolute and is cleaned before use. The response contains the cleaned current
+path, its parent (`null` at the filesystem root), and child directories:
+
+```json
+{
+  "path": "/home/claude",
+  "parent": "/home",
+  "directories": [
+    { "name": "code", "path": "/home/claude/code" }
+  ]
+}
+```
+
+The route may browse `/` and every directory the daemon process user can access. It
+does not impose an application-level root or allowlist, elevate privileges, read file
+contents, return regular files, or mutate the filesystem. Hidden directories are
+included. Symbolic links that resolve to directories are included and remain expressed
+by their visible path. Directory names are sorted case-insensitively with a stable
+case-sensitive tie-breaker.
+
+The route returns the standard API error envelope with these codes:
+
+- `ABSOLUTE_PATH_REQUIRED` (`400`) for a non-absolute explicit path;
+- `DIRECTORY_PERMISSION_DENIED` (`403`) when the process cannot read the directory;
+- `DIRECTORY_NOT_FOUND` (`404`) when the path does not exist;
+- `NOT_A_DIRECTORY` (`422`) when the path is not a directory; and
+- `DIRECTORY_READ_FAILED` (`500`) for other operating-system failures.
+
+It is a normal app API route, so the existing loopback listener serves it without
+authentication and the existing LAN listener serves it only behind `authMiddleware`.
+It is not a control route and is not available without the LAN bearer password.
+
+The remote-client dialog keeps an editable absolute-path field and adds a breadcrumb,
+an up action, a loading/error state, child-directory rows, and a `Select this folder`
+action. Opening the dialog loads the remote home directory. Entering an absolute path
+and submitting navigates to it; selecting a child navigates into it. Selecting the
+current directory continues through the existing agent-selection and project creation
+flow. Local builds continue using the native folder picker unchanged.
 
 The mobile app continues connecting directly to the existing authenticated LAN
 listener and is not routed through the desktop proxy.
@@ -161,12 +223,16 @@ Focused automated tests cover:
 - HTTP method/body/header forwarding and bearer injection;
 - SSE response streaming without buffering;
 - WebSocket upgrade forwarding and bidirectional frames;
-- upstream connection failure mapping to the local unavailable state; and
-- proxy replacement and shutdown behavior.
+- upstream connection failure mapping to the local unavailable state;
+- proxy replacement and shutdown behavior;
+- masked saved-password display and explicit reveal behavior;
+- directory listing for home, root, hidden directories, and symbolic links;
+- invalid, missing, non-directory, permission, and unexpected filesystem errors;
+- OpenAPI route/spec parity and generated TypeScript contract drift; and
+- remote directory navigation and project creation without invoking the native folder picker.
 
-Existing frontend typecheck, unit tests, and build must pass. Backend code is unchanged,
-but the backend Go test suite is run before deployment because the deployed binary is
-built from the current tree.
+Existing backend and frontend tests, frontend typecheck, lint, OpenAPI drift checks,
+and the remote package build must pass.
 
 Deployment verification checks:
 
@@ -175,11 +241,23 @@ Deployment verification checks:
 3. `0.0.0.0:3011` is listening and rejects missing credentials.
 4. Authenticated API access succeeds through the installed desktop proxy.
 5. REST project/session data, SSE invalidation, and terminal WebSocket attachment work.
-6. The saved configuration reconnects after quitting and reopening the desktop app.
-7. The remote service and sessions remain active after the desktop app exits.
+6. The authenticated directory API can browse `/`, the daemon user's home, and a
+   nested project directory on the remote host.
+7. The installed remote client selects a remote directory without opening Finder.
+8. The saved configuration reconnects after quitting and reopening the desktop app.
+9. The remote service and sessions remain active after the desktop app exits.
 
 ## Installation Result
 
 The local Mac receives the packaged remote-client application in `/Applications`.
 The prior application is replaced only after the new package builds and passes local
 verification. The remote Linux service and its password remain outside the repository.
+
+The completed deployment runs `ao-daemon.service` as an enabled, active user service
+on `claude`, with the primary listener on `127.0.0.1:3001` and the authenticated LAN
+listener on `0.0.0.0:3011`. The remote-only application is installed at
+`/Applications/Agent Orchestrator.app`, contains no bundled daemon, reuses its encrypted
+saved connection after restart, and browses `/`, `/home/claude`, hidden directories,
+and nested server paths through the authenticated local forwarding proxy. Computer Use
+verification confirmed the directory picker selects `/home/claude/code` without opening
+Finder and passes that path to the existing project-agent flow.

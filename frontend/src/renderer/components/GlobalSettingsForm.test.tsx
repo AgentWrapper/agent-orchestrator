@@ -17,6 +17,7 @@ const {
 	updInstall,
 	updOnStatus,
 	getVersion,
+	isRemoteClient,
 } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
@@ -30,6 +31,7 @@ const {
 	updInstall: vi.fn(),
 	updOnStatus: vi.fn(),
 	getVersion: vi.fn(),
+	isRemoteClient: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -40,6 +42,12 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: { getVersion },
+		remoteServer: {
+			isRemoteClient,
+			get: vi.fn().mockResolvedValue(null),
+			revealPassword: vi.fn().mockResolvedValue(null),
+			save: vi.fn(),
+		},
 		appState: { getMigration, setMigration },
 		updateSettings: { get: getUpdate, set: setUpdate },
 		updates: {
@@ -76,6 +84,7 @@ beforeEach(() => {
 	updInstall.mockResolvedValue(undefined);
 	updOnStatus.mockReturnValue(() => undefined);
 	getVersion.mockResolvedValue("1.4.0");
+	isRemoteClient.mockResolvedValue(false);
 });
 
 describe("GlobalSettingsForm", () => {
@@ -83,6 +92,16 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 		expect(await screen.findByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Migration")).toBeInTheDocument();
+	});
+
+	it("hides updates in a remote client while preserving other global settings", async () => {
+		isRemoteClient.mockResolvedValue(true);
+		renderForm();
+
+		expect(await screen.findByText("Remote server")).toBeInTheDocument();
+		expect(screen.queryByText("Updates")).not.toBeInTheDocument();
+		expect(screen.getByText("Migration")).toBeInTheDocument();
+		expect(getUpdate).not.toHaveBeenCalled();
 	});
 
 	it("shows the nightly warning and saves the loaded channel", async () => {

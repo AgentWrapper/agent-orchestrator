@@ -48,6 +48,7 @@ type API struct {
 	notifications  *controllers.NotificationsController
 	imports        *controllers.ImportController
 	scmConnections *controllers.SCMConnectionsController
+	filesystem     *controllers.FilesystemController
 	events         *EventsController
 }
 
@@ -72,6 +73,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		notifications:  &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		imports:        &controllers.ImportController{Svc: deps.Import},
 		scmConnections: &controllers.SCMConnectionsController{Svc: deps.SCMConnections},
+		filesystem:     &controllers.FilesystemController{},
 		events:         &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -98,6 +100,7 @@ func (a *API) Register(root chi.Router) {
 			a.notifications.Register(r)
 			a.imports.Register(r)
 			a.scmConnections.Register(r)
+			a.filesystem.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
