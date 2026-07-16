@@ -100,10 +100,10 @@ type TestInput struct {
 	Repository string `json:"repository" description:"Provider-native repository path, for example owner/repo or group/subgroup/repo."`
 }
 
-// ConnectionTester probes one provider connection using a credential supplied
-// only for the duration of the call. Implementations return normalized data.
+// ConnectionTester probes one provider connection and owns effective credential
+// selection for the duration of the call. Implementations return normalized data.
 type ConnectionTester interface {
-	Test(ctx context.Context, config ConnectionTestConfig, token []byte) (TestResult, error)
+	Test(ctx context.Context, config ConnectionTestConfig) (TestResult, error)
 }
 
 // CredentialOverrideChecker reports credentials that take precedence over the vault.
@@ -210,7 +210,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Connection, error
 		}
 		return Connection{}, errors.Join(primaryErr, cleanupErr)
 	}
-	return connectionView(row, configured), nil
+	viewConfigured, err := s.credentialConfigured(ctx, row)
+	if err != nil {
+		return Connection{}, err
+	}
+	return connectionView(row, viewConfigured), nil
 }
 
 // List returns every SCM connection without credential material.
@@ -278,12 +282,7 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 
 	rotated := in.Token.Present
 	var configured bool
-	if !rotated {
-		configured, err = s.credentialConfigured(ctx, original)
-		if err != nil {
-			return Connection{}, err
-		}
-	} else {
+	if rotated {
 		replacement.CredentialRef, err = s.newCredentialRef(id)
 		if err != nil || replacement.CredentialRef == original.CredentialRef {
 			return Connection{}, apierr.Internal("SCM_CONNECTION_UPDATE_FAILED", "Failed to update SCM connection")
@@ -342,7 +341,11 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 			return Connection{}, errors.Join(primaryErr, cleanupErr)
 		}
 	}
-	return connectionView(replacement, configured), nil
+	viewConfigured, err := s.credentialConfigured(ctx, replacement)
+	if err != nil {
+		return Connection{}, err
+	}
+	return connectionView(replacement, viewConfigured), nil
 }
 
 // Delete removes an unreferenced SCM connection and its credential.
@@ -407,33 +410,19 @@ func (s *Service) Test(ctx context.Context, id, repository string) (TestResult, 
 		return TestResult{}, apierr.Internal("SCM_CONNECTION_TEST_UNAVAILABLE", "SCM connection testing is unavailable")
 	}
 	config := connectionTestConfig(row, repository)
-	overrideConfigured, err := s.credentialOverrideConfigured(ctx, config)
-	if err != nil {
-		return TestResult{}, err
-	}
-	var token []byte
-	ok := false
-	if !overrideConfigured {
-		token, ok, err = s.credentials.Get(ctx, row.CredentialRef)
-		if err != nil {
-			return TestResult{}, credentialError()
-		}
-	}
-	if !ok && !overrideConfigured {
-		result := TestResult{Status: StatusMissingCredential}
-		if err := s.persistValidation(ctx, row, domain.SCMConnectionStatusMissingCredential, ""); err != nil {
-			return TestResult{}, err
-		}
-		return result, nil
-	}
-	defer zero(token)
-	result, err := s.tester.Test(ctx, config, token)
+	result, err := s.tester.Test(ctx, config)
 	if err != nil {
 		status, username, mapped := mapTestFailure(result, err)
 		if persistErr := s.persistValidation(ctx, row, status, username); persistErr != nil {
 			return TestResult{}, errors.Join(persistErr, mapped)
 		}
 		return TestResult{}, mapped
+	}
+	if result.Status == StatusMissingCredential {
+		if persistErr := s.persistValidation(ctx, row, domain.SCMConnectionStatusMissingCredential, ""); persistErr != nil {
+			return TestResult{}, persistErr
+		}
+		return result, nil
 	}
 	if result.Status != StatusConnected {
 		mapped := apierr.Internal("SCM_CONNECTION_TEST_FAILED", "Failed to test SCM connection")

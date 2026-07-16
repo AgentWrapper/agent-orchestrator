@@ -191,17 +191,17 @@ type fakeTester struct {
 	result             TestResult
 	err                error
 	config             ConnectionTestConfig
-	token              []byte
 	calls              int
 	overrideConfigured bool
+	overrideByProvider map[domain.SCMProvider]bool
+	overrideChecks     int
 	entered            chan struct{}
 	release            chan struct{}
 }
 
-func (f *fakeTester) Test(_ context.Context, config ConnectionTestConfig, token []byte) (TestResult, error) {
+func (f *fakeTester) Test(_ context.Context, config ConnectionTestConfig) (TestResult, error) {
 	f.calls++
 	f.config = config
-	f.token = append([]byte(nil), token...)
 	if f.entered != nil {
 		close(f.entered)
 		<-f.release
@@ -209,7 +209,11 @@ func (f *fakeTester) Test(_ context.Context, config ConnectionTestConfig, token 
 	return f.result, f.err
 }
 
-func (f *fakeTester) CredentialOverrideConfigured(context.Context, ConnectionTestConfig) (bool, error) {
+func (f *fakeTester) CredentialOverrideConfigured(_ context.Context, config ConnectionTestConfig) (bool, error) {
+	f.overrideChecks++
+	if f.overrideByProvider != nil {
+		return f.overrideByProvider[config.Provider], nil
+	}
 	return f.overrideConfigured, nil
 }
 
@@ -287,6 +291,31 @@ func TestListAndGetReportEnvironmentCredentialOverride(t *testing.T) {
 	list, err := svc.List(context.Background())
 	if err != nil || len(list) != 1 || !list[0].CredentialConfigured {
 		t.Fatalf("List = (%#v, %v), want configured override", list, err)
+	}
+}
+
+func TestCreateAndUpdateResponsesUseResultingEffectiveCredential(t *testing.T) {
+	st, creds := newFakeStore(), newFakeCredentials()
+	tester := &fakeTester{overrideByProvider: map[domain.SCMProvider]bool{domain.SCMProviderGitLab: true}}
+	svc := newTestService(st, creds, tester)
+	created, err := svc.Create(context.Background(), createInput(nil))
+	if err != nil || !created.CredentialConfigured {
+		t.Fatalf("Create = (%#v, %v), want environment credential", created, err)
+	}
+	st, creds = seededConnection()
+	delete(creds.secrets, st.rows["gitlab-work"].CredentialRef)
+	svc = newTestService(st, creds, tester)
+	updated, err := svc.Update(context.Background(), "gitlab-work", UpdateInput{
+		Provider: domain.SCMProviderGitLab, DisplayName: "Work", Token: tokenInput(""),
+	})
+	if err != nil || !updated.CredentialConfigured {
+		t.Fatalf("remove token = (%#v, %v), want environment credential", updated, err)
+	}
+	updated, err = svc.Update(context.Background(), "gitlab-work", UpdateInput{
+		Provider: domain.SCMProviderGitHub, DisplayName: "GitHub",
+	})
+	if err != nil || updated.CredentialConfigured {
+		t.Fatalf("provider change = (%#v, %v), want resulting GitHub credential state", updated, err)
 	}
 }
 
@@ -697,11 +726,14 @@ func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, tester.result) {
 		t.Fatalf("test = (%#v, %v)", got, err)
 	}
-	if tester.calls != 1 || string(tester.token) != "old" || tester.config != (ConnectionTestConfig{
+	if tester.calls != 1 || tester.config != (ConnectionTestConfig{
 		ID: "gitlab-work", Provider: domain.SCMProviderGitLab,
 		WebBaseURL: "https://gitlab.com", APIBaseURL: "https://gitlab.com/api/v4", Repository: "group/repo",
 	}) {
-		t.Fatalf("tester call = %#v token=%q", tester.config, tester.token)
+		t.Fatalf("tester call = %#v", tester.config)
+	}
+	if tester.overrideChecks != 0 {
+		t.Fatalf("connection test performed a separate credential override check: %d", tester.overrideChecks)
 	}
 	configType := reflect.TypeOf(tester.config)
 	for i := 0; i < configType.NumField(); i++ {
@@ -715,14 +747,13 @@ func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 	}
 
 	delete(creds.secrets, st.rows["gitlab-work"].CredentialRef)
-	tester.result = connectedTestResult("alice")
-	tester.overrideConfigured = true
+	tester.result = TestResult{Status: StatusMissingCredential}
 	got, err = svc.Test(context.Background(), "gitlab-work", "group/repo")
-	if err != nil || got.Status != StatusConnected || tester.calls != 2 || len(tester.token) != 0 {
+	if err != nil || got.Status != StatusMissingCredential || tester.calls != 2 {
 		t.Fatalf("missing credential test = (%#v, %v), calls=%d", got, err, tester.calls)
 	}
-	if row := st.rows["gitlab-work"]; row.Status != domain.SCMConnectionStatusConnected || row.Username != "alice" {
-		t.Fatalf("persisted override validation = (%q, %q)", row.Status, row.Username)
+	if row := st.rows["gitlab-work"]; row.Status != domain.SCMConnectionStatusMissingCredential || row.Username != "" {
+		t.Fatalf("persisted missing validation = (%q, %q)", row.Status, row.Username)
 	}
 
 	creds.secrets[st.rows["gitlab-work"].CredentialRef] = []byte("old")
@@ -773,7 +804,7 @@ func TestConnectionTestMapsAndPersistsStructuredFailures(t *testing.T) {
 
 func TestConnectionTestRejectsNilErrorNonSuccessResults(t *testing.T) {
 	for _, status := range []string{
-		"", StatusMissingCredential, StatusUnauthorized, StatusForbidden,
+		"", StatusUnauthorized, StatusForbidden,
 		StatusUnreachable, StatusTLSError, StatusRateLimited,
 	} {
 		t.Run(status, func(t *testing.T) {

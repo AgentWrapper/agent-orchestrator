@@ -3,6 +3,7 @@
 package scmregistry
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -176,21 +177,27 @@ func (r *Resolver) Resolve(ctx context.Context, project domain.ProjectRecord) (P
 }
 
 // Test dispatches connection validation to the registered provider factory.
-func (r *Resolver) Test(ctx context.Context, config scmconnection.ConnectionTestConfig, token []byte) (scmconnection.TestResult, error) {
-	factory, ok := r.factories[config.Provider]
+func (r *Resolver) Test(ctx context.Context, config scmconnection.ConnectionTestConfig) (scmconnection.TestResult, error) {
+	connection, err := r.connection(ctx, domain.SCMProjectConfig{Provider: config.Provider, ConnectionID: config.ID})
+	if err != nil || connection.Provider != config.Provider {
+		return scmconnection.TestResult{}, scmconnection.NewTestFailure(scmconnection.TestFailureUnreachable, ErrConnectionNotFound)
+	}
+	factory, ok := r.factories[connection.Provider]
 	if !ok || factory == nil {
 		return scmconnection.TestResult{}, scmconnection.NewTestFailure(scmconnection.TestFailureUnreachable, ErrProviderUnavailable)
 	}
-	effective, err := r.testCredential(ctx, config, token)
+	config.Provider = connection.Provider
+	config.WebBaseURL = connection.WebBaseURL
+	config.APIBaseURL = connection.APIBaseURL
+	effective, err := r.testCredentialBytes(ctx, connection)
 	if err != nil {
 		if errors.Is(err, ErrMissingCredential) {
 			return scmconnection.TestResult{Status: scmconnection.StatusMissingCredential}, nil
 		}
 		return scmconnection.TestResult{}, scmconnection.NewTestFailure(scmconnection.TestFailureAuth, ErrCredentialUnavailable)
 	}
-	secret := []byte(effective)
-	defer zero(secret)
-	return factory.Test(ctx, config, secret)
+	defer zero(effective)
+	return factory.Test(ctx, config, effective)
 }
 
 // CredentialOverrideConfigured reports environment or legacy gh credentials
@@ -213,25 +220,37 @@ func (r *Resolver) CredentialOverrideConfigured(ctx context.Context, config scmc
 	return false, nil
 }
 
-func (r *Resolver) testCredential(ctx context.Context, config scmconnection.ConnectionTestConfig, vault []byte) (string, error) {
-	for _, name := range providerEnvVars(config.Provider) {
+func (r *Resolver) testCredentialBytes(ctx context.Context, connection domain.SCMConnection) ([]byte, error) {
+	for _, name := range providerEnvVars(connection.Provider) {
 		if token := strings.TrimSpace(r.lookupEnv(name)); token != "" {
-			return token, nil
+			return []byte(token), nil
 		}
 	}
-	if token := strings.TrimSpace(string(vault)); token != "" {
-		return token, nil
+	if r.credentials != nil && connection.CredentialRef != "" {
+		secret, ok, err := r.credentials.Get(ctx, connection.CredentialRef)
+		if err != nil {
+			zero(secret)
+			return nil, ErrCredentialUnavailable
+		}
+		if ok {
+			token := append([]byte(nil), bytes.TrimSpace(secret)...)
+			zero(secret)
+			if len(token) != 0 {
+				return token, nil
+			}
+			zero(token)
+		}
 	}
-	if config.Provider == domain.SCMProviderGitHub && config.ID == githubDefaultConnectionID && r.githubFallback != nil {
+	if connection.Provider == domain.SCMProviderGitHub && connection.ID == githubDefaultConnectionID && r.githubFallback != nil {
 		token, err := r.githubFallback.Token(ctx)
 		if err == nil && strings.TrimSpace(token) != "" {
-			return token, nil
+			return []byte(strings.TrimSpace(token)), nil
 		}
 		if err != nil && !isMissingTokenError(err) {
-			return "", ErrCredentialUnavailable
+			return nil, ErrCredentialUnavailable
 		}
 	}
-	return "", ErrMissingCredential
+	return nil, ErrMissingCredential
 }
 
 func (r *Resolver) connection(ctx context.Context, config domain.SCMProjectConfig) (domain.SCMConnection, error) {

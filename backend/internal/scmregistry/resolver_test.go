@@ -462,14 +462,22 @@ func TestResolverCredentialPrecedenceAndRedactedFailures(t *testing.T) {
 
 func TestResolverUnavailableProviderAndConnectionTesterDispatch(t *testing.T) {
 	githubFactory := &fakeFactory{}
-	r := New(Deps{Factories: map[domain.SCMProvider]ProviderFactory{domain.SCMProviderGitHub: githubFactory}})
+	r := New(Deps{
+		Connections: &fakeConnectionStore{connections: map[string]domain.SCMConnection{"github-work": {
+			ID: "github-work", Provider: domain.SCMProviderGitHub, CredentialRef: "vault/ref",
+			WebBaseURL: "https://github.com", APIBaseURL: "https://api.github.com",
+		}}},
+		Credentials: &fakeCredentials{secrets: map[string][]byte{"vault/ref": []byte("test-token")}},
+		Factories:   map[domain.SCMProvider]ProviderFactory{domain.SCMProviderGitHub: githubFactory},
+		LookupEnv:   func(string) string { return "" },
+	})
 	_, err := r.Resolve(context.Background(), domain.ProjectRecord{Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-work"}}})
 	if !errors.Is(err, ErrProviderUnavailable) {
 		t.Fatalf("unavailable error = %v", err)
 	}
 
 	cfg := scmconnection.ConnectionTestConfig{ID: "github-work", Provider: domain.SCMProviderGitHub, WebBaseURL: "https://github.com", APIBaseURL: "https://api.github.com", Repository: "owner/repo"}
-	result, err := r.Test(context.Background(), cfg, []byte("test-token"))
+	result, err := r.Test(context.Background(), cfg)
 	if err != nil || result.Status != scmconnection.StatusConnected {
 		t.Fatalf("Test = (%#v, %v)", result, err)
 	}
@@ -481,7 +489,11 @@ func TestResolverUnavailableProviderAndConnectionTesterDispatch(t *testing.T) {
 func TestResolverConnectionTestUsesEnvironmentBeforeVault(t *testing.T) {
 	factory := &fakeFactory{}
 	resolver := New(Deps{
-		Factories: map[domain.SCMProvider]ProviderFactory{domain.SCMProviderGitLab: factory},
+		Connections: &fakeConnectionStore{connections: map[string]domain.SCMConnection{"gitlab-work": {
+			ID: "gitlab-work", Provider: domain.SCMProviderGitLab, CredentialRef: "vault/ref",
+		}}},
+		Credentials: &fakeCredentials{secrets: map[string][]byte{"vault/ref": []byte("vault-token")}},
+		Factories:   map[domain.SCMProvider]ProviderFactory{domain.SCMProviderGitLab: factory},
 		LookupEnv: func(name string) string {
 			if name == "AO_GITLAB_TOKEN" {
 				return "environment-token"
@@ -494,7 +506,7 @@ func TestResolverConnectionTestUsesEnvironmentBeforeVault(t *testing.T) {
 	if err != nil || !configured {
 		t.Fatalf("CredentialOverrideConfigured = (%v, %v)", configured, err)
 	}
-	result, err := resolver.Test(context.Background(), config, []byte("vault-token"))
+	result, err := resolver.Test(context.Background(), config)
 	if err != nil || result.Status != scmconnection.StatusConnected || len(factory.tokens) != 1 || factory.tokens[0] != "environment-token" {
 		t.Fatalf("Test = (%#v, %v), tokens=%v", result, err, factory.tokens)
 	}
@@ -541,7 +553,7 @@ func TestGitHubFactoryTestsConnection(t *testing.T) {
 	factory := NewGitHubFactory(GitHubFactoryOptions{HTTPClient: server.Client()})
 	result, err := factory.Test(context.Background(), scmconnection.ConnectionTestConfig{
 		ID: "github-work", Provider: domain.SCMProviderGitHub,
-		WebBaseURL: "https://github.example", APIBaseURL: server.URL, Repository: "octocat/hello-world",
+		WebBaseURL: "https://github.example", APIBaseURL: server.URL, Repository: "octocat/hello-world.git",
 	}, []byte("github-test-token"))
 	if err != nil {
 		t.Fatal(err)

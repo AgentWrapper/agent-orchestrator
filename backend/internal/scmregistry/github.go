@@ -146,7 +146,7 @@ func (f *githubFactory) githubTestGet(ctx context.Context, endpoint string, toke
 }
 
 func parseGitHubRepository(repository string) (string, string, bool) {
-	parts := strings.Split(strings.TrimSpace(repository), "/")
+	parts := strings.Split(strings.TrimSuffix(strings.TrimSpace(repository), ".git"), "/")
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 		return "", "", false
 	}
