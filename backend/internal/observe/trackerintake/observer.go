@@ -25,7 +25,8 @@ const (
 	DefaultFailureBackoff = 5 * time.Minute
 	// maxIntakePromptLen mirrors the session HTTP prompt limit. Intake uses the
 	// session service directly, so it must enforce the same boundary itself.
-	maxIntakePromptLen = 4096
+	maxIntakePromptLen  = 4096
+	maxIssuesPerProject = 20
 
 	intakePromptTruncationNotice = "\n\n[Issue content truncated to fit the session prompt limit. Open the linked issue for the full details.]\n"
 	intakePromptFooter           = "\nImplement the requested change in this repository, run the relevant checks, and open or update a pull request when ready."
@@ -42,10 +43,9 @@ type Spawner interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
 }
 
-// TrackerResolver picks the tracker adapter for a project's configured
-// provider.
+// TrackerResolver picks the tracker adapter for a project-level SCM connection.
 type TrackerResolver interface {
-	Resolve(provider domain.TrackerProvider) (ports.Tracker, error)
+	Resolve(ctx context.Context, project domain.ProjectRecord) (ports.Tracker, error)
 }
 
 // SingleTrackerResolver returns the same tracker for one specific provider and
@@ -58,7 +58,8 @@ type SingleTrackerResolver struct {
 
 // Resolve returns the wrapped adapter when the requested provider matches, or
 // when the resolver was constructed without a provider pin.
-func (s SingleTrackerResolver) Resolve(provider domain.TrackerProvider) (ports.Tracker, error) {
+func (s SingleTrackerResolver) Resolve(_ context.Context, project domain.ProjectRecord) (ports.Tracker, error) {
+	provider := domain.TrackerProvider(project.Config.WithDefaults().SCM.Provider)
 	if s.Adapter == nil {
 		return nil, fmt.Errorf("tracker intake: no adapter for provider %q", provider)
 	}
@@ -162,11 +163,12 @@ func (o *Observer) Poll(ctx context.Context) error {
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
 func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
-	cfg := project.Config.TrackerIntake.WithDefaults()
+	projectConfig := project.Config.WithDefaults()
+	cfg := projectConfig.TrackerIntake
 	if !cfg.Enabled {
 		return false
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := project.Config.Validate(); err != nil {
 		o.logger.Warn("tracker intake: skipping project with invalid config", "project", project.ID, "err", err)
 		return true
 	}
@@ -175,7 +177,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		o.logger.Warn("tracker intake: skipping project without tracker scope", "project", project.ID, "provider", cfg.Provider, "origin", project.RepoOriginURL)
 		return true
 	}
-	tracker, err := o.resolver.Resolve(cfg.Provider)
+	tracker, err := o.resolver.Resolve(ctx, project)
 	if err != nil {
 		o.logger.Warn("tracker intake: no adapter for provider", "project", project.ID, "provider", cfg.Provider, "err", err)
 		return true
@@ -183,13 +185,18 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 	issues, err := tracker.List(ctx, repo, domain.ListFilter{
 		State:    domain.ListOpen,
 		Assignee: cfg.Assignee,
+		Labels:   append([]string(nil), cfg.Labels...),
+		Limit:    maxIssuesPerProject,
 	})
 	if err != nil {
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
 		return true
 	}
 	var spawnFailed bool
-	for _, issue := range issues {
+	for i, issue := range issues {
+		if i >= maxIssuesPerProject {
+			break
+		}
 		if ctx.Err() != nil {
 			return true
 		}
@@ -219,6 +226,11 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
+	for _, label := range cfg.Labels {
+		if !containsFold(issue.Labels, label) {
+			return false
+		}
+	}
 	assignee := strings.TrimSpace(cfg.Assignee)
 	switch {
 	case assignee == "":
@@ -316,16 +328,16 @@ func truncateUTF8(s string, maxBytes int) string {
 }
 
 func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (domain.TrackerRepo, bool) {
-	provider := cfg.Provider
-	if provider == "" {
-		provider = domain.TrackerProviderGitHub
-	}
-	if provider != domain.TrackerProviderGitHub {
-		return domain.TrackerRepo{}, false
-	}
-	native := strings.TrimSpace(cfg.Repo)
+	projectConfig := project.Config.WithDefaults()
+	provider := domain.TrackerProvider(projectConfig.SCM.Provider)
+	native := strings.TrimSpace(projectConfig.SCM.Repo)
 	if native == "" {
-		native = parseGitHubRepoNative(project.RepoOriginURL)
+		native = strings.TrimSpace(cfg.Repo)
+	}
+	if native == "" {
+		native = parseRepoNative(project.RepoOriginURL, provider)
+	} else {
+		native = cleanRepoPath(native, provider)
 	}
 	if native == "" {
 		return domain.TrackerRepo{}, false
@@ -333,37 +345,37 @@ func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (
 	return domain.TrackerRepo{Provider: provider, Native: native}, true
 }
 
-func parseGitHubRepoNative(remote string) string {
+func parseRepoNative(remote string, provider domain.TrackerProvider) string {
 	remote = strings.TrimSpace(remote)
 	if remote == "" {
 		return ""
 	}
 	if strings.HasPrefix(remote, "git@") {
 		if _, rest, ok := strings.Cut(remote, ":"); ok {
-			return cleanRepoPath(rest)
+			return cleanRepoPath(rest, provider)
 		}
 	}
 	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
-		if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
-			return cleanRepoPath(u.Path)
-		}
-		return ""
+		return cleanRepoPath(u.Path, provider)
 	}
-	return cleanRepoPath(remote)
+	return cleanRepoPath(remote, provider)
 }
 
-func cleanRepoPath(path string) string {
+func cleanRepoPath(path string, provider domain.TrackerProvider) string {
 	path = strings.Trim(strings.TrimSpace(path), "/")
 	path = strings.TrimSuffix(path, ".git")
-	parts := strings.Split(path, "/")
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
 	if len(parts) < 2 {
 		return ""
 	}
-	owner := strings.TrimSpace(parts[len(parts)-2])
-	repo := strings.TrimSpace(parts[len(parts)-1])
-	if owner == "" || repo == "" {
-		return ""
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+		if parts[i] == "" {
+			return ""
+		}
 	}
-	return owner + "/" + repo
+	if provider == domain.TrackerProviderGitHub {
+		parts = parts[len(parts)-2:]
+	}
+	return strings.Join(parts, "/")
 }

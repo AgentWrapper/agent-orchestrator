@@ -94,6 +94,8 @@ type TrackerIntakeConfig struct {
 	// Assignee narrows eligible issues to one assignee. Provider-specific values
 	// such as "*" are passed through unchanged.
 	Assignee string `json:"assignee,omitempty"`
+	// Labels requires every configured provider label to be present.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // WithDefaults preserves the legacy GitHub default for callers without project
@@ -126,14 +128,19 @@ func (c TrackerIntakeConfig) validate(scmProvider SCMProvider) error {
 	if SCMProvider(c.Provider) != scmProvider {
 		return fmt.Errorf("trackerIntake.provider: must match scm.provider %q", scmProvider)
 	}
-	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
-		return err
+	if err := validateSCMRepo(scmProvider, c.Repo); err != nil {
+		return fmt.Errorf("trackerIntake.repo %q: %w", c.Repo, err)
 	}
 	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.Assignee) == "" {
 		return fmt.Errorf("trackerIntake: assignee is required when enabled")
+	}
+	for i, label := range c.Labels {
+		if strings.TrimSpace(label) == "" {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not be blank", i)
+		}
 	}
 	return nil
 }

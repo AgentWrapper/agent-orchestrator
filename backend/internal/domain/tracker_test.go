@@ -43,3 +43,10 @@ func TestTrackerIntakeConfigValidateProvider(t *testing.T) {
 		})
 	}
 }
+
+func TestTrackerIntakeConfigRejectsBlankLabel(t *testing.T) {
+	cfg := TrackerIntakeConfig{Enabled: true, Assignee: "alice", Labels: []string{"ready", " "}}
+	if err := cfg.validate(SCMProviderGitHub); err == nil {
+		t.Fatal("validate() error = nil, want blank label rejection")
+	}
+}

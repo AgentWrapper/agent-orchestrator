@@ -9,7 +9,14 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import {
+	buildIntake,
+	deriveProviderRepo,
+	deriveRepositoryHref,
+	IntakeFields,
+	type IntakeForm,
+	intakeNeedsRule,
+} from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -76,6 +83,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
+	const intakeProvider = config.scm?.provider ?? intake.provider ?? "github";
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -87,6 +95,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
+		intakeLabels: intake.labels?.join(", ") ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -101,13 +110,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	});
 
 	// The Electron app only registers git projects today, so the daemon always has a usable
-	// git origin to derive owner/repo from (trackerRepo() in observer.go) when
+	// git origin to derive a provider-native repository path when
 	// trackerIntake.repo is unset — there's no manual override input here. This mirrors that
 	// same derivation client-side purely for display (a link to the repo being polled).
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
+		provider: intakeProvider,
 		repo: form.intakeRepo,
 		assignee: form.intakeAssignee,
+		labels: form.intakeLabels,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
@@ -115,8 +126,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
 			intakeRepo: patch.repo ?? f.intakeRepo,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+			intakeLabels: patch.labels ?? f.intakeLabels,
 		}));
-	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
+	const effectiveIntakeRepo =
+		config.scm?.repo?.trim() || form.intakeRepo.trim() || deriveProviderRepo(project.repo, intakeProvider);
+	const intakeRepoHref = deriveRepositoryHref(project.repo, effectiveIntakeRepo);
 	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({
@@ -342,7 +356,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-control">Tracker intake</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
+					<IntakeFields
+						form={intakeForm}
+						onChange={patchIntake}
+						repoPreview={{ provider: intakeProvider, value: effectiveIntakeRepo, href: intakeRepoHref }}
+					/>
 				</CardContent>
 			</Card>
 

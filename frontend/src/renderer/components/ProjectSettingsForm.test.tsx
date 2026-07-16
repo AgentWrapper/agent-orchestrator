@@ -313,6 +313,51 @@ describe("ProjectSettingsForm", () => {
 		});
 	});
 
+	it("preserves project-level GitLab intake and previews subgroup repositories", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@gitlab.example.com:group/subgroup/project-one.git",
+					defaultBranch: "main",
+					config: {
+						scm: { provider: "gitlab", connectionId: "gitlab-main" },
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+						trackerIntake: {
+							enabled: true,
+							provider: "gitlab",
+							assignee: "alice",
+							labels: ["ready", "backend"],
+						},
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("link", { name: "group/subgroup/project-one" })).toHaveAttribute(
+			"href",
+			"https://gitlab.example.com/group/subgroup/project-one",
+		);
+		expect(screen.getByLabelText("Labels")).toHaveValue("ready, backend");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0]?.[1]?.body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "gitlab",
+			assignee: "alice",
+			labels: ["ready", "backend"],
+		});
+	});
+
 	it("blocks save when intake is enabled with no assignee", async () => {
 		getMock.mockResolvedValue({
 			data: {

@@ -3,6 +3,7 @@ package trackerintake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -81,6 +82,87 @@ func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	}
 	if len(spawner.calls) != 0 {
 		t.Fatalf("spawn calls = %d, want 0", len(spawner.calls))
+	}
+}
+
+func TestPollResolvesTrackerAndRepoPerProject(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{
+		{
+			ID:            "github-project",
+			RepoOriginURL: "git@github.com:acme/web.git",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled: true, Assignee: "alice",
+			}},
+		},
+		{
+			ID:            "gitlab-project",
+			RepoOriginURL: "git@gitlab.example.com:group/subgroup/api.git",
+			Config: domain.ProjectConfig{
+				SCM: domain.SCMProjectConfig{
+					Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-main",
+				},
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "bob"},
+			},
+		},
+	}}
+	githubTracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/web#1"},
+		State: domain.IssueOpen, Assignees: []string{"alice"},
+	}}}
+	gitlabTracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "gitlab.example.com/group/subgroup/api#!2"},
+		State: domain.IssueOpen, Assignees: []string{"bob"},
+	}}}
+	resolver := &fakeResolver{trackers: map[string]ports.Tracker{
+		"github-project": githubTracker,
+		"gitlab-project": gitlabTracker,
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(resolver, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if got := resolver.projects; len(got) != 2 || got[0] != "github-project" || got[1] != "gitlab-project" {
+		t.Fatalf("resolved projects = %v", got)
+	}
+	if got := githubTracker.repos; len(got) != 1 || got[0] != (domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/web"}) {
+		t.Fatalf("GitHub repos = %+v", got)
+	}
+	if got := gitlabTracker.repos; len(got) != 1 || got[0] != (domain.TrackerRepo{Provider: domain.TrackerProviderGitLab, Native: "group/subgroup/api"}) {
+		t.Fatalf("GitLab repos = %+v", got)
+	}
+	if len(githubTracker.filters) != 1 || githubTracker.filters[0].Limit != 20 {
+		t.Fatalf("GitHub filter = %+v, want limit 20", githubTracker.filters)
+	}
+	if len(gitlabTracker.filters) != 1 || gitlabTracker.filters[0].Limit != 20 {
+		t.Fatalf("GitLab filter = %+v, want limit 20", gitlabTracker.filters)
+	}
+	if len(spawner.calls) != 2 || spawner.calls[1].IssueID != "gitlab:gitlab.example.com/group/subgroup/api#!2" {
+		t.Fatalf("spawn calls = %+v", spawner.calls)
+	}
+}
+
+func TestPollSkipsExistingGitLabIssueSessionAfterRestart(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://gitlab.example.com/group/subgroup/demo.git",
+			Config: domain.ProjectConfig{
+				SCM:           domain.SCMProjectConfig{Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-main"},
+				TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"},
+			},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID: "demo-1", ProjectID: "demo", IssueID: "gitlab:gitlab.example.com/group/subgroup/demo#!12",
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "gitlab.example.com/group/subgroup/demo#!12"},
+		State: domain.IssueOpen, Assignees: []string{"alice"},
+	}}}
+
+	if err := New(&fakeResolver{trackers: map[string]ports.Tracker{"demo": tracker}}, store, &fakeSpawner{}, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
 	}
 }
 
@@ -209,12 +291,14 @@ func TestPollAppliesLocalEligibilityFilter(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+			Enabled: true, Assignee: "alice", Labels: []string{"agent-ready", "backend"},
+		}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "unassigned", State: domain.IssueOpen},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "wrong assignee", State: domain.IssueOpen, Assignees: []string{"bob"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "eligible", State: domain.IssueOpen, Labels: []string{"Agent-Ready"}, Assignees: []string{"Alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "missing label", State: domain.IssueOpen, Labels: []string{"agent-ready"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "eligible", State: domain.IssueOpen, Labels: []string{"Agent-Ready", "BACKEND"}, Assignees: []string{"Alice"}},
 	}}
 	spawner := &fakeSpawner{}
 
@@ -223,6 +307,32 @@ func TestPollAppliesLocalEligibilityFilter(t *testing.T) {
 	}
 	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#3" {
 		t.Fatalf("spawn calls = %+v, want only eligible issue #3", spawner.calls)
+	}
+	if got := tracker.filters[0].Labels; len(got) != 2 || got[0] != "agent-ready" || got[1] != "backend" {
+		t.Fatalf("tracker label filter = %v", got)
+	}
+}
+
+func TestPollCapsEachProjectScanAtTwentyIssues(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+	}}}
+	issues := make([]domain.Issue, 21)
+	for i := range issues {
+		issues[i] = domain.Issue{
+			ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: fmt.Sprintf("acme/demo#%d", i+1)},
+			State: domain.IssueOpen, Assignees: []string{"alice"},
+		}
+	}
+	tracker := &fakeTracker{issues: issues}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 20 || tracker.filters[0].Limit != 20 {
+		t.Fatalf("spawn count/filter = %d/%+v, want 20", len(spawner.calls), tracker.filters[0])
 	}
 }
 
@@ -283,8 +393,40 @@ func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
 	}
 }
 
+func TestTrackerRepoPrefersProjectSCMRepoOverLegacyIntakeRepo(t *testing.T) {
+	project := domain.ProjectRecord{
+		RepoOriginURL: "https://gitlab.example.com/wrong/origin.git",
+		Config: domain.ProjectConfig{
+			SCM: domain.SCMProjectConfig{
+				Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-main", Repo: "group/subgroup/project",
+			},
+			TrackerIntake: domain.TrackerIntakeConfig{
+				Enabled: true, Repo: "legacy/intake", Assignee: "alice",
+			},
+		},
+	}
+	repo, ok := trackerRepo(project, project.Config.WithDefaults().TrackerIntake)
+	if !ok || repo.Provider != domain.TrackerProviderGitLab || repo.Native != "group/subgroup/project" {
+		t.Fatalf("trackerRepo = %+v, %v", repo, ok)
+	}
+}
+
 func singleResolver(tracker ports.Tracker) TrackerResolver {
 	return SingleTrackerResolver{Provider: domain.TrackerProviderGitHub, Adapter: tracker}
+}
+
+type fakeResolver struct {
+	trackers map[string]ports.Tracker
+	projects []string
+}
+
+func (f *fakeResolver) Resolve(_ context.Context, project domain.ProjectRecord) (ports.Tracker, error) {
+	f.projects = append(f.projects, project.ID)
+	tracker := f.trackers[project.ID]
+	if tracker == nil {
+		return nil, errors.New("tracker unavailable")
+	}
+	return tracker, nil
 }
 
 type fakeStore struct {

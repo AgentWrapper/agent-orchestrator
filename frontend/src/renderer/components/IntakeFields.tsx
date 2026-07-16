@@ -11,18 +11,15 @@ type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 // (--tracker-repo) survives a UI save instead of being wiped.
 export type IntakeForm = {
 	enabled: boolean;
+	provider: "github" | "gitlab";
 	repo: string;
 	assignee: string;
+	labels: string;
 };
-
-// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
-// backend's openapi enum). Adding Linear/Jira later means: the backend enum
-// grows, IntakeFields gains a provider <Select> + per-provider scope fields,
-// and buildIntake switches the scope field it emits.
 
 // intakeNeedsRule mirrors the backend guard (TrackerIntakeConfig.Validate):
 // enabling intake requires an assignee so it cannot drain an entire issue
-// backlog. v1 intake is assignee-only.
+// backlog. Labels are optional and narrow the assignee-matched set further.
 export function intakeNeedsRule(form: IntakeForm): boolean {
 	return form.enabled && form.assignee.trim() === "";
 }
@@ -33,18 +30,21 @@ export function intakeNeedsRule(form: IntakeForm): boolean {
 export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 	const next: TrackerIntakeConfig = {
 		enabled: form.enabled || undefined,
-		provider: form.enabled ? "github" : undefined,
+		provider: form.enabled ? form.provider : undefined,
 		repo: form.repo.trim() || undefined,
 		assignee: form.assignee.trim() || undefined,
+		labels: form.labels
+			.split(",")
+			.map((label) => label.trim())
+			.filter(Boolean),
 	};
+	if (next.labels?.length === 0) next.labels = undefined;
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
 }
 
-// deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (observer.go):
-// derive "owner/repo" from a git origin URL for display only. The daemon does
-// the authoritative derivation server-side at poll time; this is purely so a
-// settings card can show which repo intake will actually poll.
-export function deriveGitHubRepo(remote?: string): string | undefined {
+// deriveProviderRepo mirrors the daemon's provider-neutral origin parsing for
+// display only. GitLab preserves nested group paths; GitHub uses owner/repo.
+export function deriveProviderRepo(remote: string | undefined, provider: "github" | "gitlab"): string | undefined {
 	const trimmed = remote?.trim();
 	if (!trimmed) return undefined;
 	let path: string | undefined;
@@ -63,9 +63,33 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 		.replace(/^\/+|\/+$/g, "")
 		.split("/");
 	if (parts.length < 2) return undefined;
-	const owner = parts[parts.length - 2].trim();
-	const repo = parts[parts.length - 1].trim();
-	return owner && repo ? `${owner}/${repo}` : undefined;
+	const cleaned = parts.map((part) => part.trim()).filter(Boolean);
+	if (cleaned.length < 2) return undefined;
+	return (provider === "github" ? cleaned.slice(-2) : cleaned).join("/");
+}
+
+export function deriveRepositoryHref(remote?: string, repo?: string): string | undefined {
+	const trimmed = remote?.trim();
+	if (!trimmed) return undefined;
+	if (trimmed.startsWith("git@")) {
+		const match = trimmed.match(/^git@([^:]+):(.+)$/);
+		if (!match) return undefined;
+		const path = repo?.trim() || match[2];
+		return `https://${match[1]}/${path.replace(/\.git$/, "").replace(/^\/+|\/+$/g, "")}`;
+	}
+	try {
+		const url = new URL(trimmed);
+		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+		url.username = "";
+		url.password = "";
+		url.search = "";
+		url.hash = "";
+		const path = repo?.trim() || url.pathname;
+		url.pathname = `/${path.replace(/^\/+/, "")}`.replace(/\.git$/, "").replace(/\/+$/, "");
+		return url.toString().replace(/\/$/, "");
+	} catch {
+		return undefined;
+	}
 }
 
 // IntakeFields renders the shared "Tracker intake" controls: an enable checkbox
@@ -85,7 +109,7 @@ export function IntakeFields({
 }: {
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
-	repoPreview?: { value?: string };
+	repoPreview?: { provider: "github" | "gitlab"; value?: string; href?: string };
 	// compact drops the descriptive/help prose and folds the explanation into an
 	// info-icon tooltip — used by the create-project sheet, which stays minimal.
 	compact?: boolean;
@@ -120,7 +144,7 @@ export function IntakeFields({
 									<Info className="size-3.5" aria-hidden="true" />
 								</button>
 							</TooltipTrigger>
-							<TooltipContent>Auto-spawns a worker session for each matching GitHub issue.</TooltipContent>
+							<TooltipContent>Auto-spawns a worker session for each matching tracker issue.</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
 				)}
@@ -129,18 +153,21 @@ export function IntakeFields({
 				<>
 					{repoPreview && (
 						<IntakeField label="Repository">
-							{repoPreview.value ? (
+							{repoPreview.value && repoPreview.href ? (
 								<a
-									href={`https://github.com/${repoPreview.value}`}
+									href={repoPreview.href}
 									target="_blank"
 									rel="noopener noreferrer"
 									className="text-control text-accent hover:underline"
 								>
 									{repoPreview.value}
 								</a>
+							) : repoPreview.value ? (
+								<span className="text-control text-foreground">{repoPreview.value}</span>
 							) : (
 								<span className="text-control text-muted-foreground">
-									Could not detect a GitHub repo from this project's git origin.
+									Could not detect a {repoPreview.provider === "gitlab" ? "GitLab" : "GitHub"} repository from this
+									 project's git origin.
 								</span>
 							)}
 						</IntakeField>
@@ -152,6 +179,15 @@ export function IntakeFields({
 							value={form.assignee}
 							onChange={(e) => onChange({ assignee: e.target.value })}
 							placeholder="type username or * for any"
+						/>
+					</IntakeField>
+					<IntakeField label="Labels" htmlFor="intakeLabels">
+						<input
+							id="intakeLabels"
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							value={form.labels}
+							onChange={(e) => onChange({ labels: e.target.value })}
+							placeholder="comma-separated labels"
 						/>
 					</IntakeField>
 					{!compact && needsRule && (

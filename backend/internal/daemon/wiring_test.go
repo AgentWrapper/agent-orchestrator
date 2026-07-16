@@ -210,13 +210,10 @@ func TestWiring_LegacyConsumersUseSharedGitHubDefaultResolution(t *testing.T) {
 	if done := startSCMObserver(context.Background(), nil, nil, providers, log); !isClosed(done) {
 		t.Fatal("SCM observer did not stop after provider resolution failed")
 	}
-	if done := startTrackerIntake(context.Background(), nil, nil, providers, log); !isClosed(done) {
-		t.Fatal("tracker intake did not stop after provider resolution failed")
-	}
 
 	want := legacyGitHubProject()
-	if len(providers.projects) != 3 {
-		t.Fatalf("provider resolutions = %d, want 3", len(providers.projects))
+	if len(providers.projects) != 2 {
+		t.Fatalf("provider resolutions = %d, want 2 eager legacy consumers", len(providers.projects))
 	}
 	for i, project := range providers.projects {
 		if !reflect.DeepEqual(project, want) {
@@ -224,6 +221,47 @@ func TestWiring_LegacyConsumersUseSharedGitHubDefaultResolution(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectTrackerResolverUsesThePolledProject(t *testing.T) {
+	tracker := &wiringTracker{}
+	providers := &recordingProviderResolverWithBundle{bundle: scmregistry.ProviderBundle{Tracker: tracker}}
+	project := domain.ProjectRecord{
+		ID: "gitlab-project",
+		Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+			Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-main",
+		}},
+	}
+
+	got, err := (projectTrackerResolver{providers: providers}).Resolve(context.Background(), project)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got != tracker || len(providers.projects) != 1 || !reflect.DeepEqual(providers.projects[0], project) {
+		t.Fatalf("Resolve() tracker/project = %T/%+v", got, providers.projects)
+	}
+}
+
+type recordingProviderResolverWithBundle struct {
+	projects []domain.ProjectRecord
+	bundle   scmregistry.ProviderBundle
+}
+
+func (r *recordingProviderResolverWithBundle) Resolve(_ context.Context, project domain.ProjectRecord) (scmregistry.ProviderBundle, error) {
+	r.projects = append(r.projects, project)
+	return r.bundle, nil
+}
+
+type wiringTracker struct{}
+
+func (*wiringTracker) Get(context.Context, domain.TrackerID) (domain.Issue, error) {
+	return domain.Issue{}, nil
+}
+
+func (*wiringTracker) List(context.Context, domain.TrackerRepo, domain.ListFilter) ([]domain.Issue, error) {
+	return nil, nil
+}
+
+func (*wiringTracker) Preflight(context.Context) error { return nil }
 
 func TestWiring_ProjectProviderResolverCachesLegacyBundleAcrossConsumers(t *testing.T) {
 	store, err := sqlite.Open(t.TempDir())
