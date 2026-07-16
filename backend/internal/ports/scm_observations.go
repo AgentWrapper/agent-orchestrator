@@ -120,6 +120,10 @@ type SCMPRObservation struct {
 	Deletions int
 	// ChangedFiles is the provider-reported changed file count.
 	ChangedFiles int
+	// DiffStatsComplete is true only when additions, deletions, and changed files
+	// were computed from a complete provider response. False means the numeric
+	// fields must not be presented as exact values.
+	DiffStatsComplete bool
 	// Author is the provider login/name of the PR author.
 	Author string
 	// BaseSHA is the current base branch SHA when the provider supplies it.

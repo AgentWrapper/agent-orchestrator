@@ -60,6 +60,14 @@ func (e *RateLimitError) Error() string { return ErrRateLimited.Error() }
 // Is makes RateLimitError match ErrRateLimited.
 func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited }
 
+// RateLimitDelay returns the provider-requested delay for observer backoff.
+func (e *RateLimitError) RateLimitDelay(time.Time) time.Duration {
+	if e == nil {
+		return 0
+	}
+	return e.RetryAfter
+}
+
 // PreconditionError identifies an action rejected with 409 or 422.
 type PreconditionError struct {
 	StatusCode int
@@ -151,6 +159,10 @@ func EncodedProjectPath(project string) string {
 
 // DoJSON sends one JSON request and optionally decodes a bounded JSON response.
 func (c *Client) DoJSON(ctx context.Context, method, path string, query url.Values, body, out any) (Response, error) {
+	return c.doJSONWithHeaders(ctx, method, path, query, nil, body, out)
+}
+
+func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, query url.Values, headers http.Header, body, out any) (Response, error) {
 	var reader io.Reader = http.NoBody
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -166,7 +178,7 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, query url.Valu
 		}
 		return Response{}, errors.New("gitlab scm: invalid request path")
 	}
-	response, err := c.do(ctx, method, endpoint, reader, "application/json", c.maxJSONBytes)
+	response, err := c.do(ctx, method, endpoint, reader, "application/json", c.maxJSONBytes, headers)
 	if err != nil {
 		return response, err
 	}
@@ -187,7 +199,7 @@ func (c *Client) GetRaw(ctx context.Context, path string, query url.Values) ([]b
 		}
 		return nil, errors.New("gitlab scm: invalid request path")
 	}
-	response, err := c.do(ctx, http.MethodGet, endpoint, http.NoBody, "*/*", c.maxRawBytes)
+	response, err := c.do(ctx, http.MethodGet, endpoint, http.NoBody, "*/*", c.maxRawBytes, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +216,7 @@ func (c *Client) GetJSONPages(ctx context.Context, path string, query url.Values
 		if page >= maxPaginationPages {
 			return ErrInvalidPagination
 		}
-		response, err := c.do(ctx, http.MethodGet, endpoint, http.NoBody, "application/json", c.maxJSONBytes)
+		response, err := c.do(ctx, http.MethodGet, endpoint, http.NoBody, "application/json", c.maxJSONBytes, nil)
 		if err != nil {
 			return err
 		}
@@ -221,7 +233,7 @@ func (c *Client) GetJSONPages(ctx context.Context, path string, query url.Values
 	return nil
 }
 
-func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body io.Reader, accept string, limit int64) (Response, error) {
+func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body io.Reader, accept string, limit int64, headers http.Header) (Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
 		return Response{}, errors.New("gitlab scm: build request")
@@ -231,6 +243,11 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body 
 	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", c.userAgent)
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
 	if err := c.authorize(ctx, req); err != nil {
 		return Response{}, err
 	}
@@ -247,6 +264,10 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body 
 	defer func() { _ = resp.Body.Close() }()
 	responseBody, err := readBounded(resp.Body, limit)
 	response := Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: responseBody}
+	if resp.StatusCode == http.StatusNotModified {
+		response.Body = nil
+		return response, nil
+	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		classified := c.classify(resp)
 		if errors.Is(classified, ErrAuthFailed) {
