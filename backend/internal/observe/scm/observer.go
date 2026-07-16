@@ -32,6 +32,9 @@ const (
 	DefaultReviewInterval = 2 * time.Minute
 	// DefaultCacheMax bounds each in-memory ETag/review cache map.
 	DefaultCacheMax = 512
+	// DefaultFullReconcileInterval bounds how long provider revisions may defer
+	// an authoritative refresh.
+	DefaultFullReconcileInterval = 10 * time.Minute
 	// BatchSize is the maximum number of PRs in one provider batch fetch.
 	BatchSize = 25
 )
@@ -80,6 +83,9 @@ type Config struct {
 	Logger *slog.Logger
 	// CacheMax bounds each in-memory ETag/review cache. Zero uses DefaultCacheMax.
 	CacheMax int
+	// FullReconcileInterval clears connection-scoped provider revisions before
+	// a full refresh. Zero uses DefaultFullReconcileInterval.
+	FullReconcileInterval time.Duration
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
@@ -124,6 +130,9 @@ func newCache(maxEntries int) ObserverCache {
 type Observer struct {
 	// provider is the SCM adapter used for all provider/network operations.
 	provider Provider
+	// resolver enables project-scoped multi-provider polling. It is nil for the
+	// legacy single-provider constructor.
+	resolver ProjectProviderResolver
 	// store supplies sessions/projects/local PR state and receives transactional writes.
 	store Store
 	// lifecycle is notified after successful persistence of meaningful changes.
@@ -136,6 +145,11 @@ type Observer struct {
 	clock func() time.Time
 	// logger receives non-fatal operational failures.
 	logger *slog.Logger
+	// fullReconcileInterval bounds provider revision staleness for resolver lanes.
+	fullReconcileInterval time.Duration
+	// lanes own independent credentials, revisions, review cadence, and backoff
+	// for each provider connection.
+	lanes map[string]*providerLane
 	// credentialsChecked records whether an optional provider credential gate ran.
 	credentialsChecked bool
 	// disabled is set after the credential gate reports unavailable credentials.
@@ -147,12 +161,15 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, fullReconcileInterval: cfg.FullReconcileInterval, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
 	if o.reviewInterval <= 0 {
 		o.reviewInterval = DefaultReviewInterval
+	}
+	if o.fullReconcileInterval <= 0 {
+		o.fullReconcileInterval = DefaultFullReconcileInterval
 	}
 	if o.clock == nil {
 		o.clock = time.Now
@@ -174,6 +191,9 @@ func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Obser
 // wrap stays once-per-process; a transient error there simply defers the check
 // to the next tick.
 func (o *Observer) Start(ctx context.Context) <-chan struct{} {
+	if o.resolver != nil {
+		return observe.StartPollLoop(ctx, o.tick, o.Poll, o.logger, "scm observer")
+	}
 	var credentialGate sync.Once
 	poll := func(ctx context.Context) error {
 		credentialGate.Do(func() {
@@ -236,6 +256,13 @@ type persistenceOptions struct {
 
 // Poll runs one synchronous SCM observation cycle.
 func (o *Observer) Poll(ctx context.Context) error {
+	if o.resolver != nil {
+		return o.pollResolved(ctx)
+	}
+	return o.pollProvider(ctx)
+}
+
+func (o *Observer) pollProvider(ctx context.Context) error {
 	now := o.clock().UTC()
 	if err := ctx.Err(); err != nil {
 		return err
@@ -599,11 +626,17 @@ func (o *Observer) workspaceSCMSessionRepos(ctx context.Context, proj domain.Pro
 
 func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRepo, bool) {
 	if pr.Provider != "" && pr.Host != "" && pr.Repo != "" {
-		owner, name, ok := strings.Cut(pr.Repo, "/")
-		if !ok || owner == "" || name == "" {
+		providerHostMatches := len(repos) == 0
+		for _, repo := range repos {
+			if strings.EqualFold(pr.Provider, repo.Provider) && strings.EqualFold(pr.Host, repo.Host) {
+				providerHostMatches = true
+				break
+			}
+		}
+		if !providerHostMatches {
 			return ports.SCMRepo{}, false
 		}
-		return ports.SCMRepo{Provider: pr.Provider, Host: pr.Host, Owner: owner, Name: name, Repo: pr.Repo}, true
+		return ports.SCMRepo{Provider: pr.Provider, Host: pr.Host, Owner: ownerOf(pr.Repo), Name: nameOf(pr.Repo), Repo: pr.Repo}, true
 	}
 	if pr.Repo != "" {
 		for _, repo := range repos {
@@ -1354,17 +1387,15 @@ func repoFullName(repo ports.SCMRepo) string {
 }
 
 func ownerOf(full string) string {
-	parts := strings.SplitN(full, "/", 2)
-	if len(parts) == 2 {
-		return parts[0]
+	if split := strings.LastIndex(full, "/"); split > 0 {
+		return full[:split]
 	}
 	return ""
 }
 
 func nameOf(full string) string {
-	parts := strings.SplitN(full, "/", 2)
-	if len(parts) == 2 {
-		return parts[1]
+	if split := strings.LastIndex(full, "/"); split >= 0 && split < len(full)-1 {
+		return full[split+1:]
 	}
 	return full
 }

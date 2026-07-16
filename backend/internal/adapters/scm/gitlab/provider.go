@@ -219,7 +219,8 @@ func projectPath(repo ports.SCMRepo) string {
 }
 
 func mrAPIPath(repo ports.SCMRepo, iid int, suffix ...string) string {
-	parts := []string{"/projects/" + EncodedProjectPath(projectPath(repo)), "merge_requests", strconv.Itoa(iid)}
+	parts := make([]string, 0, 3+len(suffix))
+	parts = append(parts, "/projects/"+EncodedProjectPath(projectPath(repo)), "merge_requests", strconv.Itoa(iid))
 	parts = append(parts, suffix...)
 	return strings.Join(parts, "/")
 }

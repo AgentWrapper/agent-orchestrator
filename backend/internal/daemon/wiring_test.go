@@ -189,7 +189,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 }
 
-func TestWiring_LegacyConsumersUseSharedGitHubDefaultResolution(t *testing.T) {
+func TestWiring_SCMObserverDoesNotEagerlyResolveLegacyGitHub(t *testing.T) {
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -207,13 +207,13 @@ func TestWiring_LegacyConsumersUseSharedGitHubDefaultResolution(t *testing.T) {
 	if _, _, _, err := startSession(cfg, rt, store, lcm, messenger, providers, telemetryadapter.NoopSink{}, log); err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
-	if done := startSCMObserver(context.Background(), nil, nil, providers, log); !isClosed(done) {
-		t.Fatal("SCM observer did not stop after provider resolution failed")
-	}
+	observerCtx, cancelObserver := context.WithCancel(context.Background())
+	cancelObserver()
+	<-startSCMObserver(observerCtx, store, lcm, providers, log)
 
 	want := legacyGitHubProject()
-	if len(providers.projects) != 2 {
-		t.Fatalf("provider resolutions = %d, want 2 eager legacy consumers", len(providers.projects))
+	if len(providers.projects) != 1 {
+		t.Fatalf("provider resolutions = %d, want only the remaining eager legacy consumer", len(providers.projects))
 	}
 	for i, project := range providers.projects {
 		if !reflect.DeepEqual(project, want) {
@@ -241,6 +241,25 @@ func TestProjectTrackerResolverUsesThePolledProject(t *testing.T) {
 	}
 }
 
+func TestProjectSCMResolverUsesThePolledProject(t *testing.T) {
+	provider := &wiringSCMProvider{}
+	providers := &recordingProviderResolverWithBundle{bundle: scmregistry.ProviderBundle{SCM: provider}}
+	project := domain.ProjectRecord{
+		ID: "gitlab-project",
+		Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+			Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-main",
+		}},
+	}
+
+	got, err := (projectSCMResolver{providers: providers}).ResolveSCM(context.Background(), project)
+	if err != nil {
+		t.Fatalf("ResolveSCM() error = %v", err)
+	}
+	if got.Provider != provider || got.ConnectionID != "gitlab-main" || len(providers.projects) != 1 || !reflect.DeepEqual(providers.projects[0], project) {
+		t.Fatalf("ResolveSCM() provider/connection/project = %T/%q/%+v", got.Provider, got.ConnectionID, providers.projects)
+	}
+}
+
 type recordingProviderResolverWithBundle struct {
 	projects []domain.ProjectRecord
 	bundle   scmregistry.ProviderBundle
@@ -262,6 +281,30 @@ func (*wiringTracker) List(context.Context, domain.TrackerRepo, domain.ListFilte
 }
 
 func (*wiringTracker) Preflight(context.Context) error { return nil }
+
+type wiringSCMProvider struct{}
+
+func (*wiringSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) {
+	return ports.SCMRepo{}, false
+}
+func (*wiringSCMProvider) RepoPRListGuard(context.Context, ports.SCMRepo, string) (ports.SCMGuardResult, error) {
+	return ports.SCMGuardResult{}, nil
+}
+func (*wiringSCMProvider) ListOpenPRsByRepo(context.Context, ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+	return nil, nil
+}
+func (*wiringSCMProvider) CommitChecksGuard(context.Context, ports.SCMRepo, string, string) (ports.SCMGuardResult, error) {
+	return ports.SCMGuardResult{}, nil
+}
+func (*wiringSCMProvider) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	return nil, nil
+}
+func (*wiringSCMProvider) FetchFailedCheckLogTail(context.Context, ports.SCMRepo, ports.SCMCheckObservation) (string, error) {
+	return "", nil
+}
+func (*wiringSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
+	return ports.SCMReviewObservation{}, nil
+}
 
 func TestWiring_ProjectProviderResolverCachesLegacyBundleAcrossConsumers(t *testing.T) {
 	store, err := sqlite.Open(t.TempDir())
@@ -285,15 +328,6 @@ func TestWiring_ProjectProviderResolverCachesLegacyBundleAcrossConsumers(t *test
 	}
 	if first.SCM != second.SCM || first.Tracker != second.Tracker {
 		t.Fatal("legacy consumers received independently constructed provider bundles")
-	}
-}
-
-func isClosed(done <-chan struct{}) bool {
-	select {
-	case <-done:
-		return true
-	default:
-		return false
 	}
 }
 

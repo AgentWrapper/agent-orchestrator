@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -133,6 +134,7 @@ type fakeProvider struct {
 	credentialErr    error
 	credentialChecks int
 	repoGuardCalls   int
+	repoGuardETags   []string
 	listCalls        int
 	fetchBatches     [][]ports.SCMPRRef
 	logCalls         int
@@ -163,10 +165,11 @@ func (p *fakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	}
 	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: parts[0], Name: parts[1], Repo: parts[0] + "/" + parts[1]}, true
 }
-func (p *fakeProvider) RepoPRListGuard(_ context.Context, repo ports.SCMRepo, _ string) (ports.SCMGuardResult, error) {
+func (p *fakeProvider) RepoPRListGuard(_ context.Context, repo ports.SCMRepo, etag string) (ports.SCMGuardResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.repoGuardCalls++
+	p.repoGuardETags = append(p.repoGuardETags, etag)
 	return p.repoGuards[prKey(repo, 0)], nil
 }
 func (p *fakeProvider) ListOpenPRsByRepo(_ context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error) {
@@ -227,6 +230,282 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 
 func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
 	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128})
+}
+
+type fakeProjectProviderResolver struct {
+	mu       sync.Mutex
+	resolved map[string]ResolvedProvider
+	calls    []string
+}
+
+func (r *fakeProjectProviderResolver) ResolveSCM(_ context.Context, project domain.ProjectRecord) (ResolvedProvider, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, project.ID)
+	resolved, ok := r.resolved[project.ID]
+	if !ok {
+		return ResolvedProvider{}, fmt.Errorf("no provider for %s", project.ID)
+	}
+	return resolved, nil
+}
+
+type scopedFakeProvider struct {
+	*fakeProvider
+	provider string
+	host     string
+}
+
+func (p *scopedFakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
+	remote = strings.TrimSpace(strings.TrimSuffix(remote, ".git"))
+	prefix := "https://" + p.host + "/"
+	if !strings.HasPrefix(remote, prefix) {
+		return ports.SCMRepo{}, false
+	}
+	repo := strings.Trim(strings.TrimPrefix(remote, prefix), "/")
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" {
+		return ports.SCMRepo{}, false
+	}
+	return ports.SCMRepo{Provider: p.provider, Host: p.host, Owner: owner, Name: name, Repo: repo}, true
+}
+
+type observerRateLimitError struct{ RetryAfter time.Duration }
+
+func (e *observerRateLimitError) Error() string { return "rate limited" }
+
+func (e *observerRateLimitError) RateLimitDelay(time.Time) time.Duration { return e.RetryAfter }
+
+func projectSession(projectID, sessionID, branch string) domain.SessionRecord {
+	return domain.SessionRecord{ID: domain.SessionID(sessionID), ProjectID: domain.ProjectID(projectID), Metadata: domain.SessionMetadata{Branch: branch}}
+}
+
+func projectConfig(provider domain.SCMProvider, connectionID, repo string) domain.ProjectConfig {
+	return domain.ProjectConfig{SCM: domain.SCMProjectConfig{Provider: provider, ConnectionID: connectionID, Repo: repo}}
+}
+
+func newResolverObserver(store Store, resolver ProjectProviderResolver, lc Lifecycle, now *time.Time) *Observer {
+	return NewWithResolver(resolver, store, lc, Config{
+		Clock: func() time.Time { return *now }, Tick: time.Hour,
+		Logger: quietSlog(), CacheMax: 256, FullReconcileInterval: 10 * time.Minute,
+	})
+}
+
+func scopedObservation(repo ports.SCMRepo, number int, branch string) ports.SCMObservation {
+	obs := testObs(number)
+	obs.Provider = repo.Provider
+	obs.Host = repo.Host
+	obs.Repo = repo.Repo
+	obs.PR.URL = fmt.Sprintf("https://%s/%s/change/%d", repo.Host, repo.Repo, number)
+	obs.PR.HTMLURL = obs.PR.URL
+	obs.PR.SourceBranch = branch
+	obs.PR.HeadRepo = repo.Repo
+	obs.PR.HeadSHA = fmt.Sprintf("sha%d", number)
+	obs.CI.HeadSHA = obs.PR.HeadSHA
+	return obs
+}
+
+func TestPoll_ResolvesMixedProvidersPerProject(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	githubRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "acme", Name: "web", Repo: "acme/web"}
+	gitlabRepo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.internal", Owner: "group", Name: "api", Repo: "group/api"}
+	github := &scopedFakeProvider{fakeProvider: &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(githubRepo, 0): {ETag: "gh-v1"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(githubRepo, 0): {scopedObservation(githubRepo, 1, "gh-work").PR}},
+		observations: map[string]ports.SCMObservation{prKey(githubRepo, 1): scopedObservation(githubRepo, 1, "gh-work")},
+	}, provider: "github", host: "github.com"}
+	gitlab := &scopedFakeProvider{fakeProvider: &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(gitlabRepo, 0): {ETag: "gl-v1"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(gitlabRepo, 0): {scopedObservation(gitlabRepo, 2, "gl-work").PR}},
+		observations: map[string]ports.SCMObservation{prKey(gitlabRepo, 2): scopedObservation(gitlabRepo, 2, "gl-work")},
+	}, provider: "gitlab", host: "gitlab.internal"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{projectSession("gh", "gh-1", "gh-work"), projectSession("gl", "gl-1", "gl-work")},
+		projects: map[string]domain.ProjectRecord{
+			"gh": {ID: "gh", RepoOriginURL: "https://github.com/acme/web.git", Config: projectConfig(domain.SCMProviderGitHub, "github-main", "acme/web")},
+			"gl": {ID: "gl", RepoOriginURL: "https://gitlab.internal/group/api.git", Config: projectConfig(domain.SCMProviderGitLab, "gitlab-main", "group/api")},
+		}, prs: map[domain.SessionID][]domain.PullRequest{}, checks: map[string][]domain.PullRequestCheck{},
+	}
+	resolver := &fakeProjectProviderResolver{resolved: map[string]ResolvedProvider{
+		"gh": {Provider: github, ConnectionID: "github-main"},
+		"gl": {Provider: gitlab, ConnectionID: "gitlab-main"},
+	}}
+	if err := newResolverObserver(store, resolver, &fakeLifecycle{}, &now).Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(github.fetchBatches) != 1 || github.fetchBatches[0][0].Repo.Provider != "github" {
+		t.Fatalf("GitHub batches = %#v", github.fetchBatches)
+	}
+	if len(gitlab.fetchBatches) != 1 || gitlab.fetchBatches[0][0].Repo.Provider != "gitlab" {
+		t.Fatalf("GitLab batches = %#v", gitlab.fetchBatches)
+	}
+}
+
+func TestPoll_DoesNotBatchAcrossConnections(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	repo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "acme", Name: "repo", Repo: "acme/repo"}
+	provider := func(number int, branch string) *scopedFakeProvider {
+		return &scopedFakeProvider{fakeProvider: &fakeProvider{
+			repoGuards:   map[string]ports.SCMGuardResult{prKey(repo, 0): {ETag: fmt.Sprintf("v%d", number)}},
+			openPRs:      map[string][]ports.SCMPRObservation{prKey(repo, 0): {scopedObservation(repo, number, branch).PR}},
+			observations: map[string]ports.SCMObservation{prKey(repo, number): scopedObservation(repo, number, branch)},
+		}, provider: "github", host: "github.com"}
+	}
+	one, two := provider(1, "one"), provider(2, "two")
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{projectSession("p1", "s1", "one"), projectSession("p2", "s2", "two")},
+		projects: map[string]domain.ProjectRecord{
+			"p1": {ID: "p1", RepoOriginURL: "https://github.com/acme/repo", Config: projectConfig(domain.SCMProviderGitHub, "connection-one", "acme/repo")},
+			"p2": {ID: "p2", RepoOriginURL: "https://github.com/acme/repo", Config: projectConfig(domain.SCMProviderGitHub, "connection-two", "acme/repo")},
+		}, prs: map[domain.SessionID][]domain.PullRequest{}, checks: map[string][]domain.PullRequestCheck{},
+	}
+	resolver := &fakeProjectProviderResolver{resolved: map[string]ResolvedProvider{
+		"p1": {Provider: one, ConnectionID: "connection-one"},
+		"p2": {Provider: two, ConnectionID: "connection-two"},
+	}}
+	if err := newResolverObserver(store, resolver, &fakeLifecycle{}, &now).Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(one.fetchBatches) != 1 || len(one.fetchBatches[0]) != 1 || one.fetchBatches[0][0].Number != 1 {
+		t.Fatalf("connection one batches = %#v", one.fetchBatches)
+	}
+	if len(two.fetchBatches) != 1 || len(two.fetchBatches[0]) != 1 || two.fetchBatches[0][0].Number != 2 {
+		t.Fatalf("connection two batches = %#v", two.fetchBatches)
+	}
+}
+
+func TestPoll_ProviderSwitchTakesEffectOnNextPoll(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	githubRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "acme", Name: "repo", Repo: "acme/repo"}
+	gitlabRepo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.internal", Owner: "group", Name: "repo", Repo: "group/repo"}
+	github := &scopedFakeProvider{fakeProvider: &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(githubRepo, 0): {ETag: "gh"}}, openPRs: map[string][]ports.SCMPRObservation{}, observations: map[string]ports.SCMObservation{}}, provider: "github", host: "github.com"}
+	gitlab := &scopedFakeProvider{fakeProvider: &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(gitlabRepo, 0): {ETag: "gl"}}, openPRs: map[string][]ports.SCMPRObservation{}, observations: map[string]ports.SCMObservation{}}, provider: "gitlab", host: "gitlab.internal"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{projectSession("p", "s", "work")},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/acme/repo", Config: projectConfig(domain.SCMProviderGitHub, "github-main", "acme/repo")}},
+		prs:      map[domain.SessionID][]domain.PullRequest{}, checks: map[string][]domain.PullRequestCheck{},
+	}
+	resolver := &fakeProjectProviderResolver{resolved: map[string]ResolvedProvider{"p": {Provider: github, ConnectionID: "github-main"}}}
+	observer := newResolverObserver(store, resolver, &fakeLifecycle{}, &now)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	store.prs["s"] = []domain.PullRequest{{
+		URL: "https://github.com/acme/repo/pull/9", SessionID: "s", Number: 9,
+		Provider: "github", Host: "github.com", Repo: "acme/repo", HeadSHA: "old-sha",
+		MetadataHash: "metadata", CIHash: "ci", ReviewHash: "review",
+	}}
+	store.projects["p"] = domain.ProjectRecord{ID: "p", RepoOriginURL: "https://gitlab.internal/group/repo", Config: projectConfig(domain.SCMProviderGitLab, "gitlab-main", "group/repo")}
+	resolver.resolved["p"] = ResolvedProvider{Provider: gitlab, ConnectionID: "gitlab-main"}
+	now = now.Add(DefaultTickInterval)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if github.repoGuardCalls != 1 || gitlab.repoGuardCalls != 1 {
+		t.Fatalf("repo guard calls after switch: github=%d gitlab=%d", github.repoGuardCalls, gitlab.repoGuardCalls)
+	}
+	if len(gitlab.fetchBatches) != 0 {
+		t.Fatalf("new provider fetched stale old-provider PRs: %#v", gitlab.fetchBatches)
+	}
+}
+
+func TestPoll_RateLimitBackoffIsConnectionScoped(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	repoA := "group/a"
+	repoB := "group/b"
+	a := &scopedFakeProvider{fakeProvider: &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{}, openPRs: map[string][]ports.SCMPRObservation{}, observations: map[string]ports.SCMObservation{}, listErr: &observerRateLimitError{RetryAfter: time.Minute}}, provider: "gitlab", host: "gitlab.internal"}
+	b := &scopedFakeProvider{fakeProvider: &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{}, openPRs: map[string][]ports.SCMPRObservation{}, observations: map[string]ports.SCMObservation{}}, provider: "gitlab", host: "gitlab.internal"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{projectSession("a", "sa", "a"), projectSession("b", "sb", "b")},
+		projects: map[string]domain.ProjectRecord{
+			"a": {ID: "a", RepoOriginURL: "https://gitlab.internal/group/a", Config: projectConfig(domain.SCMProviderGitLab, "gitlab-a", repoA)},
+			"b": {ID: "b", RepoOriginURL: "https://gitlab.internal/group/b", Config: projectConfig(domain.SCMProviderGitLab, "gitlab-b", repoB)},
+		}, prs: map[domain.SessionID][]domain.PullRequest{}, checks: map[string][]domain.PullRequestCheck{},
+	}
+	resolver := &fakeProjectProviderResolver{resolved: map[string]ResolvedProvider{
+		"a": {Provider: a, ConnectionID: "gitlab-a"}, "b": {Provider: b, ConnectionID: "gitlab-b"},
+	}}
+	observer := newResolverObserver(store, resolver, nil, &now)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(30 * time.Second)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a.listCalls != 1 || b.listCalls != 2 {
+		t.Fatalf("calls during connection A backoff: a=%d b=%d", a.listCalls, b.listCalls)
+	}
+	now = now.Add(31 * time.Second)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a.listCalls != 2 || b.listCalls != 3 {
+		t.Fatalf("calls after connection A backoff: a=%d b=%d", a.listCalls, b.listCalls)
+	}
+}
+
+func TestPoll_TwentyWorkersDoNotCrossAttribute(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.internal", Owner: "group", Name: "repo", Repo: "group/repo"}
+	provider := &scopedFakeProvider{fakeProvider: &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(repo, 0): {ETag: "v1"}},
+		openPRs:    map[string][]ports.SCMPRObservation{prKey(repo, 0): {}}, observations: map[string]ports.SCMObservation{},
+	}, provider: "gitlab", host: "gitlab.internal"}
+	store := &fakeStore{projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://gitlab.internal/group/repo", Config: projectConfig(domain.SCMProviderGitLab, "gitlab-main", repo.Repo)}}, prs: map[domain.SessionID][]domain.PullRequest{}, checks: map[string][]domain.PullRequestCheck{}}
+	for i := 1; i <= 20; i++ {
+		branch := fmt.Sprintf("worker-%02d", i)
+		store.sessions = append(store.sessions, projectSession("p", fmt.Sprintf("s-%02d", i), branch))
+		obs := scopedObservation(repo, i, branch)
+		provider.openPRs[prKey(repo, 0)] = append(provider.openPRs[prKey(repo, 0)], obs.PR)
+		provider.observations[prKey(repo, i)] = obs
+	}
+	resolver := &fakeProjectProviderResolver{resolved: map[string]ResolvedProvider{"p": {Provider: provider, ConnectionID: "gitlab-main"}}}
+	if err := newResolverObserver(store, resolver, nil, &now).Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	owners := map[int]domain.SessionID{}
+	for _, write := range store.writes {
+		owners[write.pr.Number] = write.pr.SessionID
+	}
+	for i := 1; i <= 20; i++ {
+		want := domain.SessionID(fmt.Sprintf("s-%02d", i))
+		if owners[i] != want {
+			t.Fatalf("change %d owner = %q, want %q", i, owners[i], want)
+		}
+	}
+}
+
+func TestPoll_ForcesFullReconciliationEveryTenMinutes(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.internal", Owner: "group", Name: "repo", Repo: "group/repo"}
+	provider := &scopedFakeProvider{fakeProvider: &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(repo, 0): {ETag: "v1", NotModified: true}},
+		openPRs:    map[string][]ports.SCMPRObservation{}, observations: map[string]ports.SCMObservation{},
+	}, provider: "gitlab", host: "gitlab.internal"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{projectSession("p", "s", "work")},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://gitlab.internal/group/repo", Config: projectConfig(domain.SCMProviderGitLab, "gitlab-main", repo.Repo)}},
+		prs:      map[domain.SessionID][]domain.PullRequest{}, checks: map[string][]domain.PullRequestCheck{},
+	}
+	resolver := &fakeProjectProviderResolver{resolved: map[string]ResolvedProvider{"p": {Provider: provider, ConnectionID: "gitlab-main"}}}
+	observer := newResolverObserver(store, resolver, nil, &now)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(9 * time.Minute)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := provider.repoGuardETags, []string{"", "v1", ""}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("repo guard revisions = %#v, want %#v", got, want)
+	}
+	if provider.listCalls != 2 {
+		t.Fatalf("full list calls = %d, want first poll plus ten-minute reconciliation", provider.listCalls)
+	}
 }
 
 func TestDispatchOrderIsDeterministic(t *testing.T) {

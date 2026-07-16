@@ -57,7 +57,7 @@ func (p *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([
 	if err != nil {
 		return nil, p.apiError("list open merge requests", err)
 	}
-	paths, err := p.resolveSourceProjects(ctx, repo, payloads)
+	paths, err := p.resolveSourceProjects(ctx, payloads)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (p *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([
 				return nil, errors.New("gitlab scm: source project response missing path")
 			}
 		}
-		out = append(out, normalizeMR(repo, mr, headRepo, diffStats{}))
+		out = append(out, normalizeMR(mr, headRepo, diffStats{}))
 	}
 	return out, nil
 }
@@ -109,7 +109,6 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 	errs := make([]error, len(refs))
 	var wg sync.WaitGroup
 	for i := range refs {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -143,7 +142,7 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 func (p *Provider) fetchPullRequest(ctx context.Context, ref ports.SCMPRRef) (ports.SCMObservation, error) {
 	query := url.Values{"include_diverged_commits_count": {"true"}, "with_merge_status_recheck": {"true"}}
 	var mr mergeRequestPayload
-	if err := p.doJSON(ctx, http.MethodGet, mrAPIPath(ref.Repo, ref.Number), query, &mr); err != nil {
+	if err := p.getJSON(ctx, mrAPIPath(ref.Repo, ref.Number), query, &mr); err != nil {
 		return ports.SCMObservation{}, p.apiError("fetch merge request", err)
 	}
 	if mr.IID == 0 {
@@ -169,7 +168,7 @@ func (p *Provider) fetchPullRequest(ctx context.Context, ref ports.SCMPRRef) (po
 	} else {
 		stats = normalizeRawDiff(raw)
 	}
-	pr := normalizeMR(ref.Repo, mr, headRepo, stats)
+	pr := normalizeMR(mr, headRepo, stats)
 	if pr.URL == "" {
 		pr.URL = firstNonEmptyString(ref.URL, p.mergeRequestURL(projectPath(ref.Repo), ref.Number))
 		pr.HTMLURL = pr.URL
@@ -229,7 +228,7 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 // window. System and bot-only discussions cannot trigger human review work.
 func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	var mr mergeRequestPayload
-	if err := p.doJSON(ctx, http.MethodGet, mrAPIPath(ref.Repo, ref.Number), nil, &mr); err != nil {
+	if err := p.getJSON(ctx, mrAPIPath(ref.Repo, ref.Number), nil, &mr); err != nil {
 		return ports.SCMReviewObservation{}, p.apiError("fetch merge request review state", err)
 	}
 	approval, err := p.fetchApprovals(ctx, ref.Repo, ref.Number)
@@ -372,13 +371,13 @@ func selectPipeline(pipelines []pipelinePayload, headSHA string) (pipelinePayloa
 
 func (p *Provider) fetchApprovals(ctx context.Context, repo ports.SCMRepo, iid int) (approvalsPayload, error) {
 	var approval approvalsPayload
-	if err := p.doJSON(ctx, http.MethodGet, mrAPIPath(repo, iid, "approvals"), nil, &approval); err != nil {
+	if err := p.getJSON(ctx, mrAPIPath(repo, iid, "approvals"), nil, &approval); err != nil {
 		return approvalsPayload{}, p.apiError("fetch merge request approvals", err)
 	}
 	return approval, nil
 }
 
-func (p *Provider) resolveSourceProjects(ctx context.Context, repo ports.SCMRepo, mergeRequests []mergeRequestPayload) (map[int64]string, error) {
+func (p *Provider) resolveSourceProjects(ctx context.Context, mergeRequests []mergeRequestPayload) (map[int64]string, error) {
 	ids := map[int64]struct{}{}
 	for _, mr := range mergeRequests {
 		if mr.SourceProjectID != 0 && mr.SourceProjectID != mr.TargetProjectID {
@@ -390,7 +389,6 @@ func (p *Provider) resolveSourceProjects(ctx context.Context, repo ports.SCMRepo
 	var wg sync.WaitGroup
 	var firstErr error
 	for id := range ids {
-		id := id
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -410,15 +408,15 @@ func (p *Provider) resolveSourceProjects(ctx context.Context, repo ports.SCMRepo
 
 func (p *Provider) fetchProject(ctx context.Context, id int64) (projectPayload, error) {
 	var project projectPayload
-	if err := p.doJSON(ctx, http.MethodGet, "/projects/"+strconv.FormatInt(id, 10), nil, &project); err != nil {
+	if err := p.getJSON(ctx, "/projects/"+strconv.FormatInt(id, 10), nil, &project); err != nil {
 		return projectPayload{}, p.apiError("fetch source project", err)
 	}
 	return project, nil
 }
 
-func (p *Provider) doJSON(ctx context.Context, method, endpoint string, query url.Values, out any) error {
+func (p *Provider) getJSON(ctx context.Context, endpoint string, query url.Values, out any) error {
 	return p.withSlot(ctx, func() error {
-		_, err := p.client.DoJSON(ctx, method, endpoint, query, nil, out)
+		_, err := p.client.DoJSON(ctx, http.MethodGet, endpoint, query, nil, out)
 		return err
 	})
 }

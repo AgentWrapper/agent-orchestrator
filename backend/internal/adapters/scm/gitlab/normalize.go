@@ -133,7 +133,7 @@ func normalizeRawDiff(raw []byte) diffStats {
 	return stats
 }
 
-func normalizeMR(repo ports.SCMRepo, mr mergeRequestPayload, headRepo string, stats diffStats) ports.SCMPRObservation {
+func normalizeMR(mr mergeRequestPayload, headRepo string, stats diffStats) ports.SCMPRObservation {
 	draft := mr.Draft || mr.WorkInProgress
 	merged := strings.EqualFold(mr.State, "merged")
 	closed := strings.EqualFold(mr.State, "closed") && !merged

@@ -56,6 +56,20 @@ func (e *RateLimitError) Error() string {
 // Is lets errors.Is match a *RateLimitError against ErrRateLimited.
 func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited }
 
+// RateLimitDelay returns the provider-requested delay for observer backoff.
+func (e *RateLimitError) RateLimitDelay(now time.Time) time.Duration {
+	if e == nil {
+		return 0
+	}
+	if e.RetryAfter > 0 {
+		return e.RetryAfter
+	}
+	if e.ResetAt.After(now) {
+		return e.ResetAt.Sub(now)
+	}
+	return 0
+}
+
 // ClientOptions configures a Client. Production code sets Token alone;
 // tests inject HTTPClient and the URL fields to point at an httptest fake.
 type ClientOptions struct {

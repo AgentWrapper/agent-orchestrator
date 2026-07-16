@@ -1,8 +1,7 @@
 package daemon
 
-// This file wires the provider-neutral SCM observer into daemon startup using
-// the resolver's virtual GitHub default bundle. Mixed-provider batching remains
-// a later observer change.
+// This file wires the provider-neutral SCM observer into daemon startup through
+// the shared project provider resolver.
 
 import (
 	"context"
@@ -31,26 +30,28 @@ func newProjectProviderResolver(store scmregistry.ConnectionStore, credentials p
 
 func legacyGitHubProject() domain.ProjectRecord { return domain.ProjectRecord{} }
 
-// startSCMObserver wires the provider-neutral SCM observer with the GitHub
-// provider used by v1. Missing credentials do not fail daemon startup; the
-// observer performs a lazy credential check in its background goroutine, logs
-// one warning, and disables itself before any provider API calls.
-func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, providers scmregistry.ProjectProviderResolver, logger *slog.Logger) <-chan struct{} {
-	bundle, err := providers.Resolve(ctx, legacyGitHubProject())
+type projectSCMResolver struct {
+	providers scmregistry.ProjectProviderResolver
+}
+
+func (r projectSCMResolver) ResolveSCM(ctx context.Context, project domain.ProjectRecord) (scmobserve.ResolvedProvider, error) {
+	bundle, err := r.providers.Resolve(ctx, project)
 	if err != nil {
-		logSCMProviderDisabled(logger, err)
-		return closedDone()
+		return scmobserve.ResolvedProvider{}, err
 	}
-	observer := scmobserve.New(bundle.SCM, store, lcm, scmobserve.Config{Logger: logger})
+	return scmobserve.ResolvedProvider{
+		Provider:     bundle.SCM,
+		ConnectionID: project.Config.SCM.WithDefaults().ConnectionID,
+	}, nil
+}
+
+// startSCMObserver resolves each active project's provider during discovery so
+// GitHub and GitLab connections can be polled by the same daemon.
+func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, providers scmregistry.ProjectProviderResolver, logger *slog.Logger) <-chan struct{} {
+	observer := scmobserve.NewWithResolver(projectSCMResolver{providers: providers}, store, lcm, scmobserve.Config{Logger: logger})
 	return observer.Start(ctx)
 }
 
 func logSCMProviderDisabled(logger *slog.Logger, err error) {
 	logger.Warn("scm observer disabled: GitHub provider setup failed", "err", err)
-}
-
-func closedDone() <-chan struct{} {
-	done := make(chan struct{})
-	close(done)
-	return done
 }
