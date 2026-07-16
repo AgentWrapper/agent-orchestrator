@@ -32,15 +32,19 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
 // ReviewCommand launches the reviewer with an inline permission policy that
 // permits inspection and the two reporting commands while denying edits and
-// every other tool. The system role is folded into the initial prompt because
-// the worker CLI has no separate system-prompt flag.
+// every other tool. Production launches provide the system role through an
+// AO-owned prompt file; direct callers without one retain the inline fallback.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
-	prompt := strings.TrimSpace(inv.SystemPrompt + "\n\n" + inv.Prompt)
+	prompt := inv.Prompt
+	if inv.SystemPromptFile == "" {
+		prompt = strings.TrimSpace(inv.SystemPrompt + "\n\n" + inv.Prompt)
+	}
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
-		SessionID:     inv.ReviewerID,
-		WorkspacePath: inv.WorkspacePath,
-		Prompt:        prompt,
-		Permissions:   ports.PermissionModeAuto,
+		SessionID:        inv.ReviewerID,
+		WorkspacePath:    inv.WorkspacePath,
+		Prompt:           prompt,
+		SystemPromptFile: inv.SystemPromptFile,
+		Permissions:      ports.PermissionModeAuto,
 	})
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err

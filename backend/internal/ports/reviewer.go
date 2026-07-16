@@ -73,6 +73,11 @@ type ReviewInvocation struct {
 	// ignore them.
 	Prompt       string
 	SystemPrompt string
+	// SystemPromptFile is the AO-owned file form of SystemPrompt. Reviewer
+	// launchers use it to keep standing instructions out of the shared terminal
+	// stream while preserving their system-level role in agent harnesses that
+	// support prompt files.
+	SystemPromptFile string
 }
 
 // ReviewTask is one PR/run in a multi-PR review trigger queue.
