@@ -40,6 +40,10 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
+	apiErrorCode: (error: unknown) =>
+		typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+			? error.code
+			: undefined,
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -133,7 +137,7 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
-function codedError(message: string, code: "NOT_A_GIT_REPO" | "PROJECT_UNBORN") {
+function codedError(message: string, code: string) {
 	const error = new Error(message) as Error & { code: string };
 	error.code = code;
 	return error;
@@ -470,9 +474,11 @@ describe("Sidebar", () => {
 		});
 	});
 
-	it("shows detected repository validation when workspace import fails", async () => {
+	it("shows detected repository validation from a stable code even when the message is localized", async () => {
 		const user = userEvent.setup();
-		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;
+		const onCreateProject = vi
+			.fn()
+			.mockRejectedValue(codedError("工作区配置无效", "INVALID_PROJECT_CONFIG")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/Users/test/dev/acme");
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/Users/test/dev/acme",
@@ -508,7 +514,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
-		expect(screen.getByText("workspace not registered")).toBeInTheDocument();
+		expect(screen.getByText("工作区配置无效")).toBeInTheDocument();
 		expect(screen.getByText("web")).toBeInTheDocument();
 		expect(screen.getByText("Origin remote is required.")).toBeInTheDocument();
 		expect(screen.getByText("api")).toBeInTheDocument();
@@ -537,6 +543,29 @@ describe("Sidebar", () => {
 		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
 		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
 	});
+
+	it.each(["PATH_ALREADY_REGISTERED", "ID_ALREADY_REGISTERED"])(
+		"does not rescan an already registered project for %s",
+		async (code) => {
+			const user = userEvent.setup();
+			const onCreateProject = vi
+				.fn()
+				.mockRejectedValue(codedError("该项目已经登记", code)) as CreateProjectHandler;
+			window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+			window.ao!.app.scanImportFolder = vi.fn();
+			renderSidebar({ onCreateProject });
+
+			await user.click(screen.getByLabelText("New project"));
+			await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+			await screen.findByRole("dialog", { name: "Workspace agents" });
+			await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+			await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+			await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+			expect(await screen.findByText("该项目已经登记")).toBeInTheDocument();
+			expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
+		},
+	);
 
 	it("opens global settings from the footer menu when no project is selected", async () => {
 		const user = userEvent.setup();

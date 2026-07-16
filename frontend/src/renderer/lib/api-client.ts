@@ -1,5 +1,6 @@
 import createClient from "openapi-fetch";
 import type { paths } from "../../api/schema";
+import { i18n } from "../i18n";
 import { captureRendererEvent } from "./telemetry";
 
 function devApiBaseUrl(): string {
@@ -226,12 +227,7 @@ export const apiClient = createClient<paths>({
 	fetch: runtimeFetch,
 });
 
-/**
- * Human-readable message from an openapi-fetch `error` value. The daemon's
- * error body is `{ error, code, message, requestId }` (backend apierr) — a
- * plain object, so `String(error)` renders "[object Object]". Falls back
- * through Error instances and strings.
- */
+/** Extract the stable code from a daemon API error envelope. */
 export function apiErrorCode(error: unknown): string | undefined {
 	if (typeof error === "object" && error !== null) {
 		const body = error as { code?: unknown };
@@ -240,16 +236,166 @@ export function apiErrorCode(error: unknown): string | undefined {
 	return undefined;
 }
 
-export function apiErrorMessage(error: unknown, fallback = "Request failed"): string {
-	if (error instanceof Error) return error.message;
-	if (typeof error === "string" && error !== "") return error;
-	if (typeof error === "object" && error !== null) {
-		const body = error as { code?: unknown; message?: unknown; error?: unknown };
-		const code = typeof body.code === "string" && body.code !== "" ? body.code : "";
-		if (typeof body.message === "string" && body.message !== "") {
-			return code && !body.message.includes(code) ? `${body.message} (${code})` : body.message;
-		}
-		if (typeof body.error === "string" && body.error !== "") return body.error;
+const STABLE_API_ERROR_CODES = [
+	"BAD_PASSWORD",
+	"LOCKED_OUT",
+	"ORIGIN_FORBIDDEN",
+	"ROUTE_NOT_FOUND",
+	"METHOD_NOT_ALLOWED",
+	"NOT_IMPLEMENTED",
+	"INTERNAL_ERROR",
+	"INVALID_JSON",
+	"ABSOLUTE_PATH_REQUIRED",
+	"INVALID_DIRECTORY_NAME",
+	"DIRECTORY_ALREADY_EXISTS",
+	"DIRECTORY_PERMISSION_DENIED",
+	"DIRECTORY_NOT_FOUND",
+	"NOT_A_DIRECTORY",
+	"DIRECTORY_READ_FAILED",
+	"DIRECTORY_CREATE_FAILED",
+	"PROJECTS_LIST_FAILED",
+	"PROJECT_LOAD_FAILED",
+	"PROJECT_NOT_FOUND",
+	"PATH_REQUIRED",
+	"INVALID_PATH",
+	"PATH_ALREADY_REGISTERED",
+	"ID_ALREADY_REGISTERED",
+	"INVALID_PROJECT_CONFIG",
+	"PROJECT_ADD_FAILED",
+	"NOT_A_GIT_REPO",
+	"PROJECT_UNBORN",
+	"GIT_INIT_FAILED",
+	"GIT_ADD_FAILED",
+	"INITIAL_COMMIT_FAILED",
+	"PROJECT_BARE_REPOSITORY",
+	"PROJECT_ALREADY_INITIALIZED",
+	"PROJECT_PATH_NOT_REPO_ROOT",
+	"UNSUPPORTED_GIT_REPO",
+	"PROJECT_SETUP_PATH_UNSAFE",
+	"PROJECT_NESTED_REPO_SCAN_FAILED",
+	"PROJECT_NESTED_GIT_REPOSITORY",
+	"PROJECT_CONFIG_UPDATE_FAILED",
+	"PROJECT_REMOVE_FAILED",
+	"INVALID_PROJECT_ID",
+	"WORKSPACE_REPOS_REQUIRED",
+	"WORKSPACE_PARENT_IS_WORKTREE",
+	"WORKSPACE_PARENT_BARE",
+	"WORKSPACE_CHILD_RESERVED_NAME",
+	"INVALID_WORKSPACE_CHILD",
+	"WORKSPACE_CHILD_IS_WORKTREE",
+	"WORKSPACE_CHILD_BARE",
+	"WORKSPACE_CHILD_UNBORN",
+	"WORKSPACE_CHILD_DEFAULT_BRANCH_UNKNOWN",
+	"WORKSPACE_CHILD_ORIGIN_REQUIRED",
+	"WORKSPACE_PARENT_GITIGNORE_FAILED",
+	"WORKSPACE_PARENT_COMMIT_FAILED",
+	"WORKSPACE_PARENT_INIT_FAILED",
+	"WORKSPACE_PARENT_ADD_FAILED",
+	"WORKSPACE_PARENT_INDEX_FAILED",
+	"WORKSPACE_PARENT_GITLINK",
+	"PROJECT_ID_REQUIRED",
+	"PROMPT_TOO_LONG",
+	"DISPLAY_NAME_TOO_LONG",
+	"BRANCH_CHECKED_OUT_ELSEWHERE",
+	"BRANCH_NOT_FETCHED",
+	"INVALID_BRANCH",
+	"AGENT_BINARY_NOT_FOUND",
+	"RUNTIME_PREREQUISITE_MISSING",
+	"UNKNOWN_HARNESS",
+	"AGENT_REQUIRED",
+	"PROJECT_NOT_RESOLVABLE",
+	"SESSION_NOT_FOUND",
+	"SESSION_NOT_RESTORABLE",
+	"SESSION_TERMINATED",
+	"SESSION_AWAITING_DECISION",
+	"SESSION_INCOMPLETE_HANDLE",
+	"SESSION_NOT_RESUMABLE",
+	"DISPLAY_NAME_REQUIRED",
+	"MESSAGE_REQUIRED",
+	"MESSAGE_TOO_LONG",
+	"NO_PREVIEW_ENTRY",
+	"PREVIEW_FILE_NOT_FOUND",
+	"INVALID_QUERY",
+	"SCM_CONNECTIONS_LIST_FAILED",
+	"RESERVED_SCM_CONNECTION_ID",
+	"SCM_CONNECTION_CREATE_FAILED",
+	"SCM_CONNECTION_ALREADY_EXISTS",
+	"INVALID_SCM_CONNECTION_ID",
+	"SCM_CONNECTION_UPDATE_FAILED",
+	"SCM_CREDENTIAL_CLEANUP_FAILED",
+	"SCM_CONNECTION_REFERENCED",
+	"SCM_CONNECTION_DELETE_FAILED",
+	"SCM_REPOSITORY_REQUIRED",
+	"SCM_CONNECTION_TEST_UNAVAILABLE",
+	"SCM_CONNECTION_TEST_FAILED",
+	"SCM_CONNECTION_LOAD_FAILED",
+	"SCM_CONNECTION_TEST_STATUS_SAVE_FAILED",
+	"SCM_CONNECTION_TEST_STALE",
+	"INVALID_SCM_PROVIDER",
+	"SCM_CONNECTION_DISPLAY_NAME_REQUIRED",
+	"SCM_CREDENTIAL_STORE_FAILED",
+	"SCM_CONNECTION_NOT_FOUND",
+	"INVALID_SCM_CONNECTION_URL",
+	"SCM_AUTH_FAILED",
+	"SCM_FORBIDDEN",
+	"SCM_INSTANCE_UNREACHABLE",
+	"SCM_TLS_FAILED",
+	"SCM_RATE_LIMITED",
+	"SCM_REPO_NOT_FOUND",
+	"SCM_WRITE_SCOPE_MISSING",
+	"PR_NOT_FOUND",
+	"PR_NOT_MERGEABLE",
+	"PR_PRECONDITIONS_UNMET",
+	"NOTHING_TO_RESOLVE",
+	"PR_OPERATION_FAILED",
+	"REVIEW_INVALID",
+	"REVIEW_NOT_FOUND",
+	"REVIEWER_BINARY_NOT_FOUND",
+	"INVALID_NOTIFICATION_ID",
+	"INVALID_NOTIFICATION_STATUS",
+	"NOTIFICATION_NOT_FOUND",
+	"MOBILE_ENABLE",
+	"MOBILE_DISABLE",
+	"MOBILE_REGEN",
+] as const;
+
+type StableAPIErrorCode = (typeof STABLE_API_ERROR_CODES)[number];
+type ErrorCodeKey = `errors.codes.${StableAPIErrorCode}`;
+
+export const ERROR_CODE_KEYS = Object.fromEntries(
+	STABLE_API_ERROR_CODES.map((code) => [code, `errors.codes.${code}`]),
+) as Record<StableAPIErrorCode, ErrorCodeKey>;
+
+const CREDENTIAL_PATTERN =
+	/\b(?:authorization|bearer|password|passwd|token|private[-_ ]?token|api[-_ ]?key|client[-_ ]?secret)\b\s*(?:[:=]\s*)?\S*/i;
+const URL_CREDENTIAL_PATTERN = /:\/\/[^/\s:]+:[^@/\s]+@/;
+const TOKEN_VALUE_PATTERN = /\b(?:glpat-[\w-]+|github_pat_[\w-]+|gh[pousr]_[\w-]+|sk-[\w-]{16,})\b/i;
+
+function structuredAPIMessage(error: unknown): string | undefined {
+	if (typeof error !== "object" || error === null) return undefined;
+	const body = error as { error?: unknown; code?: unknown; message?: unknown };
+	if (
+		typeof body.error !== "string" ||
+		body.error.trim() === "" ||
+		typeof body.code !== "string" ||
+		body.code.trim() === "" ||
+		typeof body.message !== "string" ||
+		body.message.trim() === ""
+	) {
+		return undefined;
 	}
-	return fallback;
+	const message = body.message.trim();
+	if (CREDENTIAL_PATTERN.test(message) || URL_CREDENTIAL_PATTERN.test(message) || TOKEN_VALUE_PATTERN.test(message)) {
+		return undefined;
+	}
+	return message;
+}
+
+export function apiErrorMessage(error: unknown, fallback: string = i18n.t("errors.generic")): string {
+	const code = apiErrorCode(error);
+	if (code && Object.hasOwn(ERROR_CODE_KEYS, code)) {
+		return i18n.t(ERROR_CODE_KEYS[code as StableAPIErrorCode]);
+	}
+	const message = structuredAPIMessage(error);
+	return message ? i18n.t("errors.withDetail", { summary: fallback, detail: message }) : fallback;
 }

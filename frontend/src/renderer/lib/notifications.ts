@@ -1,5 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
 import type { components } from "../../api/schema";
+import { i18n } from "../i18n";
 import { aoBridge } from "./bridge";
 import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
 
@@ -10,11 +12,67 @@ export const unreadNotificationsQueryKey = ["notifications", "unread"] as const;
 const SSE_RETRY_MS = 5_000;
 const EVENTSOURCE_CLOSED = 2;
 
+type ChangeRequestIdentity = { provider: "github" | "gitlab"; number: string };
+
+function changeRequestIdentity(value: string): ChangeRequestIdentity | null {
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		const github = url.pathname.match(/\/pull\/(\d+)(?:\/|$)/);
+		if (github?.[1]) return { provider: "github", number: github[1] };
+		const gitlab = url.pathname.match(/\/-\/merge_requests\/(\d+)(?:\/|$)/);
+		if (gitlab?.[1]) return { provider: "gitlab", number: gitlab[1] };
+	} catch {
+		return null;
+	}
+	return null;
+}
+
+function changeRequestLabel(notification: NotificationDTO, t: TFunction): string {
+	const identity = changeRequestIdentity(notification.target.prUrl || notification.prUrl);
+	if (identity?.provider === "github") return t("notifications.references.githubPull", { number: identity.number });
+	if (identity?.provider === "gitlab") return t("notifications.references.gitlabMerge", { number: identity.number });
+	return t("notifications.references.changeRequest");
+}
+
+export function localizeNotification(notification: NotificationDTO, t: TFunction): NotificationDTO {
+	switch (notification.type) {
+		case "needs_input": {
+			const session = notification.target.sessionId || notification.sessionId;
+			return {
+				...notification,
+				title: t("notifications.types.needsInput.title", { session }),
+				body: t("notifications.types.needsInput.body"),
+			};
+		}
+		case "ready_to_merge":
+			return {
+				...notification,
+				title: t("notifications.types.readyToMerge.title", { request: changeRequestLabel(notification, t) }),
+				body: t("notifications.types.readyToMerge.body"),
+			};
+		case "pr_merged":
+			return {
+				...notification,
+				title: t("notifications.types.merged.title", { request: changeRequestLabel(notification, t) }),
+				body: t("notifications.types.merged.body"),
+			};
+		case "pr_closed_unmerged":
+			return {
+				...notification,
+				title: t("notifications.types.closedUnmerged.title", { request: changeRequestLabel(notification, t) }),
+				body: t("notifications.types.closedUnmerged.body"),
+			};
+		default:
+			return notification;
+	}
+}
+
 export async function fetchUnreadNotifications(): Promise<NotificationDTO[]> {
 	const { data, error } = await apiClient.GET("/api/v1/notifications", {
 		params: { query: { status: "unread", limit: 100 } },
 	});
-	if (error) throw new Error(apiErrorMessage(error, "Could not load notifications"));
+	if (error) throw new Error(apiErrorMessage(error, i18n.t("notifications.center.loadFailed")));
 	return sortNotifications(data?.notifications ?? []);
 }
 
@@ -23,14 +81,14 @@ export async function markNotificationRead(id: string): Promise<NotificationDTO>
 		params: { path: { id } },
 		body: { status: "read" },
 	});
-	if (error) throw new Error(apiErrorMessage(error, "Could not mark notification read"));
-	if (!data?.notification) throw new Error("Notification update returned no notification");
+	if (error) throw new Error(apiErrorMessage(error, i18n.t("notifications.center.markOneFailed")));
+	if (!data?.notification) throw new Error(i18n.t("notifications.center.markOneFailed"));
 	return data.notification;
 }
 
 export async function markAllNotificationsRead(): Promise<NotificationDTO[]> {
 	const { data, error } = await apiClient.POST("/api/v1/notifications/read-all");
-	if (error) throw new Error(apiErrorMessage(error, "Could not mark notifications read"));
+	if (error) throw new Error(apiErrorMessage(error, i18n.t("notifications.center.markAllFailed")));
 	return data?.notifications ?? [];
 }
 
@@ -91,10 +149,11 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 						if (!notification) return;
 						const inserted = mergeUnreadNotification(queryClient, notification);
 						if (inserted) {
+							const localized = localizeNotification(notification, i18n.t);
 							void aoBridge.notifications.show({
 								id: notification.id,
-								title: notification.title,
-								body: notification.body || undefined,
+								title: localized.title,
+								body: localized.body || undefined,
 							});
 						}
 					});

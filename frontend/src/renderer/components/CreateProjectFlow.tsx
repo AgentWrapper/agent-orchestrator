@@ -3,6 +3,7 @@ import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "luci
 import { useEffect, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
+import { apiErrorCode } from "../lib/api-client";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
@@ -121,12 +122,12 @@ export function CreateProjectFlow({
 			await onCreateProject({ path: selectedPath, asWorkspace: selectedKind === "workspace", ...selection });
 			setSelectedPath(null);
 		} catch (err) {
-			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
+			const code = apiErrorCode(err);
 			const message = err instanceof Error ? err.message : "Could not add project";
 			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) setRepositorySetup(code);
 			setError(message);
 			if (hasModePicker && !remoteClient) {
-				if (shouldScanCreateFailure(message)) {
+				if (shouldScanCreateFailure(err)) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
 							path: selectedPath,
@@ -250,11 +251,34 @@ async function repositorySetupRequired(path: string): Promise<"NOT_A_GIT_REPO" |
 	}
 }
 
-function shouldScanCreateFailure(message: string): boolean {
-	if (/daemon|server|conflict|already exists|not ready|start|orchestrator|permission denied/i.test(message))
-		return false;
-	if (/\b(?:PATH|ID)_ALREADY_REGISTERED\b/i.test(message) || /already registered/i.test(message)) return false;
-	return /workspace|repo|repository|git|path|folder|worktree|bare|branch|commit|remote/i.test(message);
+const SCANNABLE_CREATE_FAILURE_CODES = new Set([
+	"PATH_REQUIRED",
+	"INVALID_PATH",
+	"INVALID_PROJECT_CONFIG",
+	"NOT_A_GIT_REPO",
+	"PROJECT_UNBORN",
+	"PROJECT_BARE_REPOSITORY",
+	"PROJECT_PATH_NOT_REPO_ROOT",
+	"UNSUPPORTED_GIT_REPO",
+	"PROJECT_SETUP_PATH_UNSAFE",
+	"PROJECT_NESTED_REPO_SCAN_FAILED",
+	"PROJECT_NESTED_GIT_REPOSITORY",
+	"WORKSPACE_REPOS_REQUIRED",
+	"WORKSPACE_PARENT_IS_WORKTREE",
+	"WORKSPACE_PARENT_BARE",
+	"WORKSPACE_CHILD_RESERVED_NAME",
+	"INVALID_WORKSPACE_CHILD",
+	"WORKSPACE_CHILD_IS_WORKTREE",
+	"WORKSPACE_CHILD_BARE",
+	"WORKSPACE_CHILD_UNBORN",
+	"WORKSPACE_CHILD_DEFAULT_BRANCH_UNKNOWN",
+	"WORKSPACE_CHILD_ORIGIN_REQUIRED",
+	"WORKSPACE_PARENT_GITLINK",
+]);
+
+function shouldScanCreateFailure(error: unknown): boolean {
+	const code = apiErrorCode(error);
+	return code !== undefined && SCANNABLE_CREATE_FAILURE_CODES.has(code);
 }
 
 function CreateProjectModeDialog({

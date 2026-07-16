@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	apiClient,
+	apiErrorCode,
 	apiErrorMessage,
+	ERROR_CODE_KEYS,
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
 	setApiBaseUrl,
 	subscribeApiBaseUrl,
 } from "./api-client";
+import { i18n } from "../i18n";
 import { captureRendererEvent } from "./telemetry";
 
 vi.mock("./telemetry", () => ({
@@ -297,18 +300,72 @@ describe("api error telemetry", () => {
 });
 
 describe("apiErrorMessage", () => {
-	it("preserves daemon error codes next to human messages", () => {
-		expect(apiErrorMessage({ code: "AGENT_BINARY_NOT_FOUND", message: "agent binary not found on PATH" })).toBe(
-			"agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)",
-		);
+	it("keeps apiErrorCode behavior unchanged", () => {
+		expect(apiErrorCode({ code: "NOT_A_GIT_REPO" })).toBe("NOT_A_GIT_REPO");
+		expect(apiErrorCode({ code: "" })).toBeUndefined();
+		expect(apiErrorCode(new Error("failed"))).toBeUndefined();
 	});
 
-	it("does not duplicate a code that is already present in the message", () => {
+	it("localizes every explicitly mapped daemon code in both locales", async () => {
+		expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(120);
+
+		for (const locale of ["en", "zh-CN"] as const) {
+			await i18n.changeLanguage(locale);
+			for (const [code, key] of Object.entries(ERROR_CODE_KEYS)) {
+				expect(i18n.exists(key), `${locale} is missing ${key}`).toBe(true);
+				expect(
+					apiErrorMessage({ error: "Bad Request", code, message: "untrusted diagnostic" }),
+					`${code} should use ${key}`,
+				).toBe(i18n.t(key));
+			}
+		}
+	});
+
+	it("localizes a stable daemon error code without exposing its details", async () => {
+		await i18n.changeLanguage("zh-CN");
+
 		expect(
 			apiErrorMessage({
-				code: "RUNTIME_PREREQUISITE_MISSING",
-				message: "tmux required (RUNTIME_PREREQUISITE_MISSING)",
+				code: "DIRECTORY_PERMISSION_DENIED",
+				message: "Directory permission denied; token=do-not-show",
+				details: { error: "credential-do-not-show" },
 			}),
-		).toBe("tmux required (RUNTIME_PREREQUISITE_MISSING)");
+		).toBe("没有权限访问该目录");
+	});
+
+	it("uses the localized generic fallback for arbitrary errors", async () => {
+		await i18n.changeLanguage("zh-CN");
+
+		expect(apiErrorMessage(new Error("transport secret"))).toBe("请求失败");
+	});
+
+	it("adds only a complete unknown API envelope message to the localized fallback", async () => {
+		await i18n.changeLanguage("en");
+
+		expect(
+			apiErrorMessage(
+				{ error: "Conflict", code: "FUTURE_CODE", message: "The server rejected this state." },
+				"Could not continue",
+			),
+		).toBe("Could not continue: The server rejected this state.");
+	});
+
+	it.each([
+		new Error("Bearer top-secret"),
+		"password=top-secret",
+		{ message: "forwarder leaked token=top-secret" },
+		{ error: "Conflict", code: "FUTURE_CODE", message: "Authorization: Bearer top-secret" },
+		{ error: "Conflict", code: "FUTURE_CODE", message: "glpat-top-secret" },
+		{ error: "Conflict", code: "FUTURE_CODE", message: "safe", details: { error: "top-secret" } },
+	])("does not expose arbitrary or credential-bearing errors", async (error) => {
+		await i18n.changeLanguage("en");
+		const message = apiErrorMessage(error, "Could not continue");
+
+		expect(message).not.toContain("top-secret");
+		if (typeof error === "object" && error !== null && "details" in error) {
+			expect(message).toBe("Could not continue: safe");
+		} else {
+			expect(message).toBe("Could not continue");
+		}
 	});
 });
