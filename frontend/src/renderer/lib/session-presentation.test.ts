@@ -91,6 +91,7 @@ describe("session presentation", () => {
 				}),
 			).className,
 		).toContain("bg-working");
+		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-error");
 		expect(getSessionDotView(sessionWith({ status: "unknown" })).className).toContain("bg-warning");
 	});
 
