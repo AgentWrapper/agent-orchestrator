@@ -474,9 +474,18 @@ func truncateUTF8(in string, limit int) (string, bool) {
 
 func gitWorkspaceOutput(ctx context.Context, root string, args ...string) (string, error) {
 	cmd := aoprocess.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git -C %s %s: %w: %s", root, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		detail := strings.TrimSpace(stderr.String())
+		if stdout := strings.TrimSpace(string(out)); stdout != "" {
+			if detail != "" {
+				detail += ": "
+			}
+			detail += stdout
+		}
+		return "", fmt.Errorf("git -C %s %s: %w: %s", root, strings.Join(args, " "), err, detail)
 	}
 	return string(out), nil
 }
