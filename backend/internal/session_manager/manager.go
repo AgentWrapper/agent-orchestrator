@@ -2401,7 +2401,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 // signals via ok=false (e.g. no native session id captured yet). Returns
 // ErrNotResumable when transcript-preserving restore is required but unavailable,
 // or when a promptless, unresumable worker has nothing to restore from.
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, harness domain.AgentHarness, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, _ domain.AgentHarness, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -2414,16 +2414,9 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, nil
 	}
-	// OpenCode restore must continue the captured native transcript. Replaying
-	// the saved prompt would silently create a new OpenCode conversation under a
-	// "restore" action, so require a native resume command for that harness.
-	if harness == domain.HarnessOpenCode {
-		return nil, "", ErrNotResumable
-	}
-	// Other adapters keep the historical fallback: a saved prompt is replayed
-	// fresh. An orchestrator is promptless by design and relaunches with the
-	// system prompt only. A promptless WORKER has no task and no session id to
-	// restore from: do not blank-relaunch it.
+	// A saved prompt is replayed fresh. An orchestrator is promptless by design
+	// and relaunches with the system prompt only. A promptless WORKER has no task
+	// and no session id to restore from: do not blank-relaunch it.
 	if meta.Prompt == "" && kind != domain.KindOrchestrator {
 		return nil, "", ErrNotResumable
 	}
