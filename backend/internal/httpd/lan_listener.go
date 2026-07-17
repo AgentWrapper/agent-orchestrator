@@ -122,14 +122,14 @@ func (m *LANManager) Start(port int) (int, error) {
 	if port == 0 {
 		port = m.defaultPort
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	ln, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		if !errors.Is(err, syscall.EADDRINUSE) {
 			m.mu.Unlock()
 			return 0, fmt.Errorf("bind LAN 0.0.0.0:%d: %w", port, err)
 		}
 		//nolint:gosec // G102: binding all interfaces is the deliberate purpose of the Connect Mobile LAN listener; it runs only while the bridge is enabled and behind authMiddleware.
-		if ln, err = net.Listen("tcp", "0.0.0.0:0"); err != nil {
+		if ln, err = net.Listen("tcp4", "0.0.0.0:0"); err != nil {
 			m.mu.Unlock()
 			return 0, fmt.Errorf("bind LAN ephemeral: %w", err)
 		}

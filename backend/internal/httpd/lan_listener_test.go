@@ -5,12 +5,84 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
+
+func TestLANManagerSpecifiedPortUsesIPv4Wildcard(t *testing.T) {
+	reserved, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	port := reserved.Addr().(*net.TCPAddr).Port
+	if err := reserved.Close(); err != nil {
+		t.Fatalf("release reserved port: %v", err)
+	}
+
+	m := NewLANManager(http.NotFoundHandler(), &authState{}, port, slog.Default())
+	bound, err := m.Start(port)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop(context.Background())
+
+	if bound != port {
+		t.Fatalf("bound port = %d, want specified port %d", bound, port)
+	}
+	assertIPv4WildcardListener(t, m.ln)
+	assertIPv4LoopbackReachable(t, bound)
+}
+
+func TestLANManagerPortConflictFallbackUsesIPv4Wildcard(t *testing.T) {
+	occupied, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("occupy port: %v", err)
+	}
+	defer occupied.Close()
+	occupiedPort := occupied.Addr().(*net.TCPAddr).Port
+
+	m := NewLANManager(http.NotFoundHandler(), &authState{}, occupiedPort, slog.Default())
+	bound, err := m.Start(occupiedPort)
+	if err != nil {
+		t.Fatalf("start with occupied port: %v", err)
+	}
+	defer m.Stop(context.Background())
+
+	if bound == occupiedPort {
+		t.Fatalf("bound port = occupied port %d, want ephemeral fallback", bound)
+	}
+	assertIPv4WildcardListener(t, m.ln)
+	assertIPv4LoopbackReachable(t, bound)
+}
+
+func assertIPv4WildcardListener(t *testing.T, ln net.Listener) {
+	t.Helper()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address type = %T, want *net.TCPAddr", ln.Addr())
+	}
+	if !addr.IP.IsUnspecified() {
+		t.Fatalf("listener address = %s, want wildcard", addr)
+	}
+	if addr.IP.To4() == nil {
+		t.Fatalf("listener address = %s, want IPv4 wildcard", addr)
+	}
+}
+
+func assertIPv4LoopbackReachable(t *testing.T, port int) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+	if err != nil {
+		t.Fatalf("dial IPv4 loopback: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close IPv4 loopback connection: %v", err)
+	}
+}
 
 func TestLANManagerAuthGatesSharedHandler(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
