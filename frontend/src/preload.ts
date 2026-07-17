@@ -34,6 +34,7 @@ export type ImportRepoScan = {
 	remote: string;
 	hasRemote: boolean;
 	status?: "ok" | "error";
+	setupCode?: "PROJECT_UNBORN";
 	reason?: string;
 };
 

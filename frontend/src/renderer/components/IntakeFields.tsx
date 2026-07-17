@@ -1,4 +1,5 @@
 import { Info } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { Label } from "./ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -68,12 +69,13 @@ export function IntakeFields({
 	// info-icon tooltip — used by the create-project sheet, which stays minimal.
 	compact?: boolean;
 }) {
+	const { t } = useTranslation();
 	const needsRule = intakeNeedsRule(form);
 	return (
 		<div className="flex flex-col gap-4">
 			{!compact && (
 				<p className="text-xs leading-row text-muted-foreground">
-					Auto-spawn worker sessions from matching tracker issues.
+					{t("projects.intake.description")}
 				</p>
 			)}
 			<div className="flex items-center gap-2">
@@ -84,7 +86,7 @@ export function IntakeFields({
 						checked={form.enabled}
 						onChange={(e) => onChange({ enabled: e.target.checked })}
 					/>
-					Enable issue intake
+					{t("projects.intake.enable")}
 				</label>
 				{compact && (
 					<TooltipProvider delayDuration={0}>
@@ -93,12 +95,12 @@ export function IntakeFields({
 								<button
 									type="button"
 									className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
-									aria-label="What does enabling issue intake do?"
+									aria-label={t("projects.intake.helpAria")}
 								>
 									<Info className="size-3.5" aria-hidden="true" />
 								</button>
 							</TooltipTrigger>
-							<TooltipContent>Auto-spawns a worker session for each matching tracker issue.</TooltipContent>
+							<TooltipContent>{t("projects.intake.help")}</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
 				)}
@@ -106,7 +108,7 @@ export function IntakeFields({
 			{form.enabled && (
 				<>
 					{repoPreview && (
-						<IntakeField label="Repository">
+						<IntakeField label={t("projects.intake.repository")}>
 							{repoPreview.value && repoPreview.href ? (
 								<a
 									href={repoPreview.href}
@@ -120,32 +122,33 @@ export function IntakeFields({
 								<span className="text-control text-foreground">{repoPreview.value}</span>
 							) : (
 								<span className="text-control text-muted-foreground">
-									Could not detect a {repoPreview.provider === "gitlab" ? "GitLab" : "GitHub"} repository from this
-									 project's git origin.
+									{t("projects.intake.detectFailed", {
+										provider: repoPreview.provider === "gitlab" ? "GitLab" : "GitHub",
+									})}
 								</span>
 							)}
 						</IntakeField>
 					)}
-					<IntakeField label="Assignee" htmlFor="intakeAssignee">
+					<IntakeField label={t("projects.intake.assignee")} htmlFor="intakeAssignee">
 						<input
 							id="intakeAssignee"
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.assignee}
 							onChange={(e) => onChange({ assignee: e.target.value })}
-							placeholder="type username or * for any"
+							placeholder={t("projects.intake.assigneePlaceholder")}
 						/>
 					</IntakeField>
-					<IntakeField label="Labels" htmlFor="intakeLabels">
+					<IntakeField label={t("projects.intake.labels")} htmlFor="intakeLabels">
 						<input
 							id="intakeLabels"
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.labels}
 							onChange={(e) => onChange({ labels: e.target.value })}
-							placeholder="comma-separated labels"
+							placeholder={t("projects.intake.labelsPlaceholder")}
 						/>
 					</IntakeField>
 					{!compact && needsRule && (
-						<p className="text-xs leading-row text-error">Enabling intake requires an assignee.</p>
+						<p className="text-xs leading-row text-error">{t("projects.intake.assigneeRequired")}</p>
 					)}
 				</>
 			)}

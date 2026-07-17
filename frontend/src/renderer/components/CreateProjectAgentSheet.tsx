@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { TriangleAlert, X } from "lucide-react";
 import { memo, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
@@ -31,6 +33,7 @@ const DEFAULT_SCM: SCMSelection = { provider: "github", connectionId: "github-de
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
+	errorCode?: string;
 	isCreating: boolean;
 	isInitializing?: boolean;
 	kind: ProjectKind;
@@ -43,39 +46,39 @@ type CreateProjectAgentSheetProps = {
 
 type SheetError = {
 	title: string;
-	message: string;
+	guidance?: string;
+	detail?: string;
 	tone: "warning" | "error";
 };
 
-function projectSheetError(error: string): SheetError {
-	const setupMessage = error.replace(/^Setup failed:\s*/i, "").trim();
-	const codeMatch = setupMessage.match(/\(([A-Z0-9_]+)\)\s*$/);
-	const code = codeMatch?.[1];
-	const message = codeMatch ? setupMessage.slice(0, codeMatch.index).trim() : setupMessage;
-
+function projectSheetError(error: string, code: string | undefined, t: TFunction): SheetError {
 	switch (code) {
 		case "PROJECT_PATH_NOT_REPO_ROOT":
 			return {
-				title: "Select the repository root",
-				message: "This folder is inside another Git repository. Choose the top-level folder and try again.",
+				title: t("projects.agents.errors.repositoryRootTitle"),
+				guidance: t("projects.agents.errors.repositoryRootGuidance"),
+				detail: error,
 				tone: "warning",
 			};
 		case "PROJECT_BARE_REPOSITORY":
 			return {
-				title: "Choose a normal checkout",
-				message: "AO needs a regular working folder, not a bare Git repository.",
+				title: t("projects.agents.errors.bareTitle"),
+				guidance: t("projects.agents.errors.bareGuidance"),
+				detail: error,
 				tone: "warning",
 			};
 		case "UNSUPPORTED_GIT_REPO":
 			return {
-				title: "Choose a valid Git folder",
-				message: "AO could not read the Git metadata here. Repair the repository or choose a plain folder.",
+				title: t("projects.agents.errors.invalidTitle"),
+				guidance: t("projects.agents.errors.invalidGuidance"),
+				detail: error,
 				tone: "warning",
 			};
 		default:
 			return {
-				title: error.toLowerCase().startsWith("setup failed:") ? "Repository setup failed" : "Could not create project",
-				message: message || "Try again, or choose a different folder.",
+				title: t("projects.agents.errors.createTitle"),
+				guidance: error ? undefined : t("projects.agents.errors.tryAgain"),
+				detail: error || undefined,
 				tone: "error",
 			};
 	}
@@ -83,6 +86,7 @@ function projectSheetError(error: string): SheetError {
 
 export function CreateProjectAgentSheet({
 	error,
+	errorCode,
 	isCreating,
 	isInitializing = false,
 	kind,
@@ -92,6 +96,7 @@ export function CreateProjectAgentSheet({
 	path,
 	repositorySetupNeeded = false,
 }: CreateProjectAgentSheetProps) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
 		...agentsQueryOptions,
@@ -106,15 +111,9 @@ export function CreateProjectAgentSheet({
 	const agentOptions = agents?.authorized ?? [];
 	const supportedAgents = agents?.supported ?? [];
 	const isLoadingAgents = agents === undefined && agentsQuery.isFetching;
-	const agentsError = agentsQuery.isError
-		? agentsQuery.error instanceof Error
-			? agentsQuery.error.message
-			: "Could not load agent catalog."
-		: null;
+	const agentsError = agentsQuery.isError ? t("projects.agents.loadFailed") : null;
 	const displayError = refreshAgentsMutation.isError
-		? refreshAgentsMutation.error instanceof Error
-			? refreshAgentsMutation.error.message
-			: "Could not refresh agent catalog."
+		? t("projects.agents.refreshFailed")
 		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
@@ -131,7 +130,7 @@ export function CreateProjectAgentSheet({
 		scmValidated &&
 		!isBusy &&
 		!isLoadingAgents;
-	const sheetError = error ? projectSheetError(error) : null;
+	const sheetError = error ? projectSheetError(error, errorCode, t) : null;
 
 	useEffect(() => {
 		if (!open) {
@@ -152,7 +151,7 @@ export function CreateProjectAgentSheet({
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-foreground">
-								{kind === "workspace" ? "Workspace agents" : "Project agents"}
+								{kind === "workspace" ? t("projects.agents.workspaceTitle") : t("projects.agents.projectTitle")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-1 break-all text-xs text-muted-foreground">
 								{path ?? ""}
@@ -162,7 +161,7 @@ export function CreateProjectAgentSheet({
 							<button
 								type="button"
 								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-								aria-label="Close project agents dialog"
+								aria-label={t("projects.agents.close")}
 								disabled={isBusy}
 							>
 								<X className="size-icon-base" aria-hidden="true" />
@@ -187,8 +186,8 @@ export function CreateProjectAgentSheet({
 						<div className="grid gap-3 sm:grid-cols-2">
 							<RequiredAgentField
 								id="newProjectWorkerAgent"
-								label="Worker agent"
-								placeholder="Select worker agent"
+								label={t("projects.agents.worker")}
+								placeholder={t("projects.agents.workerPlaceholder")}
 								value={workerAgent}
 								authorized={agentOptions}
 								installed={installedAgents}
@@ -198,8 +197,8 @@ export function CreateProjectAgentSheet({
 							/>
 							<RequiredAgentField
 								id="newProjectOrchestratorAgent"
-								label="Orchestrator agent"
-								placeholder="Select orchestrator agent"
+								label={t("projects.agents.orchestrator")}
+								placeholder={t("projects.agents.orchestratorPlaceholder")}
 								value={orchestratorAgent}
 								authorized={agentOptions}
 								installed={installedAgents}
@@ -216,20 +215,22 @@ export function CreateProjectAgentSheet({
 								checked={coordinatorAutoWake}
 								onChange={(event) => setCoordinatorAutoWake(event.target.checked)}
 							/>
-							Automatically wake idle coordinator
+							{t("projects.agents.autoWake")}
 						</label>
 
-						{isLoadingAgents && <p className="text-xs leading-row text-muted-foreground">Loading agents...</p>}
+						{isLoadingAgents && (
+							<p className="text-xs leading-row text-muted-foreground">{t("projects.agents.loading")}</p>
+						)}
 
 						<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
-							<span>Agent availability is cached.</span>
+							<span>{t("projects.agents.availabilityCached")}</span>
 							<button
 								type="button"
 								className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
 								disabled={refreshAgentsMutation.isPending}
 								onClick={() => refreshAgentsMutation.mutate()}
 							>
-								{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+								{refreshAgentsMutation.isPending ? t("projects.agents.refreshing") : t("projects.agents.refresh")}
 							</button>
 						</div>
 
@@ -242,13 +243,15 @@ export function CreateProjectAgentSheet({
 									disabled={refreshAgentsMutation.isPending}
 									onClick={() => refreshAgentsMutation.mutate()}
 								>
-									Retry
+									{t("projects.agents.retry")}
 								</button>
 							</div>
 						)}
 
 						<div className="border-t border-border pt-4">
-							<p className="mb-3 text-xs font-medium text-muted-foreground">Source control</p>
+							<p className="mb-3 text-xs font-medium text-muted-foreground">
+								{t("projects.agents.sourceControl")}
+							</p>
 							<SCMConnectionFields
 								compact
 								value={scm}
@@ -267,7 +270,7 @@ export function CreateProjectAgentSheet({
 
 						{repositorySetupNeeded && (
 							<div className="rounded-md border border-border bg-surface/80 px-3 py-2.5 text-xs leading-body-md text-muted-foreground">
-								If this folder needs Git setup, AO will initialize it and create the first commit before starting.
+								{t("projects.agents.setupNotice")}
 							</div>
 						)}
 
@@ -296,23 +299,24 @@ export function CreateProjectAgentSheet({
 									>
 										{sheetError.title}
 									</p>
-									<p className="text-muted-foreground">{sheetError.message}</p>
+									{sheetError.guidance && <p className="text-muted-foreground">{sheetError.guidance}</p>}
+									{sheetError.detail && <p className="text-muted-foreground">{sheetError.detail}</p>}
 								</div>
 							</div>
 						)}
 
 						<div className="flex items-center justify-end gap-2 pt-1">
 							<Button type="button" variant="ghost" disabled={isBusy} onClick={() => onOpenChange(false)}>
-								Cancel
+								{t("ui.cancel")}
 							</Button>
 							<Button type="submit" variant="primary" disabled={!canSubmit}>
 								{isInitializing
-									? "Setting up..."
+									? t("projects.create.settingUp")
 									: isCreating
-										? "Creating..."
+										? t("projects.create.creating")
 										: kind === "workspace"
-											? "Create workspace and start"
-											: "Create and start"}
+											? t("projects.agents.createWorkspace")
+											: t("projects.agents.createProject")}
 							</Button>
 						</div>
 					</form>
@@ -345,6 +349,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	supported?: AgentInfo[];
 	value: string;
 }) {
+	const { t } = useTranslation();
 	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
 	const supportedAgents = supported ?? fallbackAgents;
 	const installedAgents = installed ?? supportedAgents;
@@ -363,7 +368,13 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 				...agent,
 				disabled: !isSelectable,
 				rank,
-				reason: !installedAgent ? "Needs install" : isAuthUnknown ? "Auth unknown" : !isAuthorized ? "Needs auth" : "",
+				reason: !installedAgent
+					? t("projects.agents.needsInstall")
+					: isAuthUnknown
+						? t("projects.agents.authUnknown")
+						: !isAuthorized
+							? t("projects.agents.needsAuth")
+							: "",
 				warning: isAuthUnknown,
 			};
 		})

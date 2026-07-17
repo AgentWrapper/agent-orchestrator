@@ -156,6 +156,7 @@ async function openCreateProjectDialog(
 			remote: string;
 			hasRemote: boolean;
 			status?: "ok" | "error";
+			setupCode?: "PROJECT_UNBORN";
 			reason?: string;
 		}>;
 	} = {
@@ -221,6 +222,21 @@ describe("Sidebar", () => {
 		expect(screen.getByRole("button", { name: "打开 Project One 看板" })).toBeInTheDocument();
 		expect(screen.getByText("Project One")).toBeInTheDocument();
 		expect(screen.getByText("fix login")).toBeInTheDocument();
+	});
+
+	it("localizes the add-project workflow while preserving the selected path", async () => {
+		await initializeRendererI18n("zh-CN");
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/中文路径/raw-project");
+		renderSidebar();
+		const user = userEvent.setup();
+
+		await user.click(screen.getByLabelText("新建项目"));
+		expect(screen.getByRole("dialog", { name: "添加项目" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /^项目$/ }));
+
+		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("选择项目仓库");
+		expect(await screen.findByRole("dialog", { name: "项目智能体" })).toBeInTheDocument();
+		expect(screen.getByText("/repo/中文路径/raw-project")).toBeInTheDocument();
 	});
 
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
@@ -296,7 +312,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		expect(screen.getByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Add project" })).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
 		await user.click(screen.getByRole("button", { name: /^Project/i }));
 
@@ -401,7 +417,8 @@ describe("Sidebar", () => {
 					remote: "",
 					hasRemote: false,
 					status: "error",
-					reason: "Repository must have at least one commit.",
+					setupCode: "PROJECT_UNBORN",
+					reason: "该仓库还没有提交",
 				},
 			],
 		});

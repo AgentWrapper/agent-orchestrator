@@ -138,6 +138,7 @@ type GitRepoScanResult = {
 	remote: string;
 	hasRemote: boolean;
 	status: "ok" | "error";
+	setupCode?: "PROJECT_UNBORN";
 	reason?: string;
 };
 
@@ -1187,12 +1188,14 @@ async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoS
 		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"]),
 		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"]),
 	]);
+	const hasHead = headResult.status === "fulfilled";
+	const isBare = bareResult.status === "fulfilled" && bareResult.value === "true";
 	const validationReason = scanRepoValidationReason(
 		name,
 		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
 		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		bareResult.status === "fulfilled" && bareResult.value === "true",
-		headResult.status === "fulfilled",
+		isBare,
+		hasHead,
 	);
 	return {
 		name,
@@ -1202,6 +1205,7 @@ async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoS
 		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
 		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
 		status: validationReason ? "error" : "ok",
+		setupCode: name !== "__root__" && !isBare && !hasHead ? "PROJECT_UNBORN" : undefined,
 		reason: validationReason,
 	};
 }

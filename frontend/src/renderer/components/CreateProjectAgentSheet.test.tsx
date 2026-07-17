@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { initializeRendererI18n } from "../i18n";
 import { CreateProjectAgentSheet, RequiredAgentField } from "./CreateProjectAgentSheet";
 
 const { deleteMock, getMock, postMock, putMock } = vi.hoisted(() => ({
@@ -42,7 +43,17 @@ beforeEach(() => {
 	getMock.mockResolvedValue({ data: { connections: [gitlabConnection] }, error: undefined });
 });
 
-function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
+function renderSheet(
+	onSubmit = vi.fn().mockResolvedValue(undefined),
+	props: {
+		error?: string;
+		errorCode?: string;
+		isCreating?: boolean;
+		isInitializing?: boolean;
+		kind?: "single_repo" | "workspace";
+		repositorySetupNeeded?: boolean;
+	} = {},
+) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	queryClient.setQueryData(agentsQueryKey, {
 		supported: [
@@ -61,17 +72,25 @@ function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
 	render(
 		<QueryClientProvider client={queryClient}>
 			<CreateProjectAgentSheet
-				isCreating={false}
-				kind="single_repo"
+				error={props.error}
+				errorCode={props.errorCode}
+				isCreating={props.isCreating ?? false}
+				isInitializing={props.isInitializing}
+				kind={props.kind ?? "single_repo"}
 				onOpenChange={() => undefined}
 				onSubmit={onSubmit}
 				open={true}
 				path="/repo/new-project"
+				repositorySetupNeeded={props.repositorySetupNeeded}
 			/>
 		</QueryClientProvider>,
 	);
 	return onSubmit;
 }
+
+afterEach(async () => {
+	await initializeRendererI18n("en");
+});
 
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
@@ -79,6 +98,54 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 }
 
 describe("CreateProjectAgentSheet", () => {
+	it("localizes project-agent controls while preserving path and agent names", async () => {
+		await initializeRendererI18n("zh-CN");
+		renderSheet(undefined, { repositorySetupNeeded: true });
+
+		expect(screen.getByRole("dialog", { name: "项目智能体" })).toBeInTheDocument();
+		expect(screen.getByText("/repo/new-project")).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "工作智能体" })).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "协调智能体" })).toBeInTheDocument();
+		expect(screen.getByLabelText("自动唤醒空闲协调器")).toBeInTheDocument();
+		expect(screen.getByText(/如果此文件夹需要 Git 初始化/)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "创建并启动" })).toBeInTheDocument();
+	});
+
+	it("uses a stable error code for localized guidance and keeps raw detail unchanged", async () => {
+		await initializeRendererI18n("zh-CN");
+		renderSheet(undefined, {
+			errorCode: "PROJECT_PATH_NOT_REPO_ROOT",
+			error: "服务器返回：目录位于父仓库中",
+		});
+
+		expect(screen.getByText("请选择仓库根目录")).toBeInTheDocument();
+		expect(screen.getByText("此文件夹位于另一个 Git 仓库内。请选择顶层文件夹后重试。")).toBeInTheDocument();
+		expect(screen.getByText("服务器返回：目录位于父仓库中")).toBeInTheDocument();
+	});
+
+	it("does not parse setup prefixes or trailing codes out of display text", () => {
+		const raw = "Setup failed: raw detail (PROJECT_BARE_REPOSITORY)";
+		renderSheet(undefined, { error: raw });
+
+		expect(screen.getByText("Could not create project")).toBeInTheDocument();
+		expect(screen.getByText(raw)).toBeInTheDocument();
+		expect(screen.queryByText("Choose a normal checkout")).not.toBeInTheDocument();
+	});
+
+	it("renders agent refresh failures from the current locale instead of a cached message", async () => {
+		postMock.mockRejectedValueOnce(new Error("cached English refresh failure"));
+		renderSheet();
+
+		await userEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+		expect(await screen.findByText("Could not refresh agent catalog.")).toBeInTheDocument();
+		expect(screen.queryByText("cached English refresh failure")).not.toBeInTheDocument();
+
+		await act(async () => {
+			await initializeRendererI18n("zh-CN");
+		});
+		expect(screen.getByText("无法刷新智能体目录。")).toBeInTheDocument();
+	});
+
 	it("uses the compact trigger size for agent fields", () => {
 		render(
 			<RequiredAgentField

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getMock, putMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -26,6 +26,7 @@ vi.mock("../lib/api-client", () => ({
 
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { initializeRendererI18n } from "../i18n";
 import type { WorkspaceSummary } from "../types/workspace";
 
 function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
@@ -103,7 +104,62 @@ beforeEach(() => {
 	});
 });
 
+afterEach(async () => {
+	await initializeRendererI18n("en");
+});
+
 describe("ProjectSettingsForm", () => {
+	it("switches project settings to Chinese without changing raw project or form values", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@gitlab.example.com:group/subgroup/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				sessionPrefix: "po",
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { model: "gpt-5-codex", permissions: "auto" },
+			},
+		});
+		renderSettings();
+		await screen.findByLabelText("Default branch");
+		await userEvent.clear(screen.getByLabelText("Session prefix"));
+		await userEvent.type(screen.getByLabelText("Session prefix"), "raw-prefix");
+
+		await act(async () => {
+			await initializeRendererI18n("zh-CN");
+		});
+
+		expect(screen.getByText("设置")).toBeInTheDocument();
+		expect(screen.getByText("标识")).toBeInTheDocument();
+		expect(screen.getByText("源代码管理")).toBeInTheDocument();
+		expect(screen.getByText("工作树")).toBeInTheDocument();
+		expect(screen.getByText("智能体")).toBeInTheDocument();
+		expect(screen.getByLabelText("默认分支")).toHaveValue("develop");
+		expect(screen.getByLabelText("会话前缀")).toHaveValue("raw-prefix");
+		expect(screen.getByLabelText("模型覆盖")).toHaveValue("gpt-5-codex");
+		expect(screen.getByRole("combobox", { name: "权限模式" })).toHaveTextContent("自动");
+		expect(screen.getByText("git@gitlab.example.com:group/subgroup/project-one.git")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "保存更改" })).toBeInTheDocument();
+	});
+
+	it("renders a cached project query failure from the current locale", async () => {
+		getMock.mockResolvedValue({ data: undefined, error: { message: "cached English project failure" } });
+		renderSettings();
+
+		expect(await screen.findByText("Could not load project.")).toBeInTheDocument();
+		expect(screen.queryByText("cached English project failure")).not.toBeInTheDocument();
+
+		await act(async () => {
+			await initializeRendererI18n("zh-CN");
+		});
+		expect(screen.getByText("无法加载项目。")).toBeInTheDocument();
+	});
+
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
 		mockProject({
 			id: "proj-1",
@@ -536,5 +592,11 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
+
+		await act(async () => {
+			await initializeRendererI18n("zh-CN");
+		});
+		expect(screen.getByText("协调器重启失败：missing goose binary")).toBeInTheDocument();
+		expect(screen.getByText("已保存。")).toBeInTheDocument();
 	});
 });

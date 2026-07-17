@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -27,18 +28,14 @@ type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
-const PERMISSION_MODE_OPTIONS = [
-	{ value: "default", label: "Default" },
-	{ value: "accept-edits", label: "Accept edits" },
-	{ value: "auto", label: "Auto" },
-	{ value: "bypass-permissions", label: "Bypass permissions" },
-] as const;
+const PERMISSION_MODE_OPTIONS = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 
 const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 
 	const query = useQuery({
@@ -47,24 +44,22 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 			const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
-			if (data?.status !== "ok") throw new Error("Project config is unavailable (degraded).");
+			if (error) throw error;
+			if (data?.status !== "ok") throw new Error("PROJECT_CONFIG_UNAVAILABLE");
 			return data.project as Project;
 		},
 	});
 
 	if (query.isLoading) {
-		return <CenteredNote>Loading project settings…</CenteredNote>;
+		return <CenteredNote>{t("projects.settings.loading")}</CenteredNote>;
 	}
 	if (query.isError || !query.data) {
-		return (
-			<CenteredNote>{query.error instanceof Error ? query.error.message : "Could not load project."}</CenteredNote>
-		);
+		return <CenteredNote>{t("projects.settings.loadFailed")}</CenteredNote>;
 	}
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Settings" subtitle={query.data.path} />
+			<DashboardSubhead title={t("projects.settings.title")} subtitle={query.data.path} />
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				<SettingsBody
 					key={projectId}
@@ -78,6 +73,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 }
 
 function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
@@ -105,8 +101,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		form.scmProvider === "github" && form.scmConnectionId === "github-default",
 	);
 	const [savedAt, setSavedAt] = useState<number | null>(null);
-	const [replacementError, setReplacementError] = useState<string | null>(null);
-	const [validationError, setValidationError] = useState<string | null>(null);
+	const [replacementError, setReplacementError] = useState<{ detail?: string } | null>(null);
+	const [validationError, setValidationError] = useState<"agents" | "intake" | "scm" | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
@@ -169,7 +165,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				params: { path: { id: projectId } },
 				body: { config: next },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) throw error;
 			if (
 				form.orchestratorAgent !== initialOrchestratorAgent ||
 				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
@@ -177,9 +173,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				try {
 					await spawnOrchestrator(projectId, "settings", true);
 				} catch (error) {
-					return {
-						replacementError: error instanceof Error ? error.message : "Could not replace orchestrator",
-					};
+					return { replacementError: { detail: error instanceof Error ? error.message : undefined } };
 				}
 			}
 			return { replacementError: null };
@@ -205,15 +199,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setSavedAt(null);
 				setReplacementError(null);
 				if (missingRequiredAgent) {
-					setValidationError("Worker and orchestrator agents are required.");
+					setValidationError("agents");
 					return;
 				}
 				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
+					setValidationError("intake");
 					return;
 				}
 				if (!scmValidated) {
-					setValidationError("Test the source control connection before saving.");
+					setValidationError("scm");
 					return;
 				}
 				setValidationError(null);
@@ -222,19 +216,26 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		>
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-control">Identity</CardTitle>
+					<CardTitle className="text-control">{t("projects.settings.identity")}</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-2 font-mono text-xs text-muted-foreground">
-					<ReadonlyRow label="id" value={project.id} />
-					<ReadonlyRow label="kind" value={project.kind === "workspace" ? "workspace" : "single repo"} />
-					<ReadonlyRow label="path" value={project.path} />
-					<ReadonlyRow label="repo" value={project.repo || "—"} />
+					<ReadonlyRow label={t("projects.settings.identityId")} value={project.id} />
+					<ReadonlyRow
+						label={t("projects.settings.identityKind")}
+						value={
+							project.kind === "workspace"
+								? t("projects.settings.workspaceKind")
+								: t("projects.settings.singleRepoKind")
+						}
+					/>
+					<ReadonlyRow label={t("projects.settings.identityPath")} value={project.path} />
+					<ReadonlyRow label={t("projects.settings.identityRepo")} value={project.repo || "—"} />
 				</CardContent>
 			</Card>
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-control">Source control</CardTitle>
+					<CardTitle className="text-control">{t("projects.settings.sourceControl")}</CardTitle>
 				</CardHeader>
 				<CardContent>
 					<SCMConnectionFields
@@ -261,7 +262,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			{project.kind === "workspace" && (
 				<Card>
 					<CardHeader>
-						<CardTitle className="text-[13px]">Workspace repos</CardTitle>
+						<CardTitle className="text-[13px]">{t("projects.settings.workspaceRepos")}</CardTitle>
 					</CardHeader>
 					<CardContent className="flex flex-col gap-2">
 						{project.workspaceRepos?.length ? (
@@ -278,7 +279,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 								</div>
 							))
 						) : (
-							<p className="text-[12px] text-muted-foreground">No child repositories are registered.</p>
+							<p className="text-[12px] text-muted-foreground">{t("projects.settings.noChildRepos")}</p>
 						)}
 					</CardContent>
 				</Card>
@@ -286,10 +287,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-control">Worktrees</CardTitle>
+					<CardTitle className="text-control">{t("projects.settings.worktrees")}</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					<Field label="Default branch" htmlFor="defaultBranch">
+					<Field label={t("projects.settings.defaultBranch")} htmlFor="defaultBranch">
 						<input
 							id="defaultBranch"
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
@@ -298,7 +299,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							placeholder="main"
 						/>
 					</Field>
-					<Field label="Session prefix" htmlFor="sessionPrefix">
+					<Field label={t("projects.settings.sessionPrefix")} htmlFor="sessionPrefix">
 						<input
 							id="sessionPrefix"
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
@@ -312,14 +313,14 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-control">Agents</CardTitle>
+					<CardTitle className="text-control">{t("projects.settings.agents")}</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					<RequiredAgentField
 						id="workerAgent"
 						value={form.workerAgent}
-						placeholder="Select worker agent"
-						label="Default worker agent"
+						placeholder={t("projects.agents.workerPlaceholder")}
+						label={t("projects.settings.defaultWorker")}
 						authorized={agentCatalog?.authorized}
 						installed={agentCatalog?.installed}
 						supported={agentCatalog?.supported}
@@ -330,8 +331,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<RequiredAgentField
 						id="orchestratorAgent"
 						value={form.orchestratorAgent}
-						placeholder="Select orchestrator agent"
-						label="Default orchestrator agent"
+						placeholder={t("projects.agents.orchestratorPlaceholder")}
+						label={t("projects.settings.defaultOrchestrator")}
 						authorized={agentCatalog?.authorized}
 						installed={agentCatalog?.installed}
 						supported={agentCatalog?.supported}
@@ -348,39 +349,37 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 								setForm((current) => ({ ...current, coordinatorAutoWake: event.target.checked }))
 							}
 						/>
-						Automatically wake idle coordinator
+						{t("projects.agents.autoWake")}
 					</label>
 					<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
-						<span>Agent availability is cached.</span>
+						<span>{t("projects.agents.availabilityCached")}</span>
 						<button
 							type="button"
 							className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
 							disabled={refreshAgentsMutation.isPending}
 							onClick={() => refreshAgentsMutation.mutate()}
 						>
-							{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+							{refreshAgentsMutation.isPending ? t("projects.agents.refreshing") : t("projects.agents.refresh")}
 						</button>
 					</div>
 					{refreshAgentsMutation.isError && (
 						<p className="text-xs leading-row text-error">
-							{refreshAgentsMutation.error instanceof Error
-								? refreshAgentsMutation.error.message
-								: "Could not refresh agent catalog."}
+							{t("projects.agents.refreshFailed")}
 						</p>
 					)}
 					{missingRequiredAgent && (
-						<p className="text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
+					<p className="text-xs leading-row text-error">{t("projects.settings.agentsRequired")}</p>
 					)}
-					<Field label="Model override" htmlFor="model">
+					<Field label={t("projects.settings.modelOverride")} htmlFor="model">
 						<input
 							id="model"
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.model}
 							onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-							placeholder="(agent default)"
+							placeholder={t("projects.settings.agentDefault")}
 						/>
 					</Field>
-					<Field label="Permission mode" htmlFor="permissionMode">
+					<Field label={t("projects.settings.permissionMode")} htmlFor="permissionMode">
 						<PermissionModeSelect
 							id="permissionMode"
 							value={form.permissions}
@@ -392,10 +391,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-control">Reviewers</CardTitle>
+					<CardTitle className="text-control">{t("projects.settings.reviewers")}</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					<Field label="Default reviewer agent" htmlFor="reviewerHarness">
+					<Field label={t("projects.settings.defaultReviewer")} htmlFor="reviewerHarness">
 						<ReviewerSelect
 							id="reviewerHarness"
 							value={form.reviewerHarness}
@@ -407,7 +406,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-control">Tracker intake</CardTitle>
+					<CardTitle className="text-control">{t("projects.settings.trackerIntake")}</CardTitle>
 				</CardHeader>
 				<CardContent>
 					<IntakeFields
@@ -420,17 +419,31 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
-					{mutation.isPending ? "Saving…" : "Save changes"}
+					{mutation.isPending ? t("projects.settings.saving") : t("projects.settings.save")}
 				</Button>
-				{validationError && <span className="text-xs text-error">{validationError}</span>}
-				{mutation.isError && (
+				{validationError && (
 					<span className="text-xs text-error">
-						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
+						{validationError === "agents"
+							? t("projects.settings.agentsRequired")
+							: validationError === "intake"
+								? t("projects.settings.intakeAssigneeRequired")
+								: t("projects.settings.testSCMRequired")}
 					</span>
 				)}
-				{savedAt && !mutation.isPending && !mutation.isError && <span className="text-xs text-success">Saved.</span>}
+				{mutation.isError && (
+					<span className="text-xs text-error">
+						{apiErrorMessage(mutation.error, t("projects.settings.saveFailed"))}
+					</span>
+				)}
+				{savedAt && !mutation.isPending && !mutation.isError && (
+					<span className="text-xs text-success">{t("projects.settings.saved")}</span>
+				)}
 				{replacementError && !mutation.isPending && !mutation.isError && (
-					<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
+					<span className="text-xs text-warning">
+						{t("projects.settings.restartFailed", {
+							detail: replacementError.detail ?? t("projects.replacement.fallback"),
+						})}
+					</span>
 				)}
 			</div>
 		</form>
@@ -446,16 +459,23 @@ function PermissionModeSelect({
 	value: string;
 	onChange: (value: string) => void;
 }) {
+	const { t } = useTranslation();
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
 			<SelectTrigger id={id} className="h-control-form w-full text-control">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
-				<SelectItem value="__default__">Project default</SelectItem>
+				<SelectItem value="__default__">{t("projects.settings.projectDefault")}</SelectItem>
 				{PERMISSION_MODE_OPTIONS.map((opt) => (
-					<SelectItem key={opt.value} value={opt.value}>
-						{opt.label}
+					<SelectItem key={opt} value={opt}>
+						{opt === "default"
+							? t("projects.settings.permissionDefault")
+							: opt === "accept-edits"
+								? t("projects.settings.permissionAcceptEdits")
+								: opt === "auto"
+									? t("projects.settings.permissionAuto")
+									: t("projects.settings.permissionBypass")}
 					</SelectItem>
 				))}
 			</SelectContent>
@@ -464,13 +484,14 @@ function PermissionModeSelect({
 }
 
 function ReviewerSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+	const { t } = useTranslation();
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
 			<SelectTrigger id={id} className="h-control-form w-full text-control">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
-				<SelectItem value="__default__">Project default</SelectItem>
+				<SelectItem value="__default__">{t("projects.settings.projectDefault")}</SelectItem>
 				{REVIEWER_OPTIONS.map((reviewer) => (
 					<SelectItem key={reviewer} value={reviewer}>
 						{reviewer}
