@@ -127,8 +127,11 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	if reviewer.gotInv.RunID != "run-1" || reviewer.gotInv.TargetSHA != "sha1" || reviewer.gotInv.ReviewerID != "review-mer-1" {
 		t.Fatalf("invocation = %+v", reviewer.gotInv)
 	}
-	if !strings.HasPrefix(reviewer.gotInv.Prompt, reviewerTaskMessagePrefix) || reviewer.gotInv.SystemPrompt != "" || reviewer.gotInv.SystemPromptFile == "" {
+	if !strings.HasPrefix(reviewer.gotInv.Prompt, reviewerTaskMessagePrefix) || reviewer.gotInv.SystemPrompt != "" || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
 		t.Fatalf("hidden prompt invocation = %+v", reviewer.gotInv)
+	}
+	if reviewer.gotInv.TaskPromptFile != filepath.Join(dataDir, "prompts", "mer-1", "reviewer", "task.md") {
+		t.Fatalf("task prompt file = %q", reviewer.gotInv.TaskPromptFile)
 	}
 	task, err := os.ReadFile(filepath.Join(dataDir, "prompts", "mer-1", "reviewer", "task.md"))
 	if err != nil {
@@ -176,7 +179,7 @@ func TestLauncherNotifySendsMessageToHandle(t *testing.T) {
 	if rt.sentTo != "review-mer-1" || !strings.HasPrefix(rt.sentMsg, reviewerTaskMessagePrefix) {
 		t.Fatalf("sent to %q msg %q", rt.sentTo, rt.sentMsg)
 	}
-	if strings.Contains(reviewer.gotInv.Prompt, "run-1") || reviewer.gotInv.SystemPromptFile == "" {
+	if strings.Contains(reviewer.gotInv.Prompt, "run-1") || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
 		t.Fatalf("visible invocation = %+v", reviewer.gotInv)
 	}
 }

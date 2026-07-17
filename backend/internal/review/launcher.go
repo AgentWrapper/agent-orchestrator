@@ -123,6 +123,7 @@ func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocati
 	inv.Prompt = reviewerTaskMessagePrefix + filepath.ToSlash(taskPath) + "`."
 	inv.SystemPrompt = ""
 	inv.SystemPromptFile = systemPath
+	inv.TaskPromptFile = taskPath
 	return inv, nil
 }
 

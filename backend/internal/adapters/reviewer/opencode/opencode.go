@@ -3,14 +3,15 @@ package opencode
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"strings"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
-
-const reviewerConfig = `{"permission":{"*":"deny","read":"allow","glob":"allow","grep":"allow","bash":{"*":"deny","gh api *":"allow","git diff*":"allow","git log*":"allow","git show*":"allow","git status*":"allow","ao review submit *":"allow","printf * | gh api *":"allow","printf * | ao review submit *":"allow"}}}`
 
 // Reviewer is the opencode code-review adapter.
 type Reviewer struct {
@@ -49,10 +50,47 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
+	config, err := buildReviewerConfig(inv.TaskPromptFile)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
 	return ports.ReviewCommandSpec{
 		Argv: argv,
-		Env:  map[string]string{"OPENCODE_CONFIG_CONTENT": reviewerConfig},
+		Env:  map[string]string{"OPENCODE_CONFIG_CONTENT": config},
 	}, nil
+}
+
+// buildReviewerConfig keeps OpenCode read-only while allowing it to read the
+// AO-owned task prompt outside the worker checkout. The exception is scoped to
+// the one reviewer prompt directory; every other external path remains denied
+// by the catch-all rule.
+func buildReviewerConfig(taskPromptFile string) (string, error) {
+	permission := map[string]any{
+		"*":    "deny",
+		"read": "allow",
+		"glob": "allow",
+		"grep": "allow",
+		"bash": map[string]string{
+			"*":                             "deny",
+			"gh api *":                      "allow",
+			"git diff*":                     "allow",
+			"git log*":                      "allow",
+			"git show*":                     "allow",
+			"git status*":                   "allow",
+			"ao review submit *":            "allow",
+			"printf * | gh api *":           "allow",
+			"printf * | ao review submit *": "allow",
+		},
+	}
+	if taskPromptFile != "" {
+		promptPattern := filepath.ToSlash(filepath.Join(filepath.Dir(taskPromptFile), "**"))
+		permission["external_directory"] = map[string]string{promptPattern: "allow"}
+	}
+	data, err := json.Marshal(map[string]any{"permission": permission})
+	if err != nil {
+		return "", fmt.Errorf("encode opencode reviewer config: %w", err)
+	}
+	return string(data), nil
 }
 
 // ReviewMessage returns the centrally-authored task for an existing pane.

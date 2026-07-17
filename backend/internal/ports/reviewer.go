@@ -78,6 +78,10 @@ type ReviewInvocation struct {
 	// stream while preserving their system-level role in agent harnesses that
 	// support prompt files.
 	SystemPromptFile string
+	// TaskPromptFile is the AO-owned file containing the full per-pass task.
+	// Prompt carries only a short reference to this file so the instructions do
+	// not enter the shared terminal stream.
+	TaskPromptFile string
 }
 
 // ReviewTask is one PR/run in a multi-PR review trigger queue.
