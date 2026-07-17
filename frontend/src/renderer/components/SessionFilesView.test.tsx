@@ -53,6 +53,14 @@ describe("SessionFilesView", () => {
 								size: 80,
 								binary: false,
 							},
+							{
+								path: "docs/guide.md",
+								status: "added",
+								additions: 3,
+								deletions: 0,
+								size: 90,
+								binary: false,
+							},
 						],
 					},
 				};
@@ -83,8 +91,10 @@ describe("SessionFilesView", () => {
 	it("loads the workspace files and requests detail for the selected file", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: /src\/App\.tsx/ });
-		expect(screen.getByText("1 changed")).toBeInTheDocument();
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
+		expect(screen.getByText("2 files changed")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 
 		await waitFor(() =>
 			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
@@ -94,28 +104,27 @@ describe("SessionFilesView", () => {
 		expect(await screen.findByText("+const value = 1;")).toBeInTheDocument();
 	});
 
-	it("filters and opens a file from the list", async () => {
+	it("filters and expands a changed file from the review list", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		await userEvent.type(await screen.findByPlaceholderText("Search files"), "readme");
+		await userEvent.type(await screen.findByPlaceholderText("Search changed files"), "guide");
 		expect(screen.queryByRole("button", { name: /src\/App\.tsx/ })).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: /README\.md/ }));
+		await userEvent.click(screen.getByRole("button", { name: "Expand docs/guide.md" }));
 
 		await waitFor(() =>
 			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
-				params: { path: { sessionId: "sess-1" }, query: { path: "README.md" } },
+				params: { path: { sessionId: "sess-1" }, query: { path: "docs/guide.md" } },
 			}),
 		);
 	});
 
-	it("uses the terminal foreground color for normal file content", async () => {
+	it("uses the terminal foreground color for diff content", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: /src\/App\.tsx/ });
-		await userEvent.click(screen.getByRole("tab", { name: "File" }));
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 
-		const codePane = screen.getByText("const value = 1;").closest("pre");
+		const codePane = (await screen.findByText("+const value = 1;")).closest("pre");
 		expect(codePane).toHaveClass("text-terminal-foreground");
 		expect(codePane).not.toHaveClass("text-terminal");
 	});

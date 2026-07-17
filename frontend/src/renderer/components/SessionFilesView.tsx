@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { FileText, RefreshCw, Search, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, Copy, Download, FileText, RefreshCw, Search, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
@@ -10,7 +10,6 @@ import { Input } from "./ui/input";
 type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"];
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"];
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
-type DetailMode = "diff" | "file";
 
 type SessionFilesViewProps = {
 	sessionId: string;
@@ -36,9 +35,10 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 };
 
 export function SessionFilesView({ sessionId, onClose }: SessionFilesViewProps) {
+	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
-	const [selectedPath, setSelectedPath] = useState<string | null>(null);
-	const [detailMode, setDetailMode] = useState<DetailMode>("diff");
+	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+	const initializedExpansionFor = useRef<string | null>(null);
 
 	const filesQuery = useQuery({
 		queryKey: ["session-workspace-files", sessionId],
@@ -52,40 +52,59 @@ export function SessionFilesView({ sessionId, onClose }: SessionFilesViewProps) 
 		},
 	});
 	const files = filesQuery.data?.files ?? emptyFiles;
+	const changedFiles = useMemo(() => files.filter(isChanged), [files]);
+
+	useEffect(() => {
+		initializedExpansionFor.current = null;
+		setExpandedPaths(new Set());
+		setFilter("");
+	}, [sessionId]);
 
 	useEffect(() => {
 		if (filesQuery.isPending) return;
-		setSelectedPath((current) => {
-			if (current && files.some((file) => file.path === current)) return current;
-			return files.find(isChanged)?.path ?? files[0]?.path ?? null;
-		});
-	}, [files, filesQuery.isPending]);
-
-	const detailQuery = useQuery({
-		queryKey: ["session-workspace-file", sessionId, selectedPath],
-		enabled: Boolean(selectedPath),
-		refetchInterval: 3500,
-		queryFn: async () => {
-			if (!selectedPath) throw new Error("file path is required");
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
-				params: { path: { sessionId }, query: { path: selectedPath } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace file"));
-			if (!data) throw new Error("Workspace file response was empty");
-			return data;
-		},
-	});
+		if (initializedExpansionFor.current === sessionId) return;
+		initializedExpansionFor.current = sessionId;
+		setExpandedPaths(changedFiles[0] ? new Set([changedFiles[0].path]) : new Set());
+	}, [changedFiles, filesQuery.isPending, sessionId]);
 
 	const normalizedFilter = filter.trim().toLowerCase();
 	const visibleFiles = useMemo(
-		() => (normalizedFilter ? files.filter((file) => file.path.toLowerCase().includes(normalizedFilter)) : files),
-		[files, normalizedFilter],
+		() =>
+			normalizedFilter
+				? changedFiles.filter((file) => file.path.toLowerCase().includes(normalizedFilter))
+				: changedFiles,
+		[changedFiles, normalizedFilter],
 	);
-	const changedCount = files.filter(isChanged).length;
+	const changedCount = changedFiles.length;
+	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
 	const refresh = () => {
 		void filesQuery.refetch();
-		if (selectedPath) void detailQuery.refetch();
+		void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
+	};
+
+	const toggleFile = (path: string) => {
+		setExpandedPaths((current) => {
+			const next = new Set(current);
+			if (next.has(path)) {
+				next.delete(path);
+			} else {
+				next.add(path);
+			}
+			return next;
+		});
+	};
+
+	const toggleVisibleFiles = () => {
+		setExpandedPaths((current) => {
+			const next = new Set(current);
+			if (expandedVisibleCount > 0) {
+				for (const file of visibleFiles) next.delete(file.path);
+				return next;
+			}
+			for (const file of visibleFiles) next.add(file.path);
+			return next;
+		});
 	};
 
 	return (
@@ -95,7 +114,7 @@ export function SessionFilesView({ sessionId, onClose }: SessionFilesViewProps) 
 					<FileText className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
 					<h2 className="truncate text-md-sm font-semibold text-foreground">Files</h2>
 					<span className="shrink-0 font-mono text-caption text-passive">
-						{changedCount === 1 ? "1 changed" : `${changedCount} changed`}
+						{changedCount === 1 ? "1 file changed" : `${changedCount} files changed`}
 					</span>
 				</div>
 				<label className="relative ml-auto min-w-0 flex-1 max-w-[360px]">
@@ -103,67 +122,76 @@ export function SessionFilesView({ sessionId, onClose }: SessionFilesViewProps) 
 					<Input
 						className="h-8 pl-8 font-mono text-xs"
 						onChange={(event) => setFilter(event.target.value)}
-						placeholder="Search files"
+						placeholder="Search changed files"
 						value={filter}
 					/>
 				</label>
 				<Button
 					aria-label="Refresh files"
-					disabled={filesQuery.isFetching || detailQuery.isFetching}
+					disabled={filesQuery.isFetching}
 					onClick={refresh}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
-					<RefreshCw
-						className={cn("size-icon-sm", (filesQuery.isFetching || detailQuery.isFetching) && "animate-spin")}
-						aria-hidden="true"
-					/>
+					<RefreshCw className={cn("size-icon-sm", filesQuery.isFetching && "animate-spin")} aria-hidden="true" />
 				</Button>
 				<Button aria-label="Close files" onClick={onClose} size="icon-sm" type="button" variant="ghost">
 					<X className="size-icon-sm" aria-hidden="true" />
 				</Button>
 			</header>
 
-			<div className="grid min-h-0 flex-1 grid-cols-[minmax(210px,32%)_minmax(0,1fr)]">
-				<aside className="min-h-0 border-r border-border bg-background">
-					<FileList
+			<div className="min-h-0 flex-1 overflow-auto bg-background">
+				<div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col px-6 py-5">
+					<div className="mb-4 flex shrink-0 items-center gap-3">
+						<h3 className="text-md-sm font-medium text-foreground">Review</h3>
+						<div className="ml-auto flex items-center gap-2">
+							<Button
+								disabled={visibleFiles.length === 0}
+								onClick={toggleVisibleFiles}
+								size="sm"
+								type="button"
+								variant="outline"
+							>
+								{expandedVisibleCount > 0 ? "Collapse all" : "Expand all"}
+							</Button>
+							<Button aria-label="Diff layout" disabled size="sm" type="button" variant="outline">
+								Stacked
+								<ChevronDown className="size-icon-sm" aria-hidden="true" />
+							</Button>
+						</div>
+					</div>
+					<ReviewFileList
 						error={filesQuery.error}
+						expandedPaths={expandedPaths}
 						files={visibleFiles}
 						isLoading={filesQuery.isPending}
 						onRetry={() => void filesQuery.refetch()}
-						onSelect={setSelectedPath}
-						selectedPath={selectedPath}
+						onToggle={toggleFile}
+						sessionId={sessionId}
 					/>
-				</aside>
-				<FileDetail
-					detail={detailQuery.data}
-					error={detailQuery.error}
-					isLoading={detailQuery.isPending && Boolean(selectedPath)}
-					mode={detailMode}
-					onModeChange={setDetailMode}
-					onRetry={() => void detailQuery.refetch()}
-					selectedPath={selectedPath}
-				/>
+				</div>
 			</div>
 		</section>
 	);
 }
 
-function FileList({
+function ReviewFileList({
 	error,
+	expandedPaths,
 	files,
 	isLoading,
 	onRetry,
-	onSelect,
-	selectedPath,
+	onToggle,
+	sessionId,
 }: {
 	error: Error | null;
+	expandedPaths: Set<string>;
 	files: WorkspaceFileSummary[];
 	isLoading: boolean;
 	onRetry: () => void;
-	onSelect: (path: string) => void;
-	selectedPath: string | null;
+	onToggle: (path: string) => void;
+	sessionId: string;
 }) {
 	if (isLoading) {
 		return <PanelMessage>Loading files...</PanelMessage>;
@@ -174,93 +202,122 @@ function FileList({
 		);
 	}
 	if (files.length === 0) {
-		return <PanelMessage>No files found.</PanelMessage>;
+		return <PanelMessage>No changed files found.</PanelMessage>;
 	}
 	return (
-		<ul className="h-full overflow-auto py-2">
+		<ul className="flex flex-col gap-3">
 			{files.map((file) => (
 				<li key={file.path}>
-					<button
-						className={cn(
-							"flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-interactive-hover",
-							selectedPath === file.path && "bg-interactive-active text-foreground",
-						)}
-						onClick={() => onSelect(file.path)}
-						type="button"
-					>
-						<StatusMark status={file.status} />
-						<span className="min-w-0 flex-1 truncate font-mono text-foreground">{file.path}</span>
-						{isChanged(file) ? (
-							<span className="shrink-0 font-mono text-micro text-passive">
-								+{file.additions} -{file.deletions}
-							</span>
-						) : null}
-					</button>
+					<ReviewFileCard
+						expanded={expandedPaths.has(file.path)}
+						file={file}
+						onToggle={() => onToggle(file.path)}
+						sessionId={sessionId}
+					/>
 				</li>
 			))}
 		</ul>
 	);
 }
 
-function FileDetail({
-	detail,
-	error,
-	isLoading,
-	mode,
-	onModeChange,
-	onRetry,
-	selectedPath,
+function ReviewFileCard({
+	expanded,
+	file,
+	onToggle,
+	sessionId,
 }: {
-	detail?: WorkspaceFileDetail;
-	error: Error | null;
-	isLoading: boolean;
-	mode: DetailMode;
-	onModeChange: (mode: DetailMode) => void;
-	onRetry: () => void;
-	selectedPath: string | null;
+	expanded: boolean;
+	file: WorkspaceFileSummary;
+	onToggle: () => void;
+	sessionId: string;
 }) {
-	if (!selectedPath) {
-		return <PanelMessage>No file selected.</PanelMessage>;
-	}
+	const detailQuery = useQuery({
+		queryKey: ["session-workspace-file", sessionId, file.path],
+		enabled: expanded,
+		refetchInterval: expanded ? 3500 : false,
+		queryFn: () => loadWorkspaceFile(sessionId, file.path),
+	});
+
+	const copyPath = () => {
+		void navigator.clipboard?.writeText(file.path);
+	};
+
+	const downloadFile = async () => {
+		const detail = detailQuery.data ?? (await detailQuery.refetch()).data;
+		if (!detail || detail.binary) return;
+		downloadTextFile(detail.path, detail.deleted ? detail.diff : detail.content || detail.diff);
+	};
+
 	return (
-		<section className="flex min-h-0 flex-col bg-background" aria-label="File detail">
-			<div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-4">
-				<div className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-foreground">{selectedPath}</div>
-				<div className="inline-flex shrink-0 rounded-md bg-raised p-1" role="tablist" aria-label="File detail mode">
-					<ModeButton active={mode === "diff"} onClick={() => onModeChange("diff")}>
-						Diff
-					</ModeButton>
-					<ModeButton active={mode === "file"} onClick={() => onModeChange("file")}>
-						File
-					</ModeButton>
+		<article className="overflow-hidden rounded-md border border-border bg-surface shadow-sm">
+			<div className="flex min-h-14 items-center gap-3 px-4">
+				<button
+					aria-controls={`workspace-diff-${file.path}`}
+					aria-expanded={expanded}
+					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
+					className="flex min-w-0 flex-1 items-center gap-3 py-3 text-left"
+					onClick={onToggle}
+					type="button"
+				>
+					{expanded ? (
+						<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+					) : (
+						<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+					)}
+					<StatusMark status={file.status} />
+					<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>
+					<ChangeBadges additions={file.additions} deletions={file.deletions} />
+				</button>
+				<div className="flex shrink-0 items-center gap-1">
+					<Button
+						aria-label={`Download ${file.path}`}
+						onClick={downloadFile}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						<Download className="size-icon-sm" aria-hidden="true" />
+					</Button>
+					<Button
+						aria-label={`Copy path for ${file.path}`}
+						onClick={copyPath}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						<Copy className="size-icon-sm" aria-hidden="true" />
+					</Button>
 				</div>
 			</div>
-			<div className="min-h-0 flex-1">
-				{isLoading ? <PanelMessage>Loading file...</PanelMessage> : null}
-				{!isLoading && error ? (
-					<PanelMessage action={<RetryButton onClick={onRetry} />}>
-						{error.message || "Unable to load this file."}
-					</PanelMessage>
-				) : null}
-				{!isLoading && !error && detail ? <DetailBody detail={detail} mode={mode} /> : null}
-			</div>
-		</section>
+			{expanded ? (
+				<div id={`workspace-diff-${file.path}`} className="border-t border-border">
+					{detailQuery.isPending ? <PanelMessage>Loading diff...</PanelMessage> : null}
+					{!detailQuery.isPending && detailQuery.error ? (
+						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
+							{detailQuery.error.message || "Unable to load this file."}
+						</PanelMessage>
+					) : null}
+					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
+						<ReviewDiffBody detail={detailQuery.data} />
+					) : null}
+				</div>
+			) : null}
+		</article>
 	);
 }
 
-function DetailBody({ detail, mode }: { detail: WorkspaceFileDetail; mode: DetailMode }) {
+async function loadWorkspaceFile(sessionId: string, path: string) {
+	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
+		params: { path: { sessionId }, query: { path } },
+	});
+	if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace file"));
+	if (!data) throw new Error("Workspace file response was empty");
+	return data;
+}
+
+function ReviewDiffBody({ detail }: { detail: WorkspaceFileDetail }) {
 	if (detail.binary) {
 		return <PanelMessage>Binary file preview is not available.</PanelMessage>;
-	}
-	if (mode === "file") {
-		if (detail.deleted) return <PanelMessage>File deleted in this session.</PanelMessage>;
-		return (
-			<CodePanel
-				notice={detail.contentTruncated ? "File preview truncated." : undefined}
-				text={detail.content}
-				variant="file"
-			/>
-		);
 	}
 	return (
 		<CodePanel
@@ -274,7 +331,7 @@ function DetailBody({ detail, mode }: { detail: WorkspaceFileDetail; mode: Detai
 function CodePanel({ notice, text, variant }: { notice?: string; text: string; variant: "diff" | "file" }) {
 	const lines = text === "" ? [""] : text.replace(/\r\n/g, "\n").split("\n");
 	return (
-		<div className="flex h-full min-h-0 flex-col">
+		<div className="flex min-h-[220px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{notice ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning">{notice}</div>
 			) : null}
@@ -290,26 +347,29 @@ function CodePanel({ notice, text, variant }: { notice?: string; text: string; v
 	);
 }
 
-function ModeButton({ active, children, onClick }: { active: boolean; children: string; onClick: () => void }) {
+function ChangeBadges({ additions, deletions }: { additions: number; deletions: number }) {
 	return (
-		<button
-			aria-selected={active}
-			className={cn(
-				"rounded px-2.5 py-1 text-xs text-muted-foreground transition-colors",
-				active && "bg-background text-foreground",
-			)}
-			onClick={onClick}
-			role="tab"
-			type="button"
-		>
-			{children}
-		</button>
+		<span className="flex shrink-0 items-center gap-1 font-mono text-xs font-semibold">
+			{additions > 0 ? <span className="rounded bg-success/20 px-1.5 py-0.5 text-success">+{additions}</span> : null}
+			{deletions > 0 ? <span className="rounded bg-error/20 px-1.5 py-0.5 text-error">-{deletions}</span> : null}
+		</span>
 	);
+}
+
+function downloadTextFile(path: string, text: string) {
+	if (typeof document === "undefined") return;
+	const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = path.replace(/[\\/]/g, "__") || "workspace-file.txt";
+	anchor.click();
+	URL.revokeObjectURL(url);
 }
 
 function PanelMessage({ action, children }: { action?: ReactNode; children: ReactNode }) {
 	return (
-		<div className="grid h-full min-h-0 place-items-center p-6 text-center text-xs text-muted-foreground">
+		<div className="grid min-h-[180px] place-items-center p-6 text-center text-xs text-muted-foreground">
 			<div className="flex max-w-sm flex-col items-center gap-3">
 				<p>{children}</p>
 				{action ?? null}
