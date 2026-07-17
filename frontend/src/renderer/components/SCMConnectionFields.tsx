@@ -43,6 +43,13 @@ type TestState =
 	| { key: string; kind: "success"; result: SCMConnectionTestResult }
 	| { key: string; kind: "error"; error: unknown };
 
+type ConnectionTestVariables = Readonly<{
+	provider: SCMProvider;
+	connectionId: string;
+	repository: string;
+	testKey: string;
+}>;
+
 const GITHUB_DEFAULT_ID = "github-default";
 
 const STATUS_KEYS = {
@@ -140,10 +147,10 @@ export function SCMConnectionFields({
 	}, [connections, connectionsQuery.isLoading, onChange, value]);
 
 	const testMutation = useMutation({
-		mutationFn: async () => {
+		mutationFn: async (variables: ConnectionTestVariables) => {
 			const { data, error } = await apiClient.POST("/api/v1/scm/connections/{id}/test", {
-				params: { path: { id: value.connectionId } },
-				body: { repository: effectiveRepo },
+				params: { path: { id: variables.connectionId } },
+				body: { repository: variables.repository },
 			});
 			if (error) {
 				throw error;
@@ -151,19 +158,19 @@ export function SCMConnectionFields({
 			if (!data?.result) throw { localCode: "TEST_RESULT_MISSING" } satisfies LocalSCMFailure;
 			return data.result;
 		},
-		onSuccess: (result) => {
-			setTestState({ key: testKey, kind: "success", result });
+		onSuccess: (result, variables) => {
+			setTestState({ key: variables.testKey, kind: "success", result });
 			queryClient.setQueryData<SCMConnection[]>(scmConnectionsQueryKey, (current = []) =>
 				current.map((connection) =>
-					connection.id === value.connectionId
+					connection.provider === variables.provider && connection.id === variables.connectionId
 						? { ...connection, status: result.status, username: result.identity.username }
 						: connection,
 				),
 			);
 		},
-		onError: (error) => {
+		onError: (error, variables) => {
 			setTestState({
-				key: testKey,
+				key: variables.testKey,
 				kind: "error",
 				error,
 			});
@@ -264,7 +271,14 @@ export function SCMConnectionFields({
 						variant="outline"
 						size="sm"
 						disabled={!selected || !effectiveRepo || testMutation.isPending}
-						onClick={() => testMutation.mutate()}
+						onClick={() =>
+							testMutation.mutate({
+								provider: value.provider,
+								connectionId: value.connectionId,
+								repository: effectiveRepo,
+								testKey,
+							})
+						}
 					>
 						{testMutation.isPending ? t("projects.scm.testing") : t("projects.scm.test")}
 					</Button>

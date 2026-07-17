@@ -42,6 +42,22 @@ const gitlabConnection = {
 	status: "unknown" as const,
 };
 
+const gitlabBackupConnection = {
+	...gitlabConnection,
+	id: "gitlab-backup",
+	displayName: "GitLab Backup",
+	webBaseUrl: "https://gitlab-backup.example.com",
+	apiBaseUrl: "https://gitlab-backup.example.com/api/v4",
+};
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((next) => {
+		resolve = next;
+	});
+	return { promise, resolve };
+}
+
 function renderFields(
 	initial: SCMSelection = { provider: "gitlab", connectionId: "gitlab-work", repo: "group/app" },
 	onValidationChange?: (valid: boolean) => void,
@@ -234,6 +250,93 @@ describe("SCMConnectionFields", () => {
 			JSON.stringify({ provider: "github", connectionId: "github-default", repo: "" }),
 		);
 		expect(screen.getByText("Built-in GitHub connection")).toBeInTheDocument();
+	});
+
+	it("does not validate a repository selected while an earlier repository test is pending", async () => {
+		const pending = deferred<{
+			data: {
+				result: {
+					status: "connected";
+					identity: { username: string };
+					capabilities: { read: boolean; write: boolean };
+				};
+			};
+			error: undefined;
+		}>();
+		postMock.mockReturnValueOnce(pending.promise);
+		const onValidationChange = vi.fn();
+		const queryClient = renderFields(undefined, onValidationChange);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await userEvent.clear(screen.getByLabelText("Repository"));
+		await userEvent.type(screen.getByLabelText("Repository"), "group/app-next");
+
+		pending.resolve({
+			data: {
+				result: {
+					status: "connected",
+					identity: { username: "repo-a-user" },
+					capabilities: { read: true, write: true },
+				},
+			},
+			error: undefined,
+		});
+
+		await waitFor(() =>
+			expect(
+				(queryClient.getQueryData(scmConnectionsQueryKey) as typeof gitlabConnection[] | undefined)?.[0]?.status,
+			).toBe("connected"),
+		);
+		expect(screen.getByTestId("selection")).toHaveTextContent('"repo":"group/app-next"');
+		expect(screen.queryByText("Connected as repo-a-user")).not.toBeInTheDocument();
+		await waitFor(() => expect(onValidationChange).toHaveBeenLastCalledWith(false));
+	});
+
+	it("attributes a pending result only to the connection that was tested", async () => {
+		getMock.mockResolvedValue({
+			data: { connections: [gitlabConnection, gitlabBackupConnection] },
+			error: undefined,
+		});
+		const pending = deferred<{
+			data: {
+				result: {
+					status: "connected";
+					identity: { username: string };
+					capabilities: { read: boolean; write: boolean };
+				};
+			};
+			error: undefined;
+		}>();
+		postMock.mockReturnValueOnce(pending.promise);
+		const onValidationChange = vi.fn();
+		const queryClient = renderFields(undefined, onValidationChange);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await chooseOption(screen.getByRole("combobox", { name: "Connection" }), "GitLab Backup");
+
+		pending.resolve({
+			data: {
+				result: {
+					status: "connected",
+					identity: { username: "connection-a-user" },
+					capabilities: { read: true, write: true },
+				},
+			},
+			error: undefined,
+		});
+
+		await waitFor(() => {
+			const connections = queryClient.getQueryData(scmConnectionsQueryKey) as
+				| Array<typeof gitlabConnection>
+				| undefined;
+			expect(connections?.find((connection) => connection.id === "gitlab-work")?.status).toBe("connected");
+			expect(connections?.find((connection) => connection.id === "gitlab-backup")?.status).toBe("unknown");
+		});
+		expect(screen.getByTestId("selection")).toHaveTextContent('"connectionId":"gitlab-backup"');
+		expect(screen.queryByText("Connected as connection-a-user")).not.toBeInTheDocument();
+		await waitFor(() => expect(onValidationChange).toHaveBeenLastCalledWith(false));
 	});
 
 	it("shows a structured authentication failure without exposing provider response bodies", async () => {
