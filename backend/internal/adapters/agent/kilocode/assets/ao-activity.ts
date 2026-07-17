@@ -107,6 +107,16 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
     return true
   }
 
+  function readSessionID(value: any): string | null {
+    const id = value?.sessionID ?? value?.sessionId ?? value?.session_id
+    return typeof id === "string" && id.trim().length > 0 ? id.trim() : null
+  }
+
+  function readCreatedSessionID(value: any): string | null {
+    const id = readSessionID(value) ?? value?.id
+    return typeof id === "string" && id.trim().length > 0 ? id.trim() : null
+  }
+
   // Report a user prompt, preferring the one that carries the prompt text.
   // message.updated can arrive before message.part.updated with no text, so an
   // early empty report must NOT dedup away the later text report — otherwise the
@@ -129,7 +139,7 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
     // is untouched.
     "permission.ask": async (input: any) => {
       try {
-        const sessionID = input?.sessionID ?? input?.sessionId ?? currentSessionID
+        const sessionID = readSessionID(input) ?? currentSessionID
         if (!sessionID) return
         callHookSync("permission-request", { session_id: sessionID, model: currentModel ?? "" })
       } catch (err) {
@@ -142,9 +152,10 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
         switch (event.type) {
           case "session.created": {
             const session = (event as any).properties?.info
-            if (!session?.id) break
-            if (switchedSession(session.id)) {
-              callHookSync("session-start", { session_id: session.id })
+            const sessionID = readCreatedSessionID(session)
+            if (!sessionID) break
+            if (switchedSession(sessionID)) {
+              callHookSync("session-start", { session_id: sessionID })
             }
             break
           }
@@ -152,15 +163,16 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
           case "message.updated": {
             const msg = (event as any).properties?.info
             if (!msg) break
-            if (msg.sessionID && switchedSession(msg.sessionID)) {
-              callHookSync("session-start", { session_id: msg.sessionID })
+            const msgSessionID = readSessionID(msg)
+            if (msgSessionID && switchedSession(msgSessionID)) {
+              callHookSync("session-start", { session_id: msgSessionID })
             }
             if (msg.role === "assistant" && msg.modelID) currentModel = msg.modelID
             // Fallback: some `kilo run` flows never deliver message.part.updated
             // for the prompt, so start the turn from the user message itself.
             if (msg.role === "user") {
               rememberMessage(msg.id, msg)
-              const sessionID = msg.sessionID ?? currentSessionID
+              const sessionID = msgSessionID ?? currentSessionID
               if (sessionID) reportUserPrompt(sessionID, msg.id, "")
             }
             break
@@ -171,7 +183,7 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             if (!part?.messageID) break
             const msg = messageStore.get(part.messageID)
             if (msg?.role === "user" && part.type === "text") {
-              const sessionID = msg.sessionID ?? currentSessionID
+              const sessionID = readSessionID(msg) ?? currentSessionID
               const prompt = part.text ?? ""
               if (sessionID) reportUserPrompt(sessionID, msg.id, prompt)
               if (prompt.length > 0) messageStore.delete(part.messageID)
@@ -187,7 +199,7 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             // sessions intentionally emit one stop per idle transition.
             const props = (event as any).properties
             if (props?.status?.type !== "idle") break
-            const sessionID = props?.sessionID ?? currentSessionID
+            const sessionID = readSessionID(props) ?? currentSessionID
             if (!sessionID) break
             callHookSync("stop", { session_id: sessionID, model: currentModel ?? "" })
             break

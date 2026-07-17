@@ -74,15 +74,16 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 	return p.ToolName, p.ToolUseID
 }
 
-// hookAgentSessionID extracts the native resume handle shared by Cursor, Codex,
-// Claude Code, and other hook payloads. It is independent of activity
+// hookAgentSessionID extracts the native resume handle shared by Agy, Copilot,
+// Cursor, Codex, Claude Code, and other hook payloads. It is independent of activity
 // derivation because SessionStart is intentionally metadata-only for harnesses
 // where process startup is not proof that a turn is active.
 func hookAgentSessionID(payload []byte) string {
 	var p struct {
-		SessionID      string `json:"session_id"`
-		SessionIDCamel string `json:"sessionId"`
-		ConversationID string `json:"conversation_id"`
+		SessionID           string `json:"session_id"`
+		SessionIDCamel      string `json:"sessionId"`
+		ConversationID      string `json:"conversation_id"`
+		ConversationIDCamel string `json:"conversationId"`
 	}
 	_ = json.Unmarshal(payload, &p)
 	id := strings.TrimSpace(p.SessionID)
@@ -91,6 +92,9 @@ func hookAgentSessionID(payload []byte) string {
 	}
 	if id == "" {
 		id = strings.TrimSpace(p.ConversationID)
+	}
+	if id == "" {
+		id = strings.TrimSpace(p.ConversationIDCamel)
 	}
 	if len(id) > maxActivityMetaLen {
 		return ""

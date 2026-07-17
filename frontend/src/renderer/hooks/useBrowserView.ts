@@ -78,6 +78,21 @@ function visibleSlotRect(node: HTMLElement): BrowserRect {
 	return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
+// `requestFullscreen` (the terminal pane's fullscreen button) promotes an element
+// into the DOM top layer, which covers every other DOM node — but not the native
+// view, which Chromium composites above the page regardless. The transition also
+// leaves the slot's own box untouched, since the top layer does not reflow
+// normal-flow siblings, so neither the ResizeObserver nor `resize` fires and the
+// view would keep painting at its pre-fullscreen bounds, over the fullscreen
+// element and without its own (now hidden) toolbar. Nothing outside the
+// fullscreen subtree is visible, so hide the view unless the slot is inside it.
+function hiddenByFullscreen(node: HTMLElement): boolean {
+	// Truthy, not `!== null`: the spec says null, but jsdom (and older engines)
+	// leave `fullscreenElement` undefined when nothing is fullscreen.
+	const fullscreen = document.fullscreenElement;
+	return Boolean(fullscreen) && !fullscreen!.contains(node);
+}
+
 export function useBrowserView({
 	sessionId,
 	active,
@@ -128,7 +143,7 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current) {
+		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current || hiddenByFullscreen(node)) {
 			sendHiddenBounds(id);
 			return;
 		}
@@ -345,16 +360,21 @@ export function useBrowserView({
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
+		// Fullscreen animates on macOS, so settle-measure: hiding lands on the
+		// leading edge, and the restore on exit waits for the final geometry.
+		const handleFullscreenChange = () => scheduleSettleMeasure();
 		window.addEventListener("resize", handle);
 		window.addEventListener("scroll", handle, true);
+		document.addEventListener("fullscreenchange", handleFullscreenChange);
 		return () => {
 			window.removeEventListener("resize", handle);
 			window.removeEventListener("scroll", handle, true);
+			document.removeEventListener("fullscreenchange", handleFullscreenChange);
 			observerRef.current?.disconnect();
 			cancelScheduledMeasure();
 			if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
 		};
-	}, [cancelScheduledMeasure, scheduleMeasure]);
+	}, [cancelScheduledMeasure, scheduleMeasure, scheduleSettleMeasure]);
 
 	const withView = useCallback(async (fn: (id: string) => Promise<BrowserNavState | void>) => {
 		const id = viewIdRef.current;

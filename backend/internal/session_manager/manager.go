@@ -2397,10 +2397,11 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
 // native resume command when it can continue the session, else a fresh launch
-// that replays the saved prompt. The agent signals via ok=false (e.g. no native
-// session id captured yet). Returns ErrNotResumable when a promptless,
-// unresumable worker has nothing to restore from.
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, harness domain.AgentHarness, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
+// for harnesses where replaying the saved prompt is acceptable. The agent
+// signals via ok=false (e.g. no native session id captured yet). Returns
+// ErrNotResumable when transcript-preserving restore is required but unavailable,
+// or when a promptless, unresumable worker has nothing to restore from.
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, _ domain.AgentHarness, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -2412,12 +2413,6 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	}
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, nil
-	}
-	// OpenCode restore must continue the captured native transcript. Replaying
-	// the saved prompt would silently create a new conversation under a
-	// "restore" action, so require a native resume command for OpenCode.
-	if harness == domain.HarnessOpenCode {
-		return nil, "", ErrNotResumable
 	}
 	// A saved prompt is replayed fresh. An orchestrator is promptless by design
 	// and relaunches with the system prompt only. A promptless WORKER has no task

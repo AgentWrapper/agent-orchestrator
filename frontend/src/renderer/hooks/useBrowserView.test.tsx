@@ -68,9 +68,20 @@ function setupBridge() {
 	return bridge;
 }
 
+// jsdom does not implement the Fullscreen API, so `document.fullscreenElement`
+// has no property descriptor to spy on. Define it directly, and clear it after
+// each test so state never leaks between cases.
+function setFullscreenElement(element: Element | null): void {
+	Object.defineProperty(document, "fullscreenElement", {
+		configurable: true,
+		get: () => element,
+	});
+}
+
 describe("useBrowserView", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
+		setFullscreenElement(null);
 		document.body.replaceChildren();
 	});
 
@@ -479,5 +490,102 @@ describe("useBrowserView", () => {
 		rerender({ terminated: true });
 		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
+
+	it("hides the native view while an element outside the slot is fullscreen, and restores it on exit", async () => {
+		// The terminal pane's fullscreen button promotes it into the DOM top layer,
+		// which covers every DOM node but not the native view — Chromium composites
+		// that above the page regardless. The transition also leaves the slot's box
+		// untouched, so no observer fires and the view kept painting its stale
+		// bounds over the fullscreen terminal, toolbar-less. Fullscreen must hide it.
+		vi.useFakeTimers();
+		try {
+			const bridge = setupBridge();
+			const slot = createSlot();
+			const terminalPane = document.createElement("div");
+			document.body.appendChild(terminalPane);
+
+			const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+			await act(async () => {
+				await Promise.resolve();
+			});
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+			act(() => result.current.slotRef(slot));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(
+				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
+			);
+
+			// Terminal pane enters fullscreen: the slot is not inside it, so the
+			// view must go hidden even though the slot's own box never changed.
+			bridge.setBounds.mockClear();
+			setFullscreenElement(terminalPane);
+			act(() => document.dispatchEvent(new Event("fullscreenchange")));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 0, y: 0, width: 0, height: 0 },
+				visible: false,
+			});
+
+			// Exiting fullscreen restores the view at its measured bounds.
+			bridge.setBounds.mockClear();
+			setFullscreenElement(null);
+			act(() => document.dispatchEvent(new Event("fullscreenchange")));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(
+				expect.objectContaining({ visible: true, rect: expect.objectContaining({ x: 12, width: 320 }) }),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps the native view visible when the slot itself is inside the fullscreen element", async () => {
+		// Guards the `contains` check: if the browser subtree is the thing going
+		// fullscreen, the slot is still on screen and must keep painting.
+		const bridge = setupBridge();
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		const slot = createSlot();
+		host.appendChild(slot);
+
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		setFullscreenElement(host);
+		act(() => document.dispatchEvent(new Event("fullscreenchange")));
+
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(
+				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
+			),
+		);
 	});
 });
