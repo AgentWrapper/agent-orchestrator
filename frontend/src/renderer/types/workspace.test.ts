@@ -11,7 +11,9 @@ import {
 	toSessionActivity,
 	toSessionStatus,
 	workerDisplayStatus,
+	workerStatusLabel,
 	workerStatusPulses,
+	attentionZoneLabel,
 	openPRs,
 	mergedPRCount,
 	primaryPR,
@@ -23,6 +25,7 @@ import {
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "./workspace";
+import { initializeRendererI18n } from "../i18n";
 
 describe("canonicalTrackerIssueId", () => {
 	it("keeps provider-prefixed intake ids and rejects manual task titles", () => {
@@ -96,6 +99,17 @@ describe("toSessionActivity", () => {
 });
 
 describe("workerDisplayStatus", () => {
+	it("localizes display labels without changing serialized status values", async () => {
+		await initializeRendererI18n("zh-CN");
+		try {
+			expect(workerStatusLabel.needs_you).toBe("需要你");
+			expect(attentionZoneLabel.merge).toBe("可合并");
+			expect(workerDisplayStatus(sessionWith({ status: "changes_requested" }))).toBe("needs_you");
+		} finally {
+			await initializeRendererI18n("en");
+		}
+	});
+
 	it("prefers an explicit displayStatus override", () => {
 		expect(workerDisplayStatus(sessionWith({ status: "ci_failed", displayStatus: "done" }))).toBe("done");
 	});
@@ -230,6 +244,28 @@ describe("sessionNeedsAttention", () => {
 });
 
 describe("orchestratorHealth", () => {
+	it("localizes health messages while preserving agent identifiers", async () => {
+		await initializeRendererI18n("zh-CN");
+		try {
+			const result = orchestratorHealth({
+				id: "skills",
+				name: "skills",
+				path: "/tmp/skills",
+				orchestratorAgent: "codex",
+				sessions: [
+					sessionWith({ id: "skills-1", kind: "orchestrator", provider: "claude-code", status: "working" }),
+				],
+			});
+
+			expect(result).toEqual({
+				state: "restart_needed",
+				message: "配置的协调器智能体是 codex；正在运行的智能体是 claude-code。",
+			});
+		} finally {
+			await initializeRendererI18n("en");
+		}
+	});
+
 	it("reports restart_needed when the configured orchestrator agent differs from the newest active orchestrator", () => {
 		const older = sessionWith({
 			id: "skills-1",

@@ -1,4 +1,5 @@
 import React from "react";
+import { i18n } from "../i18n";
 import { captureRendererException } from "../lib/telemetry";
 
 type Props = {
@@ -29,9 +30,9 @@ export class TelemetryBoundary extends React.Component<Props, State> {
 			return (
 				<div className="flex h-screen items-center justify-center bg-background px-6 text-center text-foreground">
 					<div>
-						<h1 className="text-heading-sm font-semibold">The app hit an unexpected error.</h1>
+						<h1 className="text-heading-sm font-semibold">{i18n.t("shell.telemetry.title")}</h1>
 						<p className="mt-2 text-sm text-muted-foreground">
-							Restart the app or check the daemon logs if this keeps happening.
+							{i18n.t("shell.telemetry.detail")}
 						</p>
 					</div>
 				</div>

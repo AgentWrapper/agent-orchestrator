@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
+import { initializeRendererI18n } from "../i18n";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -128,7 +129,20 @@ beforeEach(() => {
 	useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
 });
 
+afterEach(async () => {
+	await initializeRendererI18n("en");
+});
+
 describe("ShellTopbar status pill", () => {
+	it("localizes controls and activity while preserving the branch", async () => {
+		await initializeRendererI18n("zh-CN");
+		renderTopbar(sessionWith());
+
+		expect(screen.getByText("工作中")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "终止会话" })).toBeInTheDocument();
+		expect(screen.getByText("ao/sess-1")).toBeInTheDocument();
+	});
+
 	it.each([
 		["active", "Working"],
 		["idle", "Idle"],

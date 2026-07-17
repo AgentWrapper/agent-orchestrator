@@ -1,11 +1,12 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { initializeRendererI18n } from "../i18n";
 
 const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -203,11 +204,25 @@ beforeEach(() => {
 	mockParams.projectId = undefined;
 });
 
-afterEach(() => {
+afterEach(async () => {
+	cleanup();
 	vi.restoreAllMocks();
+	await initializeRendererI18n("en");
 });
 
 describe("Sidebar", () => {
+	it("localizes shell navigation while preserving project and session names", async () => {
+		await initializeRendererI18n("zh-CN");
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		expect(screen.getByText("项目")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "反馈" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "设置" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "打开 Project One 看板" })).toBeInTheDocument();
+		expect(screen.getByText("Project One")).toBeInTheDocument();
+		expect(screen.getByText("fix login")).toBeInTheDocument();
+	});
+
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();

@@ -1,3 +1,5 @@
+import { i18n } from "../i18n";
+
 export type SessionStatus =
 	| "working"
 	| "pr_open"
@@ -295,13 +297,27 @@ export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 }
 
 export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
-	working: "working",
-	needs_you: "needs you",
-	mergeable: "mergeable",
-	ci_failed: "ci failed",
-	no_signal: "no signal",
-	done: "done",
-	unknown: "unknown",
+	get working() {
+		return i18n.t("shell.workspace.workerStatus.working");
+	},
+	get needs_you() {
+		return i18n.t("shell.workspace.workerStatus.needsYou");
+	},
+	get mergeable() {
+		return i18n.t("shell.workspace.workerStatus.mergeable");
+	},
+	get ci_failed() {
+		return i18n.t("shell.workspace.workerStatus.ciFailed");
+	},
+	get no_signal() {
+		return i18n.t("shell.workspace.workerStatus.noSignal");
+	},
+	get done() {
+		return i18n.t("shell.workspace.workerStatus.done");
+	},
+	get unknown() {
+		return i18n.t("shell.workspace.workerStatus.unknown");
+	},
 };
 
 /** Whether a status should breathe (alive/working). */
@@ -322,11 +338,21 @@ export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
 export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
 
 export const attentionZoneLabel: Record<AttentionZone, string> = {
-	merge: "Ready to merge",
-	action: "Needs you",
-	pending: "Pending",
-	working: "Working",
-	done: "Done",
+	get merge() {
+		return i18n.t("shell.workspace.attentionZone.merge");
+	},
+	get action() {
+		return i18n.t("shell.workspace.attentionZone.action");
+	},
+	get pending() {
+		return i18n.t("shell.workspace.attentionZone.pending");
+	},
+	get working() {
+		return i18n.t("shell.workspace.attentionZone.working");
+	},
+	get done() {
+		return i18n.t("shell.workspace.attentionZone.done");
+	},
 };
 
 export function attentionZone(session: WorkspaceSession): AttentionZone {
@@ -390,24 +416,26 @@ export type OrchestratorHealth =
 
 export function orchestratorHealth(workspace: WorkspaceSummary, restarting = false): OrchestratorHealth {
 	if (restarting) {
-		return { state: "restarting", message: "Restarting orchestrator. New tasks wait until the replacement is ready." };
+		return { state: "restarting", message: i18n.t("shell.workspace.orchestratorHealth.restarting") };
 	}
 	const active = workspace.sessions.filter((session) => isOrchestratorSession(session) && sessionIsActive(session));
 	if (active.length > 1) {
 		return {
 			state: "duplicates",
-			message:
-				"Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
+			message: i18n.t("shell.workspace.orchestratorHealth.duplicates"),
 		};
 	}
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
 	if (!orchestrator) {
-		return { state: "missing", message: "No orchestrator is running for this project." };
+		return { state: "missing", message: i18n.t("shell.workspace.orchestratorHealth.missing") };
 	}
 	if (orchestratorNeedsRestart(workspace, orchestrator)) {
 		return {
 			state: "restart_needed",
-			message: `Configured orchestrator agent is ${workspace.orchestratorAgent}; running agent is ${orchestrator.provider}.`,
+			message: i18n.t("shell.workspace.orchestratorHealth.restartNeeded", {
+				configured: workspace.orchestratorAgent!,
+				running: orchestrator.provider,
+			}),
 		};
 	}
 	return { state: "ok" };

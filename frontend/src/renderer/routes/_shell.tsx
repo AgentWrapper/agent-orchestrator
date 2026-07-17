@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
@@ -36,8 +37,8 @@ export const Route = createFileRoute("/_shell")({
 	component: ShellLayout,
 });
 
-function errorMessage(error: unknown) {
-	return error instanceof Error ? error.message : "Could not load projects";
+function errorMessage(error: unknown, fallback: string) {
+	return error instanceof Error ? error.message : fallback;
 }
 
 const isLinux =
@@ -51,6 +52,7 @@ const isLinux =
 // the old single <App>, with selection now owned by the router (route params)
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
@@ -93,7 +95,7 @@ function ShellLayout() {
 			void captureRendererEvent("ao.renderer.project_add_requested");
 			const status = await refreshDaemonStatus();
 			if (status.state !== "ready" || !status.port) {
-				throw new Error(status.message || "AO daemon is not ready.");
+				throw new Error(status.message || t("shell.errors.daemonNotReady"));
 			}
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
@@ -118,7 +120,7 @@ function ShellLayout() {
 				});
 				throw failure;
 			}
-			if (!data?.project) throw new Error("Project creation returned no project");
+			if (!data?.project) throw new Error(t("shell.errors.projectMissing"));
 
 			const workspace: WorkspaceSummary = {
 				id: data.project.id,
@@ -142,12 +144,12 @@ function ShellLayout() {
 				});
 			} catch (spawnError) {
 				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
-				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
-				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
+				const message = spawnError instanceof Error ? spawnError.message : t("shell.errors.startOrchestrator");
+				const startupMessage = t("shell.errors.projectAddedButStartFailed", { detail: message });
 				setOrchestratorStartupError(workspace.id, startupMessage);
 			}
 		},
-		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
+		[navigate, queryClient, setOrchestratorStartupError, t, updateWorkspaces],
 	);
 
 	const initializeProjectRepository = useCallback(async (path: string) => {
@@ -280,7 +282,9 @@ function ShellLayout() {
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
-						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
+					workspaceError={
+						workspaceQuery.isError ? errorMessage(workspaceQuery.error, t("shell.errors.loadProjects")) : undefined
+					}
 						workspaces={workspaces}
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">

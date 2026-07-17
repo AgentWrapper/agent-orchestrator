@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Loader2, XCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 
 type ConfirmDialogProps = {
@@ -27,6 +28,7 @@ export function ConfirmDialog({
 	onOpenChange,
 	size = "default",
 }: ConfirmDialogProps) {
+	const { t } = useTranslation();
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
@@ -48,7 +50,7 @@ export function ConfirmDialog({
 					)}
 					<div className="mt-4 flex justify-end gap-2">
 						<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy} size={size}>
-							Cancel
+							{t("ui.cancel")}
 						</Button>
 						<Button
 							className={
