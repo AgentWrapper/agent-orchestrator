@@ -280,9 +280,12 @@ type Manager struct {
 	// spawn whose agent exited immediately. New fills in the defaults; tests
 	// shrink them.
 	launchProbe launchProbeConfig
-	logger      *slog.Logger
-	telemetry   ports.EventSink
-	spawnMu     sync.Mutex
+	// workspacePrep bounds pre-launch hook/trust preparation. New fills in the
+	// defaults; tests shrink them.
+	workspacePrep workspacePrepConfig
+	logger        *slog.Logger
+	telemetry     ports.EventSink
+	spawnMu       sync.Mutex
 	// commands serializes the mutating lifecycle commands of a single session
 	// (kill, retire, restore, switch) and carries its terminal generation, so a
 	// kill can never be overwritten by a relaunch that was already in flight.
@@ -366,6 +369,14 @@ const (
 	launchCommandProbeRetryDelay = 200 * time.Millisecond
 	// launchCommandProbeAttempts is the default number of launch-process probes.
 	launchCommandProbeAttempts = 3
+	// workspacePrepAttempts bounds retryable pre-launch workspace preparation.
+	// Hook install degrades after this budget; PreLaunch remains a hard gate
+	// after retry because adapters use it for required trust setup.
+	workspacePrepAttempts = 2
+	// workspacePrepStepTimeout is passed to context-aware adapters for each
+	// hook/trust prep attempt.
+	workspacePrepStepTimeout = 5 * time.Second
+	workspacePrepRetryDelay  = 200 * time.Millisecond
 )
 
 // launchProbeConfig bounds the post-launch process-health probe. A slow start
@@ -378,6 +389,12 @@ type launchProbeConfig struct {
 	retryDelay time.Duration
 	// attempts bounds how many times the launch process is probed.
 	attempts int
+}
+
+type workspacePrepConfig struct {
+	attempts    int
+	stepTimeout time.Duration
+	retryDelay  time.Duration
 }
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -442,6 +459,11 @@ func New(d Deps) *Manager {
 		launchProbe: launchProbeConfig{
 			retryDelay: launchCommandProbeRetryDelay,
 			attempts:   launchCommandProbeAttempts,
+		},
+		workspacePrep: workspacePrepConfig{
+			attempts:    workspacePrepAttempts,
+			stepTimeout: workspacePrepStepTimeout,
+			retryDelay:  workspacePrepRetryDelay,
 		},
 		logger:    d.Logger,
 		telemetry: d.Telemetry,
@@ -736,22 +758,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// still alive (verifyLaunchCommandRunning does not reject on a probe hiccup
 	// against a live session). Either way the pane is not the bare keep-alive
 	// shell, so a title-write failure here is treated as a transient send-keys
-	// hiccup rather than a dead session — but only while we can still prove the
-	// pane is alive; anything else rolls back exactly as it did before.
+	// hiccup rather than a dead session.
 	if err := m.deliverLaunchTitleAfterReady(ctx, agent, handle, cfg.DisplayName); err != nil {
-		if alive, aliveErr := m.runtime.IsAlive(ctx, handle); alive && aliveErr == nil {
-			m.logger.Warn("spawn: could not set the harness title; session keeps AO's display name",
-				"sessionID", id, "displayName", cfg.DisplayName, "error", err)
-		} else {
-			_ = m.runtime.Destroy(ctx, handle)
-			_ = m.workspace.Destroy(ctx, ws)
-			m.rollbackSpawnSeedRow(ctx, id)
-			m.markWorkerMixBucketDown(ctx, mixBucket, err)
-			if aliveErr != nil {
-				err = errors.Join(err, fmt.Errorf("pane liveness probe: %w", aliveErr))
-			}
-			return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch title, and the pane is not alive: %w", id, err)
-		}
+		m.logger.Warn("spawn: could not set the harness title; session keeps AO's display name",
+			"sessionID", id, "displayName", cfg.DisplayName, "error", err)
 	}
 
 	if err := m.deliverInitialPromptAfterReady(ctx, agent, handle, ports.LaunchConfig{
@@ -3914,25 +3924,69 @@ type preLauncher interface {
 }
 
 // prepareWorkspace runs the per-session pre-launch steps before the runtime
-// starts the agent: installing the workspace-local activity hooks (so early
-// startup hooks can update the already-created session row), then any optional
-// PreLaunch step. Shared by Spawn and Restore.
+// starts the agent. Workspace-local activity hooks are best-effort: if install
+// fails after retry, the session still launches and later surfaces no_signal if
+// no hook ever reports. PreLaunch is a required harness readiness gate: if it
+// fails after retry, the launch fails closed before the runtime starts. The
+// per-step deadline is cooperative; adapters must observe the context to stop
+// slow local filesystem work early.
 func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt string, agentConfig ports.AgentConfig) error {
-	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
-		SessionID:     string(id),
-		WorkspacePath: workspacePath,
-		DataDir:       m.dataDir,
-		SystemPrompt:  systemPrompt,
-		Config:        agentConfig,
+	if err := m.runWorkspacePrepWithRetry(ctx, "workspace hooks", func(stepCtx context.Context) error {
+		return agent.GetAgentHooks(stepCtx, ports.WorkspaceHookConfig{
+			SessionID:     string(id),
+			WorkspacePath: workspacePath,
+			DataDir:       m.dataDir,
+			SystemPrompt:  systemPrompt,
+			Config:        agentConfig,
+		})
 	}); err != nil {
-		return fmt.Errorf("install hooks: %w", err)
+		m.logger.Warn("optional workspace preparation failed; launch will continue",
+			"sessionID", id, "workspacePath", workspacePath, "operation", "workspace hooks",
+			"degradedMode", "degraded activity and terminal-state tracking", "error", err)
 	}
 	if pl, ok := agent.(preLauncher); ok {
-		if err := pl.PreLaunch(ctx, ports.LaunchConfig{DataDir: m.dataDir, SessionID: string(id), WorkspacePath: workspacePath}); err != nil {
+		if err := m.runWorkspacePrepWithRetry(ctx, "pre-launch preparation", func(stepCtx context.Context) error {
+			return pl.PreLaunch(stepCtx, ports.LaunchConfig{DataDir: m.dataDir, SessionID: string(id), WorkspacePath: workspacePath})
+		}); err != nil {
 			return fmt.Errorf("pre-launch: %w", err)
 		}
 	}
 	return nil
+}
+
+func (m *Manager) runWorkspacePrepWithRetry(ctx context.Context, operation string, step func(context.Context) error) error {
+	var err error
+	attempts := m.workspacePrep.attempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	attempted := 0
+	for attempt := 1; attempt <= attempts; attempt++ {
+		attempted = attempt
+		stepCtx := ctx
+		var cancel context.CancelFunc
+		if m.workspacePrep.stepTimeout > 0 {
+			stepCtx, cancel = context.WithTimeout(ctx, m.workspacePrep.stepTimeout)
+		}
+		err = step(stepCtx)
+		if cancel != nil {
+			cancel()
+		}
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		if attempt < attempts {
+			select {
+			case <-ctx.Done():
+				return errors.Join(err, ctx.Err())
+			case <-time.After(m.workspacePrep.retryDelay):
+			}
+		}
+	}
+	return fmt.Errorf("%s failed after %d attempt(s): %w", operation, attempted, err)
 }
 
 type restoreKickoffDelivery int

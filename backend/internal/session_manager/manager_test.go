@@ -483,6 +483,53 @@ func (fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionIn
 	return ports.SessionInfo{}, false, nil
 }
 
+type hookFailAgent struct {
+	fakeAgent
+	err     error
+	failFor int
+	calls   int
+}
+
+func (a *hookFailAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error {
+	a.calls++
+	if a.failFor > 0 && a.calls > a.failFor {
+		return nil
+	}
+	return a.err
+}
+
+type preLaunchFailAgent struct {
+	fakeAgent
+	err     error
+	failFor int
+	calls   int
+}
+
+func (a *preLaunchFailAgent) PreLaunch(context.Context, ports.LaunchConfig) error {
+	a.calls++
+	if a.failFor > 0 && a.calls > a.failFor {
+		return nil
+	}
+	return a.err
+}
+
+type hookTimeoutPreLaunchAgent struct {
+	fakeAgent
+	hookCalls      int
+	preLaunchCalls int
+}
+
+func (a *hookTimeoutPreLaunchAgent) GetAgentHooks(ctx context.Context, _ ports.WorkspaceHookConfig) error {
+	a.hookCalls++
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (a *hookTimeoutPreLaunchAgent) PreLaunch(context.Context, ports.LaunchConfig) error {
+	a.preLaunchCalls++
+	return nil
+}
+
 // fakeAgents resolves every harness to the same fakeAgent.
 type fakeAgents struct{}
 
@@ -6274,13 +6321,11 @@ func TestSpawn_PaneReadyDoesNotDependOnTheInjectedClock(t *testing.T) {
 	}
 }
 
-// With the prompt delivered in argv, nothing else writes to the pane during a
-// claude-code/codex spawn — the title write is the only probe that touches it.
-// If the harness died between Create and that write, treating the failure as
-// cosmetic would hand back a "live" idle session that never ran a thing. A
-// title write that fails against a pane which is no longer alive must roll the
-// spawn back, exactly as it did before the write was made non-fatal.
-func TestSpawn_TitleWriteFailureOnDeadPaneRollsBack(t *testing.T) {
+// The title write is not a liveness oracle. Once the launch-process probe has
+// passed, a failed title write stays cosmetic even if a later pane-liveness
+// signal would be missing; the foreground-command probes are the spawn health
+// gate and TestSpawn_LateExitAfterProbeRollsBack owns real death detection.
+func TestSpawn_TitleWriteFailureIgnoresPaneLivenessSignal(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	// aliveByHandle has no entry for "h1": the pane is gone.
@@ -6293,20 +6338,22 @@ func TestSpawn_TitleWriteFailureOnDeadPaneRollsBack(t *testing.T) {
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
-	}); err == nil {
-		t.Fatal("spawn must fail when the title write reveals a dead pane")
+	}); err != nil {
+		t.Fatalf("spawn must keep running after a cosmetic title failure, got %v", err)
 	}
-	if rt.destroyed != 1 {
-		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times; a cosmetic title failure must not roll back", rt.destroyed)
 	}
-	if _, ok := st.sessions["mer-1"]; ok {
-		t.Fatal("seed row survived a rolled-back spawn")
+	if _, ok := st.sessions["mer-1"]; !ok {
+		t.Fatal("session row missing after cosmetic title failure")
 	}
 }
 
-// A liveness probe that itself fails cannot prove the pane is healthy, so the
-// spawn must not be reported as successful on the strength of it.
-func TestSpawn_TitleWriteFailureWithUnknownLivenessRollsBack(t *testing.T) {
+// Once the launch-process gate has passed, the title write is cosmetic. A
+// follow-up liveness probe hiccup after the cosmetic send fails must not turn
+// into a spawn rollback; the post-write foreground-command probe still owns
+// real death detection.
+func TestSpawn_TitleWriteFailureWithUnknownLivenessStillKeepsSession(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{sendErr: errors.New("tmux: send-keys failed"), aliveErr: errors.New("tmux: server gone")}
@@ -6318,11 +6365,159 @@ func TestSpawn_TitleWriteFailureWithUnknownLivenessRollsBack(t *testing.T) {
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
-	}); err == nil {
-		t.Fatal("spawn must fail when pane liveness cannot be established")
+	}); err != nil {
+		t.Fatalf("spawn must keep running after a cosmetic title failure, got %v", err)
 	}
-	if rt.destroyed != 1 {
-		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times; a cosmetic title failure must not roll back", rt.destroyed)
+	}
+}
+
+func TestSpawn_HookInstallFailureRetriesThenDegrades(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &hookFailAgent{err: errors.New("temporary hook write failure")}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err != nil {
+		t.Fatalf("spawn must degrade past hook install failure, got %v", err)
+	}
+	if agent.calls != 2 {
+		t.Fatalf("GetAgentHooks calls = %d, want 2 attempts before degrade", agent.calls)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times; hook install failure must not roll back", rt.destroyed)
+	}
+}
+
+func TestSpawn_HookInstallTransientFailureRetriesAndLaunches(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &hookFailAgent{err: errors.New("temporary hook write failure"), failFor: 1}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err != nil {
+		t.Fatalf("spawn must recover after a transient hook install failure, got %v", err)
+	}
+	if agent.calls != 2 {
+		t.Fatalf("GetAgentHooks calls = %d, want retry success on attempt 2", agent.calls)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times; recovered hook install must not roll back", rt.destroyed)
+	}
+}
+
+func TestSpawn_HookInstallTimeoutDoesNotStarvePreLaunch(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &hookTimeoutPreLaunchAgent{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.workspacePrep = workspacePrepConfig{attempts: 1, stepTimeout: 10 * time.Millisecond, retryDelay: time.Millisecond}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err != nil {
+		t.Fatalf("spawn must continue to PreLaunch after hook install timeout degrades, got %v", err)
+	}
+	if agent.hookCalls != 1 {
+		t.Fatalf("GetAgentHooks calls = %d, want one timed-out hook attempt", agent.hookCalls)
+	}
+	if agent.preLaunchCalls != 1 {
+		t.Fatalf("PreLaunch calls = %d, want fresh PreLaunch budget after hook timeout", agent.preLaunchCalls)
+	}
+	if rt.created != 1 || rt.destroyed != 0 {
+		t.Fatalf("runtime created/destroyed = %d/%d, want launched without rollback", rt.created, rt.destroyed)
+	}
+}
+
+func TestSpawn_PreLaunchFailureRetriesThenFailsClosed(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &preLaunchFailAgent{err: errors.New("temporary trust write failure")}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must fail closed when pre-launch trust preparation never succeeds")
+	}
+	if agent.calls != 2 {
+		t.Fatalf("PreLaunch calls = %d, want 2 attempts before failing closed", agent.calls)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("runtime created/destroyed = %d/%d; pre-launch failure happens before runtime create", rt.created, rt.destroyed)
+	}
+	if ws.destroyed == 0 && ws.projectDestroyed == 0 {
+		t.Fatal("workspace was not rolled back after pre-launch failure")
+	}
+}
+
+func TestSpawn_PreLaunchTransientFailureRetriesAndLaunches(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &preLaunchFailAgent{err: errors.New("temporary trust write failure"), failFor: 1}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "titled", Prompt: "task",
+	}); err != nil {
+		t.Fatalf("spawn must recover after a transient pre-launch failure, got %v", err)
+	}
+	if agent.calls != 2 {
+		t.Fatalf("PreLaunch calls = %d, want retry success on attempt 2", agent.calls)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times; recovered pre-launch must not roll back", rt.destroyed)
+	}
+}
+
+func TestWorkspacePrepRetryStopsAfterDeadline(t *testing.T) {
+	m := New(Deps{Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})
+	prepCtx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	calls := 0
+
+	err := m.runWorkspacePrepWithRetry(prepCtx, "workspace hooks", func(stepCtx context.Context) error {
+		calls++
+		<-stepCtx.Done()
+		return stepCtx.Err()
+	})
+
+	if err == nil {
+		t.Fatal("workspace prep should return the deadline error")
+	}
+	if calls != 1 {
+		t.Fatalf("prep calls = %d, want 1 (deadline results must not be retried concurrently)", calls)
 	}
 }
 
