@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -32,7 +33,9 @@ type fakeStore struct {
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
-	sharedLog *[]string
+	sharedLog      *[]string
+	reservations   map[string]domain.SpawnReservation
+	commitSpawnErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -42,7 +45,44 @@ func newFakeStore() *fakeStore {
 		projects:      map[string]domain.ProjectRecord{},
 		workspaceRepo: map[string][]domain.WorkspaceRepoRecord{},
 		worktrees:     map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		reservations:  map[string]domain.SpawnReservation{},
 	}
+}
+func (f *fakeStore) ReserveSpawn(_ context.Context, projectID domain.ProjectID, requestID, generation string, now time.Time) (domain.SpawnReservation, bool, error) {
+	if existing, ok := f.reservations[requestID]; ok {
+		return existing, true, nil
+	}
+	f.num++
+	r := domain.SpawnReservation{RequestID: requestID, Generation: generation, SessionID: domain.SessionID(fmt.Sprintf("%s-%d", projectID, f.num)), ProjectID: projectID, Num: int64(f.num), CreatedAt: now}
+	f.reservations[requestID] = r
+	return r, false, nil
+}
+func (f *fakeStore) CommitSpawn(_ context.Context, reservation domain.SpawnReservation, rec domain.SessionRecord) error {
+	if f.commitSpawnErr != nil {
+		return f.commitSpawnErr
+	}
+	rec.ID = reservation.SessionID
+	f.sessions[rec.ID] = rec
+	return nil
+}
+func (f *fakeStore) RollbackSpawnReservation(_ context.Context, generation string) error {
+	for requestID, reservation := range f.reservations {
+		if reservation.Generation == generation {
+			delete(f.reservations, requestID)
+			return nil
+		}
+	}
+	return nil
+}
+func (f *fakeStore) RollbackCommittedSpawn(_ context.Context, generation string) error {
+	for requestID, reservation := range f.reservations {
+		if reservation.Generation == generation {
+			delete(f.sessions, reservation.SessionID)
+			delete(f.reservations, requestID)
+			return nil
+		}
+	}
+	return errors.New("committed spawn not found")
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
 	r, ok := f.projects[id]
@@ -176,6 +216,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 }
 
 type fakeRuntime struct {
+	preflightErr       error
 	createErr          error
 	destroyErr         error
 	created, destroyed int
@@ -189,12 +230,20 @@ type fakeRuntime struct {
 	destroyedIDs  []string
 }
 
+func (r *fakeRuntime) Preflight(context.Context) error { return r.preflightErr }
+
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
 	}
 	r.lastCfg = cfg
 	r.created++
+	if r.aliveByHandle == nil {
+		r.aliveByHandle = map[string]bool{}
+	}
+	if _, configured := r.aliveByHandle["h1"]; !configured {
+		r.aliveByHandle["h1"] = true
+	}
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
@@ -224,6 +273,8 @@ func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int)
 }
 
 type fakeAgent struct{}
+
+func (fakeAgent) ResolveBinary(context.Context) (string, error) { return "/bin/true", nil }
 
 func (fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
@@ -367,6 +418,24 @@ func requireNoPromptDir(t *testing.T, dataDir string, id domain.SessionID) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stat prompt dir %s: %v", path, err)
 	}
+}
+
+func mustExecutable(t *testing.T) string {
+	t.Helper()
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func testExecutable(t *testing.T) func() (string, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ao")
+	if err := os.WriteFile(path, []byte("test"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return func() (string, error) { return path, nil }
 }
 
 // alwaysResumeAgent mimics Claude Code: it pins a deterministic session id, so
@@ -703,6 +772,60 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
+func TestSpawn_PreflightFailureHasZeroSideEffects(t *testing.T) {
+	m, st, rt, ws := newManager()
+	rt.preflightErr = errors.New("tmux unhealthy")
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, RequestID: "req-unhealthy"})
+	var spawnErr *domain.SpawnError
+	if !errors.As(err, &spawnErr) || spawnErr.Outcome.State != domain.SpawnStatePreflightFailed || spawnErr.Outcome.Phase != domain.SpawnPhasePreflight {
+		t.Fatalf("Spawn err = %v, want structured preflight_failed", err)
+	}
+	if rt.created != 0 || ws.lastCfg.SessionID != "" || len(st.sessions) != 0 || len(st.reservations) != 0 {
+		t.Fatalf("preflight mutated state: runtime=%d workspace=%q sessions=%d reservations=%d", rt.created, ws.lastCfg.SessionID, len(st.sessions), len(st.reservations))
+	}
+}
+
+func TestSpawn_CommitFailureRollsBackAllResources(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.commitSpawnErr = errors.New("metadata write failed")
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, RequestID: "req-commit"})
+	var spawnErr *domain.SpawnError
+	if !errors.As(err, &spawnErr) || spawnErr.Outcome.State != domain.SpawnStateCommitFailed || !spawnErr.Outcome.RolledBack || spawnErr.Outcome.RollbackState != domain.SpawnStateRolledBack {
+		t.Fatalf("Spawn err = %#v, want rolled-back commit_failed", err)
+	}
+	if rt.created != 1 || rt.destroyed != 1 || ws.destroyed != 1 || len(st.sessions) != 0 || len(st.reservations) != 0 {
+		t.Fatalf("rollback incomplete: runtime=%d/%d workspace=%d sessions=%d reservations=%d", rt.created, rt.destroyed, ws.destroyed, len(st.sessions), len(st.reservations))
+	}
+}
+
+func TestSpawn_CommitsVerifiedGenerationProfileAndIsIdempotent(t *testing.T) {
+	m, st, rt, _ := newManager()
+	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, RequestID: "req-stable"}
+
+	first, err := m.Spawn(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Metadata.Generation == "" || first.Metadata.SpawnState != domain.SpawnStateSpawned {
+		t.Fatalf("spawn metadata = %#v", first.Metadata)
+	}
+	if first.Metadata.WorkspacePath == "" || first.Metadata.Branch == "" || first.Metadata.RuntimeHandleID != "h1" {
+		t.Fatalf("spawn identity incomplete: %#v", first.Metadata)
+	}
+	if first.Metadata.CapabilityClass != domain.CapabilityClassAOWorker || first.Metadata.ObservedExecutionProfileHash != first.Metadata.ExecutionProfile.Hash || first.Metadata.ExecutionProfile.Hash == "" {
+		t.Fatalf("spawn capability/profile identity mismatch: %#v", first.Metadata)
+	}
+	second, err := m.Spawn(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID || second.Metadata.Generation != first.Metadata.Generation || rt.created != 1 || len(st.sessions) != 1 || len(st.reservations) != 1 {
+		t.Fatalf("retry duplicated spawn: first=%#v second=%#v runtime=%d sessions=%d reservations=%d", first, second, rt.created, len(st.sessions), len(st.reservations))
+	}
+}
+
 func TestSpawn_RejectsMissingRoleHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
@@ -903,14 +1026,11 @@ func TestSpawn_AfterStartPromptFailureCleansUpSpawn(t *testing.T) {
 	if ws.destroyed != 1 {
 		t.Fatalf("workspace destroyed=%d, want 1", ws.destroyed)
 	}
-	if got := lcm.terminated["mer-1"]; got != 1 {
-		t.Fatalf("MarkTerminated calls = %d, want 1", got)
+	if got := lcm.terminated["mer-1"]; got != 0 {
+		t.Fatalf("MarkTerminated calls = %d, want 0 for transactional deletion", got)
 	}
-	if rec := st.sessions["mer-1"]; !rec.IsTerminated || rec.Activity.State != domain.ActivityExited {
-		t.Fatalf("session after failed prompt delivery = %#v, want terminated/exited", rec)
-	}
-	if rec := st.sessions["mer-1"]; rec.Metadata.WorkspacePath != "" || rec.Metadata.Branch != "" || rec.Metadata.RuntimeHandleID != "" {
-		t.Fatalf("failed prompt delivery kept stale launch metadata: %#v", rec.Metadata)
+	if _, ok := st.sessions["mer-1"]; ok {
+		t.Fatal("failed prompt delivery must roll back the committed session")
 	}
 }
 
@@ -951,8 +1071,8 @@ func TestSpawn_AfterStartPromptFailureCleansUpWorkspaceProjectRows(t *testing.T)
 	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
 		t.Fatalf("stale session worktree rows = %#v, want deleted", rows)
 	}
-	if rec := st.sessions["mer-1"]; !rec.IsTerminated || rec.Metadata.WorkspacePath != "" || rec.Metadata.Branch != "" || rec.Metadata.RuntimeHandleID != "" {
-		t.Fatalf("session after failed prompt delivery = %#v, want terminated with workspace metadata cleared", rec)
+	if _, ok := st.sessions["mer-1"]; ok {
+		t.Fatal("failed prompt delivery must roll back the committed session")
 	}
 }
 
@@ -963,6 +1083,13 @@ type terminatedOnReReadStore struct {
 	*fakeStore
 	spawned domain.SessionID
 	saw     bool
+}
+
+func (s *terminatedOnReReadStore) CommitSpawn(ctx context.Context, reservation domain.SpawnReservation, rec domain.SessionRecord) error {
+	err := s.fakeStore.CommitSpawn(ctx, reservation, rec)
+	s.spawned = reservation.SessionID
+	s.saw = err == nil
+	return err
 }
 
 func (s *terminatedOnReReadStore) CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
@@ -1151,7 +1278,7 @@ func TestSpawn_PrepareFailureCleansAgentWorkspaceState(t *testing.T) {
 		Lifecycle:  &fakeLCM{store: st},
 		DataDir:    "/ao/data",
 		LookPath:   func(string) (string, error) { return "/bin/true", nil },
-		Executable: func() (string, error) { return "/daemon/ao", nil },
+		Executable: testExecutable(t),
 	})
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "install hooks") {
@@ -1189,7 +1316,7 @@ func TestSpawn_AgentRuntimeEnvAugmenterReachesRuntime(t *testing.T) {
 		Lifecycle:  &fakeLCM{store: st},
 		DataDir:    "/ao/data",
 		LookPath:   func(string) (string, error) { return "/bin/true", nil },
-		Executable: func() (string, error) { return "/daemon/ao", nil },
+		Executable: testExecutable(t),
 	})
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
@@ -1220,18 +1347,17 @@ func TestSpawn_DeletesSeedRowOnWorkspaceFailure(t *testing.T) {
 	}
 }
 
-// TestSpawn_ParksRowTerminatedWhenSeedDeleteFails asserts the fallback: if the
-// seed-row delete itself fails, the failed spawn still parks the row as
-// terminated so it never looks live.
-func TestSpawn_ParksRowTerminatedWhenSeedDeleteFails(t *testing.T) {
+// Transactional spawn never creates a seed session row, even when the legacy
+// seed-row delete path is unavailable.
+func TestSpawn_WorkspaceFailureDoesNotCreateSeedRow(t *testing.T) {
 	m, st, _, ws := newManager()
 	ws.createErr = ports.ErrWorkspaceBranchNotFetched
 	st.deleteErr = errors.New("db locked")
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("row must fall back to terminated when the seed delete fails")
+	if _, ok := st.sessions["mer-1"]; ok {
+		t.Fatal("workspace failure must not create a visible session row")
 	}
 }
 
@@ -2737,8 +2863,15 @@ func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {
 	if rt.created != 1 {
 		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
 	}
-	if !reflect.DeepEqual(rt.lastCfg.Argv, agent.argv) {
-		t.Fatalf("runtime argv = %#v, want original argv %#v", rt.lastCfg.Argv, agent.argv)
+	if got, want := rt.lastCfg.Argv, []string{mustExecutable(t), "launch"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runtime argv = %#v, want launcher argv %#v", got, want)
+	}
+	spec, err := agentlaunch.ReadAndRemove(rt.lastCfg.Env[agentlaunch.EnvSpecPath])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(spec.Argv, agent.argv) {
+		t.Fatalf("launch spec argv = %#v, want original argv %#v", spec.Argv, agent.argv)
 	}
 }
 
@@ -2884,6 +3017,9 @@ func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *f
 // kills activity tracking).
 func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
+	if err := os.WriteFile(daemonExe, []byte("test"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/usr/bin"
 	executable := func() (string, error) { return daemonExe, nil }
 
@@ -2921,28 +3057,26 @@ func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
 	}
 }
 
-// TestSpawn_HookPATHPinUnavailable asserts the degraded path is loud, not
-// silent: when the daemon executable cannot anchor `ao` resolution, PATH is
-// left to the runtime's inherited default and a warning is logged.
+// A missing or invalid launcher now fails the shared spawn preflight before
+// runtime/worktree provisioning.
 func TestSpawn_HookPATHPinUnavailable(t *testing.T) {
 	cases := []struct {
 		name       string
 		executable func() (string, error)
 	}{
 		{"executable unresolvable", func() (string, error) { return "", errors.New("no exe") }},
-		{"executable not named ao", func() (string, error) { return "/opt/aod/ao-daemon", nil }},
+		{"executable missing", func() (string, error) { return "/opt/aod/ao", nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m, _, rt, logBuf := pathPinManager(tc.executable)
-			if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
-				t.Fatal(err)
+			m, st, rt, _ := pathPinManager(tc.executable)
+			_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+			var spawnErr *domain.SpawnError
+			if !errors.As(err, &spawnErr) || spawnErr.Outcome.State != domain.SpawnStatePreflightFailed {
+				t.Fatalf("Spawn err = %v, want preflight_failed", err)
 			}
-			if got, ok := rt.lastCfg.Env["PATH"]; ok {
-				t.Fatalf("runtime env PATH = %q, want unset when the pin cannot be applied", got)
-			}
-			if !strings.Contains(logBuf.String(), "not pinned") {
-				t.Fatalf("expected a 'not pinned' warning in the log, got %q", logBuf.String())
+			if rt.created != 0 || len(st.sessions) != 0 {
+				t.Fatalf("preflight failure mutated runtime/session: created=%d sessions=%d", rt.created, len(st.sessions))
 			}
 		})
 	}
@@ -2953,6 +3087,9 @@ func TestSpawn_HookPATHPinUnavailable(t *testing.T) {
 // still comes first.
 func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
+	if err := os.WriteFile(daemonExe, []byte("test"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	m, st, rt, _ := pathPinManager(func() (string, error) { return daemonExe, nil })
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
 		Env:    map[string]string{"PATH": "/proj/bin"},

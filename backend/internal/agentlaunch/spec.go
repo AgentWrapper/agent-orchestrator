@@ -3,9 +3,34 @@ package agentlaunch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"runtime"
 )
+
+// ResolveEntrypoint verifies the daemon executable used for the internal
+// `ao launch` trampoline exists and is executable enough to start.
+func ResolveEntrypoint(executable func() (string, error)) (string, error) {
+	path, err := executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve launcher entrypoint: %w", err)
+	}
+	if path == "" {
+		return "", errors.New("resolve launcher entrypoint: empty executable path")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("launcher entrypoint %q: %w", path, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("launcher entrypoint %q is a directory", path)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+		return "", fmt.Errorf("launcher entrypoint %q is not executable", path)
+	}
+	return path, nil
+}
 
 // EnvSpecPath is the environment variable that holds the path to the launch spec file.
 const EnvSpecPath = "AO_LAUNCH_SPEC"

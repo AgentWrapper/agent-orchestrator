@@ -68,6 +68,20 @@ func TestNewPicksUpShellFromEnv(t *testing.T) {
 	}
 }
 
+func TestPreflightProbesSelectedTmuxBinary(t *testing.T) {
+	r, runner := newTestRuntime(1024)
+	if err := r.Preflight(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := runner.calls, []runnerCall{{name: "tmux-test", args: []string{"-V"}}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("preflight calls = %#v, want %#v", got, want)
+	}
+	runner.err = errors.New("broken")
+	if err := r.Preflight(context.Background()); err == nil || !strings.Contains(err.Error(), "tmux preflight") {
+		t.Fatalf("Preflight err = %v", err)
+	}
+}
+
 // -- command builder tests --
 
 func TestCommandBuilders(t *testing.T) {

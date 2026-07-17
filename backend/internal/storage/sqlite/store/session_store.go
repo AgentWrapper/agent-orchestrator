@@ -33,6 +33,89 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 	return rec, nil
 }
 
+// ReserveSpawn allocates a stable session identity without emitting a session row.
+func (s *Store) ReserveSpawn(ctx context.Context, projectID domain.ProjectID, requestID, generation string, now time.Time) (domain.SpawnReservation, bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var reservation domain.SpawnReservation
+	existing := false
+	err := s.inTx(ctx, "reserve spawn", func(q *gen.Queries) error {
+		row, err := q.GetSpawnReservationByRequestID(ctx, gen.GetSpawnReservationByRequestIDParams{ProjectID: string(projectID), RequestID: requestID})
+		if err == nil {
+			reservation = domain.SpawnReservation{RequestID: row.RequestID, Generation: row.Generation, SessionID: domain.SessionID(row.SessionID), ProjectID: domain.ProjectID(row.ProjectID), Num: row.Num, CreatedAt: row.CreatedAt}
+			existing = true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		num, err := q.NextSpawnNum(ctx, gen.NextSpawnNumParams{ProjectID: projectID, ProjectID_2: string(projectID)})
+		if err != nil {
+			return err
+		}
+		reservation = domain.SpawnReservation{RequestID: requestID, Generation: generation, SessionID: domain.SessionID(fmt.Sprintf("%s-%d", projectID, num)), ProjectID: projectID, Num: num, CreatedAt: now}
+		return q.InsertSpawnReservation(ctx, gen.InsertSpawnReservationParams{RequestID: requestID, Generation: generation, SessionID: string(reservation.SessionID), ProjectID: string(projectID), Num: num, CreatedAt: now})
+	})
+	return reservation, existing, err
+}
+
+// CommitSpawn atomically creates the visible session and commits its reservation.
+func (s *Store) CommitSpawn(ctx context.Context, reservation domain.SpawnReservation, rec domain.SessionRecord) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "commit spawn", func(q *gen.Queries) error {
+		if err := q.InsertSession(ctx, recordToInsert(rec, reservation.Num)); err != nil {
+			return err
+		}
+		rows, err := q.MarkSpawnReservationCommitted(ctx, reservation.Generation)
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errors.New("spawn reservation generation mismatch")
+		}
+		return nil
+	})
+}
+
+// RollbackSpawnReservation releases identity reserved by a failed attempt.
+func (s *Store) RollbackSpawnReservation(ctx context.Context, generation string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.DeleteSpawnReservation(ctx, generation)
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errors.New("spawn reservation not found or already committed")
+	}
+	return nil
+}
+
+// RollbackCommittedSpawn removes a just-committed spawn whose final prompt
+// delivery failed before Spawn returned success.
+func (s *Store) RollbackCommittedSpawn(ctx context.Context, generation string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "rollback committed spawn", func(q *gen.Queries) error {
+		rows, err := q.DeleteCommittedSpawnSession(ctx, generation)
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errors.New("committed spawn session not found")
+		}
+		rows, err = q.DeleteCommittedSpawnReservation(ctx, generation)
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errors.New("committed spawn reservation not found")
+		}
+		return nil
+	})
+}
+
 // UpdateSession writes the full mutable state of an existing session. The
 // id/project/num/created_at are immutable and not touched here.
 func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) error {
@@ -269,6 +352,8 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:  row.IsTerminated,
 		Metadata: domain.SessionMetadata{
+			Generation:                   row.Generation,
+			SpawnState:                   domain.SpawnState(row.SpawnState),
 			Branch:                       row.Branch,
 			WorkspacePath:                row.WorkspacePath,
 			RuntimeHandleID:              row.RuntimeHandleID,
@@ -309,6 +394,8 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		CapabilityClass:              rec.Metadata.CapabilityClass,
 		ExecutionProfileJson:         marshalExecutionProfile(rec.Metadata.ExecutionProfile),
 		ObservedExecutionProfileHash: rec.Metadata.ObservedExecutionProfileHash,
+		Generation:                   rec.Metadata.Generation,
+		SpawnState:                   string(rec.Metadata.SpawnState),
 		CreatedAt:                    rec.CreatedAt,
 		UpdatedAt:                    rec.UpdatedAt,
 	}

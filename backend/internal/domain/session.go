@@ -48,11 +48,15 @@ func CapabilityClassForKind(kind SessionKind) CapabilityClass {
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
-	Branch          string `json:"branch,omitempty"`
-	WorkspacePath   string `json:"workspacePath,omitempty"`
-	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
-	AgentSessionID  string `json:"agentSessionId,omitempty"`
-	Prompt          string `json:"prompt,omitempty"`
+	// Generation uniquely identifies this launch generation for lifecycle CAS.
+	Generation string `json:"generation,omitempty"`
+	// SpawnState is spawned only after the transactional commit point.
+	SpawnState      SpawnState `json:"spawnState,omitempty"`
+	Branch          string     `json:"branch,omitempty"`
+	WorkspacePath   string     `json:"workspacePath,omitempty"`
+	RuntimeHandleID string     `json:"runtimeHandleId,omitempty"`
+	AgentSessionID  string     `json:"agentSessionId,omitempty"`
+	Prompt          string     `json:"prompt,omitempty"`
 	// CapabilityClass records the implementation policy applied when AO
 	// launched the session. Empty values from pre-policy databases are treated
 	// as the class implied by SessionRecord.Kind.

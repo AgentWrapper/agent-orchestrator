@@ -252,6 +252,18 @@ func TestExecutionProfileDenialEmitsStructuredAuditEvent(t *testing.T) {
 		t.Fatalf("event=%#v", event)
 	}
 }
+
+func TestSpawnErrorMapsStructuredOutcome(t *testing.T) {
+	err := &domain.SpawnError{Outcome: domain.SpawnOutcome{State: domain.SpawnStateLaunchFailed, Phase: domain.SpawnPhaseLaunch, SessionID: "mer-7", Generation: "gen-7", RolledBack: true, RollbackState: domain.SpawnStateRolledBack}, Cause: errors.New("runtime failed")}
+	mapped := toAPIError(err)
+	var apiErr *apierr.Error
+	if !errors.As(mapped, &apiErr) || apiErr.Code != "SPAWN_LAUNCH_FAILED" {
+		t.Fatalf("mapped = %#v", mapped)
+	}
+	if apiErr.Details["sessionId"] != domain.SessionID("mer-7") || apiErr.Details["generation"] != "gen-7" || apiErr.Details["rolledBack"] != true {
+		t.Fatalf("details = %#v", apiErr.Details)
+	}
+}
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
 		return false, f.killErr

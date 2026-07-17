@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -172,6 +173,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	checks = append(checks,
 		c.checkGit(ctx),
 		c.checkTerminalRuntime(ctx),
+		c.checkLauncherEntrypoint(),
 		c.checkAOBinary(),
 	)
 	for _, harness := range doctorHarnesses {
@@ -179,6 +181,18 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	}
 	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
 	return checks
+}
+
+func (c *commandContext) checkLauncherEntrypoint() doctorCheck {
+	const name = "launcher-entrypoint"
+	path, err := agentlaunch.ResolveEntrypoint(c.deps.Executable)
+	if err != nil {
+		return doctorCheck{
+			Level: doctorFail, Section: doctorSectionTools, Name: name,
+			Message: fmt.Sprintf("%v; reinstall or run the daemon from a valid ao executable before spawning", err),
+		}
+	}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: name, Message: path}
 }
 
 func (c *commandContext) checkExecutionProfiles(ctx context.Context) doctorCheck {

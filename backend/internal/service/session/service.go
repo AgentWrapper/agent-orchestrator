@@ -159,6 +159,26 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	return s.toSession(ctx, rec)
 }
 
+// PreflightSpawn exposes the manager's side-effect-free transactional spawn
+// admission through the daemon API.
+func (s *Service) PreflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SpawnPreflight, error) {
+	_, err := s.requireProject(ctx, cfg.ProjectID)
+	if err != nil {
+		return domain.SpawnPreflight{}, err
+	}
+	manager, ok := s.manager.(interface {
+		PreflightSpawn(context.Context, ports.SpawnConfig) (domain.SpawnPreflight, error)
+	})
+	if !ok {
+		return domain.SpawnPreflight{}, apierr.Internal("SPAWN_PREFLIGHT_UNAVAILABLE", "Spawn preflight is unavailable")
+	}
+	preflight, err := manager.PreflightSpawn(ctx, cfg)
+	if err != nil {
+		return preflight, toAPIError(err)
+	}
+	return preflight, nil
+}
+
 // requireProject verifies the project is registered before any spawn write
 // touches the session store, so an unknown projectId surfaces as a typed 404
 // rather than an opaque 500 with an orphan terminated row left behind.
@@ -253,6 +273,15 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 	}
 	if errorCode != "" {
 		payload["error_code"] = errorCode
+	}
+	var spawnErr *domain.SpawnError
+	if errors.As(err, &spawnErr) {
+		payload["state"] = spawnErr.Outcome.State
+		payload["phase"] = spawnErr.Outcome.Phase
+		payload["session_id"] = spawnErr.Outcome.SessionID
+		payload["generation"] = spawnErr.Outcome.Generation
+		payload["rolled_back"] = spawnErr.Outcome.RolledBack
+		payload["rollback_state"] = spawnErr.Outcome.RollbackState
 	}
 	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.session.spawn_failed",
@@ -565,6 +594,22 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 // toAPIError maps the session engine's sentinel errors to their REST API
 // equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {
+	var spawnErr *domain.SpawnError
+	if errors.As(err, &spawnErr) {
+		details := map[string]any{
+			"state":         spawnErr.Outcome.State,
+			"phase":         spawnErr.Outcome.Phase,
+			"sessionId":     spawnErr.Outcome.SessionID,
+			"generation":    spawnErr.Outcome.Generation,
+			"rolledBack":    spawnErr.Outcome.RolledBack,
+			"rollbackState": spawnErr.Outcome.RollbackState,
+		}
+		code := "SPAWN_" + strings.ToUpper(string(spawnErr.Outcome.State))
+		if spawnErr.Outcome.State == domain.SpawnStatePreflightFailed {
+			return apierr.Invalid(code, spawnErr.Error(), details)
+		}
+		return apierr.New(apierr.KindInternal, code, spawnErr.Error(), details)
+	}
 	switch {
 	case err == nil:
 		return nil

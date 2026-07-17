@@ -58,6 +58,8 @@ func (s *stubRuntime) wasDestroyed(handleID string) bool {
 
 type stubAgent struct{}
 
+func (stubAgent) ResolveBinary(context.Context) (string, error) { return "/bin/true", nil }
+
 func (stubAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }

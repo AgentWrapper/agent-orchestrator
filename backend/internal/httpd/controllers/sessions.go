@@ -66,6 +66,7 @@ type SessionsController struct {
 // Register mounts the session routes on the supplied router.
 func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions", c.list)
+	r.Post("/sessions/preflight", c.preflightSpawn)
 	r.Post("/sessions", c.spawn)
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
@@ -85,6 +86,26 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
+}
+
+func (c *SessionsController) preflightSpawn(w http.ResponseWriter, r *http.Request) {
+	svc, ok := c.Svc.(interface {
+		PreflightSpawn(context.Context, ports.SpawnConfig) (domain.SpawnPreflight, error)
+	})
+	if !ok {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/preflight")
+		return
+	}
+	cfg, ok := decodeSpawnConfig(w, r)
+	if !ok {
+		return
+	}
+	preflight, err := svc.PreflightSpawn(r.Context(), cfg)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SpawnPreflightResponse{Preflight: preflight})
 }
 
 func (c *SessionsController) changeExecutionProfile(w http.ResponseWriter, r *http.Request) {
@@ -131,37 +152,42 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions")
 		return
 	}
-	var in SpawnSessionRequest
-	if err := decodeJSON(r, &in); err != nil {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+	cfg, ok := decodeSpawnConfig(w, r)
+	if !ok {
 		return
 	}
-	if in.ProjectID == "" {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
-		return
-	}
-	if len(in.Prompt) > maxPromptLen {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
-		return
-	}
-	// displayName is optional at the API (the desktop new-task dialog omits it
-	// and the read model falls back to the session id). `ao spawn` makes it
-	// required CLI-side. When present, it is held to the same length cap here so
-	// a direct API call cannot exceed it.
-	displayName := strings.TrimSpace(in.DisplayName)
-	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
-		return
-	}
-	if in.Kind == "" {
-		in.Kind = domain.KindWorker
-	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
+	sess, err := c.Svc.Spawn(r.Context(), cfg)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
+	outcome := domain.SpawnOutcome{State: sess.Metadata.SpawnState, Phase: domain.SpawnPhaseCommit, SessionID: sess.ID, Generation: sess.Metadata.Generation, Worktree: sess.Metadata.WorkspacePath, ProfileHash: sess.Metadata.ExecutionProfile.Hash}
+	envelope.WriteJSON(w, http.StatusCreated, SpawnSessionResponse{View: sessionView(sess), Outcome: outcome})
+}
+
+func decodeSpawnConfig(w http.ResponseWriter, r *http.Request) (ports.SpawnConfig, bool) {
+	var in SpawnSessionRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return ports.SpawnConfig{}, false
+	}
+	if in.ProjectID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
+		return ports.SpawnConfig{}, false
+	}
+	if len(in.Prompt) > maxPromptLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
+		return ports.SpawnConfig{}, false
+	}
+	displayName := strings.TrimSpace(in.DisplayName)
+	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
+		return ports.SpawnConfig{}, false
+	}
+	if in.Kind == "" {
+		in.Kind = domain.KindWorker
+	}
+	return ports.SpawnConfig{RequestID: strings.TrimSpace(in.RequestID), ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName}, true
 }
 
 func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {

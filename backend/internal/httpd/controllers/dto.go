@@ -149,6 +149,7 @@ type ListSessionsResponse struct {
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
+	RequestID string              `json:"requestId,omitempty"`
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
@@ -161,7 +162,18 @@ type SpawnSessionRequest struct {
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
 }
 
-// SessionResponse is the { session } body shared by session create/get.
+// SpawnSessionResponse is returned only after the transactional commit point.
+type SpawnSessionResponse struct {
+	View    SessionView         `json:"session"`
+	Outcome domain.SpawnOutcome `json:"outcome"`
+}
+
+// SpawnPreflightResponse reports side-effect-free spawn admission.
+type SpawnPreflightResponse struct {
+	Preflight domain.SpawnPreflight `json:"preflight"`
+}
+
+// SessionResponse is the { session } body shared by session get/restore.
 type SessionResponse struct {
 	Session SessionView `json:"session"`
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -33,11 +35,14 @@ type spawnOptions struct {
 	claimPR        string
 	noTakeover     bool
 	skipAgentCheck bool
+	preflightOnly  bool
+	jsonOutput     bool
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
 // POST /api/v1/sessions. The CLI keeps its own copy so it need not import httpd.
 type spawnRequest struct {
+	RequestID   string `json:"requestId,omitempty"`
 	ProjectID   string `json:"projectId"`
 	IssueID     string `json:"issueId,omitempty"`
 	Harness     string `json:"harness,omitempty"`
@@ -51,6 +56,25 @@ type spawnResult struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	} `json:"session"`
+	Outcome struct {
+		State      string `json:"state"`
+		Phase      string `json:"phase"`
+		Generation string `json:"generation"`
+		RolledBack bool   `json:"rolledBack"`
+	} `json:"outcome"`
+}
+
+type spawnPreflightResult struct {
+	Preflight struct {
+		OK              bool   `json:"ok"`
+		State           string `json:"state"`
+		Phase           string `json:"phase"`
+		LauncherPath    string `json:"launcherPath"`
+		AgentBinaryPath string `json:"agentBinaryPath"`
+		Runtime         string `json:"runtime"`
+		CapabilityClass string `json:"capabilityClass"`
+		ProfileHash     string `json:"profileHash"`
+	} `json:"preflight"`
 }
 
 type agentProbeResult struct {
@@ -69,6 +93,9 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			"fresh git worktree. Register the project first with `ao project add`.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.jsonOutput && !opts.preflightOnly {
+				return usageError{fmt.Errorf("--json requires --preflight-only")}
+			}
 			if opts.noTakeover && opts.claimPR == "" {
 				return usageError{fmt.Errorf("--no-takeover requires --claim-pr")}
 			}
@@ -102,6 +129,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				}
 			}
 			req := spawnRequest{
+				RequestID:   uuid.NewString(),
 				ProjectID:   opts.project,
 				IssueID:     opts.issue,
 				Harness:     opts.harness,
@@ -109,9 +137,25 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				Prompt:      opts.prompt,
 				DisplayName: name,
 			}
+			if opts.preflightOnly {
+				var preflight spawnPreflightResult
+				if err := ctx.postJSON(cmd.Context(), "sessions/preflight", req, &preflight); err != nil {
+					return err
+				}
+				if opts.jsonOutput {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(preflight)
+				}
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "spawn preflight ok: launcher=%s agent=%s runtime=%s profile=%s\n", preflight.Preflight.LauncherPath, preflight.Preflight.AgentBinaryPath, preflight.Preflight.Runtime, preflight.Preflight.ProfileHash)
+				return err
+			}
 			var res spawnResult
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
 				return err
+			}
+			// Older daemons do not return outcome. New daemons always do, and a
+			// present outcome must prove the transactional commit point.
+			if res.Outcome.State != "" && (res.Outcome.State != "spawned" || res.Outcome.Generation == "") {
+				return fmt.Errorf("spawn response did not confirm a committed worker (state=%q generation=%q)", res.Outcome.State, res.Outcome.Generation)
 			}
 			claimed := ""
 			if opts.claimPR != "" {
@@ -165,6 +209,8 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
+	f.BoolVar(&opts.preflightOnly, "preflight-only", false, "Validate launcher, agent binary, runtime, and execution profile without spawning")
+	f.BoolVar(&opts.jsonOutput, "json", false, "Print machine-readable preflight JSON (requires --preflight-only)")
 	return cmd
 }
 

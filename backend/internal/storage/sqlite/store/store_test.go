@@ -152,6 +152,42 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
+func TestTransactionalSpawnReservationIsInvisibleUntilCommit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	now := time.Now().UTC().Truncate(time.Second)
+	reservation, existing, err := s.ReserveSpawn(ctx, "mer", "request-1", "generation-1", now)
+	if err != nil || existing {
+		t.Fatalf("ReserveSpawn: existing=%v err=%v", existing, err)
+	}
+	if _, ok, err := s.GetSession(ctx, reservation.SessionID); err != nil || ok {
+		t.Fatalf("reservation leaked visible session: ok=%v err=%v", ok, err)
+	}
+	profile, err := domain.NewExecutionProfile(domain.AgentConfig{}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := sampleRecord("mer")
+	rec.ID = reservation.SessionID
+	rec.Metadata.Generation = reservation.Generation
+	rec.Metadata.SpawnState = domain.SpawnStateSpawned
+	rec.Metadata.RuntimeHandleID = "runtime-1"
+	rec.Metadata.ExecutionProfile = profile
+	rec.Metadata.ObservedExecutionProfileHash = profile.Hash
+	if err := s.CommitSpawn(ctx, reservation, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetSession(ctx, reservation.SessionID)
+	if err != nil || !ok || got.Metadata.Generation != "generation-1" || got.Metadata.SpawnState != domain.SpawnStateSpawned {
+		t.Fatalf("committed spawn = %#v ok=%v err=%v", got, ok, err)
+	}
+	retry, existing, err := s.ReserveSpawn(ctx, "mer", "request-1", "generation-new", now)
+	if err != nil || !existing || retry.Generation != reservation.Generation || retry.SessionID != reservation.SessionID {
+		t.Fatalf("idempotent reservation = %#v existing=%v err=%v", retry, existing, err)
+	}
+}
+
 // TestDeleteSessionOnlyRemovesSeedRows covers Bug 4's storage-layer guarantee:
 // DeleteSession removes a session row only when the row is still in seed state
 // (no workspace, no runtime handle, no agent session id, no prompt, not

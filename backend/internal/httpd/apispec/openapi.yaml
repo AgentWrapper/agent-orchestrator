@@ -909,7 +909,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionResponse'
+                $ref: '#/components/schemas/SpawnSessionResponse'
           description: Created
         "400":
           content:
@@ -1756,6 +1756,43 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/sessions/preflight:
+    post:
+      operationId: preflightSpawnSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpawnSessionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpawnPreflightResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Validate transactional spawn prerequisites without side effects
+      tags:
+      - sessions
 components:
   schemas:
     APIError:
@@ -2083,6 +2120,55 @@ components:
           type: string
       required:
       - harness
+      type: object
+    DomainSpawnOutcome:
+      properties:
+        generation:
+          type: string
+        phase:
+          type: string
+        profileHash:
+          type: string
+        rollbackState:
+          type: string
+        rolledBack:
+          type: boolean
+        sessionId:
+          type: string
+        state:
+          type: string
+        worktree:
+          type: string
+      required:
+      - state
+      - phase
+      - rolledBack
+      type: object
+    DomainSpawnPreflight:
+      properties:
+        agentBinaryPath:
+          type: string
+        capabilityClass:
+          type: string
+        launcherPath:
+          type: string
+        ok:
+          type: boolean
+        phase:
+          type: string
+        profileHash:
+          type: string
+        runtime:
+          type: string
+        state:
+          type: string
+      required:
+      - ok
+      - state
+      - phase
+      - runtime
+      - capabilityClass
+      - profileHash
       type: object
     ImportReport:
       properties:
@@ -2988,6 +3074,13 @@ components:
       required:
       - orchestrator
       type: object
+    SpawnPreflightResponse:
+      properties:
+        preflight:
+          $ref: '#/components/schemas/DomainSpawnPreflight'
+      required:
+      - preflight
+      type: object
     SpawnSessionRequest:
       properties:
         branch:
@@ -3033,8 +3126,20 @@ components:
         prompt:
           maxLength: 4096
           type: string
+        requestId:
+          type: string
       required:
       - projectId
+      type: object
+    SpawnSessionResponse:
+      properties:
+        outcome:
+          $ref: '#/components/schemas/DomainSpawnOutcome'
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+      required:
+      - session
+      - outcome
       type: object
     SubmitReviewInput:
       properties:

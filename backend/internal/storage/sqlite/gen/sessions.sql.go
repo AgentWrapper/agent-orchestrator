@@ -16,7 +16,7 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash, generation, spawn_state
 FROM sessions WHERE id = ?
 `
 
@@ -47,6 +47,8 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.CapabilityClass,
 		&i.ExecutionProfileJson,
 		&i.ObservedExecutionProfileHash,
+		&i.Generation,
+		&i.SpawnState,
 	)
 	return i, err
 }
@@ -57,8 +59,8 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
     preview_url, preview_revision, capability_class, execution_profile_json,
-    observed_execution_profile_hash, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    observed_execution_profile_hash, generation, spawn_state, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -83,6 +85,8 @@ type InsertSessionParams struct {
 	CapabilityClass              domain.CapabilityClass
 	ExecutionProfileJson         string
 	ObservedExecutionProfileHash string
+	Generation                   string
+	SpawnState                   string
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
 }
@@ -110,6 +114,8 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.CapabilityClass,
 		arg.ExecutionProfileJson,
 		arg.ObservedExecutionProfileHash,
+		arg.Generation,
+		arg.SpawnState,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -146,7 +152,7 @@ func (q *Queries) InsertSessionExecutionProfileChange(ctx context.Context, arg I
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash, generation, spawn_state
 FROM sessions ORDER BY project_id, num
 `
 
@@ -183,6 +189,8 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.CapabilityClass,
 			&i.ExecutionProfileJson,
 			&i.ObservedExecutionProfileHash,
+			&i.Generation,
+			&i.SpawnState,
 		); err != nil {
 			return nil, err
 		}
@@ -246,7 +254,7 @@ func (q *Queries) ListSessionExecutionProfileChanges(ctx context.Context, sessio
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash, generation, spawn_state
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -283,6 +291,8 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.CapabilityClass,
 			&i.ExecutionProfileJson,
 			&i.ObservedExecutionProfileHash,
+			&i.Generation,
+			&i.SpawnState,
 		); err != nil {
 			return nil, err
 		}

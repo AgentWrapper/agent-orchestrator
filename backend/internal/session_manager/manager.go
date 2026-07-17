@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -88,6 +91,19 @@ type runtimeController interface {
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
+type runtimePreflighter interface {
+	Preflight(ctx context.Context) error
+}
+
+type spawnPlan struct {
+	cfg             ports.SpawnConfig
+	project         domain.ProjectRecord
+	agentConfig     domain.AgentConfig
+	profile         domain.ExecutionProfile
+	launcherPath    string
+	agentBinaryPath string
+}
+
 // Store is the persistence surface needed by the internal session Manager.
 type Store interface {
 	// GetProject loads a project row so spawn can resolve its per-project agent
@@ -95,6 +111,10 @@ type Store interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
+	ReserveSpawn(ctx context.Context, projectID domain.ProjectID, requestID, generation string, now time.Time) (domain.SpawnReservation, bool, error)
+	CommitSpawn(ctx context.Context, reservation domain.SpawnReservation, rec domain.SessionRecord) error
+	RollbackSpawnReservation(ctx context.Context, generation string) error
+	RollbackCommittedSpawn(ctx context.Context, generation string) error
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
 	SetSessionExecutionProfile(ctx context.Context, id domain.SessionID, profile domain.ExecutionProfile, observedHash string, updatedAt time.Time) error
 	ChangeSessionExecutionProfile(ctx context.Context, change domain.ExecutionProfileChange) error
@@ -244,52 +264,48 @@ func New(d Deps) *Manager {
 	return m
 }
 
-// Spawn creates the session row (which assigns the "{project}-{n}" id), then the
-// workspace and runtime, then reports completion to the LCM. If workspace
-// materialization fails the still-seed row is deleted outright; a later failure
-// parks the row as terminated and rolls back what was built.
+// Spawn reserves an identity without creating a visible session, then commits
+// the session row only after worktree, launcher, runtime, capability, generation,
+// and execution-profile identities agree. Partial failures roll back the
+// reservation and every resource created by the attempt.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
-	project, err := m.loadProject(ctx, cfg.ProjectID)
+	plan, err := m.preflightSpawn(ctx, cfg)
 	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+		return domain.SessionRecord{}, domain.NewSpawnError(domain.SpawnStatePreflightFailed, domain.SpawnPhasePreflight, err)
 	}
-	// A per-project role override picks the harness when the spawn names none,
-	// so a project can default workers to one agent and orchestrators to another.
-	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
-	if cfg.Harness == "" {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
-	}
-
-	// Reject an unknown harness before any durable state is created. Doing this
-	// after CreateSession would leave a terminated orphan row and waste a
-	// worktree on a spawn that can never launch.
-	if _, ok := m.agents.Agent(cfg.Harness); !ok {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
-	}
-
-	if err := m.validateRuntimePrerequisites(); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
-	}
+	cfg, project := plan.cfg, plan.project
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
 
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
-	profile, err := domain.NewExecutionProfile(agentConfig, "project_config")
-	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: execution profile: %w", err)
+	agentConfig, profile := plan.agentConfig, plan.profile
+	requestID := strings.TrimSpace(cfg.RequestID)
+	if requestID == "" {
+		requestID = uuid.NewString()
 	}
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, profile, m.clock()))
+	reservation, existing, err := m.store.ReserveSpawn(ctx, cfg.ProjectID, requestID, uuid.NewString(), m.clock())
 	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
+		return domain.SessionRecord{}, domain.NewSpawnError(domain.SpawnStateCommitFailed, domain.SpawnPhaseCommit, err)
 	}
-	id := rec.ID
+	if existing {
+		if rec, ok, getErr := m.store.GetSession(ctx, reservation.SessionID); getErr != nil {
+			return domain.SessionRecord{}, getErr
+		} else if ok {
+			return rec, nil
+		}
+		return domain.SessionRecord{}, domain.NewSpawnError(domain.SpawnStateCommitFailed, domain.SpawnPhaseCommit, errors.New("spawn request is already in progress"))
+	}
+	rec := seedRecord(cfg, profile, m.clock())
+	rec.ID = reservation.SessionID
+	rec.Metadata.Generation = reservation.Generation
+	id := reservation.SessionID
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
 	if err != nil {
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: system prompt file: %w", id, err)
+		rolledBack := m.rollbackSpawnReservation(ctx, reservation.Generation)
+		m.cleanupSystemPromptDir(id)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, fmt.Errorf("system prompt file: %w", err), rolledBack)
 	}
 
 	branch := cfg.Branch
@@ -301,32 +317,33 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
 		// row is deleted outright instead of accumulating as a terminated orphan
 		// in session lists (e.g. when gitworktree refuses the branch).
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
+		rolledBack := m.rollbackSpawnReservation(ctx, reservation.Generation)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, err, rolledBack)
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
+		workspaceRolledBack := m.destroySpawnWorkspace(ctx, ws, workspaceProject)
+		reservationRolledBack := m.rollbackSpawnReservation(ctx, reservation.Generation)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, err, workspaceRolledBack && reservationRolledBack)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
+		workspaceRolledBack := m.destroySpawnWorkspace(ctx, ws, workspaceProject)
+		reservationRolledBack := m.rollbackSpawnReservation(ctx, reservation.Generation)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, fmt.Errorf("no agent adapter for harness %q", cfg.Harness), workspaceRolledBack && reservationRolledBack)
 	}
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	capabilityClass := domain.CapabilityClassForKind(cfg.Kind)
 	env[EnvCapabilityClass] = string(capabilityClass)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+		workspaceRolledBack := m.destroySpawnWorkspace(ctx, ws, workspaceProject)
+		m.cleanupSystemPromptDir(id)
+		reservationRolledBack := m.rollbackSpawnReservation(ctx, reservation.Generation)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, err, workspaceRolledBack && reservationRolledBack)
 	}
 	launchCfg := ports.LaunchConfig{
 		DataDir:          m.dataDir,
@@ -345,56 +362,195 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	applyExecutionProfileToolPolicy(&launchCfg, profile)
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, fmt.Errorf("prompt delivery: %w", err), rolledBack)
 	}
 	if delivery == ports.PromptDeliveryAfterStart {
 		launchCfg.Prompt = ""
 	}
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, fmt.Errorf("launch command: %w", err), rolledBack)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
 	// path the adapter returned) BEFORE handing the launch to the runtime.
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, err, rolledBack)
 	}
+	specPath, err := agentlaunch.WriteTemp(agentlaunch.Spec{WorkspacePath: ws.Path, Argv: argv})
+	if err != nil {
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, fmt.Errorf("launch spec: %w", err), rolledBack)
+	}
+	env[agentlaunch.EnvSpecPath] = specPath
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
-		Argv:          argv,
+		Argv:          []string{plan.launcherPath, "launch"},
 		Env:           env,
 	})
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
+		_ = os.Remove(specPath)
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject)
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, fmt.Errorf("runtime: %w", err), rolledBack)
+	}
+	if alive, aliveErr := m.runtime.IsAlive(ctx, handle); aliveErr != nil || !alive {
+		runtimeRolledBack := m.runtime.Destroy(ctx, handle) == nil
+		_ = os.Remove(specPath)
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject) && runtimeRolledBack
+		if aliveErr == nil {
+			aliveErr = errors.New("runtime did not report the launched worker alive")
+		}
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateLaunchFailed, domain.SpawnPhaseLaunch, reservation, aliveErr, rolledBack)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, CapabilityClass: capabilityClass, ExecutionProfile: profile, ObservedExecutionProfileHash: profile.Hash}
-	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
+	metadata := domain.SessionMetadata{Generation: reservation.Generation, SpawnState: domain.SpawnStateSpawned, Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, CapabilityClass: capabilityClass, ExecutionProfile: profile, ObservedExecutionProfileHash: profile.Hash}
+	rec.Metadata = metadata
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: m.clock()}
+	rec.UpdatedAt = m.clock()
+	if err := verifySpawnCommit(rec, handle); err != nil {
+		runtimeRolledBack := m.runtime.Destroy(ctx, handle) == nil
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject) && runtimeRolledBack
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateCommitFailed, domain.SpawnPhaseCommit, reservation, err, rolledBack)
+	}
+	if err := m.store.CommitSpawn(ctx, reservation, rec); err != nil {
+		runtimeRolledBack := m.runtime.Destroy(ctx, handle) == nil
+		rolledBack := m.rollbackPreparedReservation(ctx, reservation, rec, ws, workspaceProject) && runtimeRolledBack
+		return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateCommitFailed, domain.SpawnPhaseCommit, reservation, err, rolledBack)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
-			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
+			runtimeRolledBack := m.runtime.Destroy(ctx, handle) == nil
+			workspaceRolledBack := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+			metadataRolledBack := m.rollbackCommittedSpawn(ctx, reservation.Generation)
+			rolledBack := runtimeRolledBack && workspaceRolledBack && metadataRolledBack
+			return domain.SessionRecord{}, spawnAttemptError(domain.SpawnStateCommitFailed, domain.SpawnPhaseCommit, reservation, fmt.Errorf("deliver prompt: %w", err), rolledBack)
 		}
 	}
 	return m.getRecord(ctx, id)
+}
+
+// PreflightSpawn performs the same side-effect-free admission checks used by
+// Spawn and returns a machine-readable result suitable for CLI/API callers.
+func (m *Manager) PreflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SpawnPreflight, error) {
+	plan, err := m.preflightSpawn(ctx, cfg)
+	if err != nil {
+		return domain.SpawnPreflight{OK: false, State: domain.SpawnStatePreflightFailed, Phase: domain.SpawnPhasePreflight}, domain.NewSpawnError(domain.SpawnStatePreflightFailed, domain.SpawnPhasePreflight, err)
+	}
+	return domain.SpawnPreflight{
+		OK:              true,
+		Phase:           domain.SpawnPhasePreflight,
+		LauncherPath:    plan.launcherPath,
+		AgentBinaryPath: plan.agentBinaryPath,
+		Runtime:         fmt.Sprintf("%T", m.runtime),
+		CapabilityClass: domain.CapabilityClassForKind(plan.cfg.Kind),
+		ProfileHash:     plan.profile.Hash,
+	}, nil
+}
+
+func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (spawnPlan, error) {
+	project, err := m.loadProject(ctx, cfg.ProjectID)
+	if err != nil {
+		return spawnPlan{}, fmt.Errorf("spawn: %w", err)
+	}
+	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	if cfg.Harness == "" {
+		return spawnPlan{}, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
+	}
+	agent, ok := m.agents.Agent(cfg.Harness)
+	if !ok {
+		return spawnPlan{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
+	}
+	if err := m.validateRuntimePrerequisites(); err != nil {
+		return spawnPlan{}, fmt.Errorf("spawn: %w", err)
+	}
+	if preflighter, ok := m.runtime.(runtimePreflighter); ok {
+		if err := preflighter.Preflight(ctx); err != nil {
+			return spawnPlan{}, fmt.Errorf("spawn: runtime preflight: %w", err)
+		}
+	}
+	launcherPath, err := agentlaunch.ResolveEntrypoint(m.executable)
+	if err != nil {
+		return spawnPlan{}, fmt.Errorf("spawn: launcher preflight: %w", err)
+	}
+	resolver, ok := agent.(ports.AgentBinaryResolver)
+	if !ok {
+		return spawnPlan{}, fmt.Errorf("spawn: agent %q does not expose binary preflight: %w", cfg.Harness, ports.ErrAgentBinaryNotFound)
+	}
+	agentBinaryPath, err := resolver.ResolveBinary(ctx)
+	if err != nil {
+		return spawnPlan{}, fmt.Errorf("spawn: agent binary preflight: %w", err)
+	}
+	if strings.TrimSpace(agentBinaryPath) == "" {
+		return spawnPlan{}, fmt.Errorf("spawn: agent binary preflight returned an empty path: %w", ports.ErrAgentBinaryNotFound)
+	}
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	profile, err := domain.NewExecutionProfile(agentConfig, "project_config")
+	if err != nil {
+		return spawnPlan{}, fmt.Errorf("spawn: execution profile: %w", err)
+	}
+	return spawnPlan{cfg: cfg, project: project, agentConfig: agentConfig, profile: profile, launcherPath: launcherPath, agentBinaryPath: agentBinaryPath}, nil
+}
+
+func (m *Manager) rollbackSpawnReservation(ctx context.Context, generation string) bool {
+	if err := m.store.RollbackSpawnReservation(ctx, generation); err != nil {
+		m.logger.Warn("spawn reservation rollback failed", "generation", generation, "error", err)
+		return false
+	}
+	return true
+}
+
+func (m *Manager) rollbackCommittedSpawn(ctx context.Context, generation string) bool {
+	if err := m.store.RollbackCommittedSpawn(ctx, generation); err != nil {
+		m.logger.Warn("committed spawn rollback failed", "generation", generation, "error", err)
+		return false
+	}
+	return true
+}
+
+func spawnAttemptError(state domain.SpawnState, phase domain.SpawnPhase, reservation domain.SpawnReservation, cause error, rolledBack bool) *domain.SpawnError {
+	rollbackState := domain.SpawnState("")
+	if rolledBack {
+		rollbackState = domain.SpawnStateRolledBack
+	}
+	return &domain.SpawnError{Outcome: domain.SpawnOutcome{
+		State:         state,
+		Phase:         phase,
+		SessionID:     reservation.SessionID,
+		Generation:    reservation.Generation,
+		RolledBack:    rolledBack,
+		RollbackState: rollbackState,
+	}, Cause: cause}
+}
+
+func verifySpawnCommit(rec domain.SessionRecord, handle ports.RuntimeHandle) error {
+	if rec.Metadata.Generation == "" {
+		return errors.New("spawn generation is missing")
+	}
+	if rec.Metadata.SpawnState != domain.SpawnStateSpawned {
+		return fmt.Errorf("spawn state %q is not spawned", rec.Metadata.SpawnState)
+	}
+	if rec.Metadata.RuntimeHandleID == "" || rec.Metadata.RuntimeHandleID != handle.ID {
+		return errors.New("spawn runtime identity mismatch")
+	}
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		return errors.New("spawn worktree identity is incomplete")
+	}
+	wantClass := domain.CapabilityClassForKind(rec.Kind)
+	if rec.Metadata.CapabilityClass != wantClass {
+		return fmt.Errorf("spawn capability identity mismatch: got %q want %q", rec.Metadata.CapabilityClass, wantClass)
+	}
+	if err := rec.Metadata.ExecutionProfile.Validate(); err != nil {
+		return fmt.Errorf("spawn execution profile: %w", err)
+	}
+	if rec.Metadata.ExecutionProfile.Hash == "" || rec.Metadata.ObservedExecutionProfileHash != rec.Metadata.ExecutionProfile.Hash {
+		return errors.New("spawn execution profile identity mismatch")
+	}
+	return nil
 }
 
 // loadProject loads the project record so spawn can resolve its per-project
@@ -483,10 +639,19 @@ func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceI
 	return err == nil
 }
 
-func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
-	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
+func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
+	rolledBack := m.destroySpawnWorkspace(ctx, ws, workspaceProject)
+	if rolledBack {
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 	}
+	m.cleanupSystemPromptDir(rec.ID)
+	return rolledBack
+}
+
+func (m *Manager) rollbackPreparedReservation(ctx context.Context, reservation domain.SpawnReservation, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
+	workspaceRolledBack := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+	reservationRolledBack := m.rollbackSpawnReservation(ctx, reservation.Generation)
+	return workspaceRolledBack && reservationRolledBack
 }
 
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
@@ -552,45 +717,6 @@ func sessionPrefix(project domain.ProjectRecord) string {
 		return project.ID
 	}
 	return project.ID[:12]
-}
-
-// markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
-// A phantom half-spawned row is worse than a terminal one; we only delete the
-// row when nothing observable has landed yet (seed state) via rollbackSpawn or
-// rollbackSpawnSeedRow.
-func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
-	_ = m.lcm.MarkTerminated(ctx, id)
-	m.cleanupSystemPromptDir(id)
-}
-
-// markSpawnFailedTerminatedWithoutWorkspace parks a spawn failure after the
-// runtime row had become observable, but clears launch handles for resources
-// that were destroyed during rollback. This keeps later restore/cleanup paths
-// from treating a removed worktree as reusable state.
-func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context, id domain.SessionID) {
-	m.markSpawnFailedTerminated(ctx, id)
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
-		return
-	}
-	rec.Metadata.Branch = ""
-	rec.Metadata.WorkspacePath = ""
-	rec.Metadata.RuntimeHandleID = ""
-	rec.Metadata.AgentSessionID = ""
-	_ = m.store.UpdateSession(ctx, rec)
-}
-
-// rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
-// before anything observable (worktree, runtime) was built, so failed spawns
-// don't accumulate terminated rows in session lists. DeleteSession only removes
-// rows still in seed state; if the row has progressed or the delete itself
-// fails, fall back to parking it terminated so a phantom row never looks live.
-func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
-	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
-		m.cleanupSystemPromptDir(id)
-		return
-	}
-	m.markSpawnFailedTerminated(ctx, id)
 }
 
 // rollbackSpawn deletes a session row when it is still in seed state — used

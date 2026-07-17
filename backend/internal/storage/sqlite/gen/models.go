@@ -184,6 +184,8 @@ type Session struct {
 	CapabilityClass              domain.CapabilityClass
 	ExecutionProfileJson         string
 	ObservedExecutionProfileHash string
+	Generation                   string
+	SpawnState                   string
 }
 
 type SessionExecutionProfileChange struct {
@@ -204,6 +206,16 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+}
+
+type SpawnReservation struct {
+	RequestID  string
+	Generation string
+	SessionID  string
+	ProjectID  string
+	Num        int64
+	State      string
+	CreatedAt  time.Time
 }
 
 type TelemetryEvent struct {

@@ -380,6 +380,14 @@ func TestDoctorIncludesAOBinaryCheck(t *testing.T) {
 	}
 }
 
+func TestDoctorLauncherEntrypointUsesSpawnResolver(t *testing.T) {
+	c := &commandContext{deps: (Deps{Executable: func() (string, error) { return filepath.Join(t.TempDir(), "missing-ao"), nil }}).withDefaults()}
+	check := c.checkLauncherEntrypoint()
+	if check.Level != doctorFail || check.Name != "launcher-entrypoint" || !strings.Contains(check.Message, "reinstall") {
+		t.Fatalf("launcher check = %#v", check)
+	}
+}
+
 func doctorContext(t *testing.T, paths map[string]string, commandOutput func(context.Context, string, ...string) ([]byte, error)) *commandContext {
 	t.Helper()
 	clearDoctorGitHubEnv(t)
