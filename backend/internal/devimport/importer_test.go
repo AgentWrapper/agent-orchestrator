@@ -71,10 +71,12 @@ func TestRunSameIDPathUpdatesMetadataAndConfig(t *testing.T) {
 	source := newStore(t)
 	target := newStore(t)
 	src := testProject("alpha", "/repos/alpha")
+	src.RegisteredAt = time.Unix(200, 0).UTC()
 	src.DisplayName = "Alpha New"
 	src.RepoOriginURL = "https://example.com/new.git"
 	src.Config = domain.ProjectConfig{DefaultBranch: "release"}
 	dst := testProject("alpha", "/repos/alpha")
+	dst.RegisteredAt = time.Unix(100, 0).UTC()
 	dst.DisplayName = "Alpha Old"
 	dst.Config = domain.ProjectConfig{DefaultBranch: "main"}
 	if err := source.UpsertWorkspaceProject(ctx, src, nil); err != nil {
@@ -95,7 +97,7 @@ func TestRunSameIDPathUpdatesMetadataAndConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DisplayName != "Alpha New" || got.RepoOriginURL != src.RepoOriginURL || got.Config.DefaultBranch != "release" {
+	if got.DisplayName != "Alpha New" || got.RepoOriginURL != src.RepoOriginURL || got.Config.DefaultBranch != "release" || !got.RegisteredAt.Equal(src.RegisteredAt) {
 		t.Fatalf("updated target = %#v", got)
 	}
 }

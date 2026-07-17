@@ -15,7 +15,7 @@ import (
 type Store interface {
 	ListProjects(ctx context.Context) ([]domain.ProjectRecord, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
-	UpsertWorkspaceProject(ctx context.Context, row domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error
+	ImportWorkspaceProject(ctx context.Context, row domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error
 }
 
 // Options configure a project registry copy.
@@ -111,7 +111,7 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 
 		if idExists && pathExists {
 			if !opts.DryRun {
-				if err := target.UpsertWorkspaceProject(ctx, src, repos); err != nil {
+				if err := target.ImportWorkspaceProject(ctx, src, repos); err != nil {
 					return rep, fmt.Errorf("update target project %s: %w", src.ID, err)
 				}
 			}
@@ -120,7 +120,7 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 		}
 
 		if !opts.DryRun {
-			if err := target.UpsertWorkspaceProject(ctx, src, repos); err != nil {
+			if err := target.ImportWorkspaceProject(ctx, src, repos); err != nil {
 				return rep, fmt.Errorf("insert target project %s: %w", src.ID, err)
 			}
 		}

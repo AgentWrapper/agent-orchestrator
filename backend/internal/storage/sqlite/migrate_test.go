@@ -72,7 +72,7 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 
 func TestOpenReadOnlyDoesNotCreateDatabase(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "missing")
-	if _, err := OpenReadOnly(dataDir); err == nil {
+	if _, err := OpenReadOnly(context.Background(), dataDir); err == nil {
 		t.Fatal("OpenReadOnly succeeded for missing database")
 	}
 	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
@@ -104,7 +104,7 @@ INSERT INTO projects (id, path, registered_at) VALUES ('alpha', '/repos/alpha', 
 		t.Fatalf("close seed db: %v", err)
 	}
 
-	store, err := OpenReadOnly(dataDir)
+	store, err := OpenReadOnly(context.Background(), dataDir)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}

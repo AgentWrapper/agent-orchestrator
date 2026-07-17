@@ -1,8 +1,10 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,76 +12,78 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-func TestDevImportProjectsDryRunWritesNothing(t *testing.T) {
+type devImportCapture struct {
+	method string
+	path   string
+	body   devImportProjectsRequest
+}
+
+func devImportServer(t *testing.T, status int, report devimport.Report) (*httptest.Server, *devImportCapture) {
+	t.Helper()
+	capture := &devImportCapture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.method = r.Method
+		capture.path = r.URL.Path
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/dev/import-projects" {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capture.body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(devImportProjectsResponse{Report: report})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, capture
+}
+
+func TestDevImportProjectsDryRunCallsLiveDaemon(t *testing.T) {
 	cfg := setConfigEnv(t)
 	sourceDir := filepath.Join(t.TempDir(), "source")
-	writeDevImportProject(t, sourceDir, "alpha", "/repos/alpha")
+	srv, capture := devImportServer(t, http.StatusOK, devimport.Report{
+		SourceDataDir: sourceDir,
+		TargetDataDir: cfg.dataDir,
+		DryRun:        true,
+		Inserted:      1,
+	})
+	writeRunFileFor(t, cfg, srv)
 
-	out, _, err := executeCLI(t, Deps{}, "dev", "import-projects", "--from-data-dir", sourceDir, "--dry-run")
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "dev", "import-projects", "--from-data-dir", sourceDir, "--dry-run")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/dev/import-projects" {
+		t.Fatalf("request = %s %s, want POST /api/v1/dev/import-projects", capture.method, capture.path)
+	}
+	if capture.body.SourceDataDir != sourceDir || !capture.body.DryRun {
+		t.Fatalf("request body = %#v", capture.body)
 	}
 	if !strings.Contains(out, "Dry run -- no changes written.") || !strings.Contains(out, "Inserted: 1") {
 		t.Fatalf("out = %q", out)
 	}
-
-	target, err := sqlite.Open(cfg.dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = target.Close() }()
-	projects, err := target.ListProjects(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projects) != 0 {
-		t.Fatalf("target projects = %#v, want none", projects)
-	}
-}
-
-func TestDevImportProjectsDryRunDoesNotCreateMissingTarget(t *testing.T) {
-	cfg := setConfigEnv(t)
-	sourceDir := filepath.Join(t.TempDir(), "source")
-	writeDevImportProject(t, sourceDir, "alpha", "/repos/alpha")
-
-	out, _, err := executeCLI(t, Deps{}, "dev", "import-projects", "--from-data-dir", sourceDir, "--dry-run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "Inserted: 1") {
-		t.Fatalf("out = %q, want planned insert", out)
-	}
-	if _, err := os.Stat(cfg.dataDir); !os.IsNotExist(err) {
-		t.Fatalf("target data dir stat err = %v, want not exist", err)
-	}
-}
-
-func TestDevImportProjectsReadOnlySourceDoesNotCreateMissingSource(t *testing.T) {
-	setConfigEnv(t)
-	sourceDir := filepath.Join(t.TempDir(), "missing-source")
-
-	_, _, err := executeCLI(t, Deps{}, "dev", "import-projects", "--from-data-dir", sourceDir, "--dry-run")
-	if err == nil || !strings.Contains(err.Error(), "open source store") {
-		t.Fatalf("err = %v, want source open failure", err)
-	}
-	if _, err := os.Stat(sourceDir); !os.IsNotExist(err) {
-		t.Fatalf("source data dir stat err = %v, want not exist", err)
-	}
 }
 
 func TestDevImportProjectsJSON(t *testing.T) {
-	setConfigEnv(t)
+	cfg := setConfigEnv(t)
 	sourceDir := filepath.Join(t.TempDir(), "source")
-	writeDevImportProject(t, sourceDir, "alpha", "/repos/alpha")
+	srv, _ := devImportServer(t, http.StatusOK, devimport.Report{
+		SourceDataDir: sourceDir,
+		TargetDataDir: cfg.dataDir,
+		Inserted:      1,
+	})
+	writeRunFileFor(t, cfg, srv)
 
-	out, _, err := executeCLI(t, Deps{}, "dev", "import-projects", "--from-data-dir", sourceDir, "--json")
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "dev", "import-projects", "--from-data-dir", sourceDir, "--json")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
 	var rep devimport.Report
 	if err := json.Unmarshal([]byte(out), &rep); err != nil {
@@ -90,46 +94,35 @@ func TestDevImportProjectsJSON(t *testing.T) {
 	}
 }
 
-func TestDevImportProjectsRefusesLiveTargetDaemon(t *testing.T) {
+func TestDevImportProjectsDaemonError(t *testing.T) {
 	cfg := setConfigEnv(t)
 	sourceDir := filepath.Join(t.TempDir(), "source")
-	writeDevImportProject(t, sourceDir, "alpha", "/repos/alpha")
-	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3002, StartedAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"message":"open source store: file does not exist","code":"INTERNAL"}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{}, "dev", "import-projects", "--from-data-dir", sourceDir)
-	if err == nil || !strings.Contains(err.Error(), "target AO daemon is running") {
-		t.Fatalf("err = %v, want live target daemon refusal", err)
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "dev", "import-projects", "--from-data-dir", sourceDir, "--dry-run")
+	if err == nil || !strings.Contains(err.Error(), "open source store") {
+		t.Fatalf("err = %v, want daemon source open failure", err)
 	}
 }
 
 func TestDevImportProjectsRefusesSameSourceAndTargetDataDir(t *testing.T) {
 	cfg := setConfigEnv(t)
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3002, StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 
-	_, _, err := executeCLI(t, Deps{}, "dev", "import-projects", "--from-data-dir", cfg.dataDir)
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "dev", "import-projects", "--from-data-dir", cfg.dataDir)
 	if err == nil || !strings.Contains(err.Error(), "source and target data dirs are the same") {
 		t.Fatalf("err = %v, want same-dir refusal", err)
-	}
-}
-
-func writeDevImportProject(t *testing.T, dataDir string, id string, path string) {
-	t.Helper()
-	store, err := sqlite.Open(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = store.Close() }()
-	project := domain.ProjectRecord{
-		ID:            id,
-		Path:          path,
-		RepoOriginURL: "https://example.com/" + id + ".git",
-		DisplayName:   id,
-		RegisteredAt:  time.Unix(100, 0).UTC(),
-		Kind:          domain.ProjectKindSingleRepo,
-		Config:        domain.ProjectConfig{DefaultBranch: "main"},
-	}
-	if err := store.UpsertWorkspaceProject(context.Background(), project, nil); err != nil {
-		t.Fatal(err)
 	}
 }

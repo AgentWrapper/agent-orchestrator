@@ -4,6 +4,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
@@ -83,7 +84,7 @@ func Open(dataDir string) (*Store, error) {
 
 // OpenReadOnly opens an existing SQLite database under dataDir without creating
 // the directory, opening a writable connection, or running migrations.
-func OpenReadOnly(dataDir string) (*Store, error) {
+func OpenReadOnly(ctx context.Context, dataDir string) (*Store, error) {
 	dsn := "file:" + filepath.Join(dataDir, "ao.db") + readOnlyPragmas
 
 	writeDB, err := sql.Open("sqlite", dsn)
@@ -92,7 +93,7 @@ func OpenReadOnly(dataDir string) (*Store, error) {
 	}
 	writeDB.SetMaxOpenConns(1)
 	writeDB.SetMaxIdleConns(1)
-	if err := writeDB.Ping(); err != nil {
+	if err := writeDB.PingContext(ctx); err != nil {
 		_ = writeDB.Close()
 		return nil, fmt.Errorf("open sqlite read-only writer: %w", err)
 	}
@@ -104,7 +105,7 @@ func OpenReadOnly(dataDir string) (*Store, error) {
 	}
 	readDB.SetMaxOpenConns(maxReaders)
 	readDB.SetMaxIdleConns(maxReaders)
-	if err := readDB.Ping(); err != nil {
+	if err := readDB.PingContext(ctx); err != nil {
 		_ = readDB.Close()
 		_ = writeDB.Close()
 		return nil, fmt.Errorf("open sqlite read-only reader: %w", err)
