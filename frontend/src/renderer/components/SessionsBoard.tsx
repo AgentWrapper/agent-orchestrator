@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
@@ -13,6 +13,7 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
@@ -23,13 +24,13 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
 const isLinux =
 	typeof navigator !== "undefined" &&
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
 		.toLowerCase()
 		.includes("linux");
-
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
 	projectId?: string;
@@ -84,6 +85,7 @@ const COLUMNS: Column[] = [
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
@@ -136,12 +138,55 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// Collapsed by default, like agent-orchestrator's done-bar: finished and
 	// killed sessions cost one quiet line under the board until expanded.
 	const [doneExpanded, setDoneExpanded] = useState(false);
+	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
+	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
+	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
+	const activeProjectIdRef = useRef(projectId);
+	activeProjectIdRef.current = projectId;
+	useEffect(() => {
+		setRestoringSessionId(undefined);
+		setRestoreErrors({});
+		setRestoreUnavailableSession(undefined);
+	}, [projectId]);
 
 	const openSession = (session: WorkspaceSession) =>
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
+
+	const restoreDoneSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
+		event.stopPropagation();
+		if (restoringSessionId) return;
+		const restoreProjectId = projectId;
+		const isStillActiveProject = () => !restoreProjectId || activeProjectIdRef.current === restoreProjectId;
+		setRestoringSessionId(session.id);
+		setRestoreErrors((current) => {
+			const next = { ...current };
+			delete next[session.id];
+			return next;
+		});
+		try {
+			const result = await restoreSessionById(session.id);
+			if (!isStillActiveProject()) return;
+			if (result.status === "success") {
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: session.workspaceId, sessionId: session.id },
+				});
+				return;
+			}
+			if (result.status === "not_resumable") {
+				setRestoreUnavailableSession(session);
+				return;
+			}
+			setRestoreErrors((current) => ({ ...current, [session.id]: result.message }));
+		} finally {
+			if (isStillActiveProject()) {
+				setRestoringSessionId(undefined);
+			}
+		}
+	};
 
 	const openOrchestrator = async () => {
 		if (!projectId || isProjectRestarting) return;
@@ -298,20 +343,33 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{done.length}</span>
 					</button>
 					{doneExpanded && (
-						<div className="flex flex-wrap gap-2 pb-2.5 pt-1">
+						<div className="grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5 overflow-y-auto pb-3 pt-1">
 							{done.map((s) => (
-								<button
+								<SessionCard
 									key={s.id}
-									className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
-									onClick={() => openSession(s)}
-									type="button"
-								>
-									<span className="text-xs text-muted-foreground">{s.title}</span>
-								</button>
+									session={s}
+									onOpen={() => openSession(s)}
+									restoreAction={s.status === "terminated" ? (event) => void restoreDoneSession(event, s) : undefined}
+									restoreError={restoreErrors[s.id]}
+									isRestoring={restoringSessionId === s.id}
+									isRestoreDisabled={restoringSessionId !== undefined}
+								/>
 							))}
 						</div>
 					)}
 				</div>
+			)}
+			{restoreUnavailableSession && (
+				<RestoreUnavailableDialog
+					open={true}
+					session={restoreUnavailableSession}
+					onOpenChange={(open) => {
+						if (!open) setRestoreUnavailableSession(undefined);
+					}}
+					onRecreated={async () => {
+						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+					}}
+				/>
 			)}
 		</div>
 	);
@@ -347,7 +405,7 @@ function ZoneColumn({
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
 				<div className="flex flex-col gap-2.5">
 					{sessions.map((session) => (
-						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} interactive={true} />
 					))}
 				</div>
 			</div>
@@ -355,21 +413,51 @@ function ZoneColumn({
 	);
 }
 
-function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
+function SessionCard({
+	session,
+	onOpen,
+	interactive = true,
+	restoreAction,
+	restoreError,
+	isRestoring = false,
+	isRestoreDisabled = false,
+}: {
+	session: WorkspaceSession;
+	onOpen?: () => void;
+	interactive?: boolean;
+	restoreAction?: (event: MouseEvent<HTMLButtonElement>) => void;
+	restoreError?: string;
+	isRestoring?: boolean;
+	isRestoreDisabled?: boolean;
+}) {
 	const badge = sessionBadge(session);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (!interactive || !onOpen) return;
 		if (event.currentTarget !== event.target) return;
 		if (event.key !== "Enter" && event.key !== " ") return;
 		event.preventDefault();
 		onOpen();
 	};
+	const cardBodyProps = interactive
+		? {
+				onClick: onOpen,
+				onKeyDown: handleKeyDown,
+				role: "button",
+				tabIndex: 0,
+			}
+		: {};
 	return (
-		<div className="w-full rounded-md border border-border bg-surface text-left transition-colors hover:border-border-strong">
-			<div onClick={onOpen} onKeyDown={handleKeyDown} role="button" tabIndex={0}>
+		<div
+			className={cn(
+				"group relative w-full rounded-md border border-border bg-surface text-left transition-colors",
+				interactive && "hover:border-border-strong",
+			)}
+		>
+			<div {...cardBodyProps}>
 				<div className="flex items-center gap-2 px-3.25 pb-2.25 pt-3">
 					<span className={cn("inline-flex items-center gap-1.5 text-caption font-medium", badge.className)}>
 						<span className={cn("size-dot-sm rounded-full bg-current")} />
@@ -398,8 +486,11 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 				</div>
 				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
+			{restoreError && (
+				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{restoreError}</div>
+			)}
 			<div
-				className="border-t border-border px-3.25 py-2 font-mono text-2xs text-passive"
+				className={cn("border-t border-border px-3.25 py-2 font-mono text-2xs text-passive", restoreAction && "pr-20")}
 				onClick={(event) => event.stopPropagation()}
 			>
 				{prSummaries.length === 0 ? (
@@ -407,11 +498,28 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 				) : (
 					<div className="flex flex-col gap-1">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} />
+							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
 						))}
 					</div>
 				)}
 			</div>
+			{restoreAction && (
+				<button
+					aria-label={`Restore ${session.title}`}
+					title={`Restore ${session.title}`}
+					className={cn(
+						"absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-accent bg-accent px-2.5 text-2xs font-semibold text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out disabled:cursor-not-allowed",
+						!isRestoreDisabled &&
+							"hover:opacity-90 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+						isRestoring && "opacity-100",
+					)}
+					disabled={isRestoreDisabled}
+					onClick={restoreAction}
+					type="button"
+				>
+					{isRestoring ? "Restoring" : "Restore"}
+				</button>
+			)}
 		</div>
 	);
 }
@@ -419,7 +527,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
-function BoardPRGroup({ group }: { group: BoardPRGroup }) {
+function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
 	return (
 		<span
 			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
@@ -428,14 +536,18 @@ function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 			<span>PR</span>
 			{group.prs.map((pr, index) => (
 				<span key={pr.number}>
-					<a
-						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-						href={prBrowserUrl(pr)}
-						rel="noreferrer"
-						target="_blank"
-					>
-						#{pr.number}
-					</a>
+					{linksInteractive ? (
+						<a
+							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+							href={prBrowserUrl(pr)}
+							rel="noreferrer"
+							target="_blank"
+						>
+							#{pr.number}
+						</a>
+					) : (
+						<span>#{pr.number}</span>
+					)}
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
@@ -486,6 +598,9 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 }
 
 function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
+	if (session.status === "working" && session.activity?.state === "idle") {
+		return { label: "Idle", className: "text-passive" };
+	}
 	switch (session.status) {
 		case "needs_input":
 			return { label: "Input needed", className: "text-warning" };

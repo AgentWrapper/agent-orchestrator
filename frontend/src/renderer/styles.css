@@ -1571,12 +1571,15 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: var(--bg);
 }
 
-/* Maximized browser overlay: a fixed layer over the whole app window (portaled
-   to <body>, so it covers the sidebar + topbar too, not just the session area).
-   The panel goes edge-to-edge, so drop its border/radius. */
+/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
+   <body>, so it covers the sidebar + topbar too, not just the session area).
+   Electron's Window Controls Overlay owns the top-right titlebar region on
+   Windows, so start below its reported safe-area height. Platforms without a
+   titleBarOverlay resolve the env() fallback to 0px and keep the existing
+   edge-to-edge layout. */
 .browser-popout-overlay {
 	position: fixed;
-	inset: 0;
+	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
 	background: var(--bg);
 }

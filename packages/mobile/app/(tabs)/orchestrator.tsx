@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { attentionOf, type DashboardSession, type OrchestratorLink } from "../../lib/api";
+import { haptics } from "../../lib/haptics";
 import { useApp } from "../../lib/store";
 import { attentionMeta, statusVisual, theme, type AttentionLevel, type StatusVisual } from "../../lib/theme";
 import { Button, ConnectionPill, Dot, EmptyState, ScreenHeader } from "../../lib/ui";
@@ -19,6 +20,7 @@ export default function OrchestratorScreen() {
 	const visibleProjects = projects;
 
 	const onRefresh = async () => {
+		haptics.tap();
 		setRefreshing(true);
 		await refresh();
 		setRefreshing(false);

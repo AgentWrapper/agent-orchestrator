@@ -247,18 +247,22 @@ func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAg
 // session manager resolved and forwarded a project's agent config.
 type recordingAgent struct {
 	fakeAgent
-	lastConfig  ports.AgentConfig
-	lastLaunch  ports.LaunchConfig
-	lastRestore ports.RestoreConfig
+	lastConfig   ports.AgentConfig
+	lastLaunch   ports.LaunchConfig
+	lastRestore  ports.RestoreConfig
+	launchCalls  int
+	restoreCalls int
 }
 
 func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
+	a.launchCalls++
 	a.lastConfig = cfg.Config
 	a.lastLaunch = cfg
 	return []string{"launch"}, nil
 }
 
 func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.restoreCalls++
 	a.lastConfig = cfg.Config
 	a.lastRestore = cfg
 	// Mirror real adapters: with no native agent-session id to resume, signal
@@ -298,6 +302,41 @@ func (a promptStrategyErrorAgent) GetPromptDeliveryStrategy(context.Context, por
 type singleAgent struct{ agent ports.Agent }
 
 func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
+
+type cleaningAgent struct {
+	fakeAgent
+	cleanupCalls   int
+	cleanupConfigs []ports.WorkspaceHookConfig
+	sharedLog      *[]string
+}
+
+func (a *cleaningAgent) CleanupWorkspace(_ context.Context, cfg ports.WorkspaceHookConfig) error {
+	a.cleanupCalls++
+	a.cleanupConfigs = append(a.cleanupConfigs, cfg)
+	if a.sharedLog != nil {
+		*a.sharedLog = append(*a.sharedLog, "CleanupWorkspace:"+cfg.WorkspacePath)
+	}
+	return nil
+}
+
+type hookErrorCleaningAgent struct {
+	cleaningAgent
+	hookErr error
+}
+
+func (a *hookErrorCleaningAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error {
+	return a.hookErr
+}
+
+type envAugmentingAgent struct {
+	fakeAgent
+	key   string
+	value string
+}
+
+func (a envAugmentingAgent) AugmentRuntimeEnv(env map[string]string, dataDir string) {
+	env[a.key] = filepath.Join(dataDir, a.value)
+}
 
 func blockedDataDir(t *testing.T) string {
 	t.Helper()
@@ -469,6 +508,18 @@ func (w *fakeWorkspace) ApplyPreserved(_ context.Context, info ports.WorkspaceIn
 	}
 	w.calls = append(w.calls, entry)
 	return w.applyErr
+}
+
+type loggingDestroyWorkspace struct {
+	fakeWorkspace
+	sharedLog *[]string
+}
+
+func (w *loggingDestroyWorkspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	if w.sharedLog != nil {
+		*w.sharedLog = append(*w.sharedLog, "Destroy:"+info.Path)
+	}
+	return w.fakeWorkspace.Destroy(ctx, info)
 }
 
 func fakeWorkspaceRepoName(info ports.WorkspaceInfo) string {
@@ -1017,6 +1068,111 @@ func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	}
 	if rec, present := st.sessions["mer-1"]; present {
 		t.Fatalf("seed row must be deleted before a runtime handle is live, got %+v", rec)
+	}
+}
+
+func TestSpawn_RuntimeFailureCleansAgentWorkspaceAfterDestroy(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{createErr: errors.New("boom")}
+	var sharedLog []string
+	ws := &loggingDestroyWorkspace{
+		fakeWorkspace: fakeWorkspace{path: "/ws/mer-1"},
+		sharedLog:     &sharedLog,
+	}
+	agent := &cleaningAgent{sharedLog: &sharedLog}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   "/ao/data",
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Fatalf("Spawn err = %v, want runtime failure", err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroy calls = %d, want 1", ws.destroyed)
+	}
+	if agent.cleanupCalls != 1 {
+		t.Fatalf("agent cleanup calls = %d, want 1", agent.cleanupCalls)
+	}
+	if got := agent.cleanupConfigs[0].WorkspacePath; got != "/ws/mer-1" {
+		t.Fatalf("cleanup workspace path = %q, want /ws/mer-1", got)
+	}
+	want := []string{"Destroy:/ws/mer-1", "CleanupWorkspace:/ws/mer-1"}
+	if strings.Join(sharedLog, ",") != strings.Join(want, ",") {
+		t.Fatalf("rollback order = %v, want %v", sharedLog, want)
+	}
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("seed row must be deleted after cleanup, got %+v", rec)
+	}
+}
+
+func TestSpawn_PrepareFailureCleansAgentWorkspaceState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	ws := &fakeWorkspace{path: "/ws/mer-1"}
+	agent := &hookErrorCleaningAgent{hookErr: errors.New("hooks failed")}
+	m := New(Deps{
+		Runtime:    &fakeRuntime{},
+		Agents:     singleAgent{agent: agent},
+		Workspace:  ws,
+		Store:      st,
+		Messenger:  &fakeMessenger{},
+		Lifecycle:  &fakeLCM{store: st},
+		DataDir:    "/ao/data",
+		LookPath:   func(string) (string, error) { return "/bin/true", nil },
+		Executable: func() (string, error) { return "/daemon/ao", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "install hooks") {
+		t.Fatalf("Spawn err = %v, want install hooks failure", err)
+	}
+	if agent.cleanupCalls != 1 {
+		t.Fatalf("agent cleanup calls = %d, want 1", agent.cleanupCalls)
+	}
+	cleanup := agent.cleanupConfigs[0]
+	if cleanup.WorkspacePath != "/ws/mer-1" {
+		t.Fatalf("cleanup workspace path = %q, want /ws/mer-1", cleanup.WorkspacePath)
+	}
+	if cleanup.DataDir != "/ao/data" {
+		t.Fatalf("cleanup data dir = %q, want /ao/data", cleanup.DataDir)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroy calls = %d, want 1", ws.destroyed)
+	}
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("seed row must be deleted after cleanup, got %+v", rec)
+	}
+}
+
+func TestSpawn_AgentRuntimeEnvAugmenterReachesRuntime(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	agent := envAugmentingAgent{key: "AGENT_DATA_DIR", value: "agent"}
+	m := New(Deps{
+		Runtime:    rt,
+		Agents:     singleAgent{agent: agent},
+		Workspace:  &fakeWorkspace{path: "/ws/mer-1"},
+		Store:      st,
+		Messenger:  &fakeMessenger{},
+		Lifecycle:  &fakeLCM{store: st},
+		DataDir:    "/ao/data",
+		LookPath:   func(string) (string, error) { return "/bin/true", nil },
+		Executable: func() (string, error) { return "/daemon/ao", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if got, want := rt.lastCfg.Env["AGENT_DATA_DIR"], filepath.Join("/ao/data", "agent"); got != want {
+		t.Fatalf("runtime env AGENT_DATA_DIR = %q, want %q", got, want)
 	}
 }
 
@@ -1934,6 +2090,8 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"Never edit source files, resolve merge conflicts, run implementation-focused changes",
 		"spawn or redirect a worker session instead of doing the work yourself",
 		"Use `ao send` for session communication",
+		"`ao session ls --project mer`",
+		"`ao session get <worker-session-id>`",
 		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
 		"skills/using-ao/SKILL.md",
 	} {
@@ -2242,6 +2400,82 @@ func TestRestore_FallbackLaunchDeliversPromptAfterStartWhenAgentRequestsIt(t *te
 	}
 	if rt.created != 1 {
 		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+}
+
+func TestRestore_CodexWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatalf("Restore err = %v, want fallback launch", err)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 1 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 1", agent.launchCalls)
+	}
+	if agent.lastLaunch.Prompt != "continue the task" {
+		t.Fatalf("fallback launch prompt = %q, want saved prompt", agent.lastLaunch.Prompt)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after fallback launch")
+	}
+}
+
+func TestRestore_ClaudeCodeWithoutRestoreCommandFallsBackToSavedPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatalf("Restore err = %v, want fallback launch", err)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 1 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 1", agent.launchCalls)
+	}
+	if agent.lastLaunch.Prompt != "continue the task" {
+		t.Fatalf("fallback launch prompt = %q, want saved prompt", agent.lastLaunch.Prompt)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after fallback launch")
 	}
 }
 

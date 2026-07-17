@@ -127,6 +127,67 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 	}
 }
 
+func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{AgentSessionID: "native-session-1"}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Metadata.AgentSessionID != "native-session-1" {
+		t.Fatalf("AgentSessionID = %q, want native-session-1", got.Metadata.AgentSessionID)
+	}
+	if got.Activity != rec.Activity {
+		t.Fatalf("metadata-only hook changed activity: got %+v, want %+v", got.Activity, rec.Activity)
+	}
+	if !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
+		t.Fatalf("metadata-only hook changed FirstSignalAt: got %v, want %v", got.FirstSignalAt, rec.FirstSignalAt)
+	}
+}
+
+func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:          true,
+		State:          rec.Activity.State,
+		AgentSessionID: "native-session-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Metadata.AgentSessionID != "native-session-1" {
+		t.Fatalf("AgentSessionID = %q, want native-session-1", got.Metadata.AgentSessionID)
+	}
+	if got.Activity != rec.Activity {
+		t.Fatalf("same-state metadata signal changed activity: got %+v, want %+v", got.Activity, rec.Activity)
+	}
+}
+
+func TestActivity_BlankAgentSessionIDDoesNotOverwriteMetadata(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.AgentSessionID = "existing-native-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:          true,
+		State:          domain.ActivityActive,
+		AgentSessionID: "   ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "existing-native-1" {
+		t.Fatalf("AgentSessionID = %q, want existing-native-1", got)
+	}
+}
+
 func TestActivity_MissingSessionReturnsNotFound(t *testing.T) {
 	m, _, _ := newManager()
 	err := m.ApplyActivitySignal(ctx, "missing-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput})

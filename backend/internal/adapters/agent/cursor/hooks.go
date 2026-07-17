@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -16,6 +19,10 @@ import (
 const (
 	cursorHooksDirName  = ".cursor"
 	cursorHooksFileName = "hooks.json"
+	cursorDataDirEnv    = "CURSOR_DATA_DIR"
+	cursorProjectsDir   = "projects"
+	cursorTrustStateDir = "cursor-trust"
+	cursorTrustedFile   = ".workspace-trusted"
 
 	// cursorHooksSchemaVersion is the version Cursor's hooks.json declares. AO
 	// only sets it when creating a fresh file; an existing version is preserved.
@@ -67,6 +74,10 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	}
 	if strings.TrimSpace(cfg.WorkspacePath) == "" {
 		return errors.New("cursor.GetAgentHooks: WorkspacePath is required")
+	}
+	if err := ensureCursorWorkspaceTrusted(cfg); err != nil {
+		slog.Default().Warn("cursor: failed to seed workspace trust; Cursor may show its trust prompt",
+			"sessionID", cfg.SessionID, "workspacePath", cfg.WorkspacePath, "error", err)
 	}
 
 	hooksPath := cursorHooksPath(cfg.WorkspacePath)
@@ -136,6 +147,22 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 	return nil
 }
 
+// CleanupWorkspace removes durable Cursor trust state that AO created after the
+// corresponding session workspace was actually torn down. User-created trust
+// decisions are preserved.
+func (p *Plugin) CleanupWorkspace(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.WorkspacePath) == "" {
+		return errors.New("cursor.CleanupWorkspace: WorkspacePath is required")
+	}
+	if err := removeCursorWorkspaceTrust(cfg); err != nil {
+		return fmt.Errorf("cursor.CleanupWorkspace: %w", err)
+	}
+	return nil
+}
+
 // AreHooksInstalled reports whether any AO Cursor hook is present in the
 // workspace-local hooks file. A missing file means none are installed.
 func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (bool, error) {
@@ -171,6 +198,186 @@ func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (b
 
 func cursorHooksPath(workspacePath string) string {
 	return filepath.Join(workspacePath, cursorHooksDirName, cursorHooksFileName)
+}
+
+type cursorWorkspaceTrust struct {
+	TrustedAt     string `json:"trustedAt"`
+	WorkspacePath string `json:"workspacePath"`
+	TrustMethod   string `json:"trustMethod"`
+	AOManaged     bool   `json:"aoManaged,omitempty"`
+}
+
+type cursorWorkspaceTrustState struct {
+	TrustPath     string `json:"trustPath"`
+	WorkspacePath string `json:"workspacePath"`
+}
+
+func ensureCursorWorkspaceTrusted(cfg ports.WorkspaceHookConfig) error {
+	base, err := cursorWorkspaceTrustBase(cfg)
+	if err != nil {
+		return err
+	}
+	absWorkspace, err := filepath.Abs(cfg.WorkspacePath)
+	if err != nil {
+		return fmt.Errorf("resolve workspace: %w", err)
+	}
+
+	trustPath := cursorWorkspaceTrustPath(base, absWorkspace)
+	if _, err := os.Stat(trustPath); err == nil {
+		if isCursorAOTrustMarker(trustPath, absWorkspace) {
+			if err := writeCursorWorkspaceTrustState(cfg, trustPath, absWorkspace); err != nil {
+				return err
+			}
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat %s: %w", trustPath, err)
+	}
+
+	if err := writeCursorWorkspaceTrustState(cfg, trustPath, absWorkspace); err != nil {
+		return err
+	}
+
+	trust := cursorWorkspaceTrust{
+		TrustedAt:     time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		WorkspacePath: absWorkspace,
+		TrustMethod:   "ao-session",
+		AOManaged:     true,
+	}
+	data, err := json.MarshalIndent(trust, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode trust marker: %w", err)
+	}
+	data = append(data, '\n')
+
+	if err := os.MkdirAll(filepath.Dir(trustPath), 0o750); err != nil {
+		return fmt.Errorf("create trust dir: %w", err)
+	}
+	if err := os.WriteFile(trustPath, data, 0o644); err != nil { //nolint:gosec // Cursor trust path is derived from AO-owned Cursor data dir plus workspace path.
+		return fmt.Errorf("write %s: %w", trustPath, err)
+	}
+	return nil
+}
+
+func removeCursorWorkspaceTrust(cfg ports.WorkspaceHookConfig) error {
+	trustPath, absWorkspace, statePath, err := cursorWorkspaceTrustRemovalTarget(cfg)
+	if err != nil {
+		return err
+	}
+	if err := removeCursorWorkspaceTrustAt(trustPath, absWorkspace); err != nil {
+		return err
+	}
+	if statePath != "" {
+		if err := os.Remove(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove trust state %s: %w", statePath, err)
+		}
+	}
+	return nil
+}
+
+func cursorWorkspaceTrustRemovalTarget(cfg ports.WorkspaceHookConfig) (trustPath, absWorkspace, statePath string, err error) {
+	if statePath = cursorWorkspaceTrustStatePath(cfg); statePath != "" {
+		data, readErr := os.ReadFile(statePath)
+		if readErr == nil {
+			var state cursorWorkspaceTrustState
+			if unmarshalErr := json.Unmarshal(data, &state); unmarshalErr == nil && state.TrustPath != "" && state.WorkspacePath != "" {
+				return state.TrustPath, state.WorkspacePath, statePath, nil
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			return "", "", "", fmt.Errorf("read trust state %s: %w", statePath, readErr)
+		}
+	}
+	base, err := cursorWorkspaceTrustBase(cfg)
+	if err != nil {
+		return "", "", "", err
+	}
+	absWorkspace, err = filepath.Abs(cfg.WorkspacePath)
+	if err != nil {
+		return "", "", "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	return cursorWorkspaceTrustPath(base, absWorkspace), absWorkspace, statePath, nil
+}
+
+func removeCursorWorkspaceTrustAt(trustPath, absWorkspace string) error {
+	data, err := os.ReadFile(trustPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", trustPath, err)
+	}
+	var trust cursorWorkspaceTrust
+	if err := json.Unmarshal(data, &trust); err != nil {
+		return fmt.Errorf("decode %s: %w", trustPath, err)
+	}
+	if !trust.AOManaged || trust.WorkspacePath != absWorkspace {
+		return nil
+	}
+	if err := os.Remove(trustPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", trustPath, err)
+	}
+	return nil
+}
+
+func writeCursorWorkspaceTrustState(cfg ports.WorkspaceHookConfig, trustPath, absWorkspace string) error {
+	statePath := cursorWorkspaceTrustStatePath(cfg)
+	if statePath == "" {
+		return nil
+	}
+	state := cursorWorkspaceTrustState{TrustPath: trustPath, WorkspacePath: absWorkspace}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode trust state: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o750); err != nil {
+		return fmt.Errorf("create trust state dir: %w", err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		return fmt.Errorf("write trust state %s: %w", statePath, err)
+	}
+	return nil
+}
+
+func cursorWorkspaceTrustStatePath(cfg ports.WorkspaceHookConfig) string {
+	if strings.TrimSpace(cfg.DataDir) == "" || strings.TrimSpace(cfg.SessionID) == "" {
+		return ""
+	}
+	return filepath.Join(cfg.DataDir, cursorTrustStateDir, cfg.SessionID+".json")
+}
+
+func isCursorAOTrustMarker(trustPath, absWorkspace string) bool {
+	data, err := os.ReadFile(trustPath)
+	if err != nil {
+		return false
+	}
+	var trust cursorWorkspaceTrust
+	if err := json.Unmarshal(data, &trust); err != nil {
+		return false
+	}
+	return trust.AOManaged && trust.WorkspacePath == absWorkspace
+}
+
+func cursorWorkspaceTrustBase(cfg ports.WorkspaceHookConfig) (string, error) {
+	if override := strings.TrimSpace(cfg.Env[cursorDataDirEnv]); override != "" {
+		return override, nil
+	}
+	if strings.TrimSpace(cfg.DataDir) != "" {
+		return cursorDataDir(cfg.DataDir), nil
+	}
+	return "", errors.New("AO data dir is required for Cursor workspace trust")
+}
+
+func cursorWorkspaceTrustPath(base, workspacePath string) string {
+	return filepath.Join(base, cursorProjectsDir, cursorWorkspaceProjectName(workspacePath), cursorTrustedFile)
+}
+
+var cursorProjectNamePattern = regexp.MustCompile(`[^A-Za-z0-9]+`)
+
+func cursorWorkspaceProjectName(workspacePath string) string {
+	clean := filepath.Clean(workspacePath)
+	slashed := filepath.ToSlash(clean)
+	return strings.Trim(cursorProjectNamePattern.ReplaceAllString(slashed, "-"), "-")
 }
 
 // readCursorHooks loads the hooks file into a top-level raw map plus the decoded

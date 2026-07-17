@@ -372,11 +372,17 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		<div className="relative pl-5 before:absolute before:top-1 before:bottom-1.5 before:left-1.25 before:w-px before:bg-border before:content-['']">
 			{events.map((event, index) => (
 				<div key={index} className="relative pb-4 last:pb-0" data-testid="inspector-timeline-event">
-					<span
-						aria-hidden="true"
-						className={cn("absolute -left-4.5 top-0.75 size-icon-xs rounded-full", timelineNodeTone[event.tone])}
-					/>
-					<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
+					<div className="relative flex min-h-icon-xs items-center">
+						<span
+							aria-hidden="true"
+							className={cn(
+								"absolute -left-4.5 size-icon-xs rounded-full",
+								event.tone === "now" ? "top-1/2 -translate-y-1/2" : "top-1.5",
+								timelineNodeTone[event.tone],
+							)}
+						/>
+						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
+					</div>
 					{event.ts ? <div className="mt-1 font-mono text-2xs text-passive">{event.ts}</div> : null}
 				</div>
 			))}

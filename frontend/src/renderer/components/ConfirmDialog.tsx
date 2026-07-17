@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Loader2, XCircle } from "lucide-react";
+import { XCircle } from "lucide-react";
 import { Button } from "./ui/button";
 
 type ConfirmDialogProps = {
@@ -60,7 +60,6 @@ export function ConfirmDialog({
 							disabled={busy}
 							size={size}
 						>
-							{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
 							{confirmLabel}
 						</Button>
 					</div>

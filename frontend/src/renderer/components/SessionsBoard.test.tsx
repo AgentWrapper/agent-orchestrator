@@ -1,9 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, workspaceQueryMock } = vi.hoisted(() => ({
+const { navigateMock, postMock, workspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
+	postMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
 }));
 
@@ -12,14 +15,25 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
+	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+}));
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
+	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
 import { SessionsBoard } from "./SessionsBoard";
 
 function renderBoard(projectId?: string) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	render(
+	renderBoardWithClient(queryClient, projectId);
+	return queryClient;
+}
+
+function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
+	return render(
 		<QueryClientProvider client={queryClient}>
 			<SessionsBoard projectId={projectId} />
 		</QueryClientProvider>,
@@ -28,6 +42,7 @@ function renderBoard(projectId?: string) {
 
 beforeEach(() => {
 	navigateMock.mockReset();
+	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
 });
 
@@ -68,4 +83,300 @@ describe("SessionsBoard", () => {
 
 		expect(screen.getByText("Idle")).toBeInTheDocument();
 	});
+
+	it("renders idle activity in the working column with passive styling", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "brand-font-pipeline",
+							provider: "claude-code",
+							branch: "ao/radic-5",
+							status: "working",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getAllByText("Working").length).toBeGreaterThan(0);
+		const badge = screen.getByText("Idle").closest("span");
+		expect(badge).toHaveClass("text-passive");
+		expect(badge).not.toHaveClass("text-working");
+	});
+
+	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+
+		expect(screen.getByText("dead worker")).toBeInTheDocument();
+		expect(screen.getByText("Terminated")).toBeInTheDocument();
+		expect(screen.getByText("Claude")).toBeInTheDocument();
+		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
+		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
+		expect(screen.getByLabelText("#42 merged")).toHaveTextContent("PR#42merged");
+		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
+	});
+
+	it("restores a terminated session, refreshes workspace data, and opens the restored terminal", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		const queryClient = renderBoard("p1");
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/restore", {
+				params: { path: { sessionId: "s-dead" } },
+			}),
+		);
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "p1", sessionId: "s-dead" },
+		});
+	});
+
+	it("keeps other restore buttons hidden while one session is restoring", async () => {
+		let finishRestore: ((value: { data: Record<string, never> }) => void) | undefined;
+		postMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishRestore = resolve;
+			}),
+		);
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession(), terminatedSession({ id: "s-other", title: "other worker" })])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
+		const otherButton = screen.getByRole("button", { name: "Restore other worker" });
+		expect(restoringButton).toHaveClass("opacity-100");
+		expect(otherButton).toBeDisabled();
+		expect(otherButton).toHaveClass("opacity-0");
+		expect(otherButton.className).not.toContain("group-hover:opacity-100");
+		expect(otherButton.className).not.toContain("group-focus-within:opacity-100");
+
+		finishRestore?.({ data: {} });
+	});
+
+	it("opens the restore-unavailable dialog when a session is not resumable", async () => {
+		postMock.mockResolvedValueOnce({ error: { code: "SESSION_NOT_RESUMABLE" } });
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		expect(await screen.findByText("Session can no longer be restored")).toBeInTheDocument();
+	});
+
+	it("shows a card error when restore fails", async () => {
+		postMock.mockResolvedValueOnce({ error: { code: "RESTORE_FAILED", message: "boom" } });
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		expect(await screen.findByText("Unable to restore session")).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("opens a terminated session from the card body without restoring it", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByText("dead worker"));
+
+		expect(postMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "p1", sessionId: "s-dead" },
+		});
+	});
+
+	it("ignores restore completion after navigating to another project board", async () => {
+		let finishRestore: ((value: { data: Record<string, never> }) => void) | undefined;
+		postMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishRestore = resolve;
+			}),
+		);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([terminatedSession()]),
+				{
+					id: "p2",
+					name: "other",
+					path: "/tmp/other",
+					sessions: [],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const view = renderBoardWithClient(queryClient, "p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<SessionsBoard projectId="p2" />
+			</QueryClientProvider>,
+		);
+		await act(async () => {
+			finishRestore?.({ data: {} });
+		});
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.queryByText("Session can no longer be restored")).not.toBeInTheDocument();
+	});
+
+	it("ignores restore-unavailable completion after navigating to another project board", async () => {
+		let finishRestore: ((value: { error: { code: string } }) => void) | undefined;
+		postMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishRestore = resolve;
+			}),
+		);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([terminatedSession()]),
+				{
+					id: "p2",
+					name: "other",
+					path: "/tmp/other",
+					sessions: [],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const view = renderBoardWithClient(queryClient, "p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<SessionsBoard projectId="p2" />
+			</QueryClientProvider>,
+		);
+		await act(async () => {
+			finishRestore?.({ error: { code: "SESSION_NOT_RESUMABLE" } });
+		});
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.queryByText("Session can no longer be restored")).not.toBeInTheDocument();
+	});
+
+	it("opens a merged Done session from the card body without showing restore", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+
+		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByText("merged worker"));
+
+		expect(postMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "p1", sessionId: "s-merged" },
+		});
+	});
 });
+
+function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {
+	return {
+		id: "p1",
+		name: "radic",
+		path: "/tmp/radic",
+		sessions,
+	};
+}
+
+function terminatedSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
+	return {
+		id: "s-dead",
+		workspaceId: "p1",
+		workspaceName: "radic",
+		title: "dead worker",
+		issueId: "github:INT-17",
+		provider: "claude-code",
+		kind: "worker",
+		branch: "ao/dead-worker",
+		status: "terminated",
+		updatedAt: "2026-01-01T00:00:00Z",
+		prs: [
+			{
+				url: "https://github.com/example/radic/pull/42",
+				number: 42,
+				state: "merged",
+				ci: "passing",
+				review: "approved",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-01-01T00:00:00Z",
+			},
+		],
+		...overrides,
+	};
+}
