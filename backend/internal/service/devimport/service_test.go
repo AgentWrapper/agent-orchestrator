@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +65,11 @@ func TestRunProjectsImportsIntoTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Inserted != 1 || rep.TargetDataDir != targetDir {
+	wantTargetDir, err := filepath.EvalSymlinks(targetDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 1 || rep.TargetDataDir != wantTargetDir {
 		t.Fatalf("report = %#v, want insert into target dir", rep)
 	}
 	got, ok, err := target.GetProject(ctx, "alpha")
@@ -73,6 +78,35 @@ func TestRunProjectsImportsIntoTarget(t *testing.T) {
 	}
 	if !ok || !got.RegisteredAt.Equal(registeredAt) {
 		t.Fatalf("target project = %#v, want registered_at %s", got, registeredAt)
+	}
+}
+
+func TestRunProjectsRejectsSameSourceAndTarget(t *testing.T) {
+	ctx := context.Background()
+	targetDir := filepath.Join(t.TempDir(), "target")
+	target := openStore(t, targetDir)
+	svc := New(Deps{Store: target, TargetDataDir: targetDir})
+
+	_, err := svc.RunProjects(ctx, RunInput{SourceDataDir: targetDir, DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "sourceDataDir must be different") {
+		t.Fatalf("err = %v, want same source/target rejection", err)
+	}
+}
+
+func TestRunProjectsRejectsSymlinkedSameSourceAndTarget(t *testing.T) {
+	ctx := context.Background()
+	parent := t.TempDir()
+	targetDir := filepath.Join(parent, "target")
+	target := openStore(t, targetDir)
+	sourceLink := filepath.Join(parent, "source-link")
+	if err := os.Symlink(targetDir, sourceLink); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	svc := New(Deps{Store: target, TargetDataDir: targetDir})
+
+	_, err := svc.RunProjects(ctx, RunInput{SourceDataDir: sourceLink, DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "sourceDataDir must be different") {
+		t.Fatalf("err = %v, want same source/target rejection", err)
 	}
 }
 
