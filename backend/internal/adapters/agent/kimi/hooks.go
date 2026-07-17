@@ -17,18 +17,27 @@ const (
 	kimiInstructionsFileName = "AGENTS.md"
 	kimiInstructionsSentinel = "<!-- managed by agent-orchestrator: kimi system prompt -->"
 	kimiInstructionsEnd      = "<!-- /managed by agent-orchestrator: kimi system prompt -->"
+
+	kimiHooksSentinelStart = "# managed by agent-orchestrator: kimi hooks"
+	kimiHooksSentinelEnd   = "# /managed by agent-orchestrator: kimi hooks"
 )
 
 // GetAgentHooks installs AO's standing system prompt through Kimi's
 // project-level instruction file. Kimi has no system-prompt argv flag, and its
 // user-level config lives outside AO's data dir, so a gitignored worktree-local
-// instruction file is the least invasive session-scoped injection point.
+// instruction file is the least invasive session-scoped injection point. It
+// also installs Kimi lifecycle hooks into the user's Kimi config so AO can
+// capture Kimi's native session id for true resume.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.WorkspacePath) == "" {
 		return errors.New("kimi.GetAgentHooks: WorkspacePath is required")
+	}
+
+	if err := installKimiConfigHooks(cfg); err != nil {
+		return fmt.Errorf("kimi.GetAgentHooks: %w", err)
 	}
 
 	systemPrompt, err := kimiSystemPromptText(cfg.SystemPrompt, cfg.SystemPromptFile)
@@ -38,7 +47,6 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if systemPrompt == "" {
 		return nil
 	}
-
 	instructionsPath := kimiInstructionsPath(cfg.WorkspacePath)
 	var existing []byte
 	existing, err = os.ReadFile(instructionsPath) //nolint:gosec // path built from caller-owned workspace dir
@@ -61,6 +69,97 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 
 func kimiInstructionsPath(workspacePath string) string {
 	return filepath.Join(workspacePath, kimiInstructionsDirName, kimiInstructionsFileName)
+}
+
+func installKimiConfigHooks(cfg ports.WorkspaceHookConfig) error {
+	home, ok := kimiCodeHomeFromEnv(cfg.Env)
+	if !ok {
+		return errors.New("kimi: Kimi Code home is unavailable")
+	}
+	path := filepath.Join(home, "config.toml")
+	data, err := os.ReadFile(path) //nolint:gosec // path is the documented Kimi config under KIMI_CODE_HOME/home.
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	body := mergeKimiHooksConfig(string(data))
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("create Kimi config dir: %w", err)
+	}
+	if err := hookutil.AtomicWriteFile(path, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+func kimiCodeHomeFromEnv(env map[string]string) (string, bool) {
+	if env != nil {
+		if home := strings.TrimSpace(env["KIMI_CODE_HOME"]); home != "" {
+			return home, true
+		}
+	}
+	return kimiCodeHome()
+}
+
+func mergeKimiHooksConfig(existing string) string {
+	block := kimiHooksConfigBlock()
+	start := strings.Index(existing, kimiHooksSentinelStart)
+	if start < 0 {
+		return joinKimiConfigParts(existing, block, "")
+	}
+	afterStart := existing[start+len(kimiHooksSentinelStart):]
+	endRel := strings.Index(afterStart, kimiHooksSentinelEnd)
+	if endRel < 0 {
+		return joinKimiConfigParts(existing[:start], block, "")
+	}
+	end := start + len(kimiHooksSentinelStart) + endRel + len(kimiHooksSentinelEnd)
+	return joinKimiConfigParts(existing[:start], block, existing[end:])
+}
+
+func kimiHooksConfigBlock() string {
+	return kimiHooksSentinelStart + "\n\n" +
+		kimiHookEntry("SessionStart", "startup", "ao hooks kimi session-start") +
+		kimiHookEntry("UserPromptSubmit", "", "ao hooks kimi user-prompt-submit") +
+		kimiHookEntry("PermissionRequest", "", "ao hooks kimi permission-request") +
+		kimiHookEntry("Stop", "", "ao hooks kimi stop") +
+		kimiHooksSentinelEnd + "\n"
+}
+
+func kimiHookEntry(event, matcher, command string) string {
+	var b strings.Builder
+	b.WriteString("[[hooks]]\n")
+	b.WriteString("event = ")
+	b.WriteString(quoteTOMLString(event))
+	b.WriteByte('\n')
+	if matcher != "" {
+		b.WriteString("matcher = ")
+		b.WriteString(quoteTOMLString(matcher))
+		b.WriteByte('\n')
+	}
+	b.WriteString("command = ")
+	b.WriteString(quoteTOMLString(command))
+	b.WriteByte('\n')
+	b.WriteString("timeout = 5\n\n")
+	return b.String()
+}
+
+func quoteTOMLString(s string) string {
+	return fmt.Sprintf("%q", s)
+}
+
+func joinKimiConfigParts(prefix, block, suffix string) string {
+	var b strings.Builder
+	prefix = strings.TrimRight(prefix, "\n")
+	if prefix != "" {
+		b.WriteString(prefix)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(block)
+	suffix = strings.TrimLeft(suffix, "\n")
+	if suffix != "" {
+		b.WriteString("\n")
+		b.WriteString(suffix)
+	}
+	return b.String()
 }
 
 func kimiSystemPromptText(inline, file string) (string, error) {

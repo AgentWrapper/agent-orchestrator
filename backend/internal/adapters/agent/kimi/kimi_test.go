@@ -194,10 +194,12 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 
 func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "follow AO rules\n",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -227,8 +229,102 @@ func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
 	}
 }
 
+func TestGetAgentHooksInstallsKimiConfigHooksWithoutSystemPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	kimiHome := t.TempDir()
+	configPath := filepath.Join(kimiHome, "config.toml")
+	existing := `default_model = "kimi-code/kimi-for-coding"
+
+[[hooks]]
+event = "Notification"
+matcher = "task\\.completed"
+command = "notify-send done"
+timeout = 7
+`
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`default_model = "kimi-code/kimi-for-coding"`,
+		`command = "notify-send done"`,
+		kimiHooksSentinelStart,
+		`event = "SessionStart"`,
+		`matcher = "startup"`,
+		`command = "ao hooks kimi session-start"`,
+		`event = "UserPromptSubmit"`,
+		`command = "ao hooks kimi user-prompt-submit"`,
+		`event = "PermissionRequest"`,
+		`command = "ao hooks kimi permission-request"`,
+		`event = "Stop"`,
+		`command = "ao hooks kimi stop"`,
+		kimiHooksSentinelEnd,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing %q:\n%s", want, text)
+		}
+	}
+	if _, err := os.Stat(kimiInstructionsPath(workspace)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("instructions path err = %v, want not exist", err)
+	}
+}
+
+func TestGetAgentHooksRewritesManagedKimiConfigBlock(t *testing.T) {
+	workspace := t.TempDir()
+	kimiHome := t.TempDir()
+	configPath := filepath.Join(kimiHome, "config.toml")
+	existing := "before = true\n\n" +
+		kimiHooksSentinelStart + "\nold = true\n" + kimiHooksSentinelEnd + "\n\n" +
+		"after = true\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plugin := &Plugin{}
+	cfg := ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatalf("second GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"before = true", "after = true", `command = "ao hooks kimi session-start"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "old = true") {
+		t.Fatalf("stale managed block preserved:\n%s", text)
+	}
+	if strings.Count(text, kimiHooksSentinelStart) != 1 {
+		t.Fatalf("managed block duplicated:\n%s", text)
+	}
+}
+
 func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -237,6 +333,7 @@ func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath:    workspace,
 		SystemPromptFile: promptFile,
+		Env:              map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -252,6 +349,7 @@ func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 
 func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	path := kimiInstructionsPath(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
@@ -263,6 +361,7 @@ func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "AO rules",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -288,6 +387,7 @@ func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
 
 func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	path := kimiInstructionsPath(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
@@ -299,6 +399,7 @@ func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "new rules",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -315,6 +416,7 @@ func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
 
 func TestGetAgentHooksRewritesManagedBlockAndPreservesSurroundingUserInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	path := kimiInstructionsPath(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
@@ -327,6 +429,7 @@ func TestGetAgentHooksRewritesManagedBlockAndPreservesSurroundingUserInstruction
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "new rules",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}

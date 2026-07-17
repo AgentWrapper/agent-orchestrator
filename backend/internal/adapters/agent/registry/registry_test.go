@@ -26,6 +26,9 @@ func TestGetAgentHooksFootprintIsGitignored(t *testing.T) {
 			if ha.Harness == "autohand" {
 				t.Setenv("AUTOHAND_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 			}
+			if ha.Harness == "kimi" {
+				t.Setenv("KIMI_CODE_HOME", t.TempDir())
+			}
 			cfg := ports.WorkspaceHookConfig{
 				SessionID:     "proj-1",
 				WorkspacePath: ws,

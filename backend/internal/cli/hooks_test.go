@@ -373,7 +373,7 @@ func TestHooks_ClaudeCodeBlankSessionIDIsIgnored(t *testing.T) {
 }
 
 func TestHooks_RegisteredHarnessSessionStartReportsAgentSessionID(t *testing.T) {
-	for _, agent := range []string{"opencode", "qwen", "kilocode"} {
+	for _, agent := range []string{"opencode", "qwen", "kimi", "kilocode"} {
 		t.Run(agent, func(t *testing.T) {
 			t.Setenv("AO_SESSION_ID", "ao-7")
 			cfg := setConfigEnv(t)

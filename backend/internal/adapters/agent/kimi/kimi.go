@@ -11,9 +11,9 @@
 //
 // Kimi exposes no system-prompt launch flag, so AO injects standing
 // instructions through Kimi's documented project instruction file
-// (.kimi-code/AGENTS.md) in the per-session worktree. Kimi lifecycle hooks are
-// not installed yet, so native session metadata and activity are still left to
-// future adapter work.
+// (.kimi-code/AGENTS.md) in the per-session worktree. AO also installs Kimi
+// lifecycle hooks into Kimi's config so native session metadata and activity can
+// flow back through `ao hooks`.
 package kimi
 
 import (
