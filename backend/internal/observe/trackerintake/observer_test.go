@@ -84,6 +84,55 @@ func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	}
 }
 
+func TestPollRespawnsIssueAfterTerminatedSession(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		}},
+		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Killed session should respawn",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#12" {
+		t.Fatalf("spawn calls = %+v, want one spawn for issue #12 (terminated session should not block respawn)", spawner.calls)
+	}
+}
+
+func TestSeenIssueIDsExcludesTerminatedSessions(t *testing.T) {
+	sessions := []domain.SessionRecord{
+		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
+		{ID: "demo-2", IssueID: "github:acme/demo#12", IsTerminated: false},
+	}
+	seen := seenIssueIDs(sessions)
+	if !seen["github:acme/demo#12"] {
+		t.Fatal("issue with a live session alongside a terminated one should still be seen")
+	}
+	if len(seen) != 1 {
+		t.Fatalf("seen = %+v, want exactly one issue", seen)
+	}
+}
+
+func TestSeenIssueIDsIgnoresOnlyTerminatedSession(t *testing.T) {
+	sessions := []domain.SessionRecord{
+		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
+	}
+	seen := seenIssueIDs(sessions)
+	if seen["github:acme/demo#12"] {
+		t.Fatal("issue with only a terminated session should not be marked as seen")
+	}
+}
+
 func TestPollSkipsSessionScanWhenIntakeDisabled(t *testing.T) {
 	store := &fakeStore{
 		projects:    []domain.ProjectRecord{{ID: "demo"}},
