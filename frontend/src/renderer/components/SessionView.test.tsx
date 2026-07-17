@@ -67,7 +67,14 @@ vi.mock("./BrowserPanel", () => ({
 		enqueue: vi.fn(),
 		failPicking: vi.fn(),
 		retryQueued: vi.fn(),
-	}),
+		}),
+	}));
+vi.mock("./SessionFilesView", () => ({
+	SessionFilesView: ({ onClose }: { onClose: () => void }) => (
+		<button type="button" onClick={onClose}>
+			files center
+		</button>
+	),
 }));
 const browserDestroy = vi.hoisted(() => vi.fn());
 vi.mock("../hooks/useBrowserView", () => ({
@@ -91,10 +98,23 @@ vi.mock("../hooks/useBrowserView", () => ({
 	}),
 }));
 vi.mock("./SessionInspector", () => ({
-	SessionInspector: ({ onToggleBrowserPopOut, view }: { onToggleBrowserPopOut?: () => void; view?: string }) => (
-		<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
-			pop browser
-		</button>
+	SessionInspector: ({
+		onOpenFiles,
+		onToggleBrowserPopOut,
+		view,
+	}: {
+		onOpenFiles?: () => void;
+		onToggleBrowserPopOut?: () => void;
+		view?: string;
+	}) => (
+		<div>
+			<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
+				pop browser
+			</button>
+			<button type="button" onClick={onOpenFiles}>
+				open files
+			</button>
+		</div>
 	),
 }));
 vi.mock("../lib/shell-context", () => ({
@@ -325,6 +345,19 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(browserDestroy).not.toHaveBeenCalled();
+	});
+
+	it("opens the files view over the session workspace and closes it without unmounting the terminal", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+
+		expect(screen.getByRole("button", { name: "files center" })).toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "files center" }));
+		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
 
 	it("reveals an `ao preview` URL in the inspector Browser tab, not the center pane", () => {

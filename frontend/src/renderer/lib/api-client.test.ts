@@ -189,6 +189,15 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
 	});
 
+	it("keeps workspace file routes aligned with the generated API schema", () => {
+		expect(normalizeApiOperation("GET", "/api/v1/sessions/ao-42/workspace/files")).toBe(
+			"GET /api/v1/sessions/:id/workspace/files",
+		);
+		expect(normalizeApiOperation("GET", "/api/v1/sessions/ao-42/workspace/file")).toBe(
+			"GET /api/v1/sessions/:id/workspace/file",
+		);
+	});
+
 	it("normalizes ids for resources a collection heuristic would miss", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");

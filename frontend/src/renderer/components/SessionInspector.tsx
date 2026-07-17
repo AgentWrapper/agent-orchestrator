@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
+import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -22,7 +22,7 @@ type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-export type InspectorView = "summary" | "reviews" | "browser";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -58,6 +58,11 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 				<path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
 			</svg>
 		),
+	},
+	{
+		id: "files",
+		label: "Files",
+		icon: <FilesIcon aria-hidden="true" />,
 	},
 ];
 
@@ -116,6 +121,7 @@ export function SessionInspector({
 	browserAnnotationQueue,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
+	onOpenFiles,
 	browserView,
 	view: viewProp,
 	onViewChange,
@@ -126,6 +132,7 @@ export function SessionInspector({
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
+	onOpenFiles?: () => void;
 	browserView?: BrowserViewModel;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
 	view?: InspectorView;
@@ -136,6 +143,7 @@ export function SessionInspector({
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
+		if (next === "files") onOpenFiles?.();
 	};
 
 	if (!session) {
@@ -158,7 +166,7 @@ export function SessionInspector({
 						role="tab"
 						aria-selected={view === entry.id}
 						className={cn(
-							"inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md p-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+							"inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md p-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
 							view === entry.id && "bg-interactive-active text-foreground",
 						)}
 						onClick={() => setView(entry.id)}
@@ -192,6 +200,7 @@ export function SessionInspector({
 						session={session}
 					/>
 				) : null}
+				{view === "files" ? <FilesView onOpenFiles={onOpenFiles} /> : null}
 			</div>
 		</aside>
 	);
@@ -875,6 +884,19 @@ function BrowserView({
 			poppedOut={false}
 			session={session}
 		/>
+	);
+}
+
+function FilesView({ onOpenFiles }: { onOpenFiles?: () => void }) {
+	return (
+		<div role="tabpanel">
+			<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 px-5 py-10 text-center")}>
+				<p className="text-md-sm text-muted-foreground">Files are open in the expanded workspace.</p>
+				<Button disabled={!onOpenFiles} onClick={() => onOpenFiles?.()} size="sm" type="button" variant="outline">
+					Open files
+				</Button>
+			</div>
+		</div>
 	);
 }
 

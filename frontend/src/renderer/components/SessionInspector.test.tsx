@@ -130,6 +130,25 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
+describe("SessionInspector tabs", () => {
+	it("sizes rail tabs to their labels instead of stretching across the inspector", () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const summaryTab = screen.getByRole("tab", { name: "Summary" });
+
+		expect(summaryTab).not.toHaveClass("flex-1");
+	});
+
+	it("opens the expanded files panel from the Files tab", async () => {
+		const onOpenFiles = vi.fn();
+		renderWithQuery(<SessionInspector onOpenFiles={onOpenFiles} session={session([])} />);
+
+		await userEvent.click(screen.getByRole("tab", { name: "Files" }));
+
+		expect(onOpenFiles).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("SessionInspector PR section", () => {
 	// Scope assertions to the PR section so the card order is explicit.
 	const prSection = (title: string) =>
@@ -377,10 +396,10 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector tabs", () => {
-	it("exposes Summary, Reviews, and Browser as the three inspector tabs", () => {
+	it("exposes Summary, Reviews, Browser, and Files as inspector tabs", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
-		expect(tabs).toEqual(["Summary", "Reviews", "Browser"]);
+		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
 	});
 
 	it("shows the intake issue id in the summary overview when present", () => {
