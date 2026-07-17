@@ -26,26 +26,25 @@ export function isAgentActivityWorking(activity?: SessionActivity | null): boole
 }
 
 export type SessionStatusView = {
-	status: SessionStatus;
 	label: string;
 	className: string;
 };
 
 const sessionStatusViews: Record<SessionStatus, SessionStatusView> = {
-	working: { status: "working", label: "Working", className: "text-working" },
-	idle: { status: "idle", label: "Idle", className: "text-passive" },
-	needs_input: { status: "needs_input", label: "Input needed", className: "text-warning" },
-	no_signal: { status: "no_signal", label: "No signal", className: "text-warning" },
-	ci_failed: { status: "ci_failed", label: "CI failed", className: "text-error" },
-	changes_requested: { status: "changes_requested", label: "Changes requested", className: "text-warning" },
-	review_pending: { status: "review_pending", label: "Review pending", className: "text-accent" },
-	draft: { status: "draft", label: "Draft PR", className: "text-accent" },
-	pr_open: { status: "pr_open", label: "PR open", className: "text-accent" },
-	approved: { status: "approved", label: "Approved", className: "text-success" },
-	mergeable: { status: "mergeable", label: "Ready", className: "text-success" },
-	merged: { status: "merged", label: "Merged", className: "text-passive" },
-	terminated: { status: "terminated", label: "Terminated", className: "text-passive" },
-	unknown: { status: "unknown", label: "Unknown status", className: "text-warning" },
+	working: { label: "Working", className: "text-working" },
+	idle: { label: "Idle", className: "text-passive" },
+	needs_input: { label: "Input needed", className: "text-warning" },
+	no_signal: { label: "No signal", className: "text-warning" },
+	ci_failed: { label: "CI failed", className: "text-error" },
+	changes_requested: { label: "Changes requested", className: "text-warning" },
+	review_pending: { label: "Review pending", className: "text-accent" },
+	draft: { label: "Draft PR", className: "text-accent" },
+	pr_open: { label: "PR open", className: "text-accent" },
+	approved: { label: "Approved", className: "text-success" },
+	mergeable: { label: "Ready", className: "text-success" },
+	merged: { label: "Merged", className: "text-passive" },
+	terminated: { label: "Terminated", className: "text-passive" },
+	unknown: { label: "Unknown status", className: "text-warning" },
 };
 
 export function getSessionStatusView(status: SessionStatus): SessionStatusView {
@@ -157,20 +156,8 @@ export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneV
 	return attentionZoneViews[zone];
 }
 
-export function getSessionDotView(session: Pick<WorkspaceSession, "status" | "activity">): { className: string } {
-	if (session.status === "ci_failed") {
-		return {
-			className: ["bg-error", session.activity?.state === "active" && "animate-status-pulse motion-reduce:animate-none"]
-				.filter(Boolean)
-				.join(" "),
-		};
-	}
-	const dotClassName = isSessionInIdleStack(session) ? "bg-passive" : getAttentionZoneView(session.status).dotClassName;
-	const pulseClassName =
-		!isSessionInIdleStack(session) && session.activity?.state === "active"
-			? "animate-status-pulse motion-reduce:animate-none"
-			: "";
-	return { className: [pulseClassName, dotClassName].filter(Boolean).join(" ") };
+export function getSessionDotView(session: Pick<WorkspaceSession, "status">): { className: string } {
+	return { className: getAttentionZoneView(session.status).dotClassName };
 }
 
 export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;

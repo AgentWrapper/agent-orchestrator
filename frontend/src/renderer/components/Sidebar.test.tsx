@@ -903,7 +903,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("distinguishes idle and active working session dots", () => {
+	it("renders sidebar dots from attention zones without activity overrides", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -917,17 +917,30 @@ describe("Sidebar", () => {
 							status: "working",
 							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
 						},
+						{
+							...session,
+							id: "proj-1-ci",
+							title: "ci failed task",
+							status: "ci_failed",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
 					],
 				},
 			],
 		});
 
 		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-passive");
+		expect(idleDot).toHaveClass("bg-working");
 		expect(idleDot).not.toHaveClass("animate-status-pulse");
 
 		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
-		expect(workingDot).toHaveClass("animate-status-pulse", "bg-working");
+		expect(workingDot).toHaveClass("bg-working");
+		expect(workingDot).not.toHaveClass("animate-status-pulse");
+
+		const ciFailedDot = screen.getByLabelText("Open ci failed task").querySelector('span[aria-hidden="true"]');
+		expect(ciFailedDot).toHaveClass("bg-warning");
+		expect(ciFailedDot).not.toHaveClass("bg-error");
+		expect(ciFailedDot).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("renders idle activity as quiet while preserving PR status color", () => {
@@ -956,7 +969,7 @@ describe("Sidebar", () => {
 		});
 
 		const idleDot = screen.getByLabelText("Open idle activity task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-passive");
+		expect(idleDot).toHaveClass("bg-working");
 		expect(idleDot).not.toHaveClass("animate-status-pulse");
 
 		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector('span[aria-hidden="true"]');

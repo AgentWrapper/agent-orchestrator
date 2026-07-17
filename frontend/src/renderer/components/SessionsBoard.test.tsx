@@ -211,6 +211,7 @@ describe("SessionsBoard", () => {
 		fireEvent.click(idleStackToggle);
 
 		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "true");
+		expect(screen.getByText("active-task")).toBeInTheDocument();
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
 		expect(screen.getByText("idle-with-pr-task")).toBeInTheDocument();
 		const badge = within(idleCard).getByText("Working").closest("span");
@@ -218,7 +219,7 @@ describe("SessionsBoard", () => {
 		expect(badge).not.toHaveClass("text-passive");
 	});
 
-	it("expands idle as the main working-column panel and restores working from the header", () => {
+	it("toggles idle contents without hiding active cards or remounting the toggle", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -263,29 +264,106 @@ describe("SessionsBoard", () => {
 
 		const idleToggle = screen.getByRole("button", { name: /idle sessions/i });
 		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
-		expect(idleToggle.parentElement).toHaveClass("transition-[flex-grow,opacity,transform]");
+		expect(idleToggle.parentElement).toHaveClass("transition-[opacity,transform]");
+		expect(idleToggle.parentElement).not.toHaveClass("transition-[flex-grow,opacity,transform]");
 		expect(idleToggle.parentElement).toHaveClass("motion-reduce:transition-none");
+		expect(idleToggle.querySelector("svg")).toHaveClass("motion-reduce:transition-none");
 		fireEvent.click(idleToggle);
 
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "true");
-		expect(screen.getByRole("button", { name: /idle sessions/i }).parentElement).toHaveClass("flex-1");
+		expect(screen.getByRole("button", { name: /idle sessions/i })).toBe(idleToggle);
+		expect(idleToggle).toHaveAttribute("aria-expanded", "true");
+		expect(screen.getByText("active-task")).toBeInTheDocument();
 		expect(screen.getByText("idle-task")).toBeInTheDocument();
-		expect(screen.queryByText("active-task")).not.toBeInTheDocument();
 
-		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
+		fireEvent.click(idleToggle);
 
 		expect(screen.getByText("active-task")).toBeInTheDocument();
 		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "false");
+		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
+	});
+
+	it("resets the idle stack when navigating between project boards", () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "p1-active",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "p1 active",
+							provider: "claude-code",
+							branch: "ao/radic-active",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "p1-idle",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "p1 idle",
+							provider: "claude-code",
+							branch: "ao/radic-idle",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+				{
+					id: "p2",
+					name: "other",
+					path: "/tmp/other",
+					sessions: [
+						{
+							id: "p2-active",
+							workspaceId: "p2",
+							workspaceName: "other",
+							title: "p2 active",
+							provider: "claude-code",
+							branch: "ao/other-active",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "p2-idle",
+							workspaceId: "p2",
+							workspaceName: "other",
+							title: "p2 idle",
+							provider: "claude-code",
+							branch: "ao/other-idle",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+		const view = renderBoardWithClient(queryClient, "p1");
 
 		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
-		expect(screen.getByText("idle-task")).toBeInTheDocument();
-		expect(screen.queryByText("active-task")).not.toBeInTheDocument();
+		expect(screen.getByText("p1 idle")).toBeInTheDocument();
 
-		fireEvent.click(screen.getByRole("button", { name: /show working sessions/i }));
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<SessionsBoard projectId="p2" />
+			</QueryClientProvider>,
+		);
 
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
+		expect(screen.getByText("p2 active")).toBeInTheDocument();
+		expect(screen.queryByText("p2 idle")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "false");
 	});
 

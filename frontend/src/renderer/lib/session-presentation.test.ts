@@ -102,7 +102,7 @@ describe("session presentation", () => {
 		expect(getAttentionZoneView(status)).toMatchObject({ zone, label });
 	});
 
-	it("uses activity for sidebar dot motion and status for sidebar dot color", () => {
+	it("uses attention zones only for sidebar dot color and motion", () => {
 		const activeWorkingDotClass = getSessionDotView(
 			sessionWith({
 				status: "working",
@@ -110,10 +110,10 @@ describe("session presentation", () => {
 			}),
 		).className;
 		const idleDotClass = getSessionDotView(sessionWith({ status: "idle" })).className;
-		const idleWorkingDotClass = getSessionDotView(
+		const activeUnknownDotClass = getSessionDotView(
 			sessionWith({
-				status: "working",
-				activity: { state: "idle", lastActivityAt: "" },
+				status: "unknown",
+				activity: { state: "active", lastActivityAt: "" },
 			}),
 		).className;
 		const idleDraftDotClass = getSessionDotView(
@@ -124,15 +124,14 @@ describe("session presentation", () => {
 		).className;
 
 		expect(activeWorkingDotClass).toContain("bg-working");
-		expect(activeWorkingDotClass).toContain("animate-status-pulse");
-		expect(activeWorkingDotClass).toContain("motion-reduce:animate-none");
-		expect(idleDotClass).toContain("bg-passive");
+		expect(activeWorkingDotClass).not.toContain("animate-status-pulse");
+		expect(idleDotClass).toContain("bg-working");
 		expect(idleDotClass).not.toContain("animate-status-pulse");
-		expect(idleWorkingDotClass).toContain("bg-passive");
-		expect(idleWorkingDotClass).not.toContain("animate-status-pulse");
+		expect(activeUnknownDotClass).toContain("bg-warning");
+		expect(activeUnknownDotClass).not.toContain("animate-status-pulse");
 		expect(idleDraftDotClass).toContain("bg-accent-dim");
 		expect(idleDraftDotClass).not.toContain("animate-status-pulse");
-		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-error");
+		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-warning");
 		expect(getSessionDotView(sessionWith({ status: "unknown" })).className).toContain("bg-warning");
 	});
 
