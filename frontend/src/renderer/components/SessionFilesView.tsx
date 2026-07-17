@@ -287,7 +287,7 @@ function CodePanel({
 			{notice ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning">{notice}</div>
 			) : null}
-			<pre className="min-h-0 flex-1 overflow-auto bg-terminal py-3 font-mono text-xs leading-row text-terminal">
+			<pre className="min-h-0 flex-1 overflow-auto bg-terminal py-3 font-mono text-xs leading-row text-terminal-foreground">
 				{lines.map((line, index) => (
 					<div className={cn("min-w-max px-4", variant === "diff" && diffLineClass(line))} key={`${index}-${line}`}>
 						<span className="mr-4 inline-block w-8 select-none text-right text-passive">{index + 1}</span>

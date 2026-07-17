@@ -108,4 +108,15 @@ describe("SessionFilesView", () => {
 			}),
 		);
 	});
+
+	it("uses the terminal foreground color for normal file content", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: /src\/App\.tsx/ });
+		await userEvent.click(screen.getByRole("tab", { name: "File" }));
+
+		const codePane = screen.getByText("const value = 1;").closest("pre");
+		expect(codePane).toHaveClass("text-terminal-foreground");
+		expect(codePane).not.toHaveClass("text-terminal");
+	});
 });
