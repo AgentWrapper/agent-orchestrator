@@ -107,6 +107,14 @@ func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, 
 	return sessionsvc.ClaimPRResult{}, nil
 }
 
+func (f *fakeSessionService) ListWorkspaceFiles(context.Context, domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
+	return sessionsvc.WorkspaceFiles{}, nil
+}
+
+func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
+	return sessionsvc.WorkspaceFileDetail{}, nil
+}
+
 type fakeAgentCatalog struct{}
 
 var _ controllers.AgentCatalog = (*fakeAgentCatalog)(nil)

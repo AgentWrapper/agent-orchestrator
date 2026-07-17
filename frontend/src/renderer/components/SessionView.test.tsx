@@ -67,8 +67,8 @@ vi.mock("./BrowserPanel", () => ({
 		enqueue: vi.fn(),
 		failPicking: vi.fn(),
 		retryQueued: vi.fn(),
-		}),
-	}));
+	}),
+}));
 vi.mock("./SessionFilesView", () => ({
 	SessionFilesView: ({ onClose }: { onClose: () => void }) => (
 		<button type="button" onClick={onClose}>

@@ -78,10 +78,7 @@ export function SessionFilesView({ sessionId, onClose }: SessionFilesViewProps) 
 
 	const normalizedFilter = filter.trim().toLowerCase();
 	const visibleFiles = useMemo(
-		() =>
-			normalizedFilter
-				? files.filter((file) => file.path.toLowerCase().includes(normalizedFilter))
-				: files,
+		() => (normalizedFilter ? files.filter((file) => file.path.toLowerCase().includes(normalizedFilter)) : files),
 		[files, normalizedFilter],
 	);
 	const changedCount = files.filter(isChanged).length;
@@ -172,7 +169,9 @@ function FileList({
 		return <PanelMessage>Loading files...</PanelMessage>;
 	}
 	if (error) {
-		return <PanelMessage action={<RetryButton onClick={onRetry} />}>{error.message || "Unable to load files."}</PanelMessage>;
+		return (
+			<PanelMessage action={<RetryButton onClick={onRetry} />}>{error.message || "Unable to load files."}</PanelMessage>
+		);
 	}
 	if (files.length === 0) {
 		return <PanelMessage>No files found.</PanelMessage>;
@@ -272,15 +271,7 @@ function DetailBody({ detail, mode }: { detail: WorkspaceFileDetail; mode: Detai
 	);
 }
 
-function CodePanel({
-	notice,
-	text,
-	variant,
-}: {
-	notice?: string;
-	text: string;
-	variant: "diff" | "file";
-}) {
+function CodePanel({ notice, text, variant }: { notice?: string; text: string; variant: "diff" | "file" }) {
 	const lines = text === "" ? [""] : text.replace(/\r\n/g, "\n").split("\n");
 	return (
 		<div className="flex h-full min-h-0 flex-col">
