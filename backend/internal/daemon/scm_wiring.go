@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -14,6 +15,7 @@ import (
 	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/scmregistry"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -46,6 +48,31 @@ func (r sessionProjectProviderResolver) ResolveProjectProvider(ctx context.Conte
 type projectSCMResolver struct {
 	providers scmregistry.ProjectProviderResolver
 }
+
+type projectActionResolver struct {
+	providers scmregistry.ProjectProviderResolver
+}
+
+func (r projectActionResolver) ResolveProjectActions(ctx context.Context, project domain.ProjectRecord) (prsvc.ResolvedProjectActions, error) {
+	bundle, err := r.providers.Resolve(ctx, project)
+	if err != nil {
+		return prsvc.ResolvedProjectActions{}, err
+	}
+	if bundle.Writer == nil || bundle.SCM == nil {
+		return prsvc.ResolvedProjectActions{}, fmt.Errorf("SCM action writer is unavailable for project %s", project.ID)
+	}
+	repository := strings.TrimSpace(project.Config.SCM.Repo)
+	if repository == "" {
+		repository = strings.TrimSpace(project.RepoOriginURL)
+	}
+	parsed, ok := bundle.SCM.ParseRepository(repository)
+	if !ok {
+		return prsvc.ResolvedProjectActions{}, fmt.Errorf("SCM repository is unavailable for project %s", project.ID)
+	}
+	return prsvc.ResolvedProjectActions{Writer: bundle.Writer, Repository: parsed}, nil
+}
+
+var _ prsvc.ProjectActionResolver = projectActionResolver{}
 
 func (r projectSCMResolver) ResolveSCM(ctx context.Context, project domain.ProjectRecord) (scmobserve.ResolvedProvider, error) {
 	bundle, err := r.providers.Resolve(ctx, project)

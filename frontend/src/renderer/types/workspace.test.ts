@@ -30,6 +30,9 @@ import { initializeRendererI18n } from "../i18n";
 describe("canonicalTrackerIssueId", () => {
 	it("keeps provider-prefixed intake ids and rejects manual task titles", () => {
 		expect(canonicalTrackerIssueId("github:acme/project#42")).toBe("github:acme/project#42");
+		expect(canonicalTrackerIssueId("gitlab:gitlab.example.com/acme/project#!42")).toBe(
+			"gitlab:gitlab.example.com/acme/project#!42",
+		);
 		expect(canonicalTrackerIssueId("Fix fallback renderer")).toBeUndefined();
 		expect(canonicalTrackerIssueId(undefined)).toBeUndefined();
 	});

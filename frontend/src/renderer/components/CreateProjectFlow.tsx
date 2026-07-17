@@ -48,6 +48,7 @@ export function CreateProjectFlow({
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
+	const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null);
 	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
@@ -81,6 +82,7 @@ export function CreateProjectFlow({
 		setErrorCode(undefined);
 		setValidationScan(null);
 		setRepositorySetup(null);
+		setSelectedOrigin(null);
 		setSelectedKind(kind);
 		const isRemote = remoteClient ?? (await (aoBridge.remoteServer?.isRemoteClient?.() ?? Promise.resolve(false)));
 		if (remoteClient === null) setRemoteClient(isRemote);
@@ -98,8 +100,9 @@ export function CreateProjectFlow({
 					: t("projects.create.chooseProjectDirectory"),
 			);
 			if (path && kind === "single_repo") {
-				const setupCode = await repositorySetupRequired(path);
-				setRepositorySetup(setupCode);
+				const repository = await repositorySelection(path);
+				setRepositorySetup(repository.setupCode);
+				setSelectedOrigin(repository.origin || null);
 			}
 			if (path) {
 				setModePickerOpen(false);
@@ -140,6 +143,7 @@ export function CreateProjectFlow({
 			}
 			await onCreateProject({ path: selectedPath, asWorkspace: selectedKind === "workspace", ...selection });
 			setSelectedPath(null);
+			setSelectedOrigin(null);
 		} catch (err) {
 			const code = apiErrorCode(err);
 			const message = err instanceof Error ? err.message : t("projects.create.addFailed");
@@ -227,9 +231,10 @@ export function CreateProjectFlow({
 				open={remotePathDialogOpen}
 				disabled={isBusy}
 				onOpenChange={(open) => !isBusy && setRemotePathDialogOpen(open)}
-				onSelect={(path) => {
+				onSelect={(path, origin) => {
 					setRemotePathDialogOpen(false);
 					setSelectedPath(path);
+					setSelectedOrigin(selectedKind === "single_repo" ? (origin ?? null) : null);
 				}}
 			/>
 			<CreateProjectAgentSheet
@@ -241,6 +246,7 @@ export function CreateProjectFlow({
 				onOpenChange={(open) => {
 					if (!open) {
 						setSelectedPath(null);
+						setSelectedOrigin(null);
 						if (!folderPickerOpen) {
 							setError(null);
 							setErrorCode(undefined);
@@ -249,6 +255,7 @@ export function CreateProjectFlow({
 				}}
 				onSubmit={createProject}
 				open={selectedPath !== null}
+				origin={selectedOrigin ?? undefined}
 				path={selectedPath}
 				repositorySetupNeeded={repositorySetup !== null}
 			/>
@@ -265,13 +272,19 @@ function isRepositorySetupRecoveryCode(code: string | undefined): code is "NOT_A
 	return code === "NOT_A_GIT_REPO" || code === "PROJECT_UNBORN";
 }
 
-async function repositorySetupRequired(path: string): Promise<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null> {
+async function repositorySelection(
+	path: string,
+): Promise<{ setupCode: "NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null; origin: string }> {
 	try {
 		const scan = await aoBridge.app.scanImportFolder({ path, mode: "project" });
-		if (scan.repos.length === 0) return "NOT_A_GIT_REPO";
-		return scan.repos[0]?.setupCode === "PROJECT_UNBORN" ? "PROJECT_UNBORN" : null;
+		if (scan.repos.length === 0) return { setupCode: "NOT_A_GIT_REPO", origin: "" };
+		const repo = scan.repos[0];
+		return {
+			setupCode: repo?.setupCode === "PROJECT_UNBORN" ? "PROJECT_UNBORN" : null,
+			origin: repo?.remote ?? "",
+		};
 	} catch {
-		return null;
+		return { setupCode: null, origin: "" };
 	}
 }
 

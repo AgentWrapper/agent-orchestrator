@@ -28,6 +28,7 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	scmconnectionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/scmconnection"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
@@ -168,6 +169,7 @@ func Run() error {
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
+		PRs:                prsvc.NewActionService(prsvc.ActionDeps{Store: store, Resolver: projectActionResolver{providers: providers}}),
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
 		SCMConnections:     scmconnectionsvc.New(scmconnectionsvc.Deps{Store: store, Credentials: credentials, Tester: providers}),

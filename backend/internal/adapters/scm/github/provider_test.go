@@ -136,7 +136,7 @@ func TestClassifyGraphQLErrorDoesNotExposeProviderMessage(t *testing.T) {
 		{message: "Could not resolve provider-secret", want: ErrNotFound},
 		{message: "unexpected provider-secret", want: nil},
 	} {
-		err := classifyGraphQLError(tc.message)
+		err := classifyGraphQLError("", tc.message)
 		if tc.want != nil && !errors.Is(err, tc.want) {
 			t.Fatalf("error = %v, want %v", err, tc.want)
 		}

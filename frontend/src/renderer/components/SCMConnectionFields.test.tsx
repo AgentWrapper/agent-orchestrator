@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,6 +75,12 @@ function renderFields(
 					onChange={setValue}
 					onValidationChange={onValidationChange}
 				/>
+				<button
+					type="button"
+					hidden
+					data-testid="select-backup"
+					onClick={() => setValue({ ...value, connectionId: "gitlab-backup" })}
+				/>
 				<output data-testid="selection">{JSON.stringify(value)}</output>
 			</>
 		);
@@ -122,6 +128,7 @@ describe("SCMConnectionFields", () => {
 
 	it("masks a replacement token, reveals only the current input, then keeps it out of query cache", async () => {
 		const queryClient = renderFields();
+		queryClient.setQueryData(["scm-capabilities", "gitlab-work", "group/app"], { read: true, write: true });
 		putMock.mockResolvedValue({
 			data: { connection: { ...gitlabConnection, status: "unknown" } },
 			error: undefined,
@@ -159,6 +166,67 @@ describe("SCMConnectionFields", () => {
 			},
 		});
 		expect(JSON.stringify(queryClient.getQueryData(scmConnectionsQueryKey))).not.toContain("replacement-token");
+		expect(queryClient.getQueryData(["scm-capabilities", "gitlab-work", "group/app"])).toBeUndefined();
+	});
+
+	it("locks every connection editor control while a save is pending", async () => {
+		const pending = deferred<{
+			data: { connection: typeof gitlabConnection };
+			error: undefined;
+		}>();
+		putMock.mockReturnValueOnce(pending.promise);
+		renderFields();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Edit GitLab Work" }));
+		await userEvent.click(screen.getByRole("button", { name: "Save connection" }));
+		await waitFor(() => expect(putMock).toHaveBeenCalledOnce());
+
+		for (const label of ["Connection name", "Connection ID", "Instance address", "API address", "Access token"]) {
+			expect(screen.getByLabelText(label)).toBeDisabled();
+		}
+		for (const name of [
+			"Close connection dialog",
+			"Show access token",
+			"Replace",
+			"Remove credential",
+			"Delete",
+			"Cancel",
+		]) {
+			expect(screen.getByRole("button", { name })).toBeDisabled();
+		}
+
+		await act(async () => {
+			pending.resolve({ data: { connection: gitlabConnection }, error: undefined });
+			await pending.promise;
+		});
+	});
+
+	it("ignores an old save completion after the editor switches to another connection", async () => {
+		getMock.mockResolvedValue({
+			data: { connections: [gitlabConnection, gitlabBackupConnection] },
+			error: undefined,
+		});
+		const pending = deferred<{
+			data: { connection: typeof gitlabConnection };
+			error: undefined;
+		}>();
+		putMock.mockReturnValueOnce(pending.promise);
+		renderFields();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Edit GitLab Work" }));
+		await userEvent.click(screen.getByRole("button", { name: "Save connection" }));
+		await waitFor(() => expect(putMock).toHaveBeenCalledOnce());
+		fireEvent.click(screen.getByTestId("select-backup"));
+		await waitFor(() => expect(screen.getByLabelText("Connection name")).toHaveValue("GitLab Backup"));
+
+		await act(async () => {
+			pending.resolve({ data: { connection: gitlabConnection }, error: undefined });
+			await pending.promise;
+		});
+
+		expect(screen.getByTestId("selection")).toHaveTextContent('"connectionId":"gitlab-backup"');
+		expect(screen.getByRole("dialog", { name: "Edit connection" })).toBeInTheDocument();
+		expect(screen.getByLabelText("Connection name")).toHaveValue("GitLab Backup");
 	});
 
 	it("creates a self-hosted GitLab connection with a derived API URL", async () => {
@@ -199,7 +267,7 @@ describe("SCMConnectionFields", () => {
 	});
 
 	it("tests the selected connection against the current repository and reports capabilities", async () => {
-		renderFields();
+		const queryClient = renderFields();
 		postMock.mockResolvedValue({
 			data: {
 				result: {
@@ -221,6 +289,10 @@ describe("SCMConnectionFields", () => {
 		expect(await screen.findByText("Connected as alice")).toBeInTheDocument();
 		expect(screen.getByText("Read access")).toBeInTheDocument();
 		expect(screen.getByText("No write access")).toBeInTheDocument();
+		expect(queryClient.getQueryData(["scm-capabilities", "gitlab-work", "group/app"])).toEqual({
+			read: true,
+			write: false,
+		});
 	});
 
 	it("keeps selection project-level and invalidates a test when provider or repository changes", async () => {
@@ -252,7 +324,7 @@ describe("SCMConnectionFields", () => {
 		expect(screen.getByText("Built-in GitHub connection")).toBeInTheDocument();
 	});
 
-	it("does not validate a repository selected while an earlier repository test is pending", async () => {
+	it("locks the project SCM selection while a connection test is pending", async () => {
 		const pending = deferred<{
 			data: {
 				result: {
@@ -265,12 +337,15 @@ describe("SCMConnectionFields", () => {
 		}>();
 		postMock.mockReturnValueOnce(pending.promise);
 		const onValidationChange = vi.fn();
-		const queryClient = renderFields(undefined, onValidationChange);
+		renderFields(undefined, onValidationChange);
 
 		await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		await userEvent.clear(screen.getByLabelText("Repository"));
-		await userEvent.type(screen.getByLabelText("Repository"), "group/app-next");
+		expect(screen.getByRole("combobox", { name: "Provider" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Connection" })).toBeDisabled();
+		expect(screen.getByLabelText("Repository")).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Create SCM connection" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Edit GitLab Work" })).toBeDisabled();
 
 		pending.resolve({
 			data: {
@@ -283,60 +358,23 @@ describe("SCMConnectionFields", () => {
 			error: undefined,
 		});
 
-		await waitFor(() =>
-			expect(
-				(queryClient.getQueryData(scmConnectionsQueryKey) as typeof gitlabConnection[] | undefined)?.[0]?.status,
-			).toBe("connected"),
-		);
-		expect(screen.getByTestId("selection")).toHaveTextContent('"repo":"group/app-next"');
-		expect(screen.queryByText("Connected as repo-a-user")).not.toBeInTheDocument();
-		await waitFor(() => expect(onValidationChange).toHaveBeenLastCalledWith(false));
+		expect(await screen.findByText("Connected as repo-a-user")).toBeInTheDocument();
+		await waitFor(() => expect(onValidationChange).toHaveBeenLastCalledWith(true));
+		expect(screen.getByLabelText("Repository")).toBeEnabled();
 	});
 
-	it("attributes a pending result only to the connection that was tested", async () => {
-		getMock.mockResolvedValue({
-			data: { connections: [gitlabConnection, gitlabBackupConnection] },
-			error: undefined,
+	it("clears cached repository capabilities when a connection test fails", async () => {
+		const queryClient = renderFields();
+		queryClient.setQueryData(["scm-capabilities", "gitlab-work", "group/app"], { read: true, write: true });
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { code: "SCM_AUTH_FAILED", message: "SCM authentication failed" },
 		});
-		const pending = deferred<{
-			data: {
-				result: {
-					status: "connected";
-					identity: { username: string };
-					capabilities: { read: boolean; write: boolean };
-				};
-			};
-			error: undefined;
-		}>();
-		postMock.mockReturnValueOnce(pending.promise);
-		const onValidationChange = vi.fn();
-		const queryClient = renderFields(undefined, onValidationChange);
 
 		await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		await chooseOption(screen.getByRole("combobox", { name: "Connection" }), "GitLab Backup");
 
-		pending.resolve({
-			data: {
-				result: {
-					status: "connected",
-					identity: { username: "connection-a-user" },
-					capabilities: { read: true, write: true },
-				},
-			},
-			error: undefined,
-		});
-
-		await waitFor(() => {
-			const connections = queryClient.getQueryData(scmConnectionsQueryKey) as
-				| Array<typeof gitlabConnection>
-				| undefined;
-			expect(connections?.find((connection) => connection.id === "gitlab-work")?.status).toBe("connected");
-			expect(connections?.find((connection) => connection.id === "gitlab-backup")?.status).toBe("unknown");
-		});
-		expect(screen.getByTestId("selection")).toHaveTextContent('"connectionId":"gitlab-backup"');
-		expect(screen.queryByText("Connected as connection-a-user")).not.toBeInTheDocument();
-		await waitFor(() => expect(onValidationChange).toHaveBeenLastCalledWith(false));
+		expect(await screen.findByText("Unauthorized")).toBeInTheDocument();
+		expect(queryClient.getQueryData(["scm-capabilities", "gitlab-work", "group/app"])).toBeUndefined();
 	});
 
 	it("shows a structured authentication failure without exposing provider response bodies", async () => {

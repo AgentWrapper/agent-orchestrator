@@ -5,15 +5,18 @@ import {
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
 } from "./shared/browser-annotations";
+import { browserAnnotationCopy } from "./shared/i18n/browser-annotation";
+import type { SupportedLocale } from "./shared/locale";
 
 let enabled = false;
 let selectedElement: Element | null = null;
 let selectedContext: BrowserAnnotationContext | null = null;
 let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
+let locale: SupportedLocale = "en";
 
-ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean }) => {
-	setEnabled(Boolean(input?.enabled), "disabled");
+ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean; locale?: SupportedLocale }) => {
+	setEnabled(Boolean(input?.enabled), "disabled", input?.locale ?? locale);
 });
 
 window.addEventListener("beforeunload", () => {
@@ -22,8 +25,17 @@ window.addEventListener("beforeunload", () => {
 	enabled = false;
 });
 
-function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason): void {
-	if (enabled === next) return;
+function setEnabled(
+	next: boolean,
+	cancelReason: BrowserAnnotationCancelReason,
+	nextLocale: SupportedLocale = locale,
+): void {
+	const localeChanged = locale !== nextLocale;
+	locale = nextLocale;
+	if (enabled === next) {
+		if (enabled && localeChanged) updateVisibleCopy();
+		return;
+	}
 	enabled = next;
 	selectedElement = null;
 	selectedContext = null;
@@ -192,7 +204,10 @@ function renderHint(): void {
 	const root = ensureOverlay();
 	const mount = root.querySelector<HTMLDivElement>(".mount");
 	if (!mount) return;
-	mount.innerHTML = `<div class="hint">Click an element to annotate. Press Esc to cancel.</div>`;
+	const hint = document.createElement("div");
+	hint.className = "hint";
+	hint.textContent = browserAnnotationCopy[locale].hint;
+	mount.replaceChildren(hint);
 }
 
 function renderHighlight(element: Element, locked: boolean): void {
@@ -215,17 +230,22 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	if (!mount) return;
 	const rect = element.getBoundingClientRect();
 	const { left, top } = promptPosition(rect);
-	mount.innerHTML = `
-		<form class="prompt" style="left: ${left}px; top: ${top}px;">
-			<textarea aria-label="Annotation request" placeholder="Describe what to change"></textarea>
-			<div class="actions">
-				<button type="button" data-action="cancel">Cancel</button>
-				<button type="submit">Send</button>
-			</div>
-		</form>
-	`;
-	const form = mount.querySelector<HTMLFormElement>("form")!;
-	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
+	const form = document.createElement("form");
+	form.className = "prompt";
+	form.style.left = `${left}px`;
+	form.style.top = `${top}px`;
+	const textarea = document.createElement("textarea");
+	const actions = document.createElement("div");
+	actions.className = "actions";
+	const cancel = document.createElement("button");
+	cancel.type = "button";
+	cancel.dataset.action = "cancel";
+	const send = document.createElement("button");
+	send.type = "submit";
+	actions.append(cancel, send);
+	form.append(textarea, actions);
+	mount.replaceChildren(form);
+	updateVisibleCopy();
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
 		const instruction = textarea.value.trim();
@@ -237,10 +257,26 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 		ipcRenderer.send("browser:annotation:submit", payload);
 		setEnabled(false, "disabled");
 	});
-	form.querySelector<HTMLButtonElement>('[data-action="cancel"]')?.addEventListener("click", () => {
+	cancel.addEventListener("click", () => {
 		setEnabled(false, "cancel");
 	});
 	setTimeout(() => textarea.focus(), 0);
+}
+
+function updateVisibleCopy(): void {
+	if (!shadow) return;
+	const copy = browserAnnotationCopy[locale];
+	const hint = shadow.querySelector<HTMLElement>(".hint");
+	if (hint) hint.textContent = copy.hint;
+	const textarea = shadow.querySelector<HTMLTextAreaElement>("textarea");
+	if (textarea) {
+		textarea.setAttribute("aria-label", copy.requestLabel);
+		textarea.placeholder = copy.requestPlaceholder;
+	}
+	const cancel = shadow.querySelector<HTMLButtonElement>('[data-action="cancel"]');
+	if (cancel) cancel.textContent = copy.cancel;
+	const send = shadow.querySelector<HTMLButtonElement>('button[type="submit"]');
+	if (send) send.textContent = copy.send;
 }
 
 function promptPosition(rect: DOMRect): { left: number; top: number } {

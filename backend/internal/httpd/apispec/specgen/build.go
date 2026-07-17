@@ -204,9 +204,11 @@ var schemaNames = map[string]string{
 	"ControllersSCMConnectionResponse":            "SCMConnectionResponse",
 	"ControllersSCMConnectionTestResponse":        "SCMConnectionTestResponse",
 	// httpd/controllers — PR wire envelopes
+	"ControllersMergePRRequest":          "MergePRRequest",
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
+	"ControllersResolveThreadReply":      "ResolveThreadReply",
 	// httpd/controllers — review wire envelopes
 	"ControllersListReviewsResponse":   "ListReviewsResponse",
 	"ControllersReviewRunResponse":     "ReviewRunResponse",
@@ -988,11 +990,15 @@ func prOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/prs/{id}/merge", id: "mergePR", tag: "prs",
 			summary:    "Squash-merge a pull request",
 			pathParams: []any{controllers.PRIDParam{}},
+			reqBody:    controllers.MergePRRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.MergePRResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
@@ -1000,11 +1006,14 @@ func prOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/prs/{id}/resolve-comments", id: "resolveComments", tag: "prs",
 			summary:    "Resolve review threads on a pull request",
 			pathParams: []any{controllers.PRIDParam{}},
-			reqBody:    nil, // body is optional: omitting it resolves all unresolved threads
+			reqBody:    controllers.ResolveCommentsRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ResolveCommentsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

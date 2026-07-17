@@ -167,7 +167,9 @@ func (r *Resolver) Resolve(ctx context.Context, project domain.ProjectRecord) (P
 	if current, ok := r.cache[connection.ID]; ok {
 		if current.updatedAt.Equal(connection.UpdatedAt) {
 			bundle = current.bundle
-		} else if !current.updatedAt.After(connection.UpdatedAt) {
+		} else if current.updatedAt.After(connection.UpdatedAt) {
+			bundle = current.bundle
+		} else {
 			r.cache[connection.ID] = cacheEntry{updatedAt: connection.UpdatedAt, bundle: bundle}
 		}
 	} else {

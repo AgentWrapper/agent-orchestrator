@@ -180,7 +180,14 @@ function ConnectionForm({ action, onConnected }: FormProps) {
 					<Label htmlFor={`${id}-host`} className="text-xs text-muted-foreground">
 						{t("remoteServer.host")}
 					</Label>
-					<Input id={`${id}-host`} value={host} onChange={(event) => setHost(event.target.value)} required autoFocus />
+					<Input
+						id={`${id}-host`}
+						value={host}
+						onChange={(event) => setHost(event.target.value)}
+						disabled={saving}
+						required
+						autoFocus
+					/>
 				</div>
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor={`${id}-port`} className="text-xs text-muted-foreground">
@@ -193,6 +200,7 @@ function ConnectionForm({ action, onConnected }: FormProps) {
 						max={65535}
 						value={port}
 						onChange={(event) => setPort(event.target.value)}
+						disabled={saving}
 						required
 					/>
 				</div>
@@ -215,6 +223,7 @@ function ConnectionForm({ action, onConnected }: FormProps) {
 							setRevealedSavedPassword(false);
 						}}
 						autoComplete="new-password"
+						disabled={saving}
 						required={!passwordConfigured}
 					/>
 					<Button
@@ -225,6 +234,7 @@ function ConnectionForm({ action, onConnected }: FormProps) {
 						aria-label={t(showPassword ? "remoteServer.hidePassword" : "remoteServer.showPassword")}
 						title={t(showPassword ? "remoteServer.hidePassword" : "remoteServer.showPassword")}
 						onClick={() => void togglePasswordVisibility()}
+						disabled={saving}
 					>
 						{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
 					</Button>

@@ -54,7 +54,11 @@ import { RemoteClientRuntime, probeRemoteForwarder } from "./main/remote-client-
 import type { RemoteServerConfigUpdate } from "./main/remote-client-runtime";
 import { startRemoteForwarder } from "./main/remote-forwarder";
 import { readRemoteServerConfig, writeRemoteServerConfig, type ConfigCrypto } from "./main/remote-server-config";
-import { resolveRemoteClientBuild, resolveRemoteClientIdentity } from "./main/remote-client-build";
+import {
+	resolveRemoteClientBuild,
+	resolveRemoteClientIdentity,
+	shouldUseCanonicalAppState,
+} from "./main/remote-client-build";
 import { createUpdateIpcHandlers } from "./main/update-ipc";
 import {
 	scanRepoSetupCode,
@@ -284,7 +288,7 @@ function createWindow(): void {
 		height: 860,
 		minWidth: 960,
 		minHeight: 640,
-		title: "Agent Orchestrator",
+		title: clientIdentity.productName,
 		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
 		// Windows goes frameless with a Window Controls Overlay: Electron still draws
@@ -1268,11 +1272,13 @@ ipcMain.handle("terminal:saveDroppedFile", async (_event, input: { name: string;
 });
 
 ipcMain.handle("appState:getMigration", async (): Promise<MigrationState> => {
+	if (!shouldUseCanonicalAppState(isRemoteClientBuild)) return { status: "pending" };
 	const runFile = runFilePath();
 	if (!runFile) return { status: "pending" };
 	return readMigrationState(path.dirname(runFile));
 });
 ipcMain.handle("appState:setMigration", async (_event, migration: MigrationState) => {
+	if (!shouldUseCanonicalAppState(isRemoteClientBuild)) return;
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await updateMigration({ stateDir: path.dirname(runFile), migration, now: () => new Date() });
@@ -1382,7 +1388,7 @@ app.whenReady().then(async () => {
 	// writeAppStateMarker would then lock it there forever. Writing now (only when
 	// the arg is present, i.e. the npm-bootstrap launch) persists the source so the
 	// post-move instance preserves it while refreshing appPath to /Applications.
-	if (parseInstalledVia(process.argv)) {
+	if (shouldUseCanonicalAppState(isRemoteClientBuild) && parseInstalledVia(process.argv)) {
 		try {
 			await writeAppStateOnLaunch();
 		} catch (err) {
@@ -1403,10 +1409,12 @@ app.whenReady().then(async () => {
 	// Refresh the marker post-relocation so appPath records the final bundle path;
 	// the sticky installSource preserves the value captured above. A marker-write
 	// failure is non-fatal: log and continue so the app still boots.
-	try {
-		await writeAppStateOnLaunch();
-	} catch (err) {
-		console.error("failed to write app-state marker:", err);
+	if (shouldUseCanonicalAppState(isRemoteClientBuild)) {
+		try {
+			await writeAppStateOnLaunch();
+		} catch (err) {
+			console.error("failed to write app-state marker:", err);
+		}
 	}
 
 	localeController = new LocaleController({

@@ -6,6 +6,10 @@ export function resolveRemoteClientBuild(input: {
 	return input.isPackaged ? input.markerExists : input.envOverride;
 }
 
+export function shouldUseCanonicalAppState(remoteClient: boolean): boolean {
+	return !remoteClient;
+}
+
 export type RemoteClientIdentity = {
 	productName: string;
 	appBundleId: string;

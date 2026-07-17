@@ -6,18 +6,21 @@ import type { MigrationState } from "../../main/app-state";
 import { i18n, initializeRendererI18n } from "../i18n";
 import { MigrationPopup } from "./MigrationPopup";
 
-const { getMock, postMock, getMigration, setMigration } = vi.hoisted(() => ({
+const { getMock, postMock, getMigration, setMigration, isRemoteClient } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	getMigration: vi.fn(),
 	setMigration: vi.fn(),
+	isRemoteClient: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/api-client")>();
 	return { ...actual, apiClient: { GET: getMock, POST: postMock } };
 });
-vi.mock("../lib/bridge", () => ({ aoBridge: { appState: { getMigration, setMigration } } }));
+vi.mock("../lib/bridge", () => ({
+	aoBridge: { appState: { getMigration, setMigration }, remoteServer: { isRemoteClient } },
+}));
 
 function renderPopup() {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -35,6 +38,7 @@ beforeEach(async () => {
 	postMock.mockReset();
 	getMigration.mockReset();
 	setMigration.mockReset();
+	isRemoteClient.mockReset().mockResolvedValue(false);
 	getMigration.mockResolvedValue({ status: "pending" });
 	getMock.mockResolvedValue({ data: { available: true, legacyRoot: "/home/u/.agent-orchestrator" }, error: undefined });
 	postMock.mockResolvedValue({ data: { report: { projectsImported: 2, projectsSkipped: 1 } }, error: undefined });
@@ -69,6 +73,16 @@ describe("MigrationPopup", () => {
 		await waitFor(() => expect(getMigration).toHaveBeenCalled());
 		expect(screen.queryByText(/Import projects from your earlier AO/i)).not.toBeInTheDocument();
 		expect(getMock).not.toHaveBeenCalled();
+	});
+
+	it("never queries or runs migration in the Remote client", async () => {
+		isRemoteClient.mockResolvedValue(true);
+		renderPopup();
+		await waitFor(() => expect(isRemoteClient).toHaveBeenCalled());
+		expect(getMigration).not.toHaveBeenCalled();
+		expect(getMock).not.toHaveBeenCalled();
+		expect(postMock).not.toHaveBeenCalled();
+		expect(screen.queryByText(/Import projects from your earlier AO/i)).not.toBeInTheDocument();
 	});
 
 	it("Proceed imports, marks completed, and retires", async () => {

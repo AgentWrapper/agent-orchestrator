@@ -318,7 +318,7 @@ func (c *Client) classify(resp *http.Response) error {
 		return ErrForbidden
 	case http.StatusNotFound:
 		return ErrNotFound
-	case http.StatusConflict, http.StatusUnprocessableEntity:
+	case http.StatusConflict, http.StatusMethodNotAllowed, http.StatusUnprocessableEntity:
 		return &PreconditionError{StatusCode: resp.StatusCode}
 	case http.StatusTooManyRequests:
 		return &RateLimitError{RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), c.now())}

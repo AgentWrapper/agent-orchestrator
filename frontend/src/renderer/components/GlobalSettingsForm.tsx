@@ -24,8 +24,12 @@ export function GlobalSettingsForm() {
 				<div className="mx-auto flex max-w-2xl flex-col gap-4">
 					<LanguageSettingsSection />
 					<RemoteServerSettingsSection />
-					{remoteClient === false && <UpdatesSection />}
-					<MigrationSection />
+					{remoteClient === false && (
+						<>
+							<UpdatesSection />
+							<MigrationSection />
+						</>
+					)}
 				</div>
 			</div>
 		</div>

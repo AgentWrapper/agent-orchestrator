@@ -4,27 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import type { components } from "../../api/schema";
-import {
-	scmConnectionsQueryKey,
-	type SCMConnection,
-	useSCMConnections,
-} from "../hooks/useSCMConnections";
+import { scmConnectionsQueryKey, type SCMConnection, useSCMConnections } from "../hooks/useSCMConnections";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
-import {
-	defaultSCMApiBaseUrl,
-	defaultSCMWebBaseUrl,
-	deriveProviderRepo,
-	type SCMProvider,
-} from "../lib/scm-repo";
+import { clearSCMCapabilities, scmCapabilitiesQueryKey } from "../lib/scm-capabilities";
+import { defaultSCMApiBaseUrl, defaultSCMWebBaseUrl, deriveProviderRepo, type SCMProvider } from "../lib/scm-repo";
 import { Button } from "./ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "./ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -91,7 +76,8 @@ function testErrorText(error: unknown, t: TFunction): { label: string; message: 
 	}
 	const code = apiErrorCode(error);
 	const status = code ? ERROR_STATUS_KEYS[code] : undefined;
-	const detailKey = code && code in ERROR_DETAIL_KEYS ? ERROR_DETAIL_KEYS[code as keyof typeof ERROR_DETAIL_KEYS] : undefined;
+	const detailKey =
+		code && code in ERROR_DETAIL_KEYS ? ERROR_DETAIL_KEYS[code as keyof typeof ERROR_DETAIL_KEYS] : undefined;
 	return {
 		label: status ? t(STATUS_KEYS[status]) : t("projects.scm.connectionFailed"),
 		message: detailKey ? t(detailKey) : apiErrorMessage(error, t("projects.scm.connectionFailed")),
@@ -126,10 +112,11 @@ export function SCMConnectionFields({
 	const connectionsQuery = useSCMConnections();
 	const connections = connectionsQuery.data ?? [];
 	const [dialogMode, setDialogMode] = useState<"create" | "edit" | null>(null);
+	const [editorBusy, setEditorBusy] = useState(false);
 	const [testState, setTestState] = useState<TestState | null>(null);
-	const effectiveRepo = value.repo.trim() || deriveProviderRepo(origin, value.provider) || "";
-	const testKey = `${value.connectionId}|${effectiveRepo}`;
 	const selected = connections.find((connection) => connection.id === value.connectionId);
+	const effectiveRepo = value.repo.trim() || deriveProviderRepo(origin, value.provider, selected?.webBaseUrl) || "";
+	const testKey = `${value.connectionId}|${effectiveRepo}`;
 	const providerConnections = connections.filter((connection) => connection.provider === value.provider);
 	const isGitHubDefault = value.provider === "github" && value.connectionId === GITHUB_DEFAULT_ID;
 	const validated =
@@ -160,6 +147,10 @@ export function SCMConnectionFields({
 		},
 		onSuccess: (result, variables) => {
 			setTestState({ key: variables.testKey, kind: "success", result });
+			queryClient.setQueryData(
+				scmCapabilitiesQueryKey(variables.connectionId, variables.repository),
+				result.capabilities,
+			);
 			queryClient.setQueryData<SCMConnection[]>(scmConnectionsQueryKey, (current = []) =>
 				current.map((connection) =>
 					connection.provider === variables.provider && connection.id === variables.connectionId
@@ -169,6 +160,10 @@ export function SCMConnectionFields({
 			);
 		},
 		onError: (error, variables) => {
+			queryClient.removeQueries({
+				queryKey: scmCapabilitiesQueryKey(variables.connectionId, variables.repository),
+				exact: true,
+			});
 			setTestState({
 				key: variables.testKey,
 				kind: "error",
@@ -181,7 +176,7 @@ export function SCMConnectionFields({
 		const connectionId =
 			provider === "github"
 				? GITHUB_DEFAULT_ID
-				: connections.find((connection) => connection.provider === provider)?.id ?? "";
+				: (connections.find((connection) => connection.provider === provider)?.id ?? "");
 		setTestState(null);
 		onChange({ provider, connectionId, repo: "" });
 	};
@@ -195,124 +190,130 @@ export function SCMConnectionFields({
 		setTestState(null);
 		onChange({ ...value, repo });
 	};
+	const busy = testMutation.isPending || editorBusy;
 
 	return (
 		<div className={compact ? "flex flex-col gap-3" : "flex flex-col gap-4"}>
-		<div className="grid gap-3 sm:grid-cols-2">
-			<Field label={t("projects.scm.provider")} htmlFor="scmProvider">
-				<Select value={value.provider} onValueChange={(next) => changeProvider(next as SCMProvider)}>
-					<SelectTrigger id="scmProvider" size="sm" className="w-full text-control">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="github">GitHub</SelectItem>
-						<SelectItem value="gitlab">GitLab</SelectItem>
-					</SelectContent>
-				</Select>
-			</Field>
-
-			<Field label={t("projects.scm.connection")} htmlFor="scmConnection">
-				<div className="flex min-w-0 gap-2">
-					<Select value={value.connectionId} onValueChange={changeConnection}>
-						<SelectTrigger id="scmConnection" size="sm" className="min-w-0 flex-1 text-control">
-							<SelectValue placeholder={t("projects.scm.selectConnection")} />
+			<div className="grid gap-3 sm:grid-cols-2">
+				<Field label={t("projects.scm.provider")} htmlFor="scmProvider">
+					<Select disabled={busy} value={value.provider} onValueChange={(next) => changeProvider(next as SCMProvider)}>
+						<SelectTrigger id="scmProvider" size="sm" className="w-full text-control">
+							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{value.provider === "github" && (
-								<SelectItem value={GITHUB_DEFAULT_ID}>{t("projects.scm.githubDefault")}</SelectItem>
-							)}
-							{providerConnections.map((connection) => (
-								<SelectItem key={connection.id} value={connection.id}>
-									{connection.displayName}
-								</SelectItem>
-							))}
+							<SelectItem value="github">GitHub</SelectItem>
+							<SelectItem value="gitlab">GitLab</SelectItem>
 						</SelectContent>
 					</Select>
-					<IconButton label={t("projects.scm.createConnectionAria")} onClick={() => setDialogMode("create")}>
-						<Plus className="size-icon-base" aria-hidden="true" />
-					</IconButton>
-					{selected && (
+				</Field>
+
+				<Field label={t("projects.scm.connection")} htmlFor="scmConnection">
+					<div className="flex min-w-0 gap-2">
+						<Select disabled={busy} value={value.connectionId} onValueChange={changeConnection}>
+							<SelectTrigger id="scmConnection" size="sm" className="min-w-0 flex-1 text-control">
+								<SelectValue placeholder={t("projects.scm.selectConnection")} />
+							</SelectTrigger>
+							<SelectContent>
+								{value.provider === "github" && (
+									<SelectItem value={GITHUB_DEFAULT_ID}>{t("projects.scm.githubDefault")}</SelectItem>
+								)}
+								{providerConnections.map((connection) => (
+									<SelectItem key={connection.id} value={connection.id}>
+										{connection.displayName}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 						<IconButton
-							label={t("projects.scm.editConnectionAria", { name: selected.displayName })}
-							onClick={() => setDialogMode("edit")}
+							disabled={busy}
+							label={t("projects.scm.createConnectionAria")}
+							onClick={() => setDialogMode("create")}
 						>
-							<Pencil className="size-icon-sm" aria-hidden="true" />
+							<Plus className="size-icon-base" aria-hidden="true" />
 						</IconButton>
-					)}
-				</div>
+						{selected && (
+							<IconButton
+								disabled={busy}
+								label={t("projects.scm.editConnectionAria", { name: selected.displayName })}
+								onClick={() => setDialogMode("edit")}
+							>
+								<Pencil className="size-icon-sm" aria-hidden="true" />
+							</IconButton>
+						)}
+					</div>
+				</Field>
+			</div>
+
+			<Field label={t("projects.scm.repository")} htmlFor="scmRepository">
+				<Input
+					id="scmRepository"
+					value={value.repo}
+					disabled={busy}
+					onChange={(event) => changeRepo(event.target.value)}
+					placeholder={effectiveRepo || (value.provider === "gitlab" ? "group/subgroup/project" : "owner/repository")}
+				/>
 			</Field>
-		</div>
 
-		<Field label={t("projects.scm.repository")} htmlFor="scmRepository">
-			<Input
-				id="scmRepository"
-				value={value.repo}
-				onChange={(event) => changeRepo(event.target.value)}
-				placeholder={effectiveRepo || (value.provider === "gitlab" ? "group/subgroup/project" : "owner/repository")}
-			/>
-		</Field>
-
-		{selected && (
-			<p className="min-w-0 truncate text-xs text-muted-foreground" title={selected.webBaseUrl}>
-				{selected.webBaseUrl}
-			</p>
-		)}
-		{connectionsQuery.isError && (
-			<p className="text-xs text-error">{t("projects.scm.loadFailed")}</p>
-		)}
-
-		<div className="flex flex-wrap items-center gap-2">
-			{isGitHubDefault ? (
-				<span className="text-xs text-muted-foreground">{t("projects.scm.builtInGitHub")}</span>
-			) : (
-				<>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						disabled={!selected || !effectiveRepo || testMutation.isPending}
-						onClick={() =>
-							testMutation.mutate({
-								provider: value.provider,
-								connectionId: value.connectionId,
-								repository: effectiveRepo,
-								testKey,
-							})
-						}
-					>
-						{testMutation.isPending ? t("projects.scm.testing") : t("projects.scm.test")}
-					</Button>
-					{testState?.key === testKey ? (
-						testState.kind === "success" ? (
-							<ConnectionTestSuccess result={testState.result} />
-						) : (
-							<TestFailure error={testState.error} />
-						)
-					) : selected ? (
-						<span className="text-xs text-muted-foreground">{t(STATUS_KEYS[selected.status])}</span>
-					) : (
-						<span className="text-xs text-muted-foreground">{t("projects.scm.selectOrCreate")}</span>
-					)}
-				</>
+			{selected && (
+				<p className="min-w-0 truncate text-xs text-muted-foreground" title={selected.webBaseUrl}>
+					{selected.webBaseUrl}
+				</p>
 			)}
-		</div>
+			{connectionsQuery.isError && <p className="text-xs text-error">{t("projects.scm.loadFailed")}</p>}
 
-		<ConnectionEditor
-			connection={dialogMode === "edit" ? selected : undefined}
-			mode={dialogMode}
-			onClose={() => setDialogMode(null)}
-			onSaved={(connection) => {
-				setTestState(null);
-				onChange({ ...value, provider: connection.provider, connectionId: connection.id });
-				setDialogMode(null);
-			}}
-			onDeleted={() => {
-				setTestState(null);
-				onChange({ ...value, connectionId: value.provider === "github" ? GITHUB_DEFAULT_ID : "" });
-				setDialogMode(null);
-			}}
-			provider={value.provider}
-		/>
+			<div className="flex flex-wrap items-center gap-2">
+				{isGitHubDefault ? (
+					<span className="text-xs text-muted-foreground">{t("projects.scm.builtInGitHub")}</span>
+				) : (
+					<>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={!selected || !effectiveRepo || busy}
+							onClick={() =>
+								testMutation.mutate({
+									provider: value.provider,
+									connectionId: value.connectionId,
+									repository: effectiveRepo,
+									testKey,
+								})
+							}
+						>
+							{testMutation.isPending ? t("projects.scm.testing") : t("projects.scm.test")}
+						</Button>
+						{testState?.key === testKey ? (
+							testState.kind === "success" ? (
+								<ConnectionTestSuccess result={testState.result} />
+							) : (
+								<TestFailure error={testState.error} />
+							)
+						) : selected ? (
+							<span className="text-xs text-muted-foreground">{t(STATUS_KEYS[selected.status])}</span>
+						) : (
+							<span className="text-xs text-muted-foreground">{t("projects.scm.selectOrCreate")}</span>
+						)}
+					</>
+				)}
+			</div>
+
+			<ConnectionEditor
+				connection={dialogMode === "edit" ? selected : undefined}
+				mode={dialogMode}
+				onBusyChange={setEditorBusy}
+				onClose={() => setDialogMode(null)}
+				onSaved={(connection) => {
+					setTestState(null);
+					onChange({ ...value, provider: connection.provider, connectionId: connection.id });
+					setDialogMode(null);
+				}}
+				onDeleted={() => {
+					setTestState(null);
+					onChange({ ...value, connectionId: value.provider === "github" ? GITHUB_DEFAULT_ID : "" });
+					setDialogMode(null);
+				}}
+				provider={value.provider}
+			/>
 		</div>
 	);
 }
@@ -348,6 +349,7 @@ function ConnectionTestSuccess({ result }: { result: SCMConnectionTestResult }) 
 function ConnectionEditor({
 	connection,
 	mode,
+	onBusyChange,
 	onClose,
 	onDeleted,
 	onSaved,
@@ -355,6 +357,7 @@ function ConnectionEditor({
 }: {
 	connection?: SCMConnection;
 	mode: "create" | "edit" | null;
+	onBusyChange: (busy: boolean) => void;
 	onClose: () => void;
 	onDeleted: () => void;
 	onSaved: (connection: SCMConnection) => void;
@@ -363,6 +366,7 @@ function ConnectionEditor({
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const tokenRef = useRef<HTMLInputElement>(null);
+	const generationRef = useRef(0);
 	const [displayName, setDisplayName] = useState("");
 	const [id, setID] = useState("");
 	const [idEdited, setIDEdited] = useState(false);
@@ -374,6 +378,7 @@ function ConnectionEditor({
 	const editing = mode === "edit";
 
 	useEffect(() => {
+		generationRef.current += 1;
 		if (!mode) return;
 		const web = connection?.webBaseUrl || defaultSCMWebBaseUrl(provider);
 		setDisplayName(connection?.displayName ?? "");
@@ -394,7 +399,7 @@ function ConnectionEditor({
 	};
 
 	const saveMutation = useMutation({
-		mutationFn: async ({ removeToken = false }: { removeToken?: boolean } = {}) => {
+		mutationFn: async ({ removeToken = false }: { generation: number; removeToken?: boolean }) => {
 			const tokenField = removeToken ? { token: "" } : token ? { token } : {};
 			const body = {
 				provider,
@@ -413,28 +418,32 @@ function ConnectionEditor({
 			if (!response.data?.connection) throw { localCode: "SAVE_RESULT_MISSING" } satisfies LocalSCMFailure;
 			return response.data.connection;
 		},
-		onSuccess: (next) => {
+		onSuccess: (next, variables) => {
 			updateCache(next);
-			onSaved(next);
+			clearSCMCapabilities(queryClient, next.id);
+			if (variables.generation === generationRef.current) onSaved(next);
 		},
-		onSettled: () => {
-			setToken("");
-			setShowToken(false);
+		onSettled: (_data, _error, variables) => {
+			if (variables.generation === generationRef.current) {
+				setToken("");
+				setShowToken(false);
+			}
 		},
 	});
 
 	const deleteMutation = useMutation({
-		mutationFn: async () => {
+		mutationFn: async ({ id: connectionId }: { generation: number; id: string }) => {
 			const { error } = await apiClient.DELETE("/api/v1/scm/connections/{id}", {
-				params: { path: { id: connection!.id } },
+				params: { path: { id: connectionId } },
 			});
 			if (error) throw error;
 		},
-		onSuccess: () => {
+		onSuccess: (_data, variables) => {
 			queryClient.setQueryData<SCMConnection[]>(scmConnectionsQueryKey, (current = []) =>
-				current.filter((item) => item.id !== connection?.id),
+				current.filter((item) => item.id !== variables.id),
 			);
-			onDeleted();
+			clearSCMCapabilities(queryClient, variables.id);
+			if (variables.generation === generationRef.current) onDeleted();
 		},
 	});
 
@@ -450,6 +459,10 @@ function ConnectionEditor({
 
 	const error = saveMutation.error ?? deleteMutation.error;
 	const busy = saveMutation.isPending || deleteMutation.isPending;
+	useEffect(() => {
+		onBusyChange(busy);
+		return () => onBusyChange(false);
+	}, [busy, onBusyChange]);
 
 	return (
 		<Dialog open={mode !== null} onOpenChange={(open) => !open && !busy && onClose()}>
@@ -463,7 +476,8 @@ function ConnectionEditor({
 						type="button"
 						className="absolute right-0 top-0 grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground"
 						aria-label={t("projects.scm.editor.close")}
-						onClick={onClose}
+						disabled={busy}
+						onClick={() => !busy && onClose()}
 					>
 						<X className="size-icon-base" aria-hidden="true" />
 					</button>
@@ -473,13 +487,14 @@ function ConnectionEditor({
 					className="flex flex-col gap-3"
 					onSubmit={(event) => {
 						event.preventDefault();
-						saveMutation.mutate({});
+						saveMutation.mutate({ generation: generationRef.current });
 					}}
 				>
 					<Field label={t("projects.scm.editor.name")} htmlFor="scmConnectionName">
 						<Input
 							id="scmConnectionName"
 							value={displayName}
+							disabled={busy}
 							onChange={(event) => changeName(event.target.value)}
 							autoFocus
 							required
@@ -493,7 +508,7 @@ function ConnectionEditor({
 								setIDEdited(true);
 								setID(event.target.value);
 							}}
-							disabled={editing}
+							disabled={editing || busy}
 							required
 						/>
 					</Field>
@@ -502,6 +517,7 @@ function ConnectionEditor({
 							id="scmWebBaseUrl"
 							type="url"
 							value={webBaseUrl}
+							disabled={busy}
 							onChange={(event) => changeWebBaseUrl(event.target.value)}
 							required
 						/>
@@ -511,6 +527,7 @@ function ConnectionEditor({
 							id="scmApiBaseUrl"
 							type="url"
 							value={apiBaseUrl}
+							disabled={busy}
 							onChange={(event) => {
 								setApiEdited(true);
 								setApiBaseUrl(event.target.value);
@@ -526,19 +543,17 @@ function ConnectionEditor({
 									id="scmAccessToken"
 									type={showToken ? "text" : "password"}
 									value={token}
+									disabled={busy}
 									onChange={(event) => setToken(event.target.value)}
-									placeholder={
-										connection?.credentialConfigured ? "********" : t("projects.scm.editor.pasteToken")
-									}
+									placeholder={connection?.credentialConfigured ? "********" : t("projects.scm.editor.pasteToken")}
 									className="pr-10"
 									autoComplete="off"
 								/>
 								<button
 									type="button"
 									className="absolute right-1 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground"
-									aria-label={
-										showToken ? t("projects.scm.editor.hideToken") : t("projects.scm.editor.showToken")
-									}
+									aria-label={showToken ? t("projects.scm.editor.hideToken") : t("projects.scm.editor.showToken")}
+									disabled={busy}
 									onClick={() => setShowToken((current) => !current)}
 								>
 									{showToken ? (
@@ -549,7 +564,13 @@ function ConnectionEditor({
 								</button>
 							</div>
 							{connection?.credentialConfigured && (
-								<Button type="button" variant="outline" size="sm" onClick={() => tokenRef.current?.focus()}>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={busy}
+									onClick={() => tokenRef.current?.focus()}
+								>
 									{t("projects.scm.editor.replace")}
 								</Button>
 							)}
@@ -560,7 +581,8 @@ function ConnectionEditor({
 								<button
 									type="button"
 									className="text-error hover:underline"
-									onClick={() => saveMutation.mutate({ removeToken: true })}
+									disabled={busy}
+									onClick={() => saveMutation.mutate({ generation: generationRef.current, removeToken: true })}
 								>
 									{t("projects.scm.editor.removeCredential")}
 								</button>
@@ -592,7 +614,7 @@ function ConnectionEditor({
 												}),
 											)
 										) {
-											deleteMutation.mutate();
+											deleteMutation.mutate({ generation: generationRef.current, id: connection!.id });
 										}
 									}}
 								>
@@ -626,12 +648,29 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
 	);
 }
 
-function IconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {
+function IconButton({
+	children,
+	disabled,
+	label,
+	onClick,
+}: {
+	children: React.ReactNode;
+	disabled?: boolean;
+	label: string;
+	onClick: () => void;
+}) {
 	return (
 		<TooltipProvider delayDuration={300}>
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<Button type="button" variant="outline" size="icon-sm" aria-label={label} onClick={onClick}>
+					<Button
+						type="button"
+						variant="outline"
+						size="icon-sm"
+						aria-label={label}
+						disabled={disabled}
+						onClick={onClick}
+					>
 						{children}
 					</Button>
 				</TooltipTrigger>

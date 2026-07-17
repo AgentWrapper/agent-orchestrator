@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n, initializeRendererI18n } from "../i18n";
+import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { PullRequestsPage } from "./PullRequestsPage";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
+	getMock: vi.fn(),
 	navigateMock: vi.fn(),
 	postMock: vi.fn(),
 	useWorkspaceQueryMock: vi.fn(),
@@ -18,7 +20,10 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 }));
 vi.mock("../lib/api-client", () => ({
-	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
+	apiClient: {
+		GET: (...args: unknown[]) => getMock(...args),
+		POST: (...args: unknown[]) => postMock(...args),
+	},
 	apiErrorMessage: (e: unknown, fallback = "error") => (e instanceof Error ? e.message : fallback),
 }));
 
@@ -38,6 +43,35 @@ const gitlabPr = (n: number, state: PRState): PullRequestFacts => ({
 	url: `https://gitlab.example.com/group/app/-/merge_requests/${n}`,
 });
 
+let sessionSummaries: SessionPRSummary[] = [];
+
+const summary = (n: number, state: PRState, provider: "github" | "gitlab" = "github"): SessionPRSummary => {
+	const url =
+		provider === "gitlab"
+			? `https://gitlab.example.com/group/app/-/merge_requests/${n}`
+			: `https://example.com/pr/${n}`;
+	return {
+		url,
+		htmlUrl: url,
+		number: n,
+		title: `PR ${n}`,
+		state,
+		provider,
+		repo: "group/app",
+		author: "alice",
+		sourceBranch: "feat/ns",
+		targetBranch: "main",
+		headSha: `head-${n}`,
+		additions: 0,
+		deletions: 0,
+		changedFiles: 0,
+		ci: { state: "passing", failingChecks: [] },
+		review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+		mergeability: { state: "mergeable", reasons: [], prUrl: url },
+		updatedAt: "2026-06-15T00:00:00Z",
+	};
+};
+
 const session = (id: string, prs: PullRequestFacts[]): WorkspaceSession => ({
 	id,
 	workspaceId: "proj-1",
@@ -56,20 +90,56 @@ function setWorkspaces(sessions: WorkspaceSession[]) {
 	useWorkspaceQueryMock.mockReturnValue({ data, isError: false, isLoading: false });
 }
 
-function renderPage() {
+function renderPage(queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
 	render(
-		<QueryClientProvider client={new QueryClient()}>
+		<QueryClientProvider client={queryClient}>
 			<PullRequestsPage />
 		</QueryClientProvider>,
 	);
+	return queryClient;
+}
+
+function mockProject(
+	repo = "https://github.com/acme/my-app.git",
+	scm?: { provider: "gitlab"; connectionId: string; repo: string },
+) {
+	getMock.mockImplementation((path: string) => {
+		if (path === "/api/v1/sessions/{sessionId}/pr") {
+			return Promise.resolve({ data: { prs: sessionSummaries }, error: undefined });
+		}
+		if (path === "/api/v1/scm/connections") {
+			return Promise.resolve({ data: { connections: [] }, error: undefined });
+		}
+		return Promise.resolve({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "my-app",
+					path: "/p",
+					repo,
+					defaultBranch: "main",
+					kind: "single_repo",
+					config: scm ? { scm } : {},
+				},
+			},
+			error: undefined,
+		});
+	});
 }
 
 beforeEach(() => {
 	navigateMock.mockReset();
+	sessionSummaries = [];
+	getMock.mockReset();
+	mockProject();
 	postMock.mockReset().mockResolvedValue({ data: { method: "squash" }, error: undefined });
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(async () => {
+	vi.restoreAllMocks();
+	await initializeRendererI18n("en");
+});
 
 describe("PullRequestsPage", () => {
 	it("renders one row per PR across sessions, actionable PRs first", () => {
@@ -82,15 +152,49 @@ describe("PullRequestsPage", () => {
 	});
 
 	it("merges the PR by its own number, not the session's", async () => {
+		sessionSummaries = [summary(41, "open"), summary(42, "draft")];
 		setWorkspaces([session("auth", [pr(41, "open"), pr(42, "draft")])]);
 		renderPage();
 		const user = userEvent.setup();
 
 		const childRow = screen.getByText("#42").closest("tr")!;
-		await user.click(within(childRow).getByRole("button", { name: "Merge" }));
+		const merge = within(childRow).getByRole("button", { name: "Merge" });
+		await waitFor(() => expect(merge).toBeEnabled());
+		await user.click(merge);
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", { params: { path: { id: "42" } } });
+		expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
+			params: { path: { id: "42" } },
+			body: { sessionId: "auth", prUrl: "https://example.com/pr/42", expectedHeadSha: "head-42" },
+		});
+	});
+
+	it("resolves comments with the owning session and PR URL", async () => {
+		setWorkspaces([session("auth", [pr(41, "open")])]);
+		renderPage();
+		const user = userEvent.setup();
+		const resolve = screen.getByRole("button", { name: "Resolve" });
+		await waitFor(() => expect(resolve).toBeEnabled());
+
+		await user.click(resolve);
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/resolve-comments", {
+			params: { path: { id: "41" } },
+			body: { sessionId: "auth", prUrl: "https://example.com/pr/41" },
+		});
+	});
+
+	it("keeps merge disabled until the current PR head is available without blocking resolve", async () => {
+		setWorkspaces([session("auth", [pr(41, "open")])]);
+		renderPage();
+
+		await waitFor(() => expect(screen.getByRole("button", { name: "Resolve" })).toBeEnabled());
+		expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
+		expect(screen.getByText("Merge is unavailable until the latest PR details load.")).toBeInTheDocument();
+
+		await i18n.changeLanguage("zh-CN");
+		expect(await screen.findByText("加载最新 PR 详情后才能合并。")).toBeInTheDocument();
 	});
 
 	it("shows an empty state when no session has a PR", () => {
@@ -114,15 +218,80 @@ describe("PullRequestsPage", () => {
 
 	it("retranslates an existing semantic merge error without remounting", async () => {
 		await initializeRendererI18n("en");
+		sessionSummaries = [summary(41, "open")];
 		postMock.mockResolvedValueOnce({ data: undefined, error: {} });
 		setWorkspaces([session("auth", [pr(41, "open")])]);
 		renderPage();
 		const user = userEvent.setup();
 
-		await user.click(screen.getByRole("button", { name: "Merge" }));
+		const merge = screen.getByRole("button", { name: "Merge" });
+		await waitFor(() => expect(merge).toBeEnabled());
+		await user.click(merge);
 		expect(await screen.findByText("merge failed")).toBeInTheDocument();
 
 		await i18n.changeLanguage("zh-CN");
 		expect(await screen.findByText("合并失败")).toBeInTheDocument();
+	});
+
+	it("disables write actions for an untested custom connection", async () => {
+		sessionSummaries = [summary(41, "open", "gitlab")];
+		mockProject("git@gitlab.example.com:group/app.git", {
+			provider: "gitlab",
+			connectionId: "gitlab-work",
+			repo: "group/app",
+		});
+		setWorkspaces([session("auth", [gitlabPr(41, "open")])]);
+		const queryClient = renderPage();
+
+		expect(await screen.findByText("Write access has not been verified for this repository.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Resolve" })).toBeDisabled();
+
+		await i18n.changeLanguage("zh-CN");
+		expect(await screen.findByText("尚未验证该仓库的写入权限。")).toBeInTheDocument();
+
+		act(() => {
+			queryClient.setQueryData(["scm-capabilities", "gitlab-work", "group/app"], {
+				read: true,
+				write: true,
+			});
+		});
+		await waitFor(() => expect(screen.getByRole("button", { name: "合并" })).toBeEnabled());
+		expect(screen.queryByText("尚未验证该仓库的写入权限。")).not.toBeInTheDocument();
+	});
+
+	it("disables write actions when the tested repository is read-only", async () => {
+		mockProject("git@gitlab.example.com:group/app.git", {
+			provider: "gitlab",
+			connectionId: "gitlab-work",
+			repo: "group/app",
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(["scm-capabilities", "gitlab-work", "group/app"], { read: true, write: false });
+		setWorkspaces([session("auth", [gitlabPr(41, "open")])]);
+		renderPage(queryClient);
+
+		expect(
+			await screen.findByText("This source control connection is read-only for this repository."),
+		).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Resolve" })).toBeDisabled();
+	});
+
+	it("enables write actions when the custom connection was tested with write access", async () => {
+		sessionSummaries = [summary(41, "open", "gitlab")];
+		mockProject("git@gitlab.example.com:group/app.git", {
+			provider: "gitlab",
+			connectionId: "gitlab-work",
+			repo: "group/app",
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(["scm-capabilities", "gitlab-work", "group/app"], { read: true, write: true });
+		setWorkspaces([session("auth", [gitlabPr(41, "open")])]);
+		renderPage(queryClient);
+
+		await waitFor(() => expect(screen.getByRole("button", { name: "Merge" })).toBeEnabled());
+		expect(screen.getByRole("button", { name: "Resolve" })).toBeEnabled();
+		expect(screen.queryByText(/write access|read-only/i)).not.toBeInTheDocument();
 	});
 });

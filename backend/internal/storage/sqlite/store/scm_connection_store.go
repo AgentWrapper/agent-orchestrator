@@ -65,6 +65,18 @@ func (s *Store) UpdateSCMConnection(ctx context.Context, connection domain.SCMCo
 	if err != nil {
 		return false, fmt.Errorf("update SCM connection %s: %w", connection.ID, err)
 	}
+	if rows == 0 {
+		current, getErr := s.qw.GetSCMConnection(ctx, connection.ID)
+		if errors.Is(getErr, sql.ErrNoRows) {
+			return false, nil
+		}
+		if getErr != nil {
+			return false, fmt.Errorf("classify SCM connection update %s: %w", connection.ID, getErr)
+		}
+		if domain.SCMProvider(current.Provider) != connection.Provider {
+			return false, ports.ErrSCMConnectionReferenced
+		}
+	}
 	return rows > 0, nil
 }
 

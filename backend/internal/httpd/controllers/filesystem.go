@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // FilesystemController owns the /filesystem routes.
@@ -107,8 +108,17 @@ func (c *FilesystemController) listDirectories(w http.ResponseWriter, r *http.Re
 	envelope.WriteJSON(w, http.StatusOK, ListDirectoriesResponse{
 		Path:        path,
 		Parent:      parent,
+		Origin:      directoryGitOrigin(path),
 		Directories: directories,
 	})
+}
+
+func directoryGitOrigin(path string) string {
+	out, err := aoprocess.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func writeFilesystemError(w http.ResponseWriter, r *http.Request, err error) {

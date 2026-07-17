@@ -15,15 +15,23 @@ ORDER BY id;
 
 -- name: UpdateSCMConnection :execrows
 UPDATE scm_connections SET
-    provider = ?,
-    display_name = ?,
-    web_base_url = ?,
-    api_base_url = ?,
-    credential_ref = ?,
-    status = ?,
-    username = ?,
-    updated_at = ?
-WHERE id = ?;
+    provider = sqlc.arg(provider),
+    display_name = sqlc.arg(display_name),
+    web_base_url = sqlc.arg(web_base_url),
+    api_base_url = sqlc.arg(api_base_url),
+    credential_ref = sqlc.arg(credential_ref),
+    status = sqlc.arg(status),
+    username = sqlc.arg(username),
+    updated_at = sqlc.arg(updated_at)
+WHERE scm_connections.id = sqlc.arg(id)
+  AND (
+      scm_connections.provider = sqlc.arg(provider)
+      OR NOT EXISTS (
+          SELECT 1
+          FROM projects
+          WHERE json_extract(config, '$.scm.connectionId') = scm_connections.id
+      )
+  );
 
 -- name: UpdateSCMConnectionValidation :execrows
 UPDATE scm_connections SET

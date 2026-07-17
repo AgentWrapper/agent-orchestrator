@@ -20,6 +20,7 @@ export class RemoteForwarderStartError extends Error {
 const unavailableCode = "REMOTE_DAEMON_UNAVAILABLE";
 const unavailableBody = JSON.stringify({ error: "unavailable", code: unavailableCode, message: unavailableCode });
 const connectTimeoutMs = 5_000;
+const lanConnectionCookie = "ao_conn";
 const hopByHopHeaders = new Set([
 	"connection",
 	"keep-alive",
@@ -30,6 +31,30 @@ const hopByHopHeaders = new Set([
 	"transfer-encoding",
 	"upgrade",
 ]);
+
+function cookieName(value: string): string {
+	const separator = value.indexOf("=");
+	return value
+		.slice(0, separator === -1 ? value.length : separator)
+		.trim()
+		.toLowerCase();
+}
+
+function requestCookieHeader(value: string | string[]): string | undefined {
+	const cookies = (Array.isArray(value) ? value.join(";") : value)
+		.split(";")
+		.map((cookie) => cookie.trim())
+		.filter((cookie) => cookie && cookieName(cookie) !== lanConnectionCookie);
+	return cookies.length ? cookies.join("; ") : undefined;
+}
+
+function responseSetCookieHeader(value: string | string[]): string | string[] | undefined {
+	const cookies = (Array.isArray(value) ? value : [value]).filter(
+		(cookie) => cookieName(cookie) !== lanConnectionCookie,
+	);
+	if (!cookies.length) return undefined;
+	return Array.isArray(value) ? cookies : cookies[0];
+}
 
 function upstreamHeaders(
 	headers: http.IncomingHttpHeaders,
@@ -46,6 +71,11 @@ function upstreamHeaders(
 	for (const [name, value] of Object.entries(headers)) {
 		const lower = name.toLowerCase();
 		if (value === undefined || hopByHopHeaders.has(lower) || connectionTokens.has(lower)) continue;
+		if (lower === "cookie") {
+			const cookie = requestCookieHeader(value);
+			if (cookie) forwarded[lower] = cookie;
+			continue;
+		}
 		forwarded[lower] = value;
 	}
 	if (preserveUpgrade && headers.upgrade) {
@@ -68,6 +98,11 @@ function responseHeaders(headers: http.IncomingHttpHeaders): http.OutgoingHttpHe
 	for (const [name, value] of Object.entries(headers)) {
 		const lower = name.toLowerCase();
 		if (value === undefined || hopByHopHeaders.has(lower) || connectionTokens.has(lower)) continue;
+		if (lower === "set-cookie") {
+			const setCookie = responseSetCookieHeader(value);
+			if (setCookie) forwarded[lower] = setCookie;
+			continue;
+		}
 		forwarded[lower] = value;
 	}
 	return forwarded;
@@ -90,6 +125,12 @@ function rawResponseHead(response: http.IncomingMessage): string {
 	const status = `HTTP/${response.httpVersion} ${response.statusCode ?? 101} ${response.statusMessage ?? "Switching Protocols"}`;
 	const headers: string[] = [];
 	for (let i = 0; i < response.rawHeaders.length; i += 2) {
+		if (
+			response.rawHeaders[i].toLowerCase() === "set-cookie" &&
+			cookieName(response.rawHeaders[i + 1]) === lanConnectionCookie
+		) {
+			continue;
+		}
 		headers.push(`${response.rawHeaders[i]}: ${response.rawHeaders[i + 1]}`);
 	}
 	return `${status}\r\n${headers.join("\r\n")}\r\n\r\n`;

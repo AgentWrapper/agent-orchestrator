@@ -262,16 +262,19 @@ describe("browser annotation IPC", () => {
 		const { invoke, webContents } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true, locale: "zh-CN" });
 
-		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", {
+			enabled: true,
+			locale: "zh-CN",
+		});
 	});
 
 	it("ignores annotation mode changes for views owned by a different renderer", async () => {
 		const { invoke, webContents } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		await invoke("browser:annotation:setMode", { viewId: "2:sess-1", enabled: true });
+		await invoke("browser:annotation:setMode", { viewId: "2:sess-1", enabled: true, locale: "zh-CN" });
 
 		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
 	});

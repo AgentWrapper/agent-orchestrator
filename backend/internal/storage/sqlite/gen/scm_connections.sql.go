@@ -151,15 +151,23 @@ func (q *Queries) ListSCMConnections(ctx context.Context) ([]SCMConnection, erro
 
 const updateSCMConnection = `-- name: UpdateSCMConnection :execrows
 UPDATE scm_connections SET
-    provider = ?,
-    display_name = ?,
-    web_base_url = ?,
-    api_base_url = ?,
-    credential_ref = ?,
-    status = ?,
-    username = ?,
-    updated_at = ?
-WHERE id = ?
+    provider = ?1,
+    display_name = ?2,
+    web_base_url = ?3,
+    api_base_url = ?4,
+    credential_ref = ?5,
+    status = ?6,
+    username = ?7,
+    updated_at = ?8
+WHERE scm_connections.id = ?9
+  AND (
+      scm_connections.provider = ?1
+      OR NOT EXISTS (
+          SELECT 1
+          FROM projects
+          WHERE json_extract(config, '$.scm.connectionId') = scm_connections.id
+      )
+  )
 `
 
 type UpdateSCMConnectionParams struct {

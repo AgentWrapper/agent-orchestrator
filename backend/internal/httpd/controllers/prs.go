@@ -2,8 +2,8 @@ package controllers
 
 import (
 	"errors"
-	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -29,7 +29,18 @@ func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prID := chi.URLParam(r, "id")
-	res, err := c.Svc.Merge(r.Context(), prID)
+	var in MergePRRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if in.SessionID == "" || strings.TrimSpace(in.PRURL) == "" || strings.TrimSpace(in.ExpectedHeadSHA) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_ACTION", "Session, PR URL, and expected head SHA are required", nil)
+		return
+	}
+	res, err := c.Svc.Merge(r.Context(), prID, prsvc.MergeInput{
+		SessionID: in.SessionID, PRURL: in.PRURL, ExpectedHeadSHA: in.ExpectedHeadSHA,
+	})
 	if err != nil {
 		writePRError(w, r, err)
 		return
@@ -44,14 +55,36 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 	}
 	prID := chi.URLParam(r, "id")
 
-	// Body is optional: omitting it resolves all unresolved threads.
 	var in ResolveCommentsRequest
-	if err := decodeJSON(r, &in); err != nil && !isEmptyBody(err) {
+	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
+	if in.SessionID == "" || strings.TrimSpace(in.PRURL) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_ACTION", "Session and PR URL are required", nil)
+		return
+	}
+	seenReplies := make(map[string]struct{}, len(in.Replies))
+	for _, reply := range in.Replies {
+		threadID := strings.TrimSpace(reply.ThreadID)
+		if threadID == "" || strings.TrimSpace(reply.Body) == "" {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_ACTION", "Reply thread and body are required", nil)
+			return
+		}
+		if _, duplicate := seenReplies[threadID]; duplicate {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_ACTION", "Each review thread may be replied to once", nil)
+			return
+		}
+		seenReplies[threadID] = struct{}{}
+	}
 
-	res, err := c.Svc.ResolveComments(r.Context(), prID, in.CommentIDs)
+	replies := make([]prsvc.ReviewThreadReply, 0, len(in.Replies))
+	for _, reply := range in.Replies {
+		replies = append(replies, prsvc.ReviewThreadReply{ThreadID: reply.ThreadID, Body: reply.Body})
+	}
+	res, err := c.Svc.ResolveComments(r.Context(), prID, prsvc.ResolveCommentsInput{
+		SessionID: in.SessionID, PRURL: in.PRURL, CommentIDs: in.CommentIDs, Replies: replies,
+	})
 	if err != nil {
 		writePRError(w, r, err)
 		return
@@ -63,21 +96,19 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 // falling back to 500 for unexpected failures.
 func writePRError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, prsvc.ErrInvalidPRAction):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_ACTION", "Invalid PR action", nil)
 	case errors.Is(err, prsvc.ErrPRNotFound):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PR_NOT_FOUND", "Unknown PR", nil)
 	case errors.Is(err, prsvc.ErrPRNotMergeable):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "PR_NOT_MERGEABLE", "PR is not mergeable", nil)
 	case errors.Is(err, prsvc.ErrPRPreconditions):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PRECONDITIONS_UNMET", "PR merge preconditions are not met", nil)
+	case errors.Is(err, prsvc.ErrPRForbidden):
+		envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "PR_ACTION_FORBIDDEN", "SCM credential cannot perform this action", nil)
 	case errors.Is(err, prsvc.ErrNothingToResolve):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOTHING_TO_RESOLVE", "No unresolved review threads to resolve", nil)
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PR_OPERATION_FAILED", "PR operation failed", nil)
 	}
-}
-
-// isEmptyBody reports whether err signals an absent or empty request body.
-// io.ErrUnexpectedEOF means a truncated/malformed body — bad request, not absent.
-func isEmptyBody(err error) bool {
-	return errors.Is(err, io.EOF)
 }

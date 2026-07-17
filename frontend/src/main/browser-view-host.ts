@@ -351,7 +351,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = entries.get(input.viewId);
 		if (!entry) return;
 		entry.annotationEnabled = input.enabled;
-		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+		entry.view.webContents.send("browser:annotation:setMode", {
+			enabled: input.enabled,
+			locale: input.locale,
+		});
 	};
 
 	const forwardAnnotationSubmit = (

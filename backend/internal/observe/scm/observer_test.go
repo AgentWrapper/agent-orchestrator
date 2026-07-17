@@ -258,10 +258,14 @@ type scopedFakeProvider struct {
 func (p *scopedFakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	remote = strings.TrimSpace(strings.TrimSuffix(remote, ".git"))
 	prefix := "https://" + p.host + "/"
-	if !strings.HasPrefix(remote, prefix) {
-		return ports.SCMRepo{}, false
+	repo := remote
+	if strings.Contains(remote, "://") {
+		if !strings.HasPrefix(remote, prefix) {
+			return ports.SCMRepo{}, false
+		}
+		repo = strings.TrimPrefix(remote, prefix)
 	}
-	repo := strings.Trim(strings.TrimPrefix(remote, prefix), "/")
+	repo = strings.Trim(repo, "/")
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok || owner == "" || name == "" {
 		return ports.SCMRepo{}, false
@@ -1083,6 +1087,67 @@ func TestPoll_DiscoversCrossForkPRFromUpstreamRemote(t *testing.T) {
 	}
 }
 
+func TestDiscoverSubjectsPrefersProjectSCMRepoOverOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		origin   string
+		repo     string
+		wantRepo string
+		wantHead string
+	}{
+		{name: "explicit repo works without origin", repo: "configured/repo", wantRepo: "configured/repo", wantHead: "configured/repo"},
+		{name: "explicit repo overrides fork origin", origin: "https://github.com/fork/repo.git", repo: "upstream/repo", wantRepo: "upstream/repo", wantHead: "fork/repo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testStoreWithSession()
+			store.projects["p"] = domain.ProjectRecord{
+				ID:            "p",
+				RepoOriginURL: tc.origin,
+				Config:        projectConfig(domain.SCMProviderGitHub, "github-default", tc.repo),
+			}
+			observer := newTestObserver(store, &fakeProvider{}, nil, time.Unix(1, 0).UTC())
+			_, repos, err := observer.discoverSubjects(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(repos) != 1 || repos[0].repo.Repo != tc.wantRepo || repos[0].headRepo.Repo != tc.wantHead {
+				t.Fatalf("session repos = %#v, want repo=%q head=%q", repos, tc.wantRepo, tc.wantHead)
+			}
+		})
+	}
+}
+
+func TestPoll_UsesConfiguredBaseRepoWithForkOrigin(t *testing.T) {
+	store := testStoreWithSession()
+	store.sessions[0].Metadata.Branch = "ao/p-1/root"
+	store.projects["p"] = domain.ProjectRecord{
+		ID:            "p",
+		RepoOriginURL: "https://github.com/fork/repo.git",
+		Config:        projectConfig(domain.SCMProviderGitHub, "github-default", "upstream/repo"),
+	}
+	upstream := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "upstream", Name: "repo", Repo: "upstream/repo"}
+	observation := testObs(12)
+	observation.Repo = upstream.Repo
+	observation.PR.URL = "https://github.com/upstream/repo/pull/12"
+	observation.PR.HTMLURL = observation.PR.URL
+	observation.PR.SourceBranch = "ao/p-1/fix"
+	observation.PR.HeadRepo = "fork/repo"
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(upstream, 0): {ETag: "upstream-v1"}},
+		openPRs: map[string][]ports.SCMPRObservation{prKey(upstream, 0): {{
+			URL: observation.PR.URL, Number: 12, SourceBranch: "ao/p-1/fix", HeadRepo: "fork/repo", TargetBranch: "main", HeadSHA: "sha12",
+		}}},
+		observations: map[string]ports.SCMObservation{prKey(upstream, 12): observation},
+	}
+	observer := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 || store.writes[0].pr.Repo != "upstream/repo" {
+		t.Fatalf("writes = %#v, want configured upstream repo", store.writes)
+	}
+}
+
 // A PR on a scanned upstream remote whose head lives in some third-party fork
 // (not this project's origin) must never be attributed, even though its branch
 // name matches a session. Scanning extra remotes stays safe.
@@ -1283,6 +1348,52 @@ func TestPoll_ReviewPollingRespectsInterval(t *testing.T) {
 	}
 	if len(store.writes) == 0 || store.writes[0].reviewMode != ports.ReviewWriteReplace {
 		t.Fatalf("review refresh not persisted with replace mode: %#v", store.writes)
+	}
+}
+
+func TestPoll_GitLabReviewPollingRefreshesUnchangedDecisionOnInterval(t *testing.T) {
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.internal", Owner: "group", Name: "repo", Repo: "group/repo"}
+	store := testStoreWithSession()
+	store.projects["p"] = domain.ProjectRecord{
+		ID:            "p",
+		RepoOriginURL: "https://gitlab.internal/group/repo.git",
+		Config:        projectConfig(domain.SCMProviderGitLab, "gitlab-main", ""),
+	}
+	local := knownPR(1)
+	local.URL = "https://gitlab.internal/group/repo/-/merge_requests/1"
+	local.Provider = ""
+	local.Host = "gitlab.internal"
+	local.Repo = "group/repo"
+	local.Review = domain.ReviewApproved
+	local.ReviewHash = "old-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+	base := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(repo, 0): {ETag: "repo", NotModified: true}},
+		reviews: map[string]ports.SCMReviewObservation{prKey(repo, 1): {
+			Decision: string(domain.ReviewApproved),
+			Threads:  []ports.SCMReviewThreadObservation{{ID: "new", Resolved: false, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Body: "new feedback"}}}},
+		}},
+	}
+	provider := &scopedFakeProvider{fakeProvider: base, provider: "gitlab", host: "gitlab.internal"}
+	now := time.Unix(300, 0).UTC()
+	observer := New(provider, store, &fakeLifecycle{}, Config{Clock: func() time.Time { return now }, ReviewInterval: 2 * time.Minute, Logger: quietSlog()})
+	observer.Cache.RepoPRListETag[prKey(repo, 0)] = "repo"
+	observer.Cache.LastReviewPollAt[prKey(repo, 1)] = time.Unix(250, 0).UTC()
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if base.reviewCalls != 0 {
+		t.Fatalf("review fetched before interval: %d", base.reviewCalls)
+	}
+	observer.Cache.LastReviewPollAt[prKey(repo, 1)] = time.Unix(0, 0).UTC()
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if base.reviewCalls != 1 {
+		t.Fatalf("unchanged GitLab decision did not refresh discussions: %d", base.reviewCalls)
+	}
+	if len(store.writes) == 0 || store.writes[0].reviewMode != ports.ReviewWriteReplace || len(store.writes[0].comments) != 1 {
+		t.Fatalf("GitLab discussion refresh was not persisted: %#v", store.writes)
 	}
 }
 

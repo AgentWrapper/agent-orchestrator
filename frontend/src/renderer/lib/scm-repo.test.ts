@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveGitLabApiBaseUrl, deriveProviderRepo } from "./scm-repo";
+import { deriveGitLabApiBaseUrl, deriveProviderRepo, deriveRepositoryHref } from "./scm-repo";
 
 describe("SCM repository helpers", () => {
 	it("preserves nested GitLab groups while keeping GitHub owner/repo semantics", () => {
@@ -15,5 +15,33 @@ describe("SCM repository helpers", () => {
 			"https://gitlab.example.com/gitlab/api/v4",
 		);
 		expect(deriveGitLabApiBaseUrl("not a url")).toBe("");
+	});
+
+	it("removes a self-hosted GitLab base path from HTTPS and SCP repository coordinates", () => {
+		const webBaseUrl = "https://code.example.com/gitlab";
+		expect(deriveProviderRepo("https://code.example.com/gitlab/group/subgroup/project.git", "gitlab", webBaseUrl)).toBe(
+			"group/subgroup/project",
+		);
+		expect(deriveProviderRepo("git@code.example.com:gitlab/group/subgroup/project.git", "gitlab", webBaseUrl)).toBe(
+			"group/subgroup/project",
+		);
+	});
+
+	it("keeps a self-hosted GitLab base path in HTTPS and SCP repository links", () => {
+		const webBaseUrl = "https://code.example.com/gitlab";
+		expect(
+			deriveRepositoryHref(
+				"https://code.example.com/gitlab/group/subgroup/project.git",
+				"group/subgroup/project",
+				webBaseUrl,
+			),
+		).toBe("https://code.example.com/gitlab/group/subgroup/project");
+		expect(
+			deriveRepositoryHref(
+				"git@code.example.com:gitlab/group/subgroup/project.git",
+				"group/subgroup/project",
+				webBaseUrl,
+			),
+		).toBe("https://code.example.com/gitlab/group/subgroup/project");
 	});
 });

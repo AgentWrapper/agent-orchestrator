@@ -40,6 +40,7 @@ type CreateProjectAgentSheetProps = {
 	onOpenChange: (open: boolean) => void;
 	onSubmit: (selection: CreateProjectAgentSelection) => Promise<void>;
 	open: boolean;
+	origin?: string;
 	path: string | null;
 	repositorySetupNeeded?: boolean;
 };
@@ -93,6 +94,7 @@ export function CreateProjectAgentSheet({
 	onOpenChange,
 	onSubmit,
 	open,
+	origin,
 	path,
 	repositorySetupNeeded = false,
 }: CreateProjectAgentSheetProps) {
@@ -112,9 +114,7 @@ export function CreateProjectAgentSheet({
 	const supportedAgents = agents?.supported ?? [];
 	const isLoadingAgents = agents === undefined && agentsQuery.isFetching;
 	const agentsError = agentsQuery.isError ? t("projects.agents.loadFailed") : null;
-	const displayError = refreshAgentsMutation.isError
-		? t("projects.agents.refreshFailed")
-		: agentsError;
+	const displayError = refreshAgentsMutation.isError ? t("projects.agents.refreshFailed") : agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [coordinatorAutoWake, setCoordinatorAutoWake] = useState(false);
@@ -124,12 +124,7 @@ export function CreateProjectAgentSheet({
 	const [scmValidated, setSCMValidated] = useState(true);
 	const intakeIncomplete = intakeNeedsRule(intake);
 	const canSubmit =
-		workerAgent !== "" &&
-		orchestratorAgent !== "" &&
-		!intakeIncomplete &&
-		scmValidated &&
-		!isBusy &&
-		!isLoadingAgents;
+		workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && scmValidated && !isBusy && !isLoadingAgents;
 	const sheetError = error ? projectSheetError(error, errorCode, t) : null;
 
 	useEffect(() => {
@@ -249,11 +244,10 @@ export function CreateProjectAgentSheet({
 						)}
 
 						<div className="border-t border-border pt-4">
-							<p className="mb-3 text-xs font-medium text-muted-foreground">
-								{t("projects.agents.sourceControl")}
-							</p>
+							<p className="mb-3 text-xs font-medium text-muted-foreground">{t("projects.agents.sourceControl")}</p>
 							<SCMConnectionFields
 								compact
+								origin={origin}
 								value={scm}
 								onValidationChange={setSCMValidated}
 								onChange={(next) => {

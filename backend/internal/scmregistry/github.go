@@ -52,7 +52,7 @@ func (f *githubFactory) Build(_ context.Context, config FactoryConfig) (Provider
 	if err != nil {
 		return ProviderBundle{}, err
 	}
-	return ProviderBundle{SCM: scmProvider, Tracker: tracker, ReviewPublisher: scmProvider}, nil
+	return ProviderBundle{SCM: scmProvider, Tracker: tracker, Writer: scmProvider, ReviewPublisher: scmProvider}, nil
 }
 
 func (f *githubFactory) Test(ctx context.Context, config scmconnection.ConnectionTestConfig, token []byte) (scmconnection.TestResult, error) {

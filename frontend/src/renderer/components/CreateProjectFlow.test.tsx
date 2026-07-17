@@ -182,6 +182,31 @@ describe("CreateProjectFlow stable error control flow", () => {
 		expect(screen.getByText("/repo/project")).toBeInTheDocument();
 	});
 
+	it("passes the selected local repository origin to the project agent sheet", async () => {
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/project",
+			repos: [
+				{
+					name: "project",
+					path: "/repo/project",
+					relativePath: ".",
+					branch: "main",
+					remote: "git@github.com:acme/project.git",
+					hasRemote: true,
+					status: "ok",
+				},
+			],
+		});
+		renderFlow({
+			onCreateProject: vi.fn().mockResolvedValue(undefined),
+			onInitializeProject: vi.fn().mockResolvedValue(undefined),
+		});
+
+		await userEvent.click(screen.getByRole("button", { name: "New project" }));
+
+		expect(await screen.findByLabelText("Repository")).toHaveAttribute("placeholder", "acme/project");
+	});
+
 	it.each([
 		["NOT_A_GIT_REPO", "该目录不是 Git 仓库"],
 		["PROJECT_UNBORN", "该仓库还没有提交"],

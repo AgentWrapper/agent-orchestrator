@@ -322,6 +322,9 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Connec
 	ok, err := s.store.UpdateSCMConnection(ctx, replacement)
 	if err != nil || !ok {
 		primaryErr := error(apierr.Internal("SCM_CONNECTION_UPDATE_FAILED", "Failed to update SCM connection"))
+		if errors.Is(err, ports.ErrSCMConnectionReferenced) {
+			primaryErr = apierr.Conflict("SCM_CONNECTION_REFERENCED", "SCM connection provider cannot change while referenced by a project", nil)
+		}
 		var cleanupErr error
 		if rotated && configured {
 			cleanupErr = s.cleanupCredential(ctx, replacement.CredentialRef)
@@ -390,6 +393,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return primaryErr
 	}
 	defer zero(secret)
+	if !configured {
+		return nil
+	}
 	if err := s.credentials.Delete(cleanupCtx, row.CredentialRef); err != nil {
 		primaryErr := error(apierr.Internal("SCM_CONNECTION_DELETE_FAILED", "Failed to delete SCM connection"))
 		metadataErr := s.store.CreateSCMConnection(cleanupCtx, row)

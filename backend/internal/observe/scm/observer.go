@@ -485,7 +485,7 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 		return nil, nil, err
 	}
 	projects := map[domain.ProjectID]domain.ProjectRecord{}
-	originRepos := map[domain.ProjectID]ports.SCMRepo{}
+	headRepos := map[domain.ProjectID]ports.SCMRepo{}
 	scanRepos := map[domain.ProjectID][]ports.SCMRepo{}
 	out := map[string]*subject{}
 	var sessionRepos []sessionRepo
@@ -516,15 +516,24 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 			}
 			projects[sess.ProjectID] = p
 			proj = p
-			if origin, ok := o.provider.ParseRepository(p.RepoOriginURL); ok {
-				originRepos[sess.ProjectID] = origin
-				scanRepos[sess.ProjectID] = o.resolveScanRepos(p, origin)
+			origin, originOK := o.provider.ParseRepository(p.RepoOriginURL)
+			primary, primaryOK := origin, originOK
+			if configured := strings.TrimSpace(p.Config.SCM.Repo); configured != "" {
+				primary, primaryOK = o.provider.ParseRepository(configured)
+			}
+			if primaryOK {
+				head := primary
+				if originOK {
+					head = origin
+				}
+				headRepos[sess.ProjectID] = head
+				scanRepos[sess.ProjectID] = o.resolveScanRepos(p, primary)
 			}
 		}
 		repos := make([]ports.SCMRepo, 0, len(scanRepos[sess.ProjectID]))
-		if origin, ok := originRepos[sess.ProjectID]; ok {
+		if head, ok := headRepos[sess.ProjectID]; ok {
 			for _, repo := range scanRepos[sess.ProjectID] {
-				sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: origin, branch: branch})
+				sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, headRepo: head, branch: branch})
 				repos = append(repos, repo)
 			}
 		}
@@ -977,7 +986,7 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		if hasObs && obs.Review.Decision != "" {
 			decision = obs.Review.Decision
 		}
-		if !o.needsReviewRefresh(pkey, s.known, decision, hasObs, now) {
+		if !o.needsReviewRefresh(pkey, s.repo.Provider, s.known, decision, hasObs, now) {
 			continue
 		}
 		review, err := o.provider.FetchReviewThreads(ctx, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
@@ -1019,22 +1028,22 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 	}
 }
 
-func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, decision string, hasObs bool, now time.Time) bool {
+func (o *Observer) needsReviewRefresh(key, provider string, local domain.PullRequest, decision string, hasObs bool, now time.Time) bool {
 	if o.Cache.ReviewRefreshFailed[key] {
 		return true
 	}
 	if local.ReviewHash == "" {
 		return true
 	}
-	if decision == string(domain.ReviewChangesRequest) {
-		last := o.Cache.LastReviewPollAt[key]
-		return last.IsZero() || now.Sub(last) >= o.reviewInterval
-	}
 	if hasObs && decision != string(local.Review) {
 		return true
 	}
 	if local.ReviewHash != "" && string(local.Review) == string(domain.ReviewChangesRequest) && decision != string(domain.ReviewChangesRequest) {
 		return true
+	}
+	if strings.EqualFold(provider, string(domain.SCMProviderGitLab)) || decision == string(domain.ReviewChangesRequest) {
+		last := o.Cache.LastReviewPollAt[key]
+		return last.IsZero() || now.Sub(last) >= o.reviewInterval
 	}
 	return false
 }

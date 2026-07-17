@@ -5,12 +5,48 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/scmconnection"
 )
+
+func TestGitLabFactoryTrackerPreservesNonDefaultPort(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/projects/group%2Frepo/issues/7" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"iid":7,"title":"issue","state":"opened"}`))
+	}))
+	t.Cleanup(server.Close)
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := NewGitLabFactory(GitLabFactoryOptions{HTTPClient: server.Client()}).Build(context.Background(), FactoryConfig{
+		ConnectionID: "gitlab-work",
+		Provider:     domain.SCMProviderGitLab,
+		WebBaseURL:   server.URL,
+		APIBaseURL:   server.URL,
+		Token:        gitLabFactoryToken("test-token"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := bundle.Tracker.Get(context.Background(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Native:   base.Host + "/group/repo#!7",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issue.ID.Native != base.Host+"/group/repo#!7" {
+		t.Fatalf("issue id = %q, want host with port", issue.ID.Native)
+	}
+}
 
 type gitLabFactoryToken string
 
@@ -27,11 +63,8 @@ func TestGitLabFactoryBuildsCurrentBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.SCM == nil || bundle.Tracker == nil || bundle.ReviewPublisher == nil {
+	if bundle.SCM == nil || bundle.Tracker == nil || bundle.Writer == nil || bundle.ReviewPublisher == nil {
 		t.Fatalf("GitLab bundle = %#v", bundle)
-	}
-	if bundle.Writer != nil {
-		t.Fatalf("GitLab writer landed before the provider-neutral writer path: %#v", bundle.Writer)
 	}
 }
 

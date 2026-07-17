@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 type filesystemResponse struct {
 	Path        string  `json:"path"`
 	Parent      *string `json:"parent"`
+	Origin      string  `json:"origin"`
 	Directories []struct {
 		Name string `json:"name"`
 		Path string `json:"path"`
@@ -194,6 +196,28 @@ func TestFilesystemAPI_ListDirectories(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("directory names = %v, want %v", gotNames, wantNames)
+	}
+}
+
+func TestFilesystemAPI_ListDirectoriesIncludesGitOrigin(t *testing.T) {
+	srv := newFilesystemTestServer(t)
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	const origin = "git@gitlab.example.com:group/project.git"
+	if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v: %s", err, out)
+	}
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, filesystemPath(repo), "")
+	if status != http.StatusOK {
+		t.Fatalf("GET directories = %d, want 200; body=%s", status, body)
+	}
+	var got filesystemResponse
+	mustJSON(t, body, &got)
+	if got.Origin != origin {
+		t.Fatalf("origin = %q, want %q", got.Origin, origin)
 	}
 }
 

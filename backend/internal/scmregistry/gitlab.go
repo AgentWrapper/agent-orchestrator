@@ -51,11 +51,11 @@ func (f *gitLabFactory) Build(_ context.Context, config FactoryConfig) (Provider
 	if err != nil {
 		return ProviderBundle{}, err
 	}
-	tracker, err := trackergitlab.New(trackergitlab.Options{Client: client, Host: webBase.Hostname()})
+	tracker, err := trackergitlab.New(trackergitlab.Options{Client: client, Host: webBase.Host})
 	if err != nil {
 		return ProviderBundle{}, err
 	}
-	return ProviderBundle{SCM: provider, Tracker: tracker, ReviewPublisher: provider}, nil
+	return ProviderBundle{SCM: provider, Tracker: tracker, Writer: provider, ReviewPublisher: provider}, nil
 }
 
 func (f *gitLabFactory) Test(ctx context.Context, config scmconnection.ConnectionTestConfig, token []byte) (scmconnection.TestResult, error) {

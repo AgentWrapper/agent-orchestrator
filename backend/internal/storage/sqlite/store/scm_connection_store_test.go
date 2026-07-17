@@ -200,6 +200,46 @@ func TestSCMConnectionStoreRejectsReferencedDelete(t *testing.T) {
 	}
 }
 
+func TestSCMConnectionStoreRejectsReferencedProviderChange(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	conn := testSCMConnection()
+	if err := s.CreateSCMConnection(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertProject(ctx, referencedProject(conn)); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.Provider = domain.SCMProviderGitHub
+	conn.UpdatedAt = conn.UpdatedAt.Add(time.Second)
+	updated, err := s.UpdateSCMConnection(ctx, conn)
+	if updated || !errors.Is(err, ports.ErrSCMConnectionReferenced) {
+		t.Fatalf("provider update: updated=%v err=%v", updated, err)
+	}
+	stored, ok, getErr := s.GetSCMConnection(ctx, conn.ID)
+	if getErr != nil || !ok || stored.Provider != domain.SCMProviderGitLab {
+		t.Fatalf("stored connection = %#v, exists=%v err=%v", stored, ok, getErr)
+	}
+}
+
+func TestProjectStoreRejectsSCMProviderConnectionMismatch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	conn := testSCMConnection()
+	if err := s.CreateSCMConnection(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	project := referencedProject(conn)
+	project.Config.SCM.Provider = domain.SCMProviderGitHub
+	if err := s.UpsertProject(ctx, project); err == nil {
+		t.Fatal("project with mismatched SCM provider was persisted")
+	}
+	if _, exists, err := s.GetProject(ctx, project.ID); err != nil || exists {
+		t.Fatalf("mismatched project exists=%v err=%v", exists, err)
+	}
+}
+
 func TestSCMConnectionDeleteAcrossStoresPreservesReferenceIntegrity(t *testing.T) {
 	ctx := context.Background()
 

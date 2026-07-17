@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBrowserView, type BrowserNavState } from "./useBrowserView";
+import { initializeRendererI18n } from "../i18n";
 
 type Listener = (state: BrowserNavState) => void;
 
@@ -330,6 +331,39 @@ describe("useBrowserView", () => {
 		);
 		expect(result.current.navState.url).toBe("http://localhost:5173/");
 		expect(result.current.navState.title).toBe("Local app");
+	});
+
+	it("sends the current locale when annotation mode starts and while it remains open", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:5173/",
+				title: "Preview",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+
+		await act(async () => result.current.setAnnotationMode(true));
+		expect(bridge.setAnnotationMode).toHaveBeenLastCalledWith({
+			viewId: "42:sess-1",
+			enabled: true,
+			locale: "en",
+		});
+
+		await act(async () => initializeRendererI18n("zh-CN"));
+
+		await waitFor(() =>
+			expect(bridge.setAnnotationMode).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				enabled: true,
+				locale: "zh-CN",
+			}),
+		);
 	});
 
 	it("navigates on each preview revision, including a same-URL re-run, and ignores replays", async () => {

@@ -129,15 +129,16 @@ describe("GlobalSettingsForm", () => {
 		expect(updates.compareDocumentPosition(migration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
-	it("hides updates in a remote client while preserving other global settings", async () => {
+	it("hides local update and migration state in a remote client", async () => {
 		isRemoteClient.mockResolvedValue(true);
 		renderForm();
 
 		expect(await screen.findByText("Remote server")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.queryByText("Updates")).not.toBeInTheDocument();
-		expect(screen.getByText("Migration")).toBeInTheDocument();
+		expect(screen.queryByText("Migration")).not.toBeInTheDocument();
 		expect(getUpdate).not.toHaveBeenCalled();
+		expect(getMigration).not.toHaveBeenCalled();
 	});
 
 	it("shows the nightly warning and saves the loaded channel", async () => {

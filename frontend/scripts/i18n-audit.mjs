@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { JSDOM } from "jsdom";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -280,6 +281,31 @@ export function auditVisibleLiterals({ root, allowlist }) {
 			if (isErrorConstructor(node) && node.arguments?.[0]) {
 				for (const value of expressionValueLiterals(node.arguments[0])) {
 					report(value.node, "new-error", value.text);
+				}
+			}
+
+			if (
+				ts.isBinaryExpression(node) &&
+				node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+				ts.isPropertyAccessExpression(node.left) &&
+				node.left.name.text === "innerHTML"
+			) {
+				const markup = literalText(node.right);
+				if (markup !== null) {
+					const fragment = JSDOM.fragment(markup);
+					for (const element of fragment.querySelectorAll("*")) {
+						for (const attribute of USER_FACING_ATTRIBUTES) {
+							const value = element.getAttribute(attribute);
+							if (value !== null) report(node.right, `inner-html-attribute:${attribute}`, value);
+						}
+					}
+					const walker = fragment.ownerDocument.createTreeWalker(fragment, 4);
+					for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+						const parent = current.parentElement?.tagName.toLowerCase();
+						if (parent !== "style" && parent !== "script") {
+							report(node.right, "inner-html-text", current.textContent ?? "");
+						}
+					}
 				}
 			}
 

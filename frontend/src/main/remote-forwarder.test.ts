@@ -78,6 +78,43 @@ describe("remote-forwarder", () => {
 		});
 	});
 
+	it("strips only the LAN credential cookie from HTTP requests and responses", async () => {
+		let receivedCookie: string | undefined;
+		const upstream = http.createServer((req, res) => {
+			receivedCookie = req.headers.cookie;
+			res.writeHead(200, {
+				"set-cookie": [
+					"theme=light; Path=/",
+					"ao_conn=rotated-secret; HttpOnly; SameSite=Strict",
+					"session=business-session; Secure",
+				],
+			});
+			res.end("ok");
+		});
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "test-password" });
+		forwarders.push(forwarder);
+
+		const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+			const request = http.get(
+				{
+					host: "127.0.0.1",
+					port: forwarder.port,
+					path: "/cookies",
+					headers: { cookie: "theme=dark; ao_conn=browser-secret; session=business-session" },
+				},
+				resolve,
+			);
+			request.once("error", reject);
+		});
+		response.resume();
+		await once(response, "end");
+
+		expect(receivedCookie).toBe("theme=dark; session=business-session");
+		expect(response.headers["set-cookie"]).toEqual(["theme=light; Path=/", "session=business-session; Secure"]);
+	});
+
 	it("strips hop-by-hop request headers named directly and by Connection", async () => {
 		let received: http.IncomingHttpHeaders | undefined;
 		const upstream = http.createServer((req, res) => {
@@ -357,6 +394,49 @@ describe("remote-forwarder", () => {
 				setTimeout(() => reject(new Error("upstream WebSocket did not receive end")), 500),
 			),
 		]);
+	});
+
+	it("strips only the LAN credential cookie from a WebSocket upgrade response", async () => {
+		const upstream = http.createServer();
+		let upstreamSocket: { destroy(): void } | undefined;
+		upstream.on("upgrade", (_req, socket) => {
+			upstreamSocket = socket;
+			socket.write(
+				"HTTP/1.1 101 Switching Protocols\r\n" +
+					"Connection: Upgrade\r\n" +
+					"Upgrade: websocket\r\n" +
+					"Set-Cookie: ao_conn=rotated-secret; HttpOnly\r\n" +
+					"Set-Cookie: theme=dark; Path=/\r\n\r\n",
+			);
+		});
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "test-password" });
+		forwarders.push(forwarder);
+
+		const client = net.connect(forwarder.port, "127.0.0.1");
+		await once(client, "connect");
+		client.write(
+			"GET /mux HTTP/1.1\r\n" +
+				`Host: 127.0.0.1:${forwarder.port}\r\n` +
+				"Connection: Upgrade\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Key: dGVzdC1rZXk=\r\n\r\n",
+		);
+		let responseHead = "";
+		client.on("data", (chunk) => {
+			responseHead += chunk.toString("utf8");
+		});
+		await new Promise<void>((resolve) => {
+			const check = () => (responseHead.includes("\r\n\r\n") ? resolve() : setTimeout(check, 5));
+			check();
+		});
+		client.destroy();
+		upstreamSocket?.destroy();
+
+		expect(responseHead).toContain("Set-Cookie: theme=dark; Path=/");
+		expect(responseHead).not.toContain("ao_conn=");
 	});
 
 	it("returns 502 when the upstream cannot be reached", async () => {

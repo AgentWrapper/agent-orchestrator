@@ -108,6 +108,87 @@ func TestProviderDoesNotPublishReviewWhenTargetChanged(t *testing.T) {
 	}
 }
 
+func TestProviderPublishReviewRetrySkipsAlreadyCreatedParts(t *testing.T) {
+	var summaryBody, firstDiscussionBody string
+	var summaryPosts, firstPosts, secondPosts int
+	failSecondOnce := true
+	provider, server := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.EscapedPath() {
+		case "GET /projects/group%2Frepo/merge_requests/7":
+			_, _ = w.Write([]byte(`{"diff_refs":{"base_sha":"base","start_sha":"start","head_sha":"head"}}`))
+		case "GET /projects/group%2Frepo/merge_requests/7/notes":
+			if summaryBody == "" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 321, "body": summaryBody}})
+		case "GET /projects/group%2Frepo/merge_requests/7/discussions":
+			if firstDiscussionBody == "" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"id": "discussion-1", "notes": []map[string]any{{"id": 11, "body": firstDiscussionBody}},
+			}})
+		case "POST /projects/group%2Frepo/merge_requests/7/notes":
+			var request reviewNoteRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			summaryPosts++
+			summaryBody = request.Body
+			_, _ = w.Write([]byte(`{"id":321}`))
+		case "POST /projects/group%2Frepo/merge_requests/7/discussions":
+			var request reviewDiscussionRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(request.Body, "first finding") {
+				firstPosts++
+				firstDiscussionBody = request.Body
+				_, _ = w.Write([]byte(`{"id":"discussion-1"}`))
+				return
+			}
+			secondPosts++
+			if failSecondOnce {
+				failSecondOnce = false
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"discussion-2"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	ref := ports.SCMPRRef{
+		Repo: ports.SCMRepo{Provider: "gitlab", Host: strings.TrimPrefix(server.URL, "http://"), Repo: "group/repo"}, Number: 7,
+	}
+	publication := ports.ReviewPublication{
+		IdempotencyKey: "run-7", TargetSHA: "head", Body: "summary",
+		Findings: []ports.ReviewFinding{
+			{Path: "first.go", Line: 1, Body: "first finding"},
+			{Path: "second.go", Line: 2, Body: "second finding"},
+		},
+	}
+	if _, err := provider.PublishReview(context.Background(), ref, publication); err == nil {
+		t.Fatal("first publication unexpectedly succeeded")
+	}
+	result, err := provider.PublishReview(context.Background(), ref, publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reference != "321" {
+		t.Fatalf("reference = %q, want existing summary note", result.Reference)
+	}
+	if summaryPosts != 1 || firstPosts != 1 || secondPosts != 2 {
+		t.Fatalf("posts summary=%d first=%d second=%d", summaryPosts, firstPosts, secondPosts)
+	}
+	if !strings.Contains(summaryBody, "<!-- ao-review:") || !strings.Contains(firstDiscussionBody, "<!-- ao-review:") {
+		t.Fatalf("stable markers missing: summary=%q discussion=%q", summaryBody, firstDiscussionBody)
+	}
+}
+
 func TestProviderRejectsReviewForDifferentGitLabHost(t *testing.T) {
 	var calls int
 	provider, server := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

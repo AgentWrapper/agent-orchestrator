@@ -184,6 +184,40 @@ describe("RemoteServerSettings", () => {
 		);
 	});
 
+	it("prevents editing or revealing credentials while a connection save is pending", async () => {
+		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011, passwordConfigured: true }));
+		const pendingSave = deferred<{ state: "ready"; port: number }>();
+		window.ao!.remoteServer.save = vi.fn(() => pendingSave.promise);
+		const user = userEvent.setup();
+		render(<RemoteServerSettingsSection />);
+
+		const host = await screen.findByLabelText("Server IP or hostname");
+		const port = screen.getByLabelText("Port");
+		const password = screen.getByLabelText("Connection password");
+		const reveal = screen.getByRole("button", { name: "Show password" });
+		await user.click(screen.getByRole("button", { name: "Save connection" }));
+		await waitFor(() => expect(window.ao!.remoteServer.save).toHaveBeenCalledOnce());
+
+		expect(host).toBeDisabled();
+		expect(port).toBeDisabled();
+		expect(password).toBeDisabled();
+		expect(reveal).toBeDisabled();
+		await user.type(host, "-changed");
+		await user.type(port, "4000");
+		await user.type(password, "replacement");
+		await user.click(reveal);
+		expect(host).toHaveValue("claude.local");
+		expect(port).toHaveValue(3011);
+		expect(password).toHaveValue("");
+		expect(password).toHaveAttribute("type", "password");
+		expect(window.ao!.remoteServer.revealPassword).not.toHaveBeenCalled();
+
+		await act(async () => {
+			pendingSave.resolve({ state: "ready", port: 4317 });
+			await pendingSave.promise;
+		});
+	});
+
 	it("keeps a newly typed replacement editable while masked", async () => {
 		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011, passwordConfigured: true }));
 		const user = userEvent.setup();

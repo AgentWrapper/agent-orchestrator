@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -447,6 +448,37 @@ func TestManager_SetConfig(t *testing.T) {
 	// Setting on an unknown project is a clean not-found.
 	_, err = m.SetConfig(ctx, "ghost", project.SetConfigInput{Config: cfg})
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_RejectsSCMProviderConnectionMismatch(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Unix(1, 0).UTC()
+	if err := store.CreateSCMConnection(ctx, domain.SCMConnection{
+		ID: "gitlab-work", Provider: domain.SCMProviderGitLab, DisplayName: "GitLab",
+		WebBaseURL: "https://gitlab.example.com", APIBaseURL: "https://gitlab.example.com/api/v4",
+		CredentialRef: "scm/gitlab-work", Status: domain.SCMConnectionStatusUnknown, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager := project.New(store)
+	mismatch := domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+		Provider: domain.SCMProviderGitHub, ConnectionID: "gitlab-work", Repo: "owner/repo",
+	}}
+
+	_, err = manager.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("add-mismatch"), Config: &mismatch})
+	wantCode(t, err, "SCM_CONNECTION_PROVIDER_MISMATCH")
+
+	registered, err := manager.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("set-mismatch")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.SetConfig(ctx, registered.ID, project.SetConfigInput{Config: mismatch})
+	wantCode(t, err, "SCM_CONNECTION_PROVIDER_MISMATCH")
 }
 
 func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {

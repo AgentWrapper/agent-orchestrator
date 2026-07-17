@@ -34,12 +34,31 @@ const (
 	ReviewWriteMerge
 )
 
-// SCMWriter records provider-neutral SCM observations. reviewMode decides
+// SCMObservationWriter records provider-neutral SCM observations. reviewMode decides
 // whether review facts are preserved, replaced with a complete snapshot, or
 // merged as a bounded partial window.
-type SCMWriter interface {
+type SCMObservationWriter interface {
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode) error
 }
+
+var (
+	// ErrSCMActionForbidden identifies a credential that cannot mutate the target repository.
+	ErrSCMActionForbidden = errors.New("scm action forbidden")
+	// ErrSCMActionPrecondition identifies a stale head or provider-side merge precondition failure.
+	ErrSCMActionPrecondition = errors.New("scm action precondition failed")
+)
+
+// SCMActionWriter performs explicitly authorized pull/merge-request mutations.
+// expectedHeadSHA guards merge actions against merging a head the user did not inspect.
+type SCMActionWriter interface {
+	SquashMerge(ctx context.Context, ref SCMPRRef, expectedHeadSHA string) error
+	ReplyReviewThread(ctx context.Context, ref SCMPRRef, threadID, body string) error
+	ResolveReviewThread(ctx context.Context, ref SCMPRRef, threadID string) error
+}
+
+// SCMWriter is the historical ProviderBundle field type. Keep the name as an
+// alias while making its action semantics explicit at new call sites.
+type SCMWriter = SCMActionWriter
 
 // PRClaimer atomically moves (or creates) a PR row for a target session and
 // persists the live SCM facts observed for that PR in the same transaction.

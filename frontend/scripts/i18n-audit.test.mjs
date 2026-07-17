@@ -225,6 +225,30 @@ describe("auditVisibleLiterals", () => {
 		expect(violations.map((violation) => violation.text)).not.toContain("wire-value");
 	});
 
+	it("reports visible text and user-facing attributes inside innerHTML templates", () => {
+		const root = fixture({
+			"src/annotate-preload.ts": `
+				const mount = document.createElement("div");
+				mount.innerHTML = \`<button aria-label="Send annotation">Cancel request</button>\`;
+			`,
+		});
+
+		expect(auditVisibleLiterals({ root, allowlist: [] }).violations).toEqual([
+			{
+				file: "src/annotate-preload.ts",
+				kind: "inner-html-attribute:aria-label",
+				line: 3,
+				text: "Send annotation",
+			},
+			{
+				file: "src/annotate-preload.ts",
+				kind: "inner-html-text",
+				line: 3,
+				text: "Cancel request",
+			},
+		]);
+	});
+
 	it("skips tests, translation resources, translated calls, and exact allowlist entries", () => {
 		const root = fixture({
 			"src/renderer/Panel.tsx": `

@@ -104,6 +104,29 @@ func TestProviderParseRepositoryAndMergeRequestRef(t *testing.T) {
 	}
 }
 
+func TestProviderParseRepositoryStripsConfiguredWebBasePath(t *testing.T) {
+	provider, err := NewProvider(ProviderOptions{
+		Client:     NewClient(ClientOptions{BaseURL: "https://gitlab.example.com/gitlab/api/v4", Token: StaticTokenSource("token")}),
+		WebBaseURL: "https://gitlab.example.com/gitlab",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRepo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.example.com", Owner: "group", Name: "project", Repo: "group/project"}
+	for _, remote := range []string{
+		"https://gitlab.example.com/gitlab/group/project.git",
+		"ssh://git@gitlab.example.com/gitlab/group/project.git",
+	} {
+		if got, ok := provider.ParseRepository(remote); !ok || got != wantRepo {
+			t.Fatalf("ParseRepository(%q) = %#v, %v", remote, got, ok)
+		}
+	}
+	ref, ok := provider.ParseMergeRequestRef("https://gitlab.example.com/gitlab/group/project/-/merge_requests/42", wantRepo)
+	if !ok || ref.Repo != wantRepo || ref.URL != "https://gitlab.example.com/gitlab/group/project/-/merge_requests/42" {
+		t.Fatalf("ParseMergeRequestRef() = %#v, %v", ref, ok)
+	}
+}
+
 func TestNormalizeRawDiffCountsPatchLinesAndBinaryFiles(t *testing.T) {
 	t.Parallel()
 	raw := []byte("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,3 @@\n same\n-old\n+new\n+added\ndiff --git a/image.png b/image.png\nBinary files a/image.png and b/image.png differ\n")
@@ -433,6 +456,43 @@ func TestFetchReviewThreadsFiltersSystemAndBotAndMarksPartial(t *testing.T) {
 	}
 	if got.Threads[1].ID != "resolved" || !got.Threads[1].Resolved {
 		t.Fatalf("resolved thread = %#v", got.Threads[1])
+	}
+}
+
+func TestFetchReviewThreadsReturnsNewAndResolvedDiscussionStateOnEachCall(t *testing.T) {
+	var discussionCalls atomic.Int32
+	provider, server := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/approvals"):
+			_, _ = w.Write([]byte(`{"approved":true,"approvals_left":0}`))
+		case strings.HasSuffix(r.URL.Path, "/discussions"):
+			if discussionCalls.Add(1) == 1 {
+				_, _ = w.Write([]byte(`[{"id":"old","notes":[{"id":1,"resolvable":true,"resolved":false,"body":"fix","author":{"username":"alice"}}]}]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[
+				{"id":"old","notes":[{"id":1,"resolvable":true,"resolved":true,"body":"fixed","author":{"username":"alice"}}]},
+				{"id":"new","notes":[{"id":2,"resolvable":true,"resolved":false,"body":"new feedback","author":{"username":"bob"}}]}
+			]`))
+		default:
+			_, _ = w.Write([]byte(`{"iid":4,"detailed_merge_status":"mergeable"}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+	ref := ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "gitlab", Host: strings.TrimPrefix(server.URL, "http://"), Repo: "group/repo"}, Number: 4}
+	first, err := provider.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := provider.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Threads) != 1 || first.Threads[0].Resolved {
+		t.Fatalf("first review = %#v", first)
+	}
+	if len(second.Threads) != 2 || !second.Threads[0].Resolved || second.Threads[1].ID != "new" || second.Threads[1].Resolved {
+		t.Fatalf("second review = %#v", second)
 	}
 }
 

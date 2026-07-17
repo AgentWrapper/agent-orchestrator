@@ -89,7 +89,11 @@ func (*stubTracker) Preflight(context.Context) error { return nil }
 
 type stubWriter struct{ id string }
 
-func (*stubWriter) WriteSCMObservation(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode) error {
+func (*stubWriter) SquashMerge(context.Context, ports.SCMPRRef, string) error { return nil }
+func (*stubWriter) ReplyReviewThread(context.Context, ports.SCMPRRef, string, string) error {
+	return nil
+}
+func (*stubWriter) ResolveReviewThread(context.Context, ports.SCMPRRef, string) error {
 	return nil
 }
 
@@ -352,10 +356,14 @@ func TestResolverSlowOldBuildCannotReplaceNewerCache(t *testing.T) {
 		Provider: domain.SCMProviderGitHub, ConnectionID: "github-work",
 	}}}
 
-	firstDone := make(chan error, 1)
+	type resolveResult struct {
+		bundle ProviderBundle
+		err    error
+	}
+	firstDone := make(chan resolveResult, 1)
 	go func() {
-		_, err := resolver.Resolve(context.Background(), project)
-		firstDone <- err
+		bundle, err := resolver.Resolve(context.Background(), project)
+		firstDone <- resolveResult{bundle: bundle, err: err}
 	}()
 	<-factory.firstEntered
 	newer := store.connection
@@ -367,8 +375,12 @@ func TestResolverSlowOldBuildCannotReplaceNewerCache(t *testing.T) {
 		t.Fatalf("newer Resolve = (%#v, %v)", second.SCM, err)
 	}
 	close(factory.releaseFirst)
-	if err := <-firstDone; err != nil {
-		t.Fatal(err)
+	first := <-firstDone
+	if first.err != nil {
+		t.Fatal(first.err)
+	}
+	if first.bundle.SCM != second.SCM {
+		t.Fatalf("slow older Resolve returned stale bundle: got %#v want %#v", first.bundle.SCM, second.SCM)
 	}
 	third, err := resolver.Resolve(context.Background(), project)
 	if err != nil || third.SCM != second.SCM {
@@ -578,11 +590,8 @@ func TestGitHubFactoryBuildIsLazyAndReturnsCurrentBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.SCM == nil || bundle.Tracker == nil || bundle.ReviewPublisher == nil {
+	if bundle.SCM == nil || bundle.Tracker == nil || bundle.Writer == nil || bundle.ReviewPublisher == nil {
 		t.Fatalf("GitHub bundle = %#v", bundle)
-	}
-	if bundle.Writer != nil {
-		t.Fatalf("GitHub writer landed before action writer task: %#v", bundle.Writer)
 	}
 	if fallback.calls != 0 {
 		t.Fatalf("lazy build resolved fallback %d times", fallback.calls)

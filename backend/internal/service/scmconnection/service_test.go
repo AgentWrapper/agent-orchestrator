@@ -738,6 +738,37 @@ func TestDeleteMapsNotFoundAndReferenceConflict(t *testing.T) {
 	assertAPIError(t, svc.Delete(context.Background(), "missing"), "SCM_CONNECTION_NOT_FOUND")
 }
 
+func TestUpdateRejectsProviderChangeWhenConnectionIsReferenced(t *testing.T) {
+	st, creds := seededConnection()
+	st.updateErr = ports.ErrSCMConnectionReferenced
+	svc := newTestService(st, creds, nil)
+
+	_, err := svc.Update(context.Background(), "gitlab-work", UpdateInput{
+		Provider: domain.SCMProviderGitHub, DisplayName: "GitHub",
+	})
+	assertAPIError(t, err, "SCM_CONNECTION_REFERENCED")
+	if got := st.rows["gitlab-work"].Provider; got != domain.SCMProviderGitLab {
+		t.Fatalf("provider = %q, want gitlab", got)
+	}
+}
+
+func TestDeleteEnvironmentCredentialWithoutVaultSecretSkipsVaultDelete(t *testing.T) {
+	st, creds := seededConnection()
+	creds.secrets = map[string][]byte{}
+	creds.deleteErr = errors.New("vault must not be touched")
+	tester := &fakeTester{overrideConfigured: true}
+
+	if err := newTestService(st, creds, tester).Delete(context.Background(), "gitlab-work"); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := st.rows["gitlab-work"]; exists {
+		t.Fatal("connection metadata still exists")
+	}
+	if len(creds.deletes) != 0 {
+		t.Fatalf("vault delete calls = %v, want none", creds.deletes)
+	}
+}
+
 func TestConnectionTestReturnsStructuredResultAndNeverRawErrors(t *testing.T) {
 	st, creds := seededConnection()
 	tester := &fakeTester{result: TestResult{

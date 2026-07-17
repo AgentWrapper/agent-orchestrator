@@ -27,9 +27,10 @@ const (
 // errors.Is; the orchestrator's lifecycle code is intentionally insulated
 // from raw HTTP status codes.
 var (
-	ErrNotFound    = ports.ErrSCMNotFound
-	ErrAuthFailed  = errors.New("github scm: authentication failed")
-	ErrRateLimited = errors.New("github scm: rate limited")
+	ErrNotFound     = ports.ErrSCMNotFound
+	ErrAuthFailed   = errors.New("github scm: authentication failed")
+	ErrPrecondition = errors.New("github scm: precondition failed")
+	ErrRateLimited  = errors.New("github scm: rate limited")
 )
 
 // RateLimitError carries the structured backoff hints from a rate-limit
@@ -325,7 +326,7 @@ func (c *Client) doGraphQL(ctx context.Context, query string, variables map[stri
 		return nil, fmt.Errorf("github scm: decode graphql response: %w", err)
 	}
 	if len(decoded.Errors) > 0 {
-		err := classifyGraphQLError(decoded.Errors[0].Message)
+		err := classifyGraphQLError(decoded.Errors[0].Type, decoded.Errors[0].Message)
 		if errors.Is(err, ErrAuthFailed) {
 			c.invalidateToken()
 		}
@@ -334,8 +335,21 @@ func (c *Client) doGraphQL(ctx context.Context, query string, variables map[stri
 	return decoded.Data, nil
 }
 
-func classifyGraphQLError(message string) error {
+func classifyGraphQLError(errorType, message string) error {
 	low := strings.ToLower(message)
+	switch strings.ToUpper(strings.TrimSpace(errorType)) {
+	case "RATE_LIMITED":
+		return &RateLimitError{}
+	case "FORBIDDEN":
+		if strings.Contains(low, "rate limit") || strings.Contains(low, "abuse") {
+			return &RateLimitError{}
+		}
+		return ErrAuthFailed
+	case "UNPROCESSABLE":
+		return ErrPrecondition
+	case "NOT_FOUND":
+		return ErrNotFound
+	}
 	switch {
 	case strings.Contains(low, "rate limit") || strings.Contains(low, "abuse"):
 		return &RateLimitError{}
@@ -448,6 +462,8 @@ func classifyError(resp *http.Response, body []byte) error {
 		return rateLimited(resp, "")
 	case http.StatusUnauthorized:
 		return ErrAuthFailed
+	case http.StatusConflict, http.StatusMethodNotAllowed, http.StatusUnprocessableEntity:
+		return ErrPrecondition
 	case http.StatusForbidden:
 		// GitHub returns 403 for primary rate-limit exhaustion, for
 		// secondary/abuse limits, and for genuine auth/permission failures.

@@ -21,6 +21,15 @@ afterEach(async () => {
 });
 
 describe("WindowTitlebar", () => {
+	it("shows the Remote product identity in the Windows title bar", async () => {
+		vi.spyOn(window.ao!.remoteServer, "isRemoteClient").mockResolvedValueOnce(true);
+		const { WindowTitlebar } = await import("./WindowTitlebar");
+		render(<WindowTitlebar />);
+
+		expect(await screen.findByText("Agent Orchestrator Remote")).toBeInTheDocument();
+		expect(document.title).toBe("Agent Orchestrator Remote");
+	});
+
 	it("localizes Windows menus without changing action ids", async () => {
 		const menuActionSpy = vi.spyOn(window.ao!.menu!, "action").mockResolvedValue(undefined);
 		await initializeRendererI18n("zh-CN");

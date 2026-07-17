@@ -1,5 +1,6 @@
 import { aoBridge } from "./bridge";
 import { routeSurface } from "./telemetry";
+import { TOKEN_VALUE_PATTERN } from "../../shared/credential-patterns";
 
 export type ReportProblemOutput = "github" | "discord" | "email";
 
@@ -38,6 +39,7 @@ const ASSIGNMENT_SECRET_PATTERN =
 const BEARER_SECRET_PATTERN = /\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi;
 const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
 const GITHUB_TOKEN_PATTERN = /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g;
+const TOKEN_VALUE_PATTERN_GLOBAL = new RegExp(TOKEN_VALUE_PATTERN.source, "gi");
 
 export function sanitizeReportText(value: string): string {
 	if (!value) return "";
@@ -50,7 +52,8 @@ export function sanitizeReportText(value: string): string {
 		.replace(ASSIGNMENT_SECRET_PATTERN, `$1$2${REDACTED_SECRET}`)
 		.replace(BEARER_SECRET_PATTERN, `$1${REDACTED_SECRET}`)
 		.replace(OPENAI_KEY_PATTERN, REDACTED_SECRET)
-		.replace(GITHUB_TOKEN_PATTERN, REDACTED_SECRET);
+		.replace(GITHUB_TOKEN_PATTERN, REDACTED_SECRET)
+		.replace(TOKEN_VALUE_PATTERN_GLOBAL, REDACTED_SECRET);
 }
 
 export async function collectReportProblemDiagnostics(now = new Date()): Promise<ReportProblemDiagnostics> {

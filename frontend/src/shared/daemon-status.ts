@@ -1,3 +1,5 @@
+import { TOKEN_VALUE_PATTERN } from "./credential-patterns";
+
 // DaemonStatus is the supervisor → renderer handshake payload, shared by the
 // Electron main process (which derives it) and the preload bridge (which types
 // the IPC surface). The renderer picks it up through the preload's AoBridge type.
@@ -36,7 +38,6 @@ export type DaemonStatus = {
 };
 
 const URL_CREDENTIAL_PATTERN = /:\/\/[^/\s:]+:[^@/\s]+@/;
-const TOKEN_VALUE_PATTERN = /\b(?:glpat-[\w-]+|github_pat_[\w-]+|gh[pousr]_[\w-]+|sk-[\w-]{16,})\b/i;
 const NORMALIZED_CREDENTIAL_MARKER =
 	/(?:token|credential|secret|passphrase|password|passwd|authorization|bearer|apikey|privatekey|oauthkey)/;
 

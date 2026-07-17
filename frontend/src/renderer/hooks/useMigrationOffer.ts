@@ -27,11 +27,11 @@ async function fetchMigrationOffer(): Promise<MigrationOffer> {
 	return { show: true, legacyRoot, migration };
 }
 
-export function useMigrationOffer() {
+export function useMigrationOffer(enabled = true) {
 	return useQuery({
 		queryKey: migrationOfferQueryKey,
 		queryFn: fetchMigrationOffer,
-		enabled: !usePreviewData,
+		enabled: enabled && !usePreviewData,
 		retry: 1,
 		throwOnError: false,
 	});

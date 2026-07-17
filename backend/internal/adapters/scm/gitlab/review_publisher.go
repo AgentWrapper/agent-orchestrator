@@ -2,9 +2,12 @@ package gitlab
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -62,18 +65,31 @@ func (p *Provider) PublishReview(ctx context.Context, ref ports.SCMPRRef, public
 			return fmt.Errorf("%w: merge request head changed", ErrPrecondition)
 		}
 
-		var note notePayload
-		if _, err := p.client.DoJSON(ctx, http.MethodPost, mrAPIPath(ref.Repo, ref.Number, "notes"), nil, reviewNoteRequest{Body: publication.Body}, &note); err != nil {
-			return p.apiError("publish merge request review summary", err)
+		summaryMarker, findingMarkers := reviewPublicationMarkers(publication)
+		existing, err := p.findPublishedReviewParts(ctx, ref, summaryMarker, findingMarkers)
+		if err != nil {
+			return err
 		}
-		if note.ID <= 0 {
-			return errors.New("gitlab scm: created review summary is missing id")
+		if existing.summaryID > 0 {
+			result.Reference = strconv.FormatInt(existing.summaryID, 10)
+		} else {
+			var note notePayload
+			body := appendReviewMarker(publication.Body, summaryMarker)
+			if _, err := p.client.DoJSON(ctx, http.MethodPost, mrAPIPath(ref.Repo, ref.Number, "notes"), nil, reviewNoteRequest{Body: body}, &note); err != nil {
+				return p.apiError("publish merge request review summary", err)
+			}
+			if note.ID <= 0 {
+				return errors.New("gitlab scm: created review summary is missing id")
+			}
+			result.Reference = strconv.FormatInt(note.ID, 10)
 		}
-		result.Reference = strconv.FormatInt(note.ID, 10)
 
-		for _, finding := range publication.Findings {
+		for i, finding := range publication.Findings {
+			if existing.findings[i] {
+				continue
+			}
 			request := reviewDiscussionRequest{
-				Body: finding.Body,
+				Body: appendReviewMarker(finding.Body, findingMarkers[i]),
 				Position: reviewDiscussionPosition{
 					PositionType: "text",
 					BaseSHA:      mr.DiffRefs.BaseSHA,
@@ -94,4 +110,72 @@ func (p *Provider) PublishReview(ctx context.Context, ref ports.SCMPRRef, public
 		return ports.ReviewPublicationResult{}, err
 	}
 	return result, nil
+}
+
+type publishedReviewParts struct {
+	summaryID int64
+	findings  map[int]bool
+}
+
+func reviewPublicationMarkers(publication ports.ReviewPublication) (string, []string) {
+	key := strings.TrimSpace(publication.IdempotencyKey)
+	if key == "" {
+		return "", make([]string, len(publication.Findings))
+	}
+	digest := sha256.Sum256([]byte(key))
+	prefix := fmt.Sprintf("<!-- ao-review:%x:", digest[:16])
+	findings := make([]string, len(publication.Findings))
+	for i := range findings {
+		findings[i] = fmt.Sprintf("%sfinding-%d -->", prefix, i)
+	}
+	return prefix + "summary -->", findings
+}
+
+func appendReviewMarker(body, marker string) string {
+	if marker == "" {
+		return body
+	}
+	return strings.TrimRight(body, "\r\n") + "\n\n" + marker
+}
+
+func (p *Provider) findPublishedReviewParts(ctx context.Context, ref ports.SCMPRRef, summaryMarker string, findingMarkers []string) (publishedReviewParts, error) {
+	out := publishedReviewParts{findings: make(map[int]bool)}
+	if summaryMarker == "" {
+		return out, nil
+	}
+	query := url.Values{"per_page": {"100"}, "order_by": {"created_at"}, "sort": {"desc"}}
+	if err := p.client.GetJSONPages(ctx, mrAPIPath(ref.Repo, ref.Number, "notes"), query, func(body []byte) error {
+		var notes []notePayload
+		if err := json.Unmarshal(body, &notes); err != nil {
+			return errors.New("gitlab scm: decode merge request notes")
+		}
+		for _, note := range notes {
+			if out.summaryID == 0 && note.ID > 0 && strings.Contains(note.Body, summaryMarker) {
+				out.summaryID = note.ID
+			}
+		}
+		return nil
+	}); err != nil {
+		return publishedReviewParts{}, p.apiError("find existing merge request review summary", err)
+	}
+	discussionQuery := url.Values{"per_page": {"100"}}
+	if err := p.client.GetJSONPages(ctx, mrAPIPath(ref.Repo, ref.Number, "discussions"), discussionQuery, func(body []byte) error {
+		var discussions []discussionPayload
+		if err := json.Unmarshal(body, &discussions); err != nil {
+			return errors.New("gitlab scm: decode merge request discussions")
+		}
+		for _, discussion := range discussions {
+			for _, note := range discussion.Notes {
+				for i, marker := range findingMarkers {
+					if marker != "" && strings.Contains(note.Body, marker) {
+						out.findings[i] = true
+					}
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return publishedReviewParts{}, p.apiError("find existing merge request review discussions", err)
+	}
+	return out, nil
 }

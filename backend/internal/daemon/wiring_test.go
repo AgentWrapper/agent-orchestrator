@@ -254,6 +254,27 @@ func TestProjectSCMResolverUsesThePolledProject(t *testing.T) {
 	}
 }
 
+func TestProjectActionResolverUsesThePersistedProject(t *testing.T) {
+	writer := &wiringActionWriter{}
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.example.com", Repo: "group/repo"}
+	provider := &wiringSCMProvider{parsedRepo: repo, parseOK: true}
+	providers := &recordingProviderResolverWithBundle{bundle: scmregistry.ProviderBundle{SCM: provider, Writer: writer}}
+	project := domain.ProjectRecord{
+		ID: "gitlab-project",
+		Config: domain.ProjectConfig{SCM: domain.SCMProjectConfig{
+			Provider: domain.SCMProviderGitLab, ConnectionID: "gitlab-main", Repo: "group/repo",
+		}},
+	}
+
+	got, err := (projectActionResolver{providers: providers}).ResolveProjectActions(context.Background(), project)
+	if err != nil {
+		t.Fatalf("ResolveProjectActions() error = %v", err)
+	}
+	if got.Writer != writer || got.Repository != repo || len(providers.projects) != 1 || !reflect.DeepEqual(providers.projects[0], project) {
+		t.Fatalf("ResolveProjectActions() writer/project = %T/%+v", got, providers.projects)
+	}
+}
+
 func TestSessionReviewPublisherResolverUsesTheWorkerProject(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
@@ -318,10 +339,25 @@ func (*wiringTracker) List(context.Context, domain.TrackerRepo, domain.ListFilte
 
 func (*wiringTracker) Preflight(context.Context) error { return nil }
 
-type wiringSCMProvider struct{}
+type wiringSCMProvider struct {
+	parsedRepo ports.SCMRepo
+	parseOK    bool
+}
 
-func (*wiringSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) {
-	return ports.SCMRepo{}, false
+type wiringActionWriter struct{}
+
+func (*wiringActionWriter) SquashMerge(context.Context, ports.SCMPRRef, string) error {
+	return nil
+}
+func (*wiringActionWriter) ReplyReviewThread(context.Context, ports.SCMPRRef, string, string) error {
+	return nil
+}
+func (*wiringActionWriter) ResolveReviewThread(context.Context, ports.SCMPRRef, string) error {
+	return nil
+}
+
+func (p *wiringSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) {
+	return p.parsedRepo, p.parseOK
 }
 func (*wiringSCMProvider) RepoPRListGuard(context.Context, ports.SCMRepo, string) (ports.SCMGuardResult, error) {
 	return ports.SCMGuardResult{}, nil

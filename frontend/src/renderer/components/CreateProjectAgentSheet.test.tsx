@@ -51,6 +51,7 @@ function renderSheet(
 		isCreating?: boolean;
 		isInitializing?: boolean;
 		kind?: "single_repo" | "workspace";
+		origin?: string;
 		repositorySetupNeeded?: boolean;
 	} = {},
 ) {
@@ -80,6 +81,7 @@ function renderSheet(
 				onOpenChange={() => undefined}
 				onSubmit={onSubmit}
 				open={true}
+				origin={props.origin}
 				path="/repo/new-project"
 				repositorySetupNeeded={props.repositorySetupNeeded}
 			/>
@@ -263,5 +265,11 @@ describe("CreateProjectAgentSheet", () => {
 		await userEvent.click(screen.getByLabelText("Enable issue intake"));
 		expect(screen.getByLabelText("Repository")).toBeInTheDocument();
 		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
+	});
+
+	it("derives the repository from the selected folder origin", () => {
+		renderSheet(undefined, { origin: "git@github.com:acme/new-project.git" });
+
+		expect(screen.getByLabelText("Repository")).toHaveAttribute("placeholder", "acme/new-project");
 	});
 });

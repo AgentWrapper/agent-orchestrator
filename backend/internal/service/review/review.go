@@ -250,10 +250,11 @@ func (s *Service) PublishMany(ctx context.Context, workerID domain.SessionID, re
 				return nil, err
 			}
 			result, err := publisher.PublishReview(ctx, ref, ports.ReviewPublication{
-				TargetSHA: run.TargetSHA,
-				Verdict:   string(review.Verdict),
-				Body:      review.Body,
-				Findings:  append([]ports.ReviewFinding(nil), review.Findings...),
+				IdempotencyKey: run.ID,
+				TargetSHA:      run.TargetSHA,
+				Verdict:        string(review.Verdict),
+				Body:           review.Body,
+				Findings:       append([]ports.ReviewFinding(nil), review.Findings...),
 			})
 			if err != nil {
 				return nil, err

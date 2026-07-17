@@ -314,7 +314,7 @@ describe("apiErrorMessage", () => {
 	});
 
 	it("localizes every explicitly mapped daemon code in both locales", async () => {
-		expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(134);
+		expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(136);
 		expect(Object.keys(ERROR_CODE_KEYS)).toEqual(
 			expect.arrayContaining([
 				"INVALID_BODY",
@@ -325,6 +325,8 @@ describe("apiErrorMessage", () => {
 				"SESSION_NOT_CLAIMABLE",
 				"SESSION_NO_WORKSPACE",
 				"PR_PROJECT_MISMATCH",
+				"INVALID_PR_ACTION",
+				"PR_ACTION_FORBIDDEN",
 				"SCM_UNAVAILABLE",
 				"INVALID_ACTIVITY_STATE",
 				"SSE_UNSUPPORTED",

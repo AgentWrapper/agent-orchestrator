@@ -504,6 +504,7 @@ type DirectoryEntry struct {
 type ListDirectoriesResponse struct {
 	Path        string           `json:"path"`
 	Parent      *string          `json:"parent"`
+	Origin      string           `json:"origin,omitempty"`
 	Directories []DirectoryEntry `json:"directories"`
 }
 
@@ -582,6 +583,13 @@ type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
 }
 
+// MergePRRequest identifies the persisted PR and exact head authorized for merge.
+type MergePRRequest struct {
+	SessionID       domain.SessionID `json:"sessionId"`
+	PRURL           string           `json:"prUrl"`
+	ExpectedHeadSHA string           `json:"expectedHeadSha"`
+}
+
 // MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).
 type MergePRResponse struct {
 	OK       bool   `json:"ok"`
@@ -589,9 +597,18 @@ type MergePRResponse struct {
 	Method   string `json:"method"`
 }
 
-// ResolveCommentsRequest is the optional body of POST /api/v1/prs/{id}/resolve-comments.
+// ResolveCommentsRequest identifies the persisted PR and optional review threads.
 type ResolveCommentsRequest struct {
-	CommentIDs []string `json:"commentIds,omitempty"`
+	SessionID  domain.SessionID     `json:"sessionId"`
+	PRURL      string               `json:"prUrl"`
+	CommentIDs []string             `json:"commentIds,omitempty"`
+	Replies    []ResolveThreadReply `json:"replies,omitempty"`
+}
+
+// ResolveThreadReply posts a reply inside a review thread before resolving it.
+type ResolveThreadReply struct {
+	ThreadID string `json:"threadId"`
+	Body     string `json:"body"`
 }
 
 // ResolveCommentsResponse is the body of POST /api/v1/prs/{id}/resolve-comments (200).

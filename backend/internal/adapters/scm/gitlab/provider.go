@@ -104,6 +104,7 @@ func (p *Provider) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	}
 	host := p.host
 	repoPath := raw
+	urlReference := false
 	switch {
 	case strings.Contains(raw, "://"):
 		u, err := url.Parse(raw)
@@ -112,6 +113,7 @@ func (p *Provider) ParseRepository(remote string) (ports.SCMRepo, bool) {
 		}
 		host = strings.ToLower(u.Host)
 		repoPath = u.Path
+		urlReference = true
 	case strings.HasPrefix(raw, "git@"):
 		remainder := strings.TrimPrefix(raw, "git@")
 		colon := strings.IndexByte(remainder, ':')
@@ -125,6 +127,9 @@ func (p *Provider) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	}
 	if !strings.EqualFold(host, p.host) {
 		return ports.SCMRepo{}, false
+	}
+	if urlReference {
+		repoPath = p.stripWebBasePath(repoPath)
 	}
 	repo, ok := makeRepo(p.host, repoPath)
 	return repo, ok
@@ -149,7 +154,7 @@ func (p *Provider) ParseMergeRequestRef(raw string, contextRepo ports.SCMRepo) (
 		if at <= 0 {
 			return ports.SCMPRRef{}, false
 		}
-		parsed, ok := makeRepo(p.host, u.Path[:at])
+		parsed, ok := makeRepo(p.host, p.stripWebBasePath(u.Path[:at]))
 		if !ok || (contextRepo.Repo != "" && !sameRepo(parsed, contextRepo)) {
 			return ports.SCMPRRef{}, false
 		}
@@ -170,6 +175,15 @@ func (p *Provider) ParseMergeRequestRef(raw string, contextRepo ports.SCMRepo) (
 		return ports.SCMPRRef{}, false
 	}
 	return ports.SCMPRRef{Repo: repo, Number: iid, URL: p.mergeRequestURL(repo.Repo, iid)}, true
+}
+
+func (p *Provider) stripWebBasePath(repoPath string) string {
+	clean := strings.Trim(repoPath, "/")
+	base := strings.Trim(p.webBase.Path, "/")
+	if base != "" && strings.HasPrefix(clean, base+"/") {
+		clean = strings.TrimPrefix(clean, base+"/")
+	}
+	return clean
 }
 
 // ParseChangeRef exposes GitLab MR reference parsing through the shared claim boundary.

@@ -200,6 +200,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err := in.Config.Validate(); err != nil {
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
+		if err := m.validateSCMConnection(ctx, *in.Config); err != nil {
+			return Project{}, err
+		}
 		projectConfig = *in.Config
 	}
 
@@ -519,6 +522,9 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := in.Config.Validate(); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
+	if err := m.validateSCMConnection(ctx, in.Config); err != nil {
+		return Project{}, err
+	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
@@ -531,6 +537,24 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
 	return m.projectFromRow(row), nil
+}
+
+func (m *Service) validateSCMConnection(ctx context.Context, projectConfig domain.ProjectConfig) error {
+	scm := projectConfig.SCM.WithDefaults()
+	if scm.Provider == domain.SCMProviderGitHub && scm.ConnectionID == "github-default" {
+		return nil
+	}
+	connection, ok, err := m.store.GetSCMConnection(ctx, scm.ConnectionID)
+	if err != nil {
+		return apierr.Internal("SCM_CONNECTION_LOAD_FAILED", "Failed to load SCM connection")
+	}
+	if !ok {
+		return apierr.Invalid("SCM_CONNECTION_NOT_FOUND", "SCM connection does not exist", nil)
+	}
+	if connection.Provider != scm.Provider {
+		return apierr.Invalid("SCM_CONNECTION_PROVIDER_MISMATCH", "SCM connection provider does not match project provider", nil)
+	}
+	return nil
 }
 
 // resolveGitOriginURL returns the project's `origin` remote URL via

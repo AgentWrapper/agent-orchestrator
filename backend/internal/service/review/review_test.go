@@ -338,7 +338,7 @@ func TestPublishManyPublishesThenRecordsProviderReference(t *testing.T) {
 		t.Fatalf("publish ref = %+v", ref)
 	}
 	publication := publisher.publications[0]
-	if publication.TargetSHA != "head-7" || publication.Verdict != "changes_requested" || publication.Body != "fix auth" || len(publication.Findings) != 1 || publication.Findings[0].Path != "auth.go" {
+	if publication.IdempotencyKey != "run-1" || publication.TargetSHA != "head-7" || publication.Verdict != "changes_requested" || publication.Body != "fix auth" || len(publication.Findings) != 1 || publication.Findings[0].Path != "auth.go" {
 		t.Fatalf("publication = %+v", publication)
 	}
 	if len(runs) != 1 || runs[0].Status != domain.ReviewRunComplete || runs[0].GithubReviewID != "discussion-42" || st.updateCalls != 1 {

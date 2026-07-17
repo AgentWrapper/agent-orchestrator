@@ -1,3 +1,5 @@
+import type { SupportedLocale } from "./locale";
+
 export const MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH = 4096;
 
 const MAX_INSTRUCTION_LENGTH = 1400;
@@ -42,6 +44,7 @@ export type BrowserAnnotationContext = {
 export type BrowserAnnotationModeInput = {
 	viewId: string;
 	enabled: boolean;
+	locale: SupportedLocale;
 };
 
 export type BrowserAnnotationPageSubmitPayload = {

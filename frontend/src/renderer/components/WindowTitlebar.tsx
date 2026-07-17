@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import aoLogo from "../assets/ao-logo.png";
+import { aoBridge } from "../lib/bridge";
 import { useUiStore } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -72,6 +73,23 @@ export function WindowTitlebar() {
 	const { t } = useTranslation();
 	const theme = useUiStore((state) => state.theme);
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
+	const [remoteClient, setRemoteClient] = useState(false);
+
+	useEffect(() => {
+		let active = true;
+		void aoBridge.remoteServer
+			.isRemoteClient()
+			.then((remote) => {
+				if (active) {
+					setRemoteClient(remote);
+					document.title = remote ? "Agent Orchestrator Remote" : "Agent Orchestrator";
+				}
+			})
+			.catch(() => undefined);
+		return () => {
+			active = false;
+		};
+	}, []);
 
 	// Electron draws the min/max/close overlay natively and can't read our CSS, so
 	// push theme-matched colours to it whenever the theme changes.
@@ -99,7 +117,9 @@ export function WindowTitlebar() {
 	return (
 		<header className="window-titlebar">
 			<img alt="" aria-hidden="true" className="window-titlebar__logo" draggable={false} src={aoLogo} />
-			<span className="window-titlebar__title">Agent Orchestrator</span>
+			<span className="window-titlebar__title">
+				{remoteClient ? "Agent Orchestrator Remote" : "Agent Orchestrator"}
+			</span>
 			<nav className="window-titlebar__menus">
 				<TopMenu id="file" label={t("native.menu.file")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={() => void navigate({ to: "/settings" })}>
@@ -152,9 +172,7 @@ export function WindowTitlebar() {
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("view.zoomIn")}>{t("shell.windowTitlebar.zoomIn")}</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("view.zoomOut")}>{t("shell.windowTitlebar.zoomOut")}</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("view.zoomReset")}>
-						{t("shell.windowTitlebar.zoomReset")}
-					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("view.zoomReset")}>{t("shell.windowTitlebar.zoomReset")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("view.fullscreen")}>
 						{t("shell.windowTitlebar.fullscreen")}
@@ -163,9 +181,7 @@ export function WindowTitlebar() {
 				</TopMenu>
 
 				<TopMenu id="window" label={t("native.menu.window")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={act("window.minimize")}>
-						{t("shell.windowTitlebar.minimize")}
-					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("window.minimize")}>{t("shell.windowTitlebar.minimize")}</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("window.maximize")}>
 						{t("shell.windowTitlebar.maximizeRestore")}
 					</DropdownMenuItem>

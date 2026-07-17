@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { resolveSupportedLocale } from "../../shared/locale";
 
 export type { BrowserNavState };
 
@@ -85,6 +87,8 @@ export function useBrowserView({
 	previewUrl,
 	previewRevision,
 }: UseBrowserViewOptions): BrowserViewModel {
+	const { i18n } = useTranslation();
+	const locale = resolveSupportedLocale(i18n.resolvedLanguage ?? i18n.language);
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
 	const [mirrorUrl, setMirrorUrl] = useState("");
@@ -93,6 +97,8 @@ export function useBrowserView({
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
+	const localeRef = useRef(locale);
+	localeRef.current = locale;
 	const activeRef = useRef(active);
 	const frameRef = useRef<number | null>(null);
 	const settleTimerRef = useRef<number | null>(null);
@@ -231,7 +237,11 @@ export function useBrowserView({
 			const id = viewIdRef.current;
 			if (id) {
 				if (annotationModeRef.current) {
-					void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+					void window.ao?.browser.setAnnotationMode({
+						viewId: id,
+						enabled: false,
+						locale: localeRef.current,
+					});
 					setAnnotationModeState(false);
 				}
 				sendHiddenBounds(id);
@@ -373,11 +383,17 @@ export function useBrowserView({
 				setAnnotationModeState(false);
 				return;
 			}
-			await window.ao!.browser.setAnnotationMode({ viewId: id, enabled });
+			await window.ao!.browser.setAnnotationMode({ viewId: id, enabled, locale });
 			setAnnotationModeState(enabled);
 		},
-		[hasNativeBrowser],
+		[hasNativeBrowser, locale],
 	);
+
+	useEffect(() => {
+		const id = viewIdRef.current;
+		if (!id || !hasNativeBrowser || !annotationModeRef.current) return;
+		void window.ao!.browser.setAnnotationMode({ viewId: id, enabled: true, locale });
+	}, [hasNativeBrowser, locale]);
 
 	useEffect(() => {
 		const handleDone = (payload: BrowserAnnotationSubmitPayload | BrowserAnnotationCancelPayload) => {
@@ -451,7 +467,11 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		if (!id) return;
 		if (annotationModeRef.current) {
-			void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+			void window.ao?.browser.setAnnotationMode({
+				viewId: id,
+				enabled: false,
+				locale: localeRef.current,
+			});
 			setAnnotationModeState(false);
 		}
 		mirrorTokenRef.current += 1;

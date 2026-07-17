@@ -96,6 +96,24 @@ describe("report problem drafts", () => {
 		expect(draft).not.toContain(fineGrainedGithubToken);
 	});
 
+	it("redacts bare GitLab tokens from every draft and destination URL", () => {
+		const gitlabToken = `glpat-${"example_secret"}-${"1234567890"}`;
+		const input = {
+			summary: `Connection failed ${gitlabToken}`,
+			details: `Received ${gitlabToken} from the credential helper.`,
+		};
+		const withToken = { ...diagnostics, daemonMessage: `SCM response included ${gitlabToken}` };
+
+		for (const output of ["github", "discord", "email"] as const) {
+			const draft = formatReportProblemDraft(input, withToken, output);
+			const destination = reportProblemDestinationUrl(input, withToken, output);
+
+			expect(draft).toContain("[redacted-secret]");
+			expect(draft).not.toContain(gitlabToken);
+			expect(destination).not.toContain(gitlabToken);
+		}
+	});
+
 	it("produces a useful draft when user input is partial", () => {
 		const draft = formatReportProblemDraft({ summary: "", details: "" }, diagnostics, "email");
 

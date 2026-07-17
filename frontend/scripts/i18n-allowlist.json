@@ -8,12 +8,6 @@
 		},
 		{
 			"file": "src/main.ts",
-			"kind": "property:title",
-			"text": "Agent Orchestrator",
-			"reason": "Product name."
-		},
-		{
-			"file": "src/main.ts",
 			"kind": "property:message",
 			"text": "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
 			"reason": "Supervisor protocol diagnostic ignored by renderer localization for the not_configured status code."
@@ -266,9 +260,15 @@
 		},
 		{
 			"file": "src/renderer/components/WindowTitlebar.tsx",
-			"kind": "jsx-text",
+			"kind": "jsx-expression",
 			"text": "Agent Orchestrator",
 			"reason": "Product name."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-expression",
+			"text": "Agent Orchestrator Remote",
+			"reason": "Remote product name."
 		},
 		{
 			"file": "src/renderer/components/WindowTitlebar.tsx",

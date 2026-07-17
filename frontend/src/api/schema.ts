@@ -883,6 +883,7 @@ export interface components {
         };
         ListDirectoriesResponse: {
             directories: components["schemas"]["DirectoryEntry"][];
+            origin?: string;
             parent: null | string;
             path: string;
         };
@@ -915,6 +916,11 @@ export interface components {
              * @enum {string}
              */
             status: "read";
+        };
+        MergePRRequest: {
+            expectedHeadSha: string;
+            prUrl: string;
+            sessionId: string;
         };
         MergePRResponse: {
             method: string;
@@ -1053,9 +1059,19 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        ResolveCommentsRequest: {
+            commentIds?: string[];
+            prUrl: string;
+            replies?: components["schemas"]["ResolveThreadReply"][];
+            sessionId: string;
+        };
         ResolveCommentsResponse: {
             ok: boolean;
             resolved: number;
+        };
+        ResolveThreadReply: {
+            body: string;
+            threadId: string;
         };
         RestoreSessionResponse: {
             ok: boolean;
@@ -2499,7 +2515,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergePRRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -2508,6 +2528,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MergePRResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */
@@ -2537,6 +2575,15 @@ export interface operations {
                     "application/json": components["schemas"]["APIError"];
                 };
             };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
             /** @description Not Implemented */
             501: {
                 headers: {
@@ -2558,7 +2605,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveCommentsRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -2567,6 +2618,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResolveCommentsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */
@@ -2580,6 +2649,15 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -9,10 +9,11 @@ type SCMReviewPublisher interface {
 
 // ReviewPublication is one provider-neutral review summary and its inline findings.
 type ReviewPublication struct {
-	TargetSHA string
-	Verdict   string
-	Body      string
-	Findings  []ReviewFinding
+	IdempotencyKey string
+	TargetSHA      string
+	Verdict        string
+	Body           string
+	Findings       []ReviewFinding
 }
 
 // ReviewFinding is one line-specific review comment.

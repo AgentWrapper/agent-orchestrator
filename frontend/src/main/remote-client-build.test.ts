@@ -1,6 +1,11 @@
 // @vitest-environment node
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { resolveRemoteClientBuild, resolveRemoteClientIdentity } from "./remote-client-build";
+import {
+	resolveRemoteClientBuild,
+	resolveRemoteClientIdentity,
+	shouldUseCanonicalAppState,
+} from "./remote-client-build";
 
 describe("resolveRemoteClientBuild", () => {
 	it("allows the environment override only in development", () => {
@@ -31,5 +36,18 @@ describe("resolveRemoteClientIdentity", () => {
 			executableName: "agent-orchestrator-remote",
 			userDataDirectoryName: "electron-remote",
 		});
+	});
+});
+
+describe("remote client desktop policies", () => {
+	it("keeps canonical app-state exclusive to the standard desktop app", () => {
+		expect(shouldUseCanonicalAppState(false)).toBe(true);
+		expect(shouldUseCanonicalAppState(true)).toBe(false);
+	});
+
+	it("uses the selected desktop identity for the native window title", async () => {
+		const mainSource = await readFile(new URL("../main.ts", import.meta.url), "utf8");
+
+		expect(mainSource).toMatch(/title:\s*clientIdentity\.productName/);
 	});
 });

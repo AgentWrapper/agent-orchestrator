@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "./ui/button";
@@ -24,13 +24,28 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 // (re-runnable later once the Settings entry point lands, issue #2205).
 export function MigrationPopup() {
 	const { t } = useTranslation();
-	const offer = useMigrationOffer();
+	const [remoteClient, setRemoteClient] = useState<boolean | null>(null);
+	useEffect(() => {
+		let active = true;
+		void aoBridge.remoteServer
+			.isRemoteClient()
+			.then((remote) => {
+				if (active) setRemoteClient(remote);
+			})
+			.catch(() => {
+				if (active) setRemoteClient(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, []);
+	const offer = useMigrationOffer(remoteClient === false);
 	const queryClient = useQueryClient();
 	const [skipped, setSkipped] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<MigrationActionError>();
 
-	const open = (offer.data?.show ?? false) && !skipped;
+	const open = remoteClient === false && (offer.data?.show ?? false) && !skipped;
 	if (!open) return null;
 
 	const legacyRoot = offer.data?.legacyRoot || t("migration.popup.earlierAO");

@@ -1,6 +1,7 @@
 import createClient from "openapi-fetch";
 import type { paths } from "../../api/schema";
 import { i18n } from "../i18n";
+import { TOKEN_VALUE_PATTERN } from "../../shared/credential-patterns";
 import { captureRendererEvent } from "./telemetry";
 
 function devApiBaseUrl(): string {
@@ -333,6 +334,7 @@ const STABLE_API_ERROR_CODES = [
 	"SESSION_NOT_CLAIMABLE",
 	"SESSION_NO_WORKSPACE",
 	"PR_PROJECT_MISMATCH",
+	"INVALID_PR_ACTION",
 	"SCM_CONNECTIONS_LIST_FAILED",
 	"RESERVED_SCM_CONNECTION_ID",
 	"SCM_CONNECTION_CREATE_FAILED",
@@ -364,6 +366,7 @@ const STABLE_API_ERROR_CODES = [
 	"PR_NOT_FOUND",
 	"PR_NOT_MERGEABLE",
 	"PR_PRECONDITIONS_UNMET",
+	"PR_ACTION_FORBIDDEN",
 	"NOTHING_TO_RESOLVE",
 	"PR_OPERATION_FAILED",
 	"REVIEW_INVALID",
@@ -385,7 +388,6 @@ export const ERROR_CODE_KEYS = Object.fromEntries(
 ) as Record<StableAPIErrorCode, ErrorCodeKey>;
 
 const URL_CREDENTIAL_PATTERN = /:\/\/[^/\s:]+:[^@/\s]+@/;
-const TOKEN_VALUE_PATTERN = /\b(?:glpat-[\w-]+|github_pat_[\w-]+|gh[pousr]_[\w-]+|sk-[\w-]{16,})\b/i;
 const NORMALIZED_CREDENTIAL_MARKER =
 	/(?:token|credential|secret|passphrase|password|passwd|authorization|bearer|apikey|privatekey|oauthkey)/;
 

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n, initializeRendererI18n } from "../i18n";
@@ -11,19 +11,26 @@ vi.mock("../lib/api-client", async (importOriginal) => ({
 	apiClient: { GET: getMock, POST: postMock },
 }));
 
-function response(path: string, parent: string | null, directories: Array<{ name: string; path: string }>) {
-	return { data: { path, parent, directories }, error: undefined };
+function response(
+	path: string,
+	parent: string | null,
+	directories: Array<{ name: string; path: string }>,
+	origin?: string,
+) {
+	return { data: { path, parent, directories, ...(origin ? { origin } : {}) }, error: undefined };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+	let resolve: (value: T) => void = () => undefined;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
 }
 
 function renderPicker(onSelect = vi.fn()) {
 	render(
-		<RemoteDirectoryPickerDialog
-			disabled={false}
-			kind="single_repo"
-			onOpenChange={vi.fn()}
-			onSelect={onSelect}
-			open
-		/>,
+		<RemoteDirectoryPickerDialog disabled={false} kind="single_repo" onOpenChange={vi.fn()} onSelect={onSelect} open />,
 	);
 	return onSelect;
 }
@@ -98,9 +105,7 @@ describe("RemoteDirectoryPickerDialog", () => {
 	it("keeps API errors visible without closing the dialog", async () => {
 		const user = userEvent.setup();
 		getMock
-			.mockResolvedValueOnce(
-				response("/home/claude", "/home", [{ name: "private", path: "/home/claude/private" }]),
-			)
+			.mockResolvedValueOnce(response("/home/claude", "/home", [{ name: "private", path: "/home/claude/private" }]))
 			.mockResolvedValueOnce({
 				data: undefined,
 				error: { error: "forbidden", code: "UNRECOGNIZED_DIRECTORY_CODE", message: "Permission denied" },
@@ -129,12 +134,10 @@ describe("RemoteDirectoryPickerDialog", () => {
 
 	it("keeps selection disabled when navigation to the edited path fails", async () => {
 		const user = userEvent.setup();
-		getMock
-			.mockResolvedValueOnce(response("/home/claude/code", "/home/claude", []))
-			.mockResolvedValueOnce({
-				data: undefined,
-				error: { error: "forbidden", code: "UNRECOGNIZED_DIRECTORY_CODE", message: "Permission denied" },
-			});
+		getMock.mockResolvedValueOnce(response("/home/claude/code", "/home/claude", [])).mockResolvedValueOnce({
+			data: undefined,
+			error: { error: "forbidden", code: "UNRECOGNIZED_DIRECTORY_CODE", message: "Permission denied" },
+		});
 		renderPicker();
 
 		const pathInput = await screen.findByLabelText("Server path");
@@ -164,6 +167,19 @@ describe("RemoteDirectoryPickerDialog", () => {
 		await user.click(await screen.findByRole("button", { name: "Select this folder" }));
 
 		expect(onSelect).toHaveBeenCalledWith("/home/claude/code");
+	});
+
+	it("returns the current folder origin when the server provides it", async () => {
+		const user = userEvent.setup();
+		const onSelect = vi.fn();
+		getMock.mockResolvedValueOnce(
+			response("/home/claude/code", "/home/claude", [], "git@gitlab.example.com:group/project.git"),
+		);
+		renderPicker(onSelect);
+
+		await user.click(await screen.findByRole("button", { name: "Select this folder" }));
+
+		expect(onSelect).toHaveBeenCalledWith("/home/claude/code", "git@gitlab.example.com:group/project.git");
 	});
 
 	it("opens a new-folder form with Create disabled for a blank name", async () => {
@@ -254,6 +270,88 @@ describe("RemoteDirectoryPickerDialog", () => {
 		expect(postMock).toHaveBeenCalledTimes(1);
 	});
 
+	it("blocks every close path while folder creation is pending", async () => {
+		const user = userEvent.setup();
+		const onOpenChange = vi.fn();
+		getMock.mockResolvedValueOnce(response("/home/ubuntu/code", "/home/ubuntu", []));
+		postMock.mockReturnValueOnce(new Promise<never>(() => undefined));
+		render(
+			<RemoteDirectoryPickerDialog
+				disabled={false}
+				kind="single_repo"
+				onOpenChange={onOpenChange}
+				onSelect={vi.fn()}
+				open
+			/>,
+		);
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+		await user.type(screen.getByLabelText("Folder name"), "new-project");
+		await user.click(screen.getByRole("button", { name: "Create" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledOnce());
+		const close = screen.getByRole("button", { name: "Close server folder browser" });
+		const cancel = screen.getByRole("button", { name: "Cancel" });
+		const dialog = screen.getByRole("dialog", { name: "Browse server project folders" });
+		const overlay = dialog.previousElementSibling;
+		if (!(overlay instanceof HTMLElement)) throw new Error("missing dialog overlay");
+
+		await user.click(close);
+		await user.click(cancel);
+		await user.keyboard("{Escape}");
+		fireEvent.pointerDown(overlay);
+		fireEvent.click(overlay);
+
+		expect(close).toBeDisabled();
+		expect(cancel).toBeDisabled();
+		expect(onOpenChange).not.toHaveBeenCalled();
+		expect(dialog).toBeInTheDocument();
+	});
+
+	it("ignores a create response from an earlier open generation", async () => {
+		const user = userEvent.setup();
+		const pendingCreate = deferred<{
+			data: { name: string; path: string };
+			error: undefined;
+			response: Response;
+		}>();
+		getMock
+			.mockResolvedValueOnce(response("/home/ubuntu/old", "/home/ubuntu", []))
+			.mockResolvedValueOnce(response("/srv/fresh", "/srv", []))
+			.mockResolvedValueOnce(response("/home/ubuntu/old/stale", "/home/ubuntu/old", []));
+		postMock.mockReturnValueOnce(pendingCreate.promise);
+		const picker = (open: boolean) => (
+			<RemoteDirectoryPickerDialog
+				disabled={false}
+				kind="single_repo"
+				onOpenChange={vi.fn()}
+				onSelect={vi.fn()}
+				open={open}
+			/>
+		);
+		const { rerender } = render(picker(true));
+
+		await user.click(await screen.findByRole("button", { name: "New folder" }));
+		await user.type(screen.getByLabelText("Folder name"), "stale");
+		await user.click(screen.getByRole("button", { name: "Create" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledOnce());
+		rerender(picker(false));
+		rerender(picker(true));
+		await waitFor(() => expect(screen.getByLabelText("Server path")).toHaveValue("/srv/fresh"));
+
+		await act(async () => {
+			pendingCreate.resolve({
+				data: { name: "stale", path: "/home/ubuntu/old/stale" },
+				error: undefined,
+				response: new Response(null, { status: 201 }),
+			});
+			await pendingCreate.promise;
+		});
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledOnce());
+		expect(getMock).toHaveBeenCalledTimes(2);
+		expect(screen.getByLabelText("Server path")).toHaveValue("/srv/fresh");
+	});
+
 	it("resets the new-folder form after canceling and reopening", async () => {
 		const user = userEvent.setup();
 		const onOpenChange = vi.fn();
@@ -283,7 +381,9 @@ describe("RemoteDirectoryPickerDialog", () => {
 	it("localizes controls while preserving server paths and directory names", async () => {
 		await initializeRendererI18n("zh-CN");
 		getMock.mockResolvedValueOnce(
-			response("/home/ubuntu/原始目录", "/home/ubuntu", [{ name: "raw-folder-42", path: "/home/ubuntu/原始目录/raw-folder-42" }]),
+			response("/home/ubuntu/原始目录", "/home/ubuntu", [
+				{ name: "raw-folder-42", path: "/home/ubuntu/原始目录/raw-folder-42" },
+			]),
 		);
 		renderPicker();
 
@@ -295,7 +395,8 @@ describe("RemoteDirectoryPickerDialog", () => {
 	});
 
 	it("updates a local load fallback after a live language change", async () => {
-		getMock.mockResolvedValueOnce(response("/home/ubuntu", "/home", [{ name: "private", path: "/home/ubuntu/private" }]))
+		getMock
+			.mockResolvedValueOnce(response("/home/ubuntu", "/home", [{ name: "private", path: "/home/ubuntu/private" }]))
 			.mockRejectedValueOnce(null);
 		const user = userEvent.setup();
 		renderPicker();

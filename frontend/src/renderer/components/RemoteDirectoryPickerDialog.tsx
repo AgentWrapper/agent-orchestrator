@@ -16,7 +16,7 @@ export type RemoteDirectoryPickerDialogProps = {
 	disabled: boolean;
 	kind: ProjectKind;
 	onOpenChange: (open: boolean) => void;
-	onSelect: (path: string) => void;
+	onSelect: (path: string, origin?: string) => void;
 	open: boolean;
 };
 
@@ -36,6 +36,7 @@ export function RemoteDirectoryPickerDialog({
 	const [newFolderOpen, setNewFolderOpen] = useState(false);
 	const [creatingFolder, setCreatingFolder] = useState(false);
 	const requestNumber = useRef(0);
+	const createRequestNumber = useRef(0);
 
 	const openPath = useCallback(async (nextPath?: string) => {
 		const request = ++requestNumber.current;
@@ -69,9 +70,11 @@ export function RemoteDirectoryPickerDialog({
 		} else {
 			setNewFolderName("");
 			setNewFolderOpen(false);
+			setCreatingFolder(false);
 		}
 		return () => {
 			requestNumber.current += 1;
+			createRequestNumber.current += 1;
 		};
 	}, [open, openPath]);
 
@@ -85,12 +88,14 @@ export function RemoteDirectoryPickerDialog({
 		event.preventDefault();
 		const name = newFolderName.trim();
 		if (!current || !name || creatingFolder) return;
+		const request = ++createRequestNumber.current;
 		setCreatingFolder(true);
 		setError(null);
 		try {
 			const { data, error: apiError } = await apiClient.POST("/api/v1/filesystem/directories", {
 				body: { parentPath: current.path, name },
 			});
+			if (request !== createRequestNumber.current) return;
 			if (apiError) {
 				setError({ cause: apiError, kind: "create" });
 				return;
@@ -101,9 +106,11 @@ export function RemoteDirectoryPickerDialog({
 				await openPath(data.path);
 			}
 		} catch (cause) {
-			setError({ cause: cause ?? {}, kind: "create" });
+			if (request === createRequestNumber.current) {
+				setError({ cause: cause ?? {}, kind: "create" });
+			}
 		} finally {
-			setCreatingFolder(false);
+			if (request === createRequestNumber.current) setCreatingFolder(false);
 		}
 	};
 
@@ -112,10 +119,24 @@ export function RemoteDirectoryPickerDialog({
 	const busy = loading || creatingFolder;
 
 	return (
-		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+		<Dialog.Root
+			open={open}
+			onOpenChange={(nextOpen) => {
+				if (!nextOpen && (disabled || busy)) return;
+				onOpenChange(nextOpen);
+			}}
+		>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(680px,calc(100svh-24px))] w-[min(620px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Content
+					className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(680px,calc(100svh-24px))] w-[min(620px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl data-[state=open]:animate-modal-in"
+					onEscapeKeyDown={(event) => {
+						if (disabled || busy) event.preventDefault();
+					}}
+					onPointerDownOutside={(event) => {
+						if (disabled || busy) event.preventDefault();
+					}}
+				>
 					<div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
 						<div className="min-w-0">
 							<Dialog.Title className="text-[18px] font-semibold text-foreground">
@@ -131,7 +152,7 @@ export function RemoteDirectoryPickerDialog({
 								variant="ghost"
 								size="icon-sm"
 								aria-label={t("remoteDirectory.close")}
-								disabled={disabled}
+								disabled={disabled || busy}
 							>
 								<X className="size-4" aria-hidden="true" />
 							</Button>
@@ -287,14 +308,18 @@ export function RemoteDirectoryPickerDialog({
 					</div>
 
 					<div className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-4 sm:px-6">
-						<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
+						<Button type="button" variant="outline" disabled={disabled || busy} onClick={() => onOpenChange(false)}>
 							{t("ui.cancel")}
 						</Button>
 						<Button
 							type="button"
 							variant="primary"
 							disabled={disabled || busy || !current || path.trim() !== current.path}
-							onClick={() => current && onSelect(current.path)}
+							onClick={() => {
+								if (!current) return;
+								if (current.origin) onSelect(current.path, current.origin);
+								else onSelect(current.path);
+							}}
 						>
 							{t("remoteDirectory.select")}
 						</Button>

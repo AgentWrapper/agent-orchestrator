@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { useSCMConnections } from "../hooks/useSCMConnections";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
@@ -81,6 +82,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
+	const connectionsQuery = useSCMConnections();
 	const config = project.config ?? {};
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
@@ -118,6 +120,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	});
 
 	const intakeProvider = form.scmProvider;
+	const selectedConnection = connectionsQuery.data?.find((connection) => connection.id === form.scmConnectionId);
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
 		provider: intakeProvider,
@@ -134,8 +137,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			intakeLabels: patch.labels ?? f.intakeLabels,
 		}));
 	const effectiveIntakeRepo =
-		form.scmRepo.trim() || form.intakeRepo.trim() || deriveProviderRepo(project.repo, intakeProvider);
-	const intakeRepoHref = deriveRepositoryHref(project.repo, effectiveIntakeRepo);
+		form.scmRepo.trim() ||
+		form.intakeRepo.trim() ||
+		deriveProviderRepo(project.repo, intakeProvider, selectedConnection?.webBaseUrl);
+	const intakeRepoHref = deriveRepositoryHref(project.repo, effectiveIntakeRepo, selectedConnection?.webBaseUrl);
 	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({

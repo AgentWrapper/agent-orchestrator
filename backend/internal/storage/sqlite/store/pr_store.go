@@ -23,9 +23,9 @@ import (
 // drift between either interface and this implementation fails here at the point
 // of definition rather than later at the call sites in lifecycle_wiring / tests.
 var (
-	_ ports.PRWriter  = (*Store)(nil)
-	_ ports.SCMWriter = (*Store)(nil)
-	_ ports.PRClaimer = (*Store)(nil)
+	_ ports.PRWriter             = (*Store)(nil)
+	_ ports.SCMObservationWriter = (*Store)(nil)
+	_ ports.PRClaimer            = (*Store)(nil)
 )
 
 // WritePR persists a legacy PR observation — scalar facts, check runs, and the
