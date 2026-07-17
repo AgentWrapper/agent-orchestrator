@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"reflect"
+	"syscall"
 	"testing"
 	"time"
 
@@ -14,16 +16,16 @@ import (
 )
 
 func TestLANManagerSpecifiedPortUsesIPv4Wildcard(t *testing.T) {
-	reserved, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve port: %v", err)
-	}
-	port := reserved.Addr().(*net.TCPAddr).Port
-	if err := reserved.Close(); err != nil {
-		t.Fatalf("release reserved port: %v", err)
-	}
+	t.Parallel()
+	ln := newIPv4WildcardListener(t)
+	port := ln.Addr().(*net.TCPAddr).Port
+	var calls []listenCall
 
 	m := NewLANManager(http.NotFoundHandler(), &authState{}, port, slog.Default())
+	m.listen = func(network, address string) (net.Listener, error) {
+		calls = append(calls, listenCall{network: network, address: address})
+		return ln, nil
+	}
 	bound, err := m.Start(port)
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -33,30 +35,63 @@ func TestLANManagerSpecifiedPortUsesIPv4Wildcard(t *testing.T) {
 	if bound != port {
 		t.Fatalf("bound port = %d, want specified port %d", bound, port)
 	}
+	assertListenCalls(t, calls, []listenCall{{network: "tcp4", address: fmt.Sprintf("0.0.0.0:%d", port)}})
 	assertIPv4WildcardListener(t, m.ln)
 	assertIPv4LoopbackReachable(t, bound)
 }
 
 func TestLANManagerPortConflictFallbackUsesIPv4Wildcard(t *testing.T) {
-	occupied, err := net.Listen("tcp4", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("occupy port: %v", err)
-	}
-	defer occupied.Close()
-	occupiedPort := occupied.Addr().(*net.TCPAddr).Port
+	t.Parallel()
+	fallback := newIPv4WildcardListener(t)
+	fallbackPort := fallback.Addr().(*net.TCPAddr).Port
+	const wantedPort = 3011
+	var calls []listenCall
 
-	m := NewLANManager(http.NotFoundHandler(), &authState{}, occupiedPort, slog.Default())
-	bound, err := m.Start(occupiedPort)
+	m := NewLANManager(http.NotFoundHandler(), &authState{}, wantedPort, slog.Default())
+	m.listen = func(network, address string) (net.Listener, error) {
+		calls = append(calls, listenCall{network: network, address: address})
+		if len(calls) == 1 {
+			return nil, syscall.EADDRINUSE
+		}
+		return fallback, nil
+	}
+	bound, err := m.Start(wantedPort)
 	if err != nil {
 		t.Fatalf("start with occupied port: %v", err)
 	}
 	defer m.Stop(context.Background())
 
-	if bound == occupiedPort {
-		t.Fatalf("bound port = occupied port %d, want ephemeral fallback", bound)
+	if bound != fallbackPort {
+		t.Fatalf("bound port = %d, want fallback listener port %d", bound, fallbackPort)
 	}
+	assertListenCalls(t, calls, []listenCall{
+		{network: "tcp4", address: "0.0.0.0:3011"},
+		{network: "tcp4", address: "0.0.0.0:0"},
+	})
 	assertIPv4WildcardListener(t, m.ln)
 	assertIPv4LoopbackReachable(t, bound)
+}
+
+type listenCall struct {
+	network string
+	address string
+}
+
+func newIPv4WildcardListener(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("pre-bind IPv4 wildcard listener: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln
+}
+
+func assertListenCalls(t *testing.T, got, want []listenCall) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("listen calls = %#v, want %#v", got, want)
+	}
 }
 
 func assertIPv4WildcardListener(t *testing.T, ln net.Listener) {

@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+type listenerFactory func(network, address string) (net.Listener, error)
+
 // LANManager owns the daemon's second, network-facing HTTP listener. It binds
 // 0.0.0.0 only while Connect Mobile is enabled and wraps the shared router in
 // authMiddleware. The loopback listener is unaffected.
@@ -21,6 +23,7 @@ type LANManager struct {
 	defaultPort int
 	log         *slog.Logger
 	state       *authState // shared with authMiddleware; SetPasswordHash writes through here
+	listen      listenerFactory
 
 	mu    sync.Mutex
 	srv   *http.Server
@@ -38,6 +41,7 @@ func NewLANManager(handler http.Handler, state *authState, defaultPort int, log 
 		defaultPort: defaultPort,
 		log:         loggerOrDefault(log),
 		state:       state,
+		listen:      net.Listen,
 	}
 }
 
@@ -122,14 +126,14 @@ func (m *LANManager) Start(port int) (int, error) {
 	if port == 0 {
 		port = m.defaultPort
 	}
-	ln, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
+	ln, err := m.listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		if !errors.Is(err, syscall.EADDRINUSE) {
 			m.mu.Unlock()
 			return 0, fmt.Errorf("bind LAN 0.0.0.0:%d: %w", port, err)
 		}
 		//nolint:gosec // G102: binding all interfaces is the deliberate purpose of the Connect Mobile LAN listener; it runs only while the bridge is enabled and behind authMiddleware.
-		if ln, err = net.Listen("tcp4", "0.0.0.0:0"); err != nil {
+		if ln, err = m.listen("tcp4", "0.0.0.0:0"); err != nil {
 			m.mu.Unlock()
 			return 0, fmt.Errorf("bind LAN ephemeral: %w", err)
 		}
