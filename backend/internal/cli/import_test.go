@@ -75,7 +75,7 @@ func TestImportCommand_SurfacesParseErrorOnce(t *testing.T) {
 		t.Fatalf("ExitCode = %d, want 1 (runtime failure)", got)
 	}
 	// The parse error must reach the user exactly once. main.go prints the
-	// returned error, so the command itself must not also Fprintf it — that
+	// returned error, so the command itself must not also Fprintf it; that
 	// doubled the output before this fix.
 	count := strings.Count(stderr, "parse legacy config.yaml") + strings.Count(err.Error(), "parse legacy config.yaml")
 	if count != 1 {
