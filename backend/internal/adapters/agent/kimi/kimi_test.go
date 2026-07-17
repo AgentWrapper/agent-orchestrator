@@ -281,6 +281,82 @@ timeout = 7
 	}
 }
 
+func TestGetAgentHooksSeedsAOManagedConfigFromUserKimiConfig(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	userConfig := `api_key = "user-key"
+default_model = "kimi-code/kimi-for-coding"
+`
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(userConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(aoHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read AO config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`api_key = "user-key"`,
+		`default_model = "kimi-code/kimi-for-coding"`,
+		`command = "ao hooks kimi session-start"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("AO config missing %q:\n%s", want, text)
+		}
+	}
+	source, err := os.ReadFile(filepath.Join(userHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read source config: %v", err)
+	}
+	if string(source) != userConfig {
+		t.Fatalf("source config mutated:\n%s", source)
+	}
+}
+
+func TestGetAgentHooksReseedsAOManagedConfigWithoutAuth(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(`api_key = "user-key"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(aoHome, "config.toml"), []byte(kimiHooksConfigBlock()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(aoHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read AO config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`api_key = "user-key"`, `command = "ao hooks kimi session-start"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("AO config missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Count(text, kimiHooksSentinelStart) != 1 {
+		t.Fatalf("managed hook block duplicated:\n%s", text)
+	}
+}
+
 func TestGetAgentHooksRewritesManagedKimiConfigBlock(t *testing.T) {
 	workspace := t.TempDir()
 	kimiHome := t.TempDir()

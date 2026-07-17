@@ -82,6 +82,11 @@ func installKimiConfigHooks(cfg ports.WorkspaceHookConfig) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	if seeded, ok, err := kimiSeedConfig(path, data); err != nil {
+		return err
+	} else if ok {
+		data = seeded
+	}
 	body := mergeKimiHooksConfig(string(data))
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create Kimi config dir: %w", err)
@@ -99,6 +104,76 @@ func kimiCodeHomeFromEnv(env map[string]string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func kimiSeedConfig(targetPath string, existing []byte) ([]byte, bool, error) {
+	if kimiConfigHasAPIKey(existing) {
+		return nil, false, nil
+	}
+	if !kimiConfigCanSeed(existing) {
+		return nil, false, nil
+	}
+	sourceHome, ok := kimiCodeHome()
+	if !ok {
+		return nil, false, nil
+	}
+	sourcePath := filepath.Join(sourceHome, "config.toml")
+	if sameKimiConfigPath(sourcePath, targetPath) {
+		return nil, false, nil
+	}
+	source, err := os.ReadFile(sourcePath) //nolint:gosec // user/process Kimi config used only as a seed for AO-managed home.
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read source Kimi config %s: %w", sourcePath, err)
+	}
+	if !kimiConfigHasAPIKey(source) {
+		return nil, false, nil
+	}
+	return source, true, nil
+}
+
+func kimiConfigCanSeed(existing []byte) bool {
+	text := strings.TrimSpace(string(existing))
+	if text == "" {
+		return true
+	}
+	return strings.TrimSpace(removeKimiManagedHooks(text)) == ""
+}
+
+func removeKimiManagedHooks(existing string) string {
+	start := strings.Index(existing, kimiHooksSentinelStart)
+	if start < 0 {
+		return existing
+	}
+	afterStart := existing[start+len(kimiHooksSentinelStart):]
+	endRel := strings.Index(afterStart, kimiHooksSentinelEnd)
+	if endRel < 0 {
+		return strings.TrimRight(existing[:start], "\n")
+	}
+	end := start + len(kimiHooksSentinelStart) + endRel + len(kimiHooksSentinelEnd)
+	return existing[:start] + existing[end:]
+}
+
+func kimiConfigHasAPIKey(data []byte) bool {
+	for _, match := range kimiAPIKeyLineRE.FindAllStringSubmatch(string(data), -1) {
+		for _, group := range match[2:] {
+			if strings.TrimSpace(group) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameKimiConfigPath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA == nil && errB == nil {
+		return absA == absB
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func mergeKimiHooksConfig(existing string) string {
