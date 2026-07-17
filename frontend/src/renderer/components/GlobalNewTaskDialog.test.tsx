@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GlobalNewTaskDialog } from "./GlobalNewTaskDialog";
 import { useUiStore } from "../stores/ui-store";
+import { GlobalNewTaskDialog } from "./GlobalNewTaskDialog";
 
 const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
 
@@ -11,25 +12,36 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
 }));
 
-// Probe stand-in: surfaces the props the real dialog would receive and lets the
-// test simulate a successful task creation.
+// Probe stand-in: surfaces the props the real dialog would receive, preserves a
+// draft while open, and exposes the real onOpenChange boundary.
 vi.mock("./NewTaskDialog", () => ({
 	NewTaskDialog: ({
 		open,
 		projectId,
 		onCreated,
+		onOpenChange,
 	}: {
 		open: boolean;
 		projectId?: string;
 		onCreated: (id: string) => void;
-	}) =>
-		open ? (
+		onOpenChange: (open: boolean) => void;
+	}) => {
+		const [draft, setDraft] = useState("");
+		return open ? (
 			<div data-testid="new-task-dialog" data-project={projectId}>
+				<label>
+					task
+					<input aria-label="task" value={draft} onChange={(event) => setDraft(event.currentTarget.value)} />
+				</label>
 				<button type="button" onClick={() => onCreated("sess-9")}>
 					create
 				</button>
+				<button type="button" onClick={() => onOpenChange(false)}>
+					close
+				</button>
 			</div>
-		) : null,
+		) : null;
+	},
 }));
 
 function renderDialog() {
@@ -74,7 +86,8 @@ describe("GlobalNewTaskDialog", () => {
 		});
 	});
 
-	it("re-opens on a repeat request for the same project (nonce bump)", async () => {
+	it("actually closes and re-opens for a fresh request to the same project", async () => {
+		const user = userEvent.setup();
 		renderDialog();
 
 		act(() => {
@@ -82,10 +95,37 @@ describe("GlobalNewTaskDialog", () => {
 		});
 		await screen.findByTestId("new-task-dialog");
 
-		// Close it, then request the same project again — the nonce must re-open it.
+		await user.click(screen.getByRole("button", { name: "close" }));
+		expect(screen.queryByTestId("new-task-dialog")).not.toBeInTheDocument();
+
 		act(() => {
-			useUiStore.setState({ newTaskRequest: { projectId: "proj-7", nonce: 999 } });
+			useUiStore.getState().requestNewTask("proj-7");
 		});
 		expect(await screen.findByTestId("new-task-dialog")).toHaveAttribute("data-project", "proj-7");
+	});
+
+	it("does not retarget or replay a request received while the dialog is open", async () => {
+		const user = userEvent.setup();
+		renderDialog();
+
+		act(() => {
+			useUiStore.getState().requestNewTask("proj-7");
+		});
+		const dialog = await screen.findByTestId("new-task-dialog");
+		await user.type(screen.getByRole("textbox", { name: "task" }), "keep this draft");
+
+		act(() => {
+			useUiStore.getState().requestNewTask("proj-8");
+		});
+		expect(dialog).toHaveAttribute("data-project", "proj-7");
+		expect(screen.getByRole("textbox", { name: "task" })).toHaveValue("keep this draft");
+
+		await user.click(screen.getByRole("button", { name: "close" }));
+		expect(screen.queryByTestId("new-task-dialog")).not.toBeInTheDocument();
+
+		act(() => {
+			useUiStore.getState().requestNewTask("proj-8");
+		});
+		expect(await screen.findByTestId("new-task-dialog")).toHaveAttribute("data-project", "proj-8");
 	});
 });

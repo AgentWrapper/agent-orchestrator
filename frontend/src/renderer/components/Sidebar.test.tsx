@@ -1,6 +1,6 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
@@ -252,6 +252,16 @@ describe("Sidebar", () => {
 		const request = useUiStore.getState().newTaskRequest;
 		expect(request?.projectId).toBe("proj-1");
 		expect(request?.nonce ?? 0).toBeGreaterThan(before);
+	});
+
+	it("opens the create-project flow when the no-project shortcut signal arrives", async () => {
+		renderSidebar();
+
+		act(() => {
+			useUiStore.getState().requestCreateProject();
+		});
+
+		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
 	});
 
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {

@@ -20,7 +20,6 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
-import { dispatchNewSession, resolveScopedProjectId } from "../lib/new-session-shortcut";
 import { aoBridge } from "../lib/bridge";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -66,7 +65,11 @@ function ShellLayout() {
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
-	const scopedProjectId = resolveScopedProjectId(routeParams, workspaces);
+	const scopedProjectId = routeParams.projectId
+		? routeParams.projectId
+		: routeParams.sessionId
+			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
+			: undefined;
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
@@ -255,9 +258,13 @@ function ShellLayout() {
 	// for the in-scope project, else fall back to create-project.
 	useEffect(
 		() =>
-			aoBridge.app.onNewSessionShortcut(() =>
-				dispatchNewSession(scopedProjectId, { requestNewTask, requestCreateProject }),
-			),
+			aoBridge.app.onNewSessionShortcut(() => {
+				if (scopedProjectId) {
+					requestNewTask(scopedProjectId);
+				} else {
+					requestCreateProject();
+				}
+			}),
 		[scopedProjectId, requestNewTask, requestCreateProject],
 	);
 

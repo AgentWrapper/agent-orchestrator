@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 import { attachNewSessionShortcut } from "./new-session-shortcut";
 
 type InputEvent = {
@@ -11,15 +12,14 @@ type InputEvent = {
 	isAutoRepeat?: boolean;
 };
 
-// Minimal stand-in for the electron WebContents before-input-event emitter.
-function fakeContents() {
+function fakeSource() {
 	let handler: ((event: { preventDefault: () => void }, input: InputEvent) => void) | undefined;
 	return {
-		on(channel: string, fn: typeof handler) {
-			if (channel === "before-input-event") handler = fn;
+		on(channel: string, listener: typeof handler) {
+			if (channel === "before-input-event") handler = listener;
 			return this;
 		},
-		send(input: Partial<InputEvent> & { key: string }) {
+		emit(input: Partial<InputEvent> & { key: string }) {
 			const event = { preventDefault: vi.fn() };
 			handler?.(event, {
 				control: false,
@@ -34,49 +34,66 @@ function fakeContents() {
 	};
 }
 
+function fakeTarget() {
+	return { focus: vi.fn(), send: vi.fn() };
+}
+
 describe("attachNewSessionShortcut", () => {
-	it("notifies and prevents default on the matching chord (Windows/Linux)", () => {
-		const contents = fakeContents();
-		const notify = vi.fn();
-		attachNewSessionShortcut(contents, false, notify);
+	it("forwards and prevents default on the main-window chord", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachNewSessionShortcut(source, false, target);
 
-		const event = contents.send({ key: "N", control: true, shift: true });
+		const event = source.emit({ key: "N", control: true, shift: true });
 
-		expect(notify).toHaveBeenCalledTimes(1);
+		expect(target.send).toHaveBeenCalledWith(NEW_SESSION_SHORTCUT_CHANNEL);
+		expect(target.focus).not.toHaveBeenCalled();
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
 	});
 
-	it("notifies on ⌘N on macOS", () => {
-		const contents = fakeContents();
-		const notify = vi.fn();
-		attachNewSessionShortcut(contents, true, notify);
+	it("forwards the macOS command chord", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachNewSessionShortcut(source, true, target);
 
-		contents.send({ key: "n", meta: true });
+		source.emit({ key: "n", meta: true });
 
-		expect(notify).toHaveBeenCalledTimes(1);
+		expect(target.send).toHaveBeenCalledWith(NEW_SESSION_SHORTCUT_CHANNEL);
+	});
+
+	it("focuses a separate shell target before forwarding", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachNewSessionShortcut(source, false, target, true);
+
+		source.emit({ key: "N", control: true, shift: true });
+
+		expect(target.focus).toHaveBeenCalledTimes(1);
+		expect(target.send).toHaveBeenCalledWith(NEW_SESSION_SHORTCUT_CHANNEL);
+		expect(target.focus.mock.invocationCallOrder[0]).toBeLessThan(target.send.mock.invocationCallOrder[0]);
 	});
 
 	it("ignores non-matching chords and key-up events", () => {
-		const contents = fakeContents();
-		const notify = vi.fn();
-		attachNewSessionShortcut(contents, false, notify);
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachNewSessionShortcut(source, false, target);
 
-		contents.send({ key: "n", control: true }); // plain Ctrl+N — reserved for terminal
-		contents.send({ key: "N", control: true, shift: true, type: "keyUp" }); // release
-		contents.send({ key: "a", control: true, shift: true });
+		source.emit({ key: "n", control: true });
+		source.emit({ key: "N", control: true, shift: true, type: "keyUp" });
+		source.emit({ key: "a", control: true, shift: true });
 
-		expect(notify).not.toHaveBeenCalled();
+		expect(target.send).not.toHaveBeenCalled();
 	});
 
 	it("ignores auto-repeat so holding the combo fires once", () => {
-		const contents = fakeContents();
-		const notify = vi.fn();
-		attachNewSessionShortcut(contents, false, notify);
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachNewSessionShortcut(source, false, target);
 
-		contents.send({ key: "N", control: true, shift: true });
-		contents.send({ key: "N", control: true, shift: true, isAutoRepeat: true });
-		contents.send({ key: "N", control: true, shift: true, isAutoRepeat: true });
+		source.emit({ key: "N", control: true, shift: true });
+		source.emit({ key: "N", control: true, shift: true, isAutoRepeat: true });
+		source.emit({ key: "N", control: true, shift: true, isAutoRepeat: true });
 
-		expect(notify).toHaveBeenCalledTimes(1);
+		expect(target.send).toHaveBeenCalledTimes(1);
 	});
 });

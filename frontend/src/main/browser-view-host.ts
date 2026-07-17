@@ -15,7 +15,6 @@ import type {
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 import { attachNewSessionShortcut } from "./new-session-shortcut";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
@@ -77,7 +76,7 @@ type BrowserWindowLike = {
 		removeChildView?: (view: BrowserViewLike) => void;
 	};
 	getContentBounds: () => BrowserRect;
-	webContents: Pick<WebContents, "id" | "send"> & {
+	webContents: Pick<WebContents, "focus" | "id" | "send"> & {
 		session?: Pick<Session, "setDisplayMediaRequestHandler">;
 	};
 	isDestroyed?: () => boolean;
@@ -245,9 +244,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// The preview is a separate WebContentsView, so a renderer-window keydown
 		// listener never sees keys typed here. Forward the app-level new-session
 		// shortcut to the shell renderer so it works with the panel focused.
-		attachNewSessionShortcut(view.webContents, Boolean(options.isMac), () =>
-			options.mainWindow.webContents.send(NEW_SESSION_SHORTCUT_CHANNEL),
-		);
+		attachNewSessionShortcut(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = viewId;
 		});

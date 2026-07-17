@@ -38,7 +38,6 @@ import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import { attachNewSessionShortcut } from "./main/new-session-shortcut";
 import {
 	type DaemonProbe,
@@ -341,9 +340,7 @@ function createWindow(): void {
 	// xterm's helper textarea, or a browser-preview view (wired per-view in the
 	// browser host). Each hook just tells the shell renderer to open the flow.
 	const isMac = process.platform === "darwin";
-	attachNewSessionShortcut(mainWindow.webContents, isMac, () =>
-		mainWindow?.webContents.send(NEW_SESSION_SHORTCUT_CHANNEL),
-	);
+	attachNewSessionShortcut(mainWindow.webContents, isMac, mainWindow.webContents);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,

@@ -22,9 +22,13 @@ export function GlobalNewTaskDialog() {
 	useEffect(() => {
 		if (!newTaskRequest || newTaskRequest.nonce === lastNonce.current) return;
 		lastNonce.current = newTaskRequest.nonce;
+		// Consume requests that arrive while this dialog is already open. In
+		// particular, do not retarget a populated form to another project, and do
+		// not replay the ignored request when the user later closes the dialog.
+		if (open) return;
 		setProjectId(newTaskRequest.projectId);
 		setOpen(true);
-	}, [newTaskRequest]);
+	}, [newTaskRequest, open]);
 
 	const handleCreated = async (sessionId: string) => {
 		if (!projectId) return;
