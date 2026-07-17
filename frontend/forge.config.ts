@@ -34,7 +34,8 @@ const config: ForgeConfig = {
 		asar: true,
 		appBundleId: CLIENT_IDENTITY.appBundleId,
 		name: CLIENT_IDENTITY.productName,
-		executableName: CLIENT_IDENTITY.executableName,
+		// Electron Packager derives macOS CFBundleDisplayName from executableName.
+		executableName: process.platform === "darwin" ? CLIENT_IDENTITY.productName : CLIENT_IDENTITY.executableName,
 		appCategoryType: "public.app-category.developer-tools",
 		// App icon. electron-packager appends the per-platform extension
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
