@@ -23,6 +23,7 @@
 		"make": "electron-forge make",
 		"make:remote": "AO_REMOTE_CLIENT=1 electron-forge make",
 		"publish": "npm run build:daemon && electron-forge publish",
+		"i18n:audit": "node ./scripts/i18n-audit.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run --config vite.renderer.config.ts",
 		"test:e2e": "playwright test",
