@@ -76,28 +76,40 @@ func TestSessionsAPI_ActivityAcceptsBlocked(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"blocked"}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"blocked","agent":"claude-code"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
-	if !rec.gotSignal.Valid || rec.gotSignal.State != domain.ActivityBlocked {
+	if !rec.gotSignal.Valid || rec.gotSignal.State != domain.ActivityBlocked || rec.gotSignal.Harness != domain.HarnessClaudeCode {
 		t.Fatalf("recorder signal = %#v", rec.gotSignal)
 	}
 }
 
+func TestSessionsAPI_ActivityRejectsMissingAgent(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"blocked"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("activity = %d, want 400; body=%s", status, body)
+	}
+	if rec.calls != 0 {
+		t.Fatalf("recorder calls = %d, want none", rec.calls)
+	}
+}
+
 func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
-	// The optional correlation fields ride into the signal (sanitized); a
-	// body without them (old CLIs) keeps producing a plain state-only signal,
-	// which the other tests in this file pin.
+	// The optional correlation fields ride into the signal (sanitized); a body
+	// without them keeps producing a plain state signal for the named harness.
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
-		`{"state":"active","event":"post-tool-use","toolName":"Bash","toolUseId":"toolu_42"}`)
+		`{"state":"active","agent":"claude-code","event":"post-tool-use","toolName":"Bash","toolUseId":"toolu_42"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
-	want := ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "post-tool-use", ToolName: "Bash", ToolUseID: "toolu_42"}
+	want := ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Harness: domain.HarnessClaudeCode, Event: "post-tool-use", ToolName: "Bash", ToolUseID: "toolu_42"}
 	if rec.gotSignal != want {
 		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
 	}
@@ -136,7 +148,7 @@ func TestSessionsAPI_ActivityCapsOverlongCorrelationFields(t *testing.T) {
 		long[i] = 'a'
 	}
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
-		`{"state":"active","event":"post-tool-use","toolUseId":"`+string(long)+`"}`)
+		`{"state":"active","agent":"claude-code","event":"post-tool-use","toolUseId":"`+string(long)+`"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
@@ -180,20 +192,20 @@ func TestSessionsAPI_ActivityRejectsBadJSON(t *testing.T) {
 func TestSessionsAPI_ActivityMissingSessionIs404(t *testing.T) {
 	srv := newActivityTestServer(t, &fakeActivityRecorder{err: ports.ErrSessionNotFound})
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing/activity", `{"state":"idle"}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing/activity", `{"state":"idle","agent":"claude-code"}`)
 	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
 }
 
 func TestSessionsAPI_ActivityRecorderErrorIs500(t *testing.T) {
 	srv := newActivityTestServer(t, &fakeActivityRecorder{err: errors.New("boom")})
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"exited"}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"exited","agent":"claude-code"}`)
 	assertErrorCode(t, body, status, http.StatusInternalServerError, "INTERNAL_ERROR")
 }
 
 func TestSessionsAPI_ActivityWithoutRecorderIs501(t *testing.T) {
 	srv := newActivityTestServer(t, nil)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"idle"}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"idle","agent":"claude-code"}`)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }

@@ -718,10 +718,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime token: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
-		SessionID:     id,
-		WorkspacePath: ws.Path,
-		Argv:          argv,
-		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, cfg.Kind, project.Config),
+		SessionID:            id,
+		WorkspacePath:        ws.Path,
+		Argv:                 argv,
+		Env:                  m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, cfg.Kind, project.Config),
+		RequireHookParentPID: requiresHookParentPID(agent),
 	})
 	if err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -1469,10 +1470,11 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime token: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
-		SessionID:     rec.ID,
-		WorkspacePath: ws.Path,
-		Argv:          argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
+		SessionID:            rec.ID,
+		WorkspacePath:        ws.Path,
+		Argv:                 argv,
+		Env:                  m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
+		RequireHookParentPID: requiresHookParentPID(agent),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
@@ -1673,10 +1675,11 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime token: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
-		SessionID:     id,
-		WorkspacePath: meta.WorkspacePath,
-		Argv:          launch.argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
+		SessionID:            id,
+		WorkspacePath:        meta.WorkspacePath,
+		Argv:                 launch.argv,
+		Env:                  m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
+		RequireHookParentPID: requiresHookParentPID(agent),
 	})
 	if err != nil {
 		// No live runtime now. Mark terminated so the session stops cleanly with
@@ -1760,10 +1763,11 @@ func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime token: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
-		SessionID:     id,
-		WorkspacePath: ws.Path,
-		Argv:          launch.argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
+		SessionID:            id,
+		WorkspacePath:        ws.Path,
+		Argv:                 launch.argv,
+		Env:                  m.runtimeEnv(id, rec.ProjectID, rec.IssueID, runtimeToken, rec.Kind, project.Config),
+		RequireHookParentPID: requiresHookParentPID(agent),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: runtime: %w", id, err)
@@ -3014,6 +3018,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace in use by a live session"})
 			continue
 		}
+		m.uninstallWorkspaceHooks(ctx, rec)
 		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 			m.logger.Warn("cleanup: workspace project rows failed", "sessionID", rec.ID, "error", rowErr)
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace metadata unavailable"})
@@ -3044,6 +3049,26 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+func (m *Manager) uninstallWorkspaceHooks(ctx context.Context, rec domain.SessionRecord) {
+	if rec.Metadata.WorkspacePath == "" || m.agents == nil {
+		return
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return
+	}
+	uninstaller, ok := agent.(hookUninstaller)
+	if !ok {
+		return
+	}
+	if scoped, ok := agent.(workspaceScopedHookUninstaller); ok && !scoped.WorkspaceScopedHooks() {
+		return
+	}
+	if err := uninstaller.UninstallHooks(ctx, rec.Metadata.WorkspacePath); err != nil {
+		m.logger.Warn("cleanup: workspace hook cleanup failed", "sessionID", rec.ID, "workspacePath", rec.Metadata.WorkspacePath, "error", err)
+	}
 }
 
 // liveWorkspacePaths returns the set of normalized workspace paths still
@@ -3921,6 +3946,23 @@ func runPostCreate(ctx context.Context, workspacePath string, commands []string)
 // pane. Adapters that don't need it simply omit the method.
 type preLauncher interface {
 	PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error
+}
+
+type hookUninstaller interface {
+	UninstallHooks(ctx context.Context, workspacePath string) error
+}
+
+type workspaceScopedHookUninstaller interface {
+	WorkspaceScopedHooks() bool
+}
+
+type hookParentPIDRequirer interface {
+	RequireHookParentPID() bool
+}
+
+func requiresHookParentPID(agent ports.Agent) bool {
+	requirer, ok := agent.(hookParentPIDRequirer)
+	return ok && requirer.RequireHookParentPID()
 }
 
 // prepareWorkspace runs the per-session pre-launch steps before the runtime

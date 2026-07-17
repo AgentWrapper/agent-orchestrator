@@ -76,6 +76,10 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // unsubmitted draft. See ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
+// RequireHookParentPID reports that Claude Code runs AO hook commands directly
+// enough for the tmux runtime's parent-PID lineage marker to guard callbacks.
+func (p *Plugin) RequireHookParentPID() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)

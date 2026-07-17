@@ -361,7 +361,7 @@ func TestActivity_StaleExitAfterSwitchIsSuppressed(t *testing.T) {
 	}
 }
 
-func TestActivity_PreTokenSwitchExitSuppressionExpires(t *testing.T) {
+func TestActivity_PreTokenForeignHarnessExitStaysSuppressedAfterSwitchWindow(t *testing.T) {
 	m, st, _ := newManager()
 	now := time.Unix(150, 0).UTC()
 	m.clock = func() time.Time { return now }
@@ -378,8 +378,8 @@ func TestActivity_PreTokenSwitchExitSuppressionExpires(t *testing.T) {
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
 		t.Fatal(err)
 	}
-	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
-		t.Fatalf("pre-token exit after suppression window was ignored: %+v", got)
+	if got := st.sessions["mer-1"]; got.IsTerminated || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("foreign pre-token exit mutated switched session: %+v", got)
 	}
 }
 
@@ -430,6 +430,35 @@ func TestActivity_MissingRuntimeTokenDuringSwitchIsTreatedAsStale(t *testing.T) 
 	}
 	if got := st.sessions["mer-1"]; got.IsTerminated {
 		t.Fatalf("missing-token stale exit terminated switched session: %+v", got)
+	}
+}
+
+func TestActivity_ClaudeCompatibleDelegateExitAfterSwitchWindow(t *testing.T) {
+	m, st, _ := newManager()
+	now := time.Unix(350, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+	}
+	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessGrok, domain.SessionMetadata{RuntimeHandleID: "new-handle", WorkspacePath: "/ws", Branch: "b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("pre-token delegate exit inside switch window terminated session: %+v", got)
+	}
+
+	now = now.Add(31 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("delegate exit after switch window was ignored: %+v", got)
 	}
 }
 
@@ -543,6 +572,145 @@ func TestActivity_StaleRuntimeTokenSuppressesUsageTelemetry(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"]; got.Activity.State != domain.ActivityIdle {
 		t.Fatalf("activity state = %q, want unchanged idle", got.Activity.State)
+	}
+}
+
+func TestActivity_ForeignHarnessWithInheritedTokenCannotMutateSession(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		before domain.SessionRecord
+		signal ports.ActivitySignal
+		assert func(t *testing.T, got domain.SessionRecord)
+	}{
+		{
+			name: "exited cannot terminate parent",
+			before: domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+				Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Unix(90, 0)},
+				Metadata: domain.SessionMetadata{RuntimeToken: "current-token"},
+			},
+			signal: ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Harness: domain.HarnessClaudeCode, RuntimeToken: "current-token"},
+			assert: func(t *testing.T, got domain.SessionRecord) {
+				t.Helper()
+				if got.IsTerminated || got.Activity.State != domain.ActivityActive {
+					t.Fatalf("foreign exited mutated parent: %+v", got)
+				}
+			},
+		},
+		{
+			name: "idle cannot arm drain kill",
+			before: domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+				Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Unix(90, 0)},
+				Metadata: domain.SessionMetadata{RuntimeToken: "current-token"},
+			},
+			signal: ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Harness: domain.HarnessClaudeCode, RuntimeToken: "current-token"},
+			assert: func(t *testing.T, got domain.SessionRecord) {
+				t.Helper()
+				if got.Activity.State != domain.ActivityActive {
+					t.Fatalf("foreign idle changed state to %q", got.Activity.State)
+				}
+			},
+		},
+		{
+			name: "empty agent cannot bypass harness guard",
+			before: domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+				Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Unix(90, 0)},
+				Metadata: domain.SessionMetadata{RuntimeToken: "current-token"},
+			},
+			signal: ports.ActivitySignal{Valid: true, State: domain.ActivityExited, RuntimeToken: "current-token"},
+			assert: func(t *testing.T, got domain.SessionRecord) {
+				t.Helper()
+				if got.IsTerminated || got.Activity.State != domain.ActivityActive {
+					t.Fatalf("empty-agent exited mutated parent: %+v", got)
+				}
+			},
+		},
+		{
+			name: "blocked cannot inject pending decision",
+			before: domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+				Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Unix(90, 0)},
+				Metadata: domain.SessionMetadata{RuntimeToken: "current-token"},
+			},
+			signal: ports.ActivitySignal{
+				Valid: true, State: domain.ActivityBlocked, Harness: domain.HarnessClaudeCode, RuntimeToken: "current-token",
+				PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindQuestion, Question: "foreign?"},
+			},
+			assert: func(t *testing.T, got domain.SessionRecord) {
+				t.Helper()
+				if got.Activity.State != domain.ActivityActive || got.Metadata.PendingDecision != nil {
+					t.Fatalf("foreign blocked injected state/decision: %+v", got)
+				}
+			},
+		},
+		{
+			name: "tool post cannot clear permission dialog",
+			before: domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+				Activity:      domain.Activity{State: domain.ActivityBlocked, LastActivityAt: time.Unix(90, 0)},
+				FirstSignalAt: time.Unix(80, 0),
+				Metadata: domain.SessionMetadata{
+					RuntimeToken:    "current-token",
+					PendingDecision: &domain.PendingDecision{Kind: domain.DecisionKindPermission, Question: "Allow Bash?"},
+				},
+			},
+			signal: ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Harness: domain.HarnessClaudeCode, RuntimeToken: "current-token", Event: "post-tool-use", ToolName: "Bash", ToolUseID: "toolu_foreign"},
+			assert: func(t *testing.T, got domain.SessionRecord) {
+				t.Helper()
+				if got.Activity.State != domain.ActivityBlocked || got.Metadata.PendingDecision == nil {
+					t.Fatalf("foreign tool post cleared parent dialog: %+v", got)
+				}
+			},
+		},
+		{
+			name: "active cannot mask stale parent",
+			before: domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessCodex,
+				Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Unix(90, 0)},
+				Metadata: domain.SessionMetadata{RuntimeToken: "current-token"},
+			},
+			signal: ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Harness: domain.HarnessClaudeCode, RuntimeToken: "current-token"},
+			assert: func(t *testing.T, got domain.SessionRecord) {
+				t.Helper()
+				if got.Activity.State != domain.ActivityIdle || !got.FirstSignalAt.IsZero() {
+					t.Fatalf("foreign active masked parent liveness: %+v", got)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, st, _ := newManager()
+			st.sessions["mer-1"] = tc.before
+			if err := m.ApplyActivitySignal(ctx, "mer-1", tc.signal); err != nil {
+				t.Fatal(err)
+			}
+			tc.assert(t, st.sessions["mer-1"])
+		})
+	}
+}
+
+func TestActivity_ClaudeCompatibleDelegatesAcceptClaudeCodeSignals(t *testing.T) {
+	for _, harness := range []domain.AgentHarness{domain.HarnessGrok, domain.HarnessContinue, domain.HarnessDevin} {
+		t.Run(string(harness), func(t *testing.T) {
+			m, st, _ := newManager()
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID:        "mer-1",
+				ProjectID: "mer",
+				Harness:   harness,
+				Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Unix(90, 0)},
+				Metadata:  domain.SessionMetadata{RuntimeToken: "current-token"},
+			}
+			if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+				Valid: true, State: domain.ActivityActive, Harness: domain.HarnessClaudeCode, RuntimeToken: "current-token",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if got := st.sessions["mer-1"]; got.Activity.State != domain.ActivityActive {
+				t.Fatalf("delegate signal did not update state: %+v", got)
+			}
+		})
 	}
 }
 

@@ -61,8 +61,7 @@ func Derive(agent, event string, payload []byte) (domain.ActivityState, bool) {
 // derivation uses this to decide whether prolonged silence is suspicious
 // (no_signal) or simply all a hook-less harness can ever report (idle).
 func SupportsHarness(h domain.AgentHarness) bool {
-	switch h {
-	case domain.HarnessGrok, domain.HarnessContinue, domain.HarnessDevin:
+	if domain.HookReportingHarness(h) != h {
 		return true
 	}
 	_, ok := Derivers[string(h)]

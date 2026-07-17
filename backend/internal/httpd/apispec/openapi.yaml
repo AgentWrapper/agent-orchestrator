@@ -3858,7 +3858,7 @@ components:
     SetActivityRequest:
       properties:
         agent:
-          description: Agent harness that emitted the hook, when known.
+          description: Agent harness that emitted the hook.
           enum:
           - claude-code
           - codex
@@ -3916,6 +3916,7 @@ components:
             this turn.
       required:
       - state
+      - agent
       type: object
     SetActivityResponse:
       properties:

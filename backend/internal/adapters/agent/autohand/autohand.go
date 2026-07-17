@@ -36,6 +36,11 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// WorkspaceScopedHooks reports that Autohand's hook config is global rather
+// than workspace-local, so terminal cleanup must not uninstall it for one
+// session while another live Autohand session may still rely on it.
+func (p *Plugin) WorkspaceScopedHooks() bool { return false }
+
 // EmitsSubmitActivity signals Autohand fires a pre-prompt hook under AO's
 // launch. See ports.ActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }

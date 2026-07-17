@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -111,6 +114,7 @@ func capturedUsage(t *testing.T, capture *activityCapture) map[string]float64 {
 func TestHooks_NotificationReportsWaitingInput(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDEnv, strconv.Itoa(os.Getppid()))
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"sessionId":"ao-7","state":"waiting_input"}`)
 	writeRunFileFor(t, cfg, srv)
@@ -368,6 +372,307 @@ func TestHooks_SessionEndReportsExited(t *testing.T) {
 	}
 	if got := capturedState(t, capture); got != "exited" {
 		t.Errorf("state = %q, want exited", got)
+	}
+}
+
+func TestHooks_SuppressesNestedChildWhenParentPIDDoesNotMatch(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	t.Setenv(hookParentPIDEnv, "1")
+	oldParentProcessInfo := parentProcessInfo
+	parentProcessInfo = func(int) (int, string, bool) { return 2, "go", true }
+	t.Cleanup(func() { parentProcessInfo = oldParentProcessInfo })
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capture.hits != 0 {
+		t.Fatalf("nested hook posted %d activity request(s); body=%s", capture.hits, capture.body)
+	}
+}
+
+func TestHooks_SuppressedParentPIDMismatchGoesToHooksLog(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	t.Setenv(hookParentPIDEnv, "1")
+	oldParentProcessInfo := parentProcessInfo
+	parentProcessInfo = func(int) (int, string, bool) { return 2, "go", true }
+	t.Cleanup(func() { parentProcessInfo = oldParentProcessInfo })
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want suppressed hook to stay quiet", errOut)
+	}
+	if capture.hits != 0 {
+		t.Fatalf("suppressed hook posted %d activity request(s); body=%s", capture.hits, capture.body)
+	}
+	if data, err := os.ReadFile(filepath.Join(cfg.dataDir, "hooks.log")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("hooks.log should stay reserved for delivery failures, got err=%v data=%q", err, data)
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.dataDir, suppressedLogName))
+	if err != nil {
+		t.Fatalf("%s not written: %v", suppressedLogName, err)
+	}
+	for _, want := range []string{"session=ao-7", "ao hooks claude-code session-end suppressed", "parent pid mismatch"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("%s missing %q:\n%s", suppressedLogName, want, data)
+		}
+	}
+}
+
+func TestHooks_SuppressesNonShellChildWhoseGrandparentMatchesMarker(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	t.Setenv(hookParentPIDEnv, strconv.Itoa(os.Getpid()))
+	oldParentProcessInfo := parentProcessInfo
+	parentProcessInfo = func(int) (int, string, bool) { return os.Getpid(), "claude", true }
+	t.Cleanup(func() { parentProcessInfo = oldParentProcessInfo })
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capture.hits != 0 {
+		t.Fatalf("nested non-shell hook posted %d activity request(s); body=%s", capture.hits, capture.body)
+	}
+}
+
+func TestHooks_SuppressesShellChildWhoseGrandparentDoesNotMatchMarker(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	expected := os.Getpid() + 100000
+	t.Setenv(hookParentPIDEnv, strconv.Itoa(expected))
+	oldParentProcessInfo := parentProcessInfo
+	parentProcessInfo = func(int) (int, string, bool) { return expected + 1, "bash", true }
+	t.Cleanup(func() { parentProcessInfo = oldParentProcessInfo })
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capture.hits != 0 {
+		t.Fatalf("nested shell hook posted %d activity request(s); body=%s", capture.hits, capture.body)
+	}
+}
+
+func TestHooks_PostsWhenRequiredParentPIDMatches(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	t.Setenv(hookParentPIDEnv, strconv.Itoa(os.Getppid()))
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "exited" {
+		t.Fatalf("state = %q, want exited", got)
+	}
+}
+
+func TestHooks_PostsWhenRequiredParentPIDMarkerIsInvalid(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	t.Setenv(hookParentPIDEnv, "not-a-pid")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "exited" {
+		t.Fatalf("state = %q, want exited", got)
+	}
+}
+
+func TestHooks_PostsWhenRequiredParentPIDLineageIsUnresolvable(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	t.Setenv(hookParentPIDEnv, "1")
+	oldParentProcessInfo := parentProcessInfo
+	parentProcessInfo = func(int) (int, string, bool) { return 0, "", false }
+	t.Cleanup(func() { parentProcessInfo = oldParentProcessInfo })
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "exited" {
+		t.Fatalf("state = %q, want exited", got)
+	}
+}
+
+func TestHooks_SubprocessWhoseParentMatchesMarkerPosts(t *testing.T) {
+	switch {
+	case os.Getenv("AO_HOOK_AGENT_HELPER") == "1":
+		runMarkedAgentHookHelper(t)
+		return
+	case os.Getenv("AO_HOOK_CHILD_HELPER") == "1":
+		_, _, err := executeCLI(t, Deps{
+			In:           strings.NewReader(`{"reason":"logout"}`),
+			ProcessAlive: func(int) bool { return true },
+		}, "hooks", "claude-code", "session-end")
+		if err != nil {
+			t.Fatalf("hook helper error: %v", err)
+		}
+		return
+	}
+
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestHooks_SubprocessWhoseParentMatchesMarkerPosts$")
+	cmd.Env = append(os.Environ(), "AO_HOOK_AGENT_HELPER=1")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("agent helper failed: %v\n%s", err, out.String())
+	}
+	if got := capturedState(t, capture); got != "exited" {
+		t.Fatalf("state = %q, want exited; helper output:\n%s", got, out.String())
+	}
+}
+
+func TestHooks_ShellChildWhoseGrandparentMatchesMarkerPosts(t *testing.T) {
+	switch {
+	case os.Getenv("AO_HOOK_SHELL_AGENT_HELPER") == "1":
+		runMarkedAgentShellHookHelper(t)
+		return
+	case os.Getenv("AO_HOOK_SHELL_CHILD_HELPER") == "1":
+		_, _, err := executeCLI(t, Deps{
+			In:           strings.NewReader(`{"reason":"logout"}`),
+			ProcessAlive: func(int) bool { return true },
+		}, "hooks", "claude-code", "session-end")
+		if err != nil {
+			t.Fatalf("hook helper error: %v", err)
+		}
+		return
+	}
+
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	t.Setenv(hookParentPIDRequiredEnv, "1")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestHooks_ShellChildWhoseGrandparentMatchesMarkerPosts$")
+	cmd.Env = append(os.Environ(), "AO_HOOK_SHELL_AGENT_HELPER=1")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("agent helper failed: %v\n%s", err, out.String())
+	}
+	if got := capturedState(t, capture); got != "exited" {
+		t.Fatalf("state = %q, want exited; helper output:\n%s", got, out.String())
+	}
+}
+
+func runMarkedAgentShellHookHelper(t *testing.T) {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", `"$1" -test.run "^TestHooks_ShellChildWhoseGrandparentMatchesMarkerPosts$"; true`, "ao-hook-shell", os.Args[0])
+	cmd.Env = append(os.Environ(),
+		"AO_HOOK_SHELL_AGENT_HELPER=",
+		"AO_HOOK_SHELL_CHILD_HELPER=1",
+		hookParentPIDEnv+"="+strconv.Itoa(os.Getpid()),
+	)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("hook shell failed: %v\n%s", err, out.String())
+	}
+}
+
+func runMarkedAgentHookHelper(t *testing.T) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestHooks_SubprocessWhoseParentMatchesMarkerPosts$")
+	cmd.Env = append(os.Environ(),
+		"AO_HOOK_AGENT_HELPER=",
+		"AO_HOOK_CHILD_HELPER=1",
+		hookParentPIDEnv+"="+strconv.Itoa(os.Getpid()),
+	)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("hook child failed: %v\n%s", err, out.String())
+	}
+}
+
+func TestHooks_TokenBearingLegacyHookWithoutRequiredParentPIDStillPosts(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_TOKEN", "runtime-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"reason":"logout"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "exited" {
+		t.Fatalf("state = %q, want exited", got)
 	}
 }
 

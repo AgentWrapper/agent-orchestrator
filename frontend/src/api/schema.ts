@@ -1490,10 +1490,10 @@ export interface components {
         };
         SetActivityRequest: {
             /**
-             * @description Agent harness that emitted the hook, when known.
+             * @description Agent harness that emitted the hook.
              * @enum {string}
              */
-            agent?: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            agent: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             /** @description Structured pending dialog metadata, when the harness reports it. */
             decision?: components["schemas"]["SessionDecisionPayload"];
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */

@@ -262,11 +262,56 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	// The launch command is the last argument to new-session (after shellPath -c).
 	args := fr.calls[0].args
 	launchCmd := args[len(args)-1]
-	if !strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
+	if !strings.Contains(launchCmd, `unset AO_SESSION_ID AO_RUNTIME_TOKEN AO_HOOK_PARENT_PID AO_HOOK_PARENT_PID_REQUIRED; exec "${SHELL:-/bin/sh}" -i`) {
 		t.Fatalf("launch command missing keep-alive shell: %q", launchCmd)
+	}
+	if strings.Contains(launchCmd, "AO_HOOK_PARENT_PID_REQUIRED=1") {
+		t.Fatalf("launch command should not require hook parent pid by default: %q", launchCmd)
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
+	}
+}
+
+func TestCreateLaunchCommandContainsHookParentPIDWrapperWhenRequired(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{nil, nil, nil}
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:            "sess-1",
+		WorkspacePath:        "/tmp/ws",
+		Argv:                 []string{"myagent", "--flag"},
+		RequireHookParentPID: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	args := fr.calls[0].args
+	launchCmd := args[len(args)-1]
+	if !strings.Contains(launchCmd, "sh -c 'export AO_HOOK_PARENT_PID=$$; export AO_HOOK_PARENT_PID_REQUIRED=1; exec \"$@\"' ao-agent 'myagent' '--flag'") {
+		t.Fatalf("launch command missing hook parent pid wrapper: %q", launchCmd)
+	}
+}
+
+func TestLaunchWrapperMarksProcessThatExecsAgent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := buildLaunchCommand(ports.RuntimeConfig{
+		Argv:                 []string{"sh", "-c", `printf 'marker=%s pid=%s\n' "$AO_HOOK_PARENT_PID" "$$"`},
+		RequireHookParentPID: true,
+	})
+	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput()
+	if err != nil {
+		t.Fatalf("launch wrapper failed: %v\n%s", err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		t.Fatalf("launch wrapper output = %q, want marker and pid", out)
+	}
+	marker := strings.TrimPrefix(fields[0], "marker=")
+	pid := strings.TrimPrefix(fields[1], "pid=")
+	if marker == "" || pid == "" || marker != pid {
+		t.Fatalf("marker did not match exec'd process pid: %q", out)
 	}
 }
 

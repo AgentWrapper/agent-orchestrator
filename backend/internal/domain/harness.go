@@ -51,6 +51,18 @@ func (h AgentHarness) IsKnown() bool {
 	return false
 }
 
+// HookReportingHarness returns the harness token an adapter's hook callback
+// reports as. Most adapters report themselves; Claude-compatible delegates
+// install Claude Code hooks and therefore report as claude-code.
+func HookReportingHarness(h AgentHarness) AgentHarness {
+	switch h {
+	case HarnessGrok, HarnessContinue, HarnessDevin:
+		return HarnessClaudeCode
+	default:
+		return h
+	}
+}
+
 // ModelProvider maps a harness to the vendor family whose models it accepts.
 // Only harnesses whose model namespace AO knows are classified; every other
 // harness returns ProviderUnknown and is left unguarded, so its configured

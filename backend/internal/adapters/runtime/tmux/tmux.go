@@ -663,11 +663,16 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	for i, a := range cfg.Argv {
 		parts[i] = shellQuote(a)
 	}
+	if cfg.RequireHookParentPID {
+		b.WriteString("sh -c ")
+		b.WriteString(shellQuote("export AO_HOOK_PARENT_PID=$$; export AO_HOOK_PARENT_PID_REQUIRED=1; exec \"$@\""))
+		b.WriteString(" ao-agent ")
+	}
 	b.WriteString(strings.Join(parts, " "))
 	// Keep the tmux session alive after the agent exits so the operator can
 	// inspect the terminal. The shell variable expansion picks up $SHELL from
 	// the process env if set, otherwise falls back to /bin/sh.
-	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
+	b.WriteString(`; unset AO_SESSION_ID AO_RUNTIME_TOKEN AO_HOOK_PARENT_PID AO_HOOK_PARENT_PID_REQUIRED; exec "${SHELL:-/bin/sh}" -i`)
 	return b.String()
 }
 

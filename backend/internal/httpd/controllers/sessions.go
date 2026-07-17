@@ -610,7 +610,11 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	harness := domain.AgentHarness(strings.TrimSpace(in.Agent))
-	if harness != "" && !harness.IsKnown() {
+	if harness == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_AGENT", "Agent harness is required", nil)
+		return
+	}
+	if !harness.IsKnown() {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_AGENT", "Unknown agent harness", nil)
 		return
 	}

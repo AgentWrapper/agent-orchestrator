@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +25,15 @@ import (
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 const (
+	hookParentPIDEnv         = "AO_HOOK_PARENT_PID"
+	hookParentPIDRequiredEnv = "AO_HOOK_PARENT_PID_REQUIRED"
 	// hooksLogName is the file under AO_DATA_DIR where hook delivery failures
 	// are appended. Agent hook runners swallow stderr, so without a durable
 	// sink a dead activity feed (e.g. an unreachable daemon) stays invisible.
 	hooksLogName = "hooks.log"
+	// suppressedLogName records expected parent-lineage guard drops separately
+	// so routine nested-child suppressions cannot truncate delivery failures.
+	suppressedLogName = "hooks-suppressed.log"
 	// maxHooksLogBytes caps hooks.log: an append against a file already past
 	// the cap truncates it first, so a persistently failing hook cannot grow
 	// the file without bound.
@@ -311,6 +317,11 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// without a piped payload can't block on EOF.
 		return nil
 	}
+	if ok, reason := currentHookParentMatches(); !ok {
+		_, _ = io.Copy(io.Discard, c.deps.In)
+		c.reportHookSuppressed(agent, event, sessionID, reason)
+		return nil
+	}
 	payload, err := io.ReadAll(c.deps.In)
 	if err != nil {
 		// Surface read errors for parity with the daemon-error path, but keep
@@ -339,6 +350,67 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	return nil
 }
 
+func currentHookParentMatches() (bool, string) {
+	if strings.TrimSpace(os.Getenv(hookParentPIDRequiredEnv)) == "" {
+		return true, ""
+	}
+	expectedText := strings.TrimSpace(os.Getenv(hookParentPIDEnv))
+	expected, err := strconv.Atoi(expectedText)
+	if err != nil || expected <= 0 {
+		return true, ""
+	}
+	current := os.Getppid()
+	if current == expected {
+		return true, ""
+	}
+	parent, name, ok := parentProcessInfo(current)
+	if !ok {
+		// Parent lineage is a safety improvement, not the trust boundary. When
+		// this host cannot expose the process tree (for example macOS without
+		// /proc), fail open so a supported runtime does not go signal-dark.
+		return true, ""
+	}
+	if parent == expected && isHookShell(name) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("parent pid mismatch: expected=%d actual=%d", expected, current)
+}
+
+var parentProcessInfo = readParentProcessInfo
+
+func readParentProcessInfo(pid int) (ppid int, name string, ok bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0, "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch key {
+		case "Name":
+			name = value
+		case "PPid":
+			ppid, err = strconv.Atoi(value)
+			if err != nil {
+				return 0, "", false
+			}
+		}
+	}
+	return ppid, name, ppid > 0
+}
+
+func isHookShell(name string) bool {
+	switch name {
+	case "sh", "bash", "dash", "zsh", "fish":
+		return true
+	default:
+		return false
+	}
+}
+
 // reportHookFailure surfaces a hook delivery failure without breaking the
 // agent: stderr for the agent's hook runner, plus a best-effort append to
 // $AO_DATA_DIR/hooks.log so the failure can be diagnosed after the fact.
@@ -353,14 +425,30 @@ func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause
 	appendHooksLog(dataDir, line)
 }
 
+// reportHookSuppressed leaves a durable breadcrumb for parent-lineage guard
+// drops. It deliberately avoids stderr: expected nested-child suppression must
+// not look like an agent hook failure.
+func (c *commandContext) reportHookSuppressed(agent, event, sessionID, reason string) {
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir == "" {
+		return
+	}
+	line := fmt.Sprintf("%s session=%s ao hooks %s %s suppressed: %s\n", time.Now().UTC().Format(time.RFC3339), sessionID, agent, event, reason)
+	appendHookLogLine(dataDir, suppressedLogName, line)
+}
+
 // appendHooksLog appends one line to the hooks log, truncating first when the
 // file has outgrown maxHooksLogBytes. Errors are dropped: this sink is itself
 // best-effort and has nowhere better to report.
 func appendHooksLog(dataDir, line string) {
+	appendHookLogLine(dataDir, hooksLogName, line)
+}
+
+func appendHookLogLine(dataDir, name, line string) {
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return
 	}
-	path := filepath.Join(dataDir, hooksLogName)
+	path := filepath.Join(dataDir, name)
 	flags := os.O_APPEND | os.O_CREATE | os.O_WRONLY
 	if info, err := os.Stat(path); err == nil && info.Size() > maxHooksLogBytes {
 		flags = os.O_TRUNC | os.O_CREATE | os.O_WRONLY

@@ -483,6 +483,12 @@ func (fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionIn
 	return ports.SessionInfo{}, false, nil
 }
 
+type hookParentPIDAgent struct {
+	fakeAgent
+}
+
+func (hookParentPIDAgent) RequireHookParentPID() bool { return true }
+
 type hookFailAgent struct {
 	fakeAgent
 	err     error
@@ -497,6 +503,28 @@ func (a *hookFailAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig
 	}
 	return a.err
 }
+
+type hookCleanupAgent struct {
+	fakeAgent
+	uninstallCalls int
+	installCalls   int
+}
+
+func (a *hookCleanupAgent) UninstallHooks(context.Context, string) error {
+	a.uninstallCalls++
+	return nil
+}
+
+func (a *hookCleanupAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error {
+	a.installCalls++
+	return nil
+}
+
+type globalHookCleanupAgent struct {
+	hookCleanupAgent
+}
+
+func (a *globalHookCleanupAgent) WorkspaceScopedHooks() bool { return false }
 
 type preLaunchFailAgent struct {
 	fakeAgent
@@ -1328,6 +1356,28 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if got, ok := rt.lastCfg.Env["POLYPOWERS_AUTOMERGE"]; ok {
 		t.Fatalf("runtime env POLYPOWERS_AUTOMERGE = %q, want unset for project without autonomous merge", got)
+	}
+}
+
+func TestSpawn_RequiresHookParentPIDOnlyForOptInAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent ports.Agent
+		want  bool
+	}{
+		{name: "default", agent: fakeAgent{}},
+		{name: "opt in", agent: hookParentPIDAgent{}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, rt, _ := newManager()
+			m.agents = singleAgent{agent: tc.agent}
+			if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+				t.Fatal(err)
+			}
+			if rt.lastCfg.RequireHookParentPID != tc.want {
+				t.Fatalf("RequireHookParentPID = %v, want %v", rt.lastCfg.RequireHookParentPID, tc.want)
+			}
+		})
 	}
 }
 

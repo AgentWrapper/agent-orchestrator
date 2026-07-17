@@ -204,6 +204,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
+	if foreignHarnessSignal(rec, s) {
+		m.mu.Unlock()
+		return nil
+	}
 	if staleRuntimeTokenSignal(rec, s) {
 		m.mu.Unlock()
 		return nil
@@ -871,15 +875,17 @@ func (m *Manager) MarkSwitched(ctx context.Context, id domain.SessionID, harness
 	return m.store.UpdateSession(ctx, rec)
 }
 
+func foreignHarnessSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
+	return rec.Harness != "" && domain.HookReportingHarness(rec.Harness) != s.Harness
+}
+
 func staleSwitchExitSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
-	if s.State != domain.ActivityExited {
-		return false
-	}
-	currentToken := strings.TrimSpace(rec.Metadata.RuntimeToken)
-	if currentToken != "" {
-		return false
-	}
-	return s.Harness != "" && s.Harness != rec.Harness
+	return s.State == domain.ActivityExited &&
+		strings.TrimSpace(s.RuntimeToken) == "" &&
+		rec.Harness != "" &&
+		s.Harness != "" &&
+		rec.Harness != s.Harness &&
+		domain.HookReportingHarness(rec.Harness) == s.Harness
 }
 
 func staleRuntimeTokenSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {

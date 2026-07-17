@@ -92,10 +92,11 @@ type Runtime interface {
 // shell-quotes it for its own shell, so the command survives args with spaces
 // (e.g. a prompt) without the caller guessing the target shell's quoting.
 type RuntimeConfig struct {
-	SessionID     domain.SessionID
-	WorkspacePath string
-	Argv          []string
-	Env           map[string]string
+	SessionID            domain.SessionID
+	WorkspacePath        string
+	Argv                 []string
+	Env                  map[string]string
+	RequireHookParentPID bool
 }
 
 // RuntimeHandle identifies a live runtime instance. Its ID is opaque outside
