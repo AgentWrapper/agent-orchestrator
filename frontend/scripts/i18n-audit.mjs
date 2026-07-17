@@ -39,6 +39,23 @@ function propertyName(node) {
 	return null;
 }
 
+function isTranslationCall(node) {
+	if (!ts.isCallExpression(node)) return false;
+	if (ts.isIdentifier(node.expression)) return node.expression.text === "t";
+	return ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "t";
+}
+
+function jsxExpressionContext(node) {
+	let current = node.parent;
+	while (current) {
+		if (isTranslationCall(current)) return null;
+		if (ts.isJsxExpression(current)) return current;
+		if (ts.isSourceFile(current) || ts.isJsxElement(current) || ts.isJsxFragment(current)) return null;
+		current = current.parent;
+	}
+	return null;
+}
+
 function shouldSkip(relativePath) {
 	const path = relativePath.split(sep).join("/");
 	return (
@@ -114,8 +131,17 @@ export function auditVisibleLiterals({ root, allowlist }) {
 
 			if (ts.isJsxAttribute(node)) {
 				const name = node.name.getText(sourceFile);
-				if (USER_FACING_ATTRIBUTES.has(name) && node.initializer && ts.isStringLiteral(node.initializer)) {
-					report(node.initializer, `attribute:${name}`, node.initializer.text);
+				if (USER_FACING_ATTRIBUTES.has(name) && node.initializer) {
+					if (ts.isStringLiteral(node.initializer)) {
+						report(node.initializer, `attribute:${name}`, node.initializer.text);
+					} else if (
+						ts.isJsxExpression(node.initializer) &&
+						node.initializer.expression &&
+						(ts.isStringLiteral(node.initializer.expression) ||
+							ts.isNoSubstitutionTemplateLiteral(node.initializer.expression))
+					) {
+						report(node.initializer.expression, `attribute:${name}`, node.initializer.expression.text);
+					}
 				}
 			}
 
@@ -130,12 +156,9 @@ export function auditVisibleLiterals({ root, allowlist }) {
 				}
 			}
 
-			if (
-				(ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
-				node.parent &&
-				ts.isJsxExpression(node.parent)
-			) {
-				report(node, "jsx-expression", node.text);
+			if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+				const context = jsxExpressionContext(node);
+				if (context && !ts.isJsxAttribute(context.parent)) report(node, "jsx-expression", node.text);
 			}
 
 			ts.forEachChild(node, visit);

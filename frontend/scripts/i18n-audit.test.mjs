@@ -21,7 +21,9 @@ describe("auditVisibleLiterals", () => {
 			"src/renderer/Panel.tsx": `
 				export function Panel() {
 					const notice = { title: "Connection failed", detail: "Try again later" };
-					return <button aria-label="Save project">Save changes {"now"}</button>;
+					return <button aria-label={"Save project"} className={"button-primary"}>
+						Save changes {true ? "now" : t("actions.later")}
+					</button>;
 				}
 			`,
 		});
@@ -48,13 +50,13 @@ describe("auditVisibleLiterals", () => {
 			{
 				file: "src/renderer/Panel.tsx",
 				kind: "jsx-text",
-				line: 4,
+				line: 5,
 				text: "Save changes",
 			},
 			{
 				file: "src/renderer/Panel.tsx",
 				kind: "jsx-expression",
-				line: 4,
+				line: 5,
 				text: "now",
 			},
 		]);
