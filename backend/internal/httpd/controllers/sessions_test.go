@@ -66,6 +66,13 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	return s, nil
 }
 
+func (f *fakeSessionService) PreflightSpawn(_ context.Context, cfg ports.SpawnConfig) (domain.SpawnPreflight, error) {
+	if f.spawnErr != nil {
+		return domain.SpawnPreflight{}, f.spawnErr
+	}
+	return domain.SpawnPreflight{OK: true, Phase: domain.SpawnPhasePreflight, LauncherPath: "/usr/bin/ao", AgentBinaryPath: "/usr/bin/codex", Runtime: "tmux", CapabilityClass: domain.CapabilityClassForKind(cfg.Kind), ProfileHash: "profile-1"}, nil
+}
+
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
 	if clean {
 		active := true
@@ -214,6 +221,19 @@ func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref
 	}
 	prs, _ := f.ListPRs(context.Background(), id)
 	return sessionsvc.ClaimPRResult{PRs: prs, TakenOverFrom: []domain.SessionID{}, BranchChanged: true}, nil
+}
+
+func TestSpawnPreflightEndpointIsMachineReadableAndSideEffectFree(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+	before := len(svc.sessions)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/preflight", `{"projectId":"ao","kind":"worker","harness":"codex"}`)
+	if status != http.StatusOK || !strings.Contains(string(body), `"ok":true`) || !strings.Contains(string(body), `"launcherPath":"/usr/bin/ao"`) {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	if len(svc.sessions) != before {
+		t.Fatalf("preflight mutated sessions: before=%d after=%d", before, len(svc.sessions))
+	}
 }
 
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {

@@ -30,14 +30,15 @@ type Launcher interface {
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
-	RunID         string
-	WorkerID      domain.SessionID
-	Harness       domain.ReviewerHarness
-	WorkspacePath string
-	PRURL         string
-	TargetSHA     string
-	ReviewQueue   []ports.ReviewTask
-	ReviewIndex   int
+	ExecutionProfile domain.ExecutionProfile
+	RunID            string
+	WorkerID         domain.SessionID
+	Harness          domain.ReviewerHarness
+	WorkspacePath    string
+	PRURL            string
+	TargetSHA        string
+	ReviewQueue      []ports.ReviewTask
+	ReviewIndex      int
 }
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
@@ -76,16 +77,17 @@ func reviewerHandleID(workerID domain.SessionID) string {
 func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 	prompt, systemPrompt := reviewTexts(spec)
 	return ports.ReviewInvocation{
-		ReviewerID:      reviewerHandleID(spec.WorkerID),
-		RunID:           spec.RunID,
-		WorkerSessionID: spec.WorkerID,
-		PRURL:           spec.PRURL,
-		TargetSHA:       spec.TargetSHA,
-		ReviewQueue:     spec.ReviewQueue,
-		ReviewIndex:     spec.ReviewIndex,
-		WorkspacePath:   spec.WorkspacePath,
-		Prompt:          prompt,
-		SystemPrompt:    systemPrompt,
+		ExecutionProfile: spec.ExecutionProfile,
+		ReviewerID:       reviewerHandleID(spec.WorkerID),
+		RunID:            spec.RunID,
+		WorkerSessionID:  spec.WorkerID,
+		PRURL:            spec.PRURL,
+		TargetSHA:        spec.TargetSHA,
+		ReviewQueue:      spec.ReviewQueue,
+		ReviewIndex:      spec.ReviewIndex,
+		WorkspacePath:    spec.WorkspacePath,
+		Prompt:           prompt,
+		SystemPrompt:     systemPrompt,
 	}
 }
 

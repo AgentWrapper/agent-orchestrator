@@ -58,7 +58,7 @@ func (f *fakeSessionService) List(context.Context, sessionsvc.ListFilter) ([]dom
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	f.spawned = cfg
 	return domain.Session{
-		SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1")},
+		SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1"), Metadata: domain.SessionMetadata{Generation: "gen-test", SpawnState: domain.SpawnStateSpawned}},
 		Status:        domain.StatusIdle,
 	}, nil
 }

@@ -418,6 +418,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/execution-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply an explicit human-authorized execution profile change */
+        post: operations["changeSessionExecutionProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -662,8 +679,12 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            allowNativeSubagents?: boolean;
+            fastMode?: boolean;
             model?: string;
             permissions?: string;
+            reasoningEffort?: string;
+            reviewModel?: string;
         };
         AgentInfo: {
             /**
@@ -698,17 +719,28 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        ControllersChangeExecutionProfileRequest: {
+            authority: string;
+            profile: components["schemas"]["DomainExecutionProfile"];
+            reason: string;
+        };
+        ControllersChangeExecutionProfileResponse: {
+            change: components["schemas"]["DomainExecutionProfileChange"];
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
+            executionProfile: components["schemas"]["DomainExecutionProfile"];
+            executionProfileDrift: boolean;
             harness?: string;
             id: string;
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            observedExecutionProfileHash?: string;
             /** Format: int64 */
             previewRevision?: number;
             previewUrl?: string;
@@ -731,6 +763,26 @@ export interface components {
             /** Format: date-time */
             lastActivityAt: string;
             state: string;
+        };
+        DomainExecutionProfile: {
+            allow_native_subagents: boolean;
+            authority_source: string;
+            fast_mode: boolean;
+            hash: string;
+            model: string;
+            reasoning_effort: string;
+            review_model?: string;
+            review_model_policy: string;
+            version: string;
+        };
+        DomainExecutionProfileChange: {
+            authority: string;
+            /** Format: date-time */
+            changed_at: string;
+            new_profile: components["schemas"]["DomainExecutionProfile"];
+            old_profile: components["schemas"]["DomainExecutionProfile"];
+            reason: string;
+            session_id: string;
         };
         DomainReviewerConfig: {
             harness: string;
@@ -2519,6 +2571,69 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    changeSessionExecutionProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersChangeExecutionProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersChangeExecutionProfileResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

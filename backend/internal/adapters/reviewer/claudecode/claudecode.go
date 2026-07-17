@@ -68,7 +68,13 @@ var reviewerDisallowedTools = []string{
 // ReviewCommand builds a claude-code invocation that reviews the worker's
 // checkout for the PR, with the review prompt baked in.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	config := inv.ExecutionProfile.AgentConfig()
+	config.Model = inv.ExecutionProfile.EffectiveReviewModel()
+	if config.Model == domain.ExecutionProfileAgentDefault {
+		config.Model = ""
+	}
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+		Config:        config,
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
 		Prompt:        inv.Prompt,

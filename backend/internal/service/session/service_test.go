@@ -214,6 +214,7 @@ type fakeCommander struct {
 	spawned         bool
 	spawnedCfg      ports.SpawnConfig
 	killsAtSpawn    int
+	changeErr       error
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
@@ -230,6 +231,38 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 }
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
 	return domain.SessionRecord{}, nil
+}
+func (f *fakeCommander) ChangeExecutionProfile(_ context.Context, id domain.SessionID, requested domain.ExecutionProfile, authority, reason string) (domain.ExecutionProfileChange, error) {
+	if f.changeErr != nil {
+		return domain.ExecutionProfileChange{}, f.changeErr
+	}
+	return domain.ExecutionProfileChange{SessionID: id, NewProfile: requested, Authority: authority, Reason: reason}, nil
+}
+
+func TestExecutionProfileDenialEmitsStructuredAuditEvent(t *testing.T) {
+	commander := &fakeCommander{changeErr: domain.ErrExecutionProfileUnauthorized}
+	sink := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{Manager: commander, Store: newFakeStore(), Telemetry: sink, Clock: func() time.Time { return time.Unix(1, 0) }})
+	_, err := svc.ChangeExecutionProfile(context.Background(), "ao-1", domain.ExecutionProfile{}, "orchestrator", "use a fallback")
+	if err == nil || len(sink.events) != 1 {
+		t.Fatalf("err=%v events=%#v", err, sink.events)
+	}
+	event := sink.events[0]
+	if event.Name != "ao.execution_profile.change_denied" || event.Payload["actor_session"] != "ao-1" || event.Payload["capability"] != "execution_profile.change" || event.Payload["target"] != "ao-1" || event.Payload["policy_reason"] == "" {
+		t.Fatalf("event=%#v", event)
+	}
+}
+
+func TestSpawnErrorMapsStructuredOutcome(t *testing.T) {
+	err := &domain.SpawnError{Outcome: domain.SpawnOutcome{State: domain.SpawnStateLaunchFailed, Phase: domain.SpawnPhaseLaunch, SessionID: "mer-7", Generation: "gen-7", RolledBack: true, RollbackState: domain.SpawnStateRolledBack}, Cause: errors.New("runtime failed")}
+	mapped := toAPIError(err)
+	var apiErr *apierr.Error
+	if !errors.As(mapped, &apiErr) || apiErr.Code != "SPAWN_LAUNCH_FAILED" {
+		t.Fatalf("mapped = %#v", mapped)
+	}
+	if apiErr.Details["sessionId"] != domain.SessionID("mer-7") || apiErr.Details["generation"] != "gen-7" || apiErr.Details["rolledBack"] != true {
+		t.Fatalf("details = %#v", apiErr.Details)
+	}
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
@@ -882,6 +915,41 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRDeniesNonWorkerCapabilityClassesAndAuditsAttempt(t *testing.T) {
+	for _, class := range []domain.CapabilityClass{
+		domain.CapabilityClassOrchestrator,
+		domain.CapabilityClassNativeSubagent,
+	} {
+		t.Run(string(class), func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+				Metadata: domain.SessionMetadata{WorkspacePath: "/ws", CapabilityClass: class},
+			}
+			sink := &fakeTelemetrySink{}
+			svc := NewWithDeps(Deps{Store: st, Telemetry: sink})
+
+			_, err := svc.ClaimPR(context.Background(), "mer-1", "42", ClaimPROptions{AllowTakeover: true})
+			if !errors.Is(err, ErrSessionNotClaimable) {
+				t.Fatalf("err = %v, want %v", err, ErrSessionNotClaimable)
+			}
+			if len(sink.events) != 1 {
+				t.Fatalf("events = %#v, want one denial", sink.events)
+			}
+			ev := sink.events[0]
+			if ev.Name != "ao.capability.denied" || ev.SessionID == nil || *ev.SessionID != "mer-1" {
+				t.Fatalf("event = %+v", ev)
+			}
+			if ev.Payload["actor_session"] != domain.SessionID("mer-1") ||
+				ev.Payload["capability"] != domain.CapabilityClaimPR ||
+				ev.Payload["target"] != "42" ||
+				ev.Payload["policy_reason"] != domain.IndependentWorkerPolicyReason {
+				t.Fatalf("denial payload = %+v", ev.Payload)
+			}
+		})
 	}
 }
 

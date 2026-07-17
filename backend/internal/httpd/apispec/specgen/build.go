@@ -146,6 +146,8 @@ var schemaNames = map[string]string{
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
 	"ControllersSpawnSessionRequest":              "SpawnSessionRequest",
+	"ControllersSpawnSessionResponse":             "SpawnSessionResponse",
+	"ControllersSpawnPreflightResponse":           "SpawnPreflightResponse",
 	"ControllersSessionResponse":                  "SessionResponse",
 	"ControllersSessionPreviewResponse":           "SessionPreviewResponse",
 	"ControllersSetSessionPreviewRequest":         "SetSessionPreviewRequest",
@@ -614,11 +616,22 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/preflight", id: "preflightSpawnSession", tag: "sessions",
+			summary: "Validate transactional spawn prerequisites without side effects",
+			reqBody: controllers.SpawnSessionRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SpawnPreflightResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions", id: "spawnSession", tag: "sessions",
 			summary: "Spawn a new agent session",
 			reqBody: controllers.SpawnSessionRequest{},
 			resps: []respUnit{
-				{http.StatusCreated, controllers.SessionResponse{}},
+				{http.StatusCreated, controllers.SpawnSessionResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -630,6 +643,19 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/execution-profile", id: "changeSessionExecutionProfile", tag: "sessions",
+			summary:    "Apply an explicit human-authorized execution profile change",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.ChangeExecutionProfileRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ChangeExecutionProfileResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},

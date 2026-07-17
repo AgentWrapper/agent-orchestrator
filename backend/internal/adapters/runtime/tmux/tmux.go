@@ -55,6 +55,15 @@ type Runtime struct {
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
+
+// Preflight verifies the selected tmux entrypoint is executable and healthy.
+func (r *Runtime) Preflight(ctx context.Context) error {
+	if _, err := r.runner.Run(ctx, nil, r.binary, "-V"); err != nil {
+		return fmt.Errorf("tmux preflight %q: %w", r.binary, err)
+	}
+	return nil
+}
+
 var _ ports.Attacher = (*Runtime)(nil)
 
 type runner interface {

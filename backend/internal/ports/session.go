@@ -12,6 +12,8 @@ var ErrSessionNotFound = errors.New("session not found")
 // SpawnConfig is the request to start a new session: which project/issue, which
 // agent harness, and the branch/prompt the agent launches with.
 type SpawnConfig struct {
+	// RequestID is an idempotency key supplied by the caller.
+	RequestID string
 	ProjectID domain.ProjectID
 	IssueID   domain.IssueID
 	// IssueContext is optional pre-fetched tracker context for the task prompt.

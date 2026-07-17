@@ -195,11 +195,12 @@ func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain
 }
 
 func liveWorker() domain.SessionRecord {
+	profile, _ := domain.NewExecutionProfile(domain.AgentConfig{}, "test")
 	return domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
 		Harness:   domain.HarnessClaudeCode,
-		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1"},
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", ExecutionProfile: profile, ObservedExecutionProfileHash: profile.Hash},
 	}
 }
 
@@ -214,6 +215,42 @@ func newEngineForTest(store Store, sessions Sessions, prs PRs, projects Projects
 
 func prAt(sha string) fakePRs {
 	return fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", Number: 1, HeadSHA: sha}}}
+}
+
+type unavailableModel struct{}
+
+func (unavailableModel) Available(context.Context, domain.ReviewerHarness, string) bool { return false }
+
+func TestTriggerWaitsWhenConfiguredReviewModelUnavailableWithoutFallback(t *testing.T) {
+	store := &fakeStore{}
+	worker := liveWorker()
+	profile, _ := domain.NewExecutionProfile(domain.AgentConfig{Model: "worker-model", ReviewModel: "required-review-model"}, "project_config")
+	worker.Metadata.ExecutionProfile = profile
+	worker.Metadata.ObservedExecutionProfileHash = profile.Hash
+	launcher := &fakeLauncher{}
+	engine := New(Deps{Store: store, Sessions: fakeSessions{rec: worker, ok: true}, PRs: prAt("sha1"), Projects: fakeProjects{}, Launcher: launcher, ModelAvailability: unavailableModel{}})
+	result, err := engine.Trigger(context.Background(), worker.ID)
+	if !errors.Is(err, ErrReviewModelUnavailable) || !result.Waiting {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if launcher.spawned || len(store.runs) != 0 {
+		t.Fatalf("unavailable model caused side effects: spawned=%v runs=%d", launcher.spawned, len(store.runs))
+	}
+}
+
+func TestTriggerWaitsOnConfiguredObservedProfileDrift(t *testing.T) {
+	store := &fakeStore{}
+	worker := liveWorker()
+	worker.Metadata.ObservedExecutionProfileHash = "stale-runtime"
+	launcher := &fakeLauncher{}
+	engine := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+	result, err := engine.Trigger(context.Background(), worker.ID)
+	if !errors.Is(err, domain.ErrExecutionProfileDrift) || !result.Waiting {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if launcher.spawned || len(store.runs) != 0 {
+		t.Fatalf("drift caused side effects: spawned=%v runs=%d", launcher.spawned, len(store.runs))
+	}
 }
 
 // --- tests ---

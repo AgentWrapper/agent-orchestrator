@@ -159,6 +159,26 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	return s.toSession(ctx, rec)
 }
 
+// PreflightSpawn exposes the manager's side-effect-free transactional spawn
+// admission through the daemon API.
+func (s *Service) PreflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SpawnPreflight, error) {
+	_, err := s.requireProject(ctx, cfg.ProjectID)
+	if err != nil {
+		return domain.SpawnPreflight{}, err
+	}
+	manager, ok := s.manager.(interface {
+		PreflightSpawn(context.Context, ports.SpawnConfig) (domain.SpawnPreflight, error)
+	})
+	if !ok {
+		return domain.SpawnPreflight{}, apierr.Internal("SPAWN_PREFLIGHT_UNAVAILABLE", "Spawn preflight is unavailable")
+	}
+	preflight, err := manager.PreflightSpawn(ctx, cfg)
+	if err != nil {
+		return preflight, toAPIError(err)
+	}
+	return preflight, nil
+}
+
 // requireProject verifies the project is registered before any spawn write
 // touches the session store, so an unknown projectId surfaces as a typed 404
 // rather than an opaque 500 with an orphan terminated row left behind.
@@ -253,6 +273,15 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 	}
 	if errorCode != "" {
 		payload["error_code"] = errorCode
+	}
+	var spawnErr *domain.SpawnError
+	if errors.As(err, &spawnErr) {
+		payload["state"] = spawnErr.Outcome.State
+		payload["phase"] = spawnErr.Outcome.Phase
+		payload["session_id"] = spawnErr.Outcome.SessionID
+		payload["generation"] = spawnErr.Outcome.Generation
+		payload["rolled_back"] = spawnErr.Outcome.RolledBack
+		payload["rollback_state"] = spawnErr.Outcome.RollbackState
 	}
 	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.session.spawn_failed",
@@ -414,6 +443,23 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string)
 	return toAPIError(s.manager.Send(ctx, id, message))
 }
 
+// ChangeExecutionProfile applies an explicit human control event. Denials are
+// emitted as structured audit telemetry before returning to the caller.
+func (s *Service) ChangeExecutionProfile(ctx context.Context, id domain.SessionID, requested domain.ExecutionProfile, authority, reason string) (domain.ExecutionProfileChange, error) {
+	changer, ok := s.manager.(interface {
+		ChangeExecutionProfile(context.Context, domain.SessionID, domain.ExecutionProfile, string, string) (domain.ExecutionProfileChange, error)
+	})
+	if !ok {
+		return domain.ExecutionProfileChange{}, errors.New("execution profile changes are unavailable")
+	}
+	change, err := changer.ChangeExecutionProfile(ctx, id, requested, authority, reason)
+	if err != nil && s.telemetry != nil {
+		sessionID := id
+		s.telemetry.Emit(context.Background(), ports.TelemetryEvent{Name: "ao.execution_profile.change_denied", Source: "session_service", OccurredAt: s.now(), Level: ports.TelemetryLevelWarn, SessionID: &sessionID, Payload: map[string]any{"actor_session": string(id), "capability": "execution_profile.change", "target": string(id), "policy_reason": err.Error()}})
+	}
+	return change, toAPIError(err)
+}
+
 // Rename updates the user-facing session display name.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
 	displayName = strings.TrimSpace(displayName)
@@ -548,6 +594,22 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 // toAPIError maps the session engine's sentinel errors to their REST API
 // equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {
+	var spawnErr *domain.SpawnError
+	if errors.As(err, &spawnErr) {
+		details := map[string]any{
+			"state":         spawnErr.Outcome.State,
+			"phase":         spawnErr.Outcome.Phase,
+			"sessionId":     spawnErr.Outcome.SessionID,
+			"generation":    spawnErr.Outcome.Generation,
+			"rolledBack":    spawnErr.Outcome.RolledBack,
+			"rollbackState": spawnErr.Outcome.RollbackState,
+		}
+		code := "SPAWN_" + strings.ToUpper(string(spawnErr.Outcome.State))
+		if spawnErr.Outcome.State == domain.SpawnStatePreflightFailed {
+			return apierr.Invalid(code, spawnErr.Error(), details)
+		}
+		return apierr.New(apierr.KindInternal, code, spawnErr.Error(), details)
+	}
 	switch {
 	case err == nil:
 		return nil
@@ -571,6 +633,10 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.Is(err, domain.ErrExecutionProfileUnauthorized):
+		return apierr.Conflict("EXECUTION_PROFILE_CHANGE_UNAUTHORIZED", err.Error(), nil)
+	case errors.Is(err, domain.ErrExecutionProfileMissing), errors.Is(err, domain.ErrExecutionProfileDrift):
+		return apierr.Conflict("EXECUTION_PROFILE_INVALID", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

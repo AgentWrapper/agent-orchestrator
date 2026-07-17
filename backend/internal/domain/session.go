@@ -22,14 +22,50 @@ const (
 	KindOrchestrator SessionKind = "orchestrator"
 )
 
+// CapabilityClass identifies the security boundary an actor runs within.
+// AO workers are independent CLI processes with their own session, worktree,
+// branch, and runtime. Orchestrators and any native in-process subagents are
+// coordination/analysis actors and cannot perform formal implementation.
+type CapabilityClass string
+
+// Capability classes persisted in session metadata and policy audit events.
+const (
+	CapabilityClassOrchestrator   CapabilityClass = "orchestrator"
+	CapabilityClassAOWorker       CapabilityClass = "ao_worker"
+	CapabilityClassNativeSubagent CapabilityClass = "native_subagent"
+)
+
+// CapabilityClassForKind returns the capability class AO assigns to a durable
+// session. Native subagents are not durable AO sessions; their class is still
+// explicit so policy hooks and audit records can identify them.
+func CapabilityClassForKind(kind SessionKind) CapabilityClass {
+	if kind == KindWorker {
+		return CapabilityClassAOWorker
+	}
+	return CapabilityClassOrchestrator
+}
+
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
-	Branch          string `json:"branch,omitempty"`
-	WorkspacePath   string `json:"workspacePath,omitempty"`
-	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
-	AgentSessionID  string `json:"agentSessionId,omitempty"`
-	Prompt          string `json:"prompt,omitempty"`
+	// Generation uniquely identifies this launch generation for lifecycle CAS.
+	Generation string `json:"generation,omitempty"`
+	// SpawnState is spawned only after the transactional commit point.
+	SpawnState      SpawnState `json:"spawnState,omitempty"`
+	Branch          string     `json:"branch,omitempty"`
+	WorkspacePath   string     `json:"workspacePath,omitempty"`
+	RuntimeHandleID string     `json:"runtimeHandleId,omitempty"`
+	AgentSessionID  string     `json:"agentSessionId,omitempty"`
+	Prompt          string     `json:"prompt,omitempty"`
+	// CapabilityClass records the implementation policy applied when AO
+	// launched the session. Empty values from pre-policy databases are treated
+	// as the class implied by SessionRecord.Kind.
+	CapabilityClass CapabilityClass `json:"capabilityClass,omitempty"`
+	// ExecutionProfile is persisted before any workspace or runtime is created.
+	ExecutionProfile ExecutionProfile `json:"executionProfile,omitempty"`
+	// ObservedExecutionProfileHash is recorded only after the adapter/runtime
+	// accepted the profile. A mismatch is surfaced as drift by status/doctor.
+	ObservedExecutionProfileHash string `json:"observedExecutionProfileHash,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.

@@ -20,6 +20,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -79,7 +80,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
-	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendCapabilityPolicyFlags(&cmd, effectiveCapabilityClass(cfg.Kind, cfg.CapabilityClass), cfg.Permissions)
+	appendExecutionProfileFlags(&cmd, cfg.ExecutionProfile, cfg.Config)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
@@ -120,7 +122,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
-	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendCapabilityPolicyFlags(&cmd, effectiveCapabilityClass(cfg.Kind, cfg.CapabilityClass), cfg.Permissions)
+	appendExecutionProfileFlags(&cmd, cfg.ExecutionProfile, cfg.Config)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
@@ -356,6 +359,67 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 		*cmd = append(*cmd, "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`)
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
+	}
+}
+
+func effectiveCapabilityClass(kind domain.SessionKind, class domain.CapabilityClass) domain.CapabilityClass {
+	if class != "" {
+		return class
+	}
+	// Direct adapter callers predating capability metadata generally omit both
+	// fields. Preserve their worker behavior; Session Manager always supplies an
+	// explicit class for real AO launches and restores.
+	if kind == "" {
+		return domain.CapabilityClassAOWorker
+	}
+	return domain.CapabilityClassForKind(kind)
+}
+
+func appendCapabilityPolicyFlags(cmd *[]string, class domain.CapabilityClass, permissions ports.PermissionMode) {
+	if class.AllowsImplementation() {
+		appendApprovalFlags(cmd, permissions)
+		return
+	}
+	// This is the hard process boundary. It is independent of prompt wording:
+	// repository writes are sandboxed, approval escalation is disabled, and
+	// Codex's native in-process collaboration workers cannot be launched as an
+	// implementation substitute. The PreToolUse hook separately classifies and
+	// audits denied verification/git/AO control attempts.
+	*cmd = append(*cmd,
+		"--sandbox", "read-only",
+		"--ask-for-approval", "never",
+		"--disable", "multi_agent",
+	)
+}
+
+func appendExecutionProfileFlags(cmd *[]string, profile domain.ExecutionProfile, config ports.AgentConfig) {
+	model, reasoning := config.Model, config.ReasoningEffort
+	fastMode, allowNative := config.FastMode, config.AllowNativeSubagents
+	profilePresent := !profile.IsZero()
+	if profilePresent {
+		if profile.Model != domain.ExecutionProfileAgentDefault {
+			model = profile.Model
+		} else {
+			model = ""
+		}
+		if profile.ReasoningEffort != domain.ExecutionProfileAgentDefault {
+			reasoning = profile.ReasoningEffort
+		} else {
+			reasoning = ""
+		}
+		fastMode, allowNative = profile.FastMode, profile.AllowNativeSubagents
+	}
+	if model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
+	if reasoning != "" {
+		*cmd = append(*cmd, "-c", "model_reasoning_effort="+codexTOMLConfigString(reasoning))
+	}
+	if fastMode {
+		*cmd = append(*cmd, "-c", `service_tier="fast"`)
+	}
+	if profilePresent && !allowNative {
+		*cmd = append(*cmd, "--disable", "multi_agent")
 	}
 }
 

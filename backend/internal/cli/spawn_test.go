@@ -47,6 +47,36 @@ func TestSpawnCommand_MissingProjectContext(t *testing.T) {
 	}
 }
 
+func TestSpawnPreflightOnlyPrintsMachineReadableResultWithoutSpawning(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"codex"}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/preflight":
+			_, _ = io.WriteString(w, `{"preflight":{"ok":true,"phase":"preflight","launcherPath":"/usr/bin/ao","agentBinaryPath":"/usr/bin/codex","runtime":"tmux","capabilityClass":"ao_worker","profileHash":"hash-1"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--preflight-only", "--json", "--skip-agent-check")
+	if err != nil {
+		t.Fatalf("preflight failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, `"ok":true`) || !strings.Contains(out, `"profileHash":"hash-1"`) {
+		t.Fatalf("output = %s", out)
+	}
+	if want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions/preflight"}; !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want=%#v", requests, want)
+	}
+}
+
 // TestProjectAddCommand_RequiresPath asserts `ao project add` rejects a missing
 // --path before touching the network.
 func TestProjectAddCommand_RequiresPath(t *testing.T) {

@@ -126,7 +126,10 @@ type CleanupSessionsQuery struct {
 // fields are json:"-"; these curated fields are what serialize.
 type SessionView struct {
 	domain.Session
-	Branch string `json:"branch,omitempty"`
+	Branch                       string                  `json:"branch,omitempty"`
+	ExecutionProfile             domain.ExecutionProfile `json:"executionProfile"`
+	ObservedExecutionProfileHash string                  `json:"observedExecutionProfileHash,omitempty"`
+	ExecutionProfileDrift        bool                    `json:"executionProfileDrift"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session, set via POST /sessions/{sessionId}/preview. Empty (omitted) when
 	// no preview has been requested. Pulled from the json:"-" domain Metadata.
@@ -146,6 +149,7 @@ type ListSessionsResponse struct {
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
+	RequestID string              `json:"requestId,omitempty"`
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
@@ -158,7 +162,18 @@ type SpawnSessionRequest struct {
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
 }
 
-// SessionResponse is the { session } body shared by session create/get.
+// SpawnSessionResponse is returned only after the transactional commit point.
+type SpawnSessionResponse struct {
+	View    SessionView         `json:"session"`
+	Outcome domain.SpawnOutcome `json:"outcome"`
+}
+
+// SpawnPreflightResponse reports side-effect-free spawn admission.
+type SpawnPreflightResponse struct {
+	Preflight domain.SpawnPreflight `json:"preflight"`
+}
+
+// SessionResponse is the { session } body shared by session get/restore.
 type SessionResponse struct {
 	Session SessionView `json:"session"`
 }
@@ -173,6 +188,18 @@ type SessionPreviewResponse struct {
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
+}
+
+// ChangeExecutionProfileRequest is an explicit human profile control event.
+type ChangeExecutionProfileRequest struct {
+	Profile   domain.ExecutionProfile `json:"profile"`
+	Authority string                  `json:"authority"`
+	Reason    string                  `json:"reason"`
+}
+
+// ChangeExecutionProfileResponse returns the durable old/new audit record.
+type ChangeExecutionProfileResponse struct {
+	Change domain.ExecutionProfileChange `json:"change"`
 }
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.

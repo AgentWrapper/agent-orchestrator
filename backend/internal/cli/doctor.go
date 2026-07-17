@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -164,11 +165,15 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 			msg += " (" + st.Error + ")"
 		}
 		checks = append(checks, doctorCheck{Level: level, Section: doctorSectionCore, Name: "daemon", Message: msg})
+		if st.State == stateReady {
+			checks = append(checks, c.checkExecutionProfiles(ctx))
+		}
 	}
 
 	checks = append(checks,
 		c.checkGit(ctx),
 		c.checkTerminalRuntime(ctx),
+		c.checkLauncherEntrypoint(),
 		c.checkAOBinary(),
 	)
 	for _, harness := range doctorHarnesses {
@@ -176,6 +181,35 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	}
 	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
 	return checks
+}
+
+func (c *commandContext) checkLauncherEntrypoint() doctorCheck {
+	const name = "launcher-entrypoint"
+	path, err := agentlaunch.ResolveEntrypoint(c.deps.Executable)
+	if err != nil {
+		return doctorCheck{
+			Level: doctorFail, Section: doctorSectionTools, Name: name,
+			Message: fmt.Sprintf("%v; reinstall or run the daemon from a valid ao executable before spawning", err),
+		}
+	}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: name, Message: path}
+}
+
+func (c *commandContext) checkExecutionProfiles(ctx context.Context) doctorCheck {
+	var response sessionListResponse
+	if err := c.getJSON(ctx, "sessions", &response); err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionCore, Name: "execution-profiles", Message: err.Error()}
+	}
+	var drift []string
+	for _, session := range response.Sessions {
+		if session.ExecutionProfileDrift {
+			drift = append(drift, session.ID)
+		}
+	}
+	if len(drift) > 0 {
+		return doctorCheck{Level: doctorFail, Section: doctorSectionCore, Name: "execution-profiles", Message: "configured/observed drift: " + strings.Join(drift, ", ")}
+	}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionCore, Name: "execution-profiles", Message: fmt.Sprintf("%d session profile(s) consistent", len(response.Sessions))}
 }
 
 // checkStore inspects the SQLite store WITHOUT opening or migrating it. The
