@@ -40,6 +40,7 @@ func (c *FilesystemController) createDirectory(w http.ResponseWriter, r *http.Re
 	}
 	parent := filepath.Clean(in.ParentPath)
 	target := filepath.Join(parent, in.Name)
+	//nolint:gosec // G301: user-created project directories intentionally use standard 0755 permissions, subject to the daemon user's umask.
 	if err := os.Mkdir(target, 0o755); err != nil {
 		writeDirectoryCreateError(w, r, err)
 		return
