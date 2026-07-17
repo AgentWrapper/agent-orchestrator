@@ -635,6 +635,19 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/execution-profile", id: "changeSessionExecutionProfile", tag: "sessions",
+			summary:    "Apply an explicit human-authorized execution profile change",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.ChangeExecutionProfileRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ChangeExecutionProfileResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview", id: "getSessionPreview", tag: "sessions",
 			summary:    "Discover a browser preview URL for a session workspace",
 			pathParams: []any{controllers.SessionIDParam{}},

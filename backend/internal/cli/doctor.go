@@ -164,6 +164,9 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 			msg += " (" + st.Error + ")"
 		}
 		checks = append(checks, doctorCheck{Level: level, Section: doctorSectionCore, Name: "daemon", Message: msg})
+		if st.State == stateReady {
+			checks = append(checks, c.checkExecutionProfiles(ctx))
+		}
 	}
 
 	checks = append(checks,
@@ -176,6 +179,23 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	}
 	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
 	return checks
+}
+
+func (c *commandContext) checkExecutionProfiles(ctx context.Context) doctorCheck {
+	var response sessionListResponse
+	if err := c.getJSON(ctx, "sessions", &response); err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionCore, Name: "execution-profiles", Message: err.Error()}
+	}
+	var drift []string
+	for _, session := range response.Sessions {
+		if session.ExecutionProfileDrift {
+			drift = append(drift, session.ID)
+		}
+	}
+	if len(drift) > 0 {
+		return doctorCheck{Level: doctorFail, Section: doctorSectionCore, Name: "execution-profiles", Message: "configured/observed drift: " + strings.Join(drift, ", ")}
+	}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionCore, Name: "execution-profiles", Message: fmt.Sprintf("%d session profile(s) consistent", len(response.Sessions))}
 }
 
 // checkStore inspects the SQLite store WITHOUT opening or migrating it. The

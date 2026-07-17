@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -38,6 +39,69 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
+}
+
+// SetSessionExecutionProfile persists an initial/legacy-compatible profile
+// without recording a human change event. Callers must do this before launch.
+func (s *Store) SetSessionExecutionProfile(ctx context.Context, id domain.SessionID, profile domain.ExecutionProfile, observedHash string, updatedAt time.Time) error {
+	if err := profile.Validate(); err != nil {
+		return err
+	}
+	b, err := json.Marshal(profile)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, err = s.qw.SetSessionExecutionProfile(ctx, gen.SetSessionExecutionProfileParams{ID: id, ExecutionProfileJson: string(b), ObservedExecutionProfileHash: observedHash, UpdatedAt: updatedAt})
+	return err
+}
+
+// ChangeSessionExecutionProfile atomically updates a profile and appends the
+// human-authorized audit row. Authorization is validated again at this durable
+// boundary so callers cannot bypass it by constructing a change directly.
+func (s *Store) ChangeSessionExecutionProfile(ctx context.Context, change domain.ExecutionProfileChange) error {
+	authorized, err := domain.AuthorizeExecutionProfileChange(change.SessionID, change.OldProfile, change.NewProfile, change.Authority, change.Reason, change.ChangedAt)
+	if err != nil {
+		return err
+	}
+	oldJSON, _ := json.Marshal(authorized.OldProfile)
+	newJSON, _ := json.Marshal(authorized.NewProfile)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "change execution profile", func(q *gen.Queries) error {
+		current, err := q.GetSession(ctx, authorized.SessionID)
+		if err != nil {
+			return err
+		}
+		if current.ExecutionProfileJson != string(oldJSON) {
+			return domain.ErrExecutionProfileDrift
+		}
+		if _, err := q.SetSessionExecutionProfile(ctx, gen.SetSessionExecutionProfileParams{ID: authorized.SessionID, ExecutionProfileJson: string(newJSON), ObservedExecutionProfileHash: "", UpdatedAt: authorized.ChangedAt}); err != nil {
+			return err
+		}
+		return q.InsertSessionExecutionProfileChange(ctx, gen.InsertSessionExecutionProfileChangeParams{SessionID: string(authorized.SessionID), OldProfileJson: string(oldJSON), NewProfileJson: string(newJSON), Authority: authorized.Authority, Reason: authorized.Reason, ChangedAt: authorized.ChangedAt})
+	})
+}
+
+// ListSessionExecutionProfileChanges returns newest-first durable audit rows.
+func (s *Store) ListSessionExecutionProfileChanges(ctx context.Context, id domain.SessionID) ([]domain.ExecutionProfileChange, error) {
+	rows, err := s.qr.ListSessionExecutionProfileChanges(ctx, string(id))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.ExecutionProfileChange, 0, len(rows))
+	for _, row := range rows {
+		var oldProfile, newProfile domain.ExecutionProfile
+		if err := json.Unmarshal([]byte(row.OldProfileJson), &oldProfile); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(row.NewProfileJson), &newProfile); err != nil {
+			return nil, err
+		}
+		out = append(out, domain.ExecutionProfileChange{SessionID: domain.SessionID(row.SessionID), OldProfile: oldProfile, NewProfile: newProfile, Authority: row.Authority, Reason: row.Reason, ChangedAt: row.ChangedAt})
+	}
+	return out, nil
 }
 
 // RenameSession updates only the user-facing display name for an existing
@@ -187,6 +251,10 @@ func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
 }
 
 func rowToRecord(row gen.Session) domain.SessionRecord {
+	var profile domain.ExecutionProfile
+	if row.ExecutionProfileJson != "" {
+		_ = json.Unmarshal([]byte(row.ExecutionProfileJson), &profile)
+	}
 	return domain.SessionRecord{
 		ID:          row.ID,
 		ProjectID:   row.ProjectID,
@@ -201,14 +269,16 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:  row.IsTerminated,
 		Metadata: domain.SessionMetadata{
-			Branch:          row.Branch,
-			WorkspacePath:   row.WorkspacePath,
-			RuntimeHandleID: row.RuntimeHandleID,
-			AgentSessionID:  row.AgentSessionID,
-			Prompt:          row.Prompt,
-			PreviewURL:      row.PreviewURL,
-			PreviewRevision: row.PreviewRevision,
-			CapabilityClass: row.CapabilityClass,
+			Branch:                       row.Branch,
+			WorkspacePath:                row.WorkspacePath,
+			RuntimeHandleID:              row.RuntimeHandleID,
+			AgentSessionID:               row.AgentSessionID,
+			Prompt:                       row.Prompt,
+			PreviewURL:                   row.PreviewURL,
+			PreviewRevision:              row.PreviewRevision,
+			CapabilityClass:              row.CapabilityClass,
+			ExecutionProfile:             profile,
+			ObservedExecutionProfileHash: row.ObservedExecutionProfileHash,
 		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -218,52 +288,63 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:              rec.ID,
-		ProjectID:       rec.ProjectID,
-		Num:             num,
-		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
-		Harness:         rec.Harness,
-		DisplayName:     rec.DisplayName,
-		ActivityState:   activity.State,
-		ActivityLastAt:  activity.LastActivityAt,
-		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:    rec.IsTerminated,
-		Branch:          rec.Metadata.Branch,
-		WorkspacePath:   rec.Metadata.WorkspacePath,
-		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
-		AgentSessionID:  rec.Metadata.AgentSessionID,
-		Prompt:          rec.Metadata.Prompt,
-		PreviewURL:      rec.Metadata.PreviewURL,
-		PreviewRevision: rec.Metadata.PreviewRevision,
-		CapabilityClass: rec.Metadata.CapabilityClass,
-		CreatedAt:       rec.CreatedAt,
-		UpdatedAt:       rec.UpdatedAt,
+		ID:                           rec.ID,
+		ProjectID:                    rec.ProjectID,
+		Num:                          num,
+		IssueID:                      rec.IssueID,
+		Kind:                         rec.Kind,
+		Harness:                      rec.Harness,
+		DisplayName:                  rec.DisplayName,
+		ActivityState:                activity.State,
+		ActivityLastAt:               activity.LastActivityAt,
+		FirstSignalAt:                timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:                 rec.IsTerminated,
+		Branch:                       rec.Metadata.Branch,
+		WorkspacePath:                rec.Metadata.WorkspacePath,
+		RuntimeHandleID:              rec.Metadata.RuntimeHandleID,
+		AgentSessionID:               rec.Metadata.AgentSessionID,
+		Prompt:                       rec.Metadata.Prompt,
+		PreviewURL:                   rec.Metadata.PreviewURL,
+		PreviewRevision:              rec.Metadata.PreviewRevision,
+		CapabilityClass:              rec.Metadata.CapabilityClass,
+		ExecutionProfileJson:         marshalExecutionProfile(rec.Metadata.ExecutionProfile),
+		ObservedExecutionProfileHash: rec.Metadata.ObservedExecutionProfileHash,
+		CreatedAt:                    rec.CreatedAt,
+		UpdatedAt:                    rec.UpdatedAt,
 	}
 }
 
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:              rec.ID,
-		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
-		Harness:         rec.Harness,
-		DisplayName:     rec.DisplayName,
-		ActivityState:   activity.State,
-		ActivityLastAt:  activity.LastActivityAt,
-		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:    rec.IsTerminated,
-		Branch:          rec.Metadata.Branch,
-		WorkspacePath:   rec.Metadata.WorkspacePath,
-		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
-		AgentSessionID:  rec.Metadata.AgentSessionID,
-		Prompt:          rec.Metadata.Prompt,
-		PreviewURL:      rec.Metadata.PreviewURL,
-		PreviewRevision: rec.Metadata.PreviewRevision,
-		CapabilityClass: rec.Metadata.CapabilityClass,
-		UpdatedAt:       rec.UpdatedAt,
+		ID:                           rec.ID,
+		IssueID:                      rec.IssueID,
+		Kind:                         rec.Kind,
+		Harness:                      rec.Harness,
+		DisplayName:                  rec.DisplayName,
+		ActivityState:                activity.State,
+		ActivityLastAt:               activity.LastActivityAt,
+		FirstSignalAt:                timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:                 rec.IsTerminated,
+		Branch:                       rec.Metadata.Branch,
+		WorkspacePath:                rec.Metadata.WorkspacePath,
+		RuntimeHandleID:              rec.Metadata.RuntimeHandleID,
+		AgentSessionID:               rec.Metadata.AgentSessionID,
+		Prompt:                       rec.Metadata.Prompt,
+		PreviewURL:                   rec.Metadata.PreviewURL,
+		PreviewRevision:              rec.Metadata.PreviewRevision,
+		CapabilityClass:              rec.Metadata.CapabilityClass,
+		ObservedExecutionProfileHash: rec.Metadata.ObservedExecutionProfileHash,
+		UpdatedAt:                    rec.UpdatedAt,
 	}
+}
+
+func marshalExecutionProfile(profile domain.ExecutionProfile) string {
+	if profile.IsZero() {
+		return ""
+	}
+	b, _ := json.Marshal(profile)
+	return string(b)
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column

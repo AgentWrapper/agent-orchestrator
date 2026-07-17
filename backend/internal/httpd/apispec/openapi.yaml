@@ -1066,6 +1066,57 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/execution-profile:
+    post:
+      operationId: changeSessionExecutionProfile
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersChangeExecutionProfileRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersChangeExecutionProfileResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Apply an explicit human-authorized execution profile change
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -1746,9 +1797,17 @@ components:
       type: object
     AgentConfig:
       properties:
+        allowNativeSubagents:
+          type: boolean
+        fastMode:
+          type: boolean
         model:
           type: string
         permissions:
+          type: string
+        reasoningEffort:
+          type: string
+        reviewModel:
           type: string
       type: object
     AgentInfo:
@@ -1843,6 +1902,26 @@ components:
       - sessionId
       - reason
       type: object
+    ControllersChangeExecutionProfileRequest:
+      properties:
+        authority:
+          type: string
+        profile:
+          $ref: '#/components/schemas/DomainExecutionProfile'
+        reason:
+          type: string
+      required:
+      - profile
+      - authority
+      - reason
+      type: object
+    ControllersChangeExecutionProfileResponse:
+      properties:
+        change:
+          $ref: '#/components/schemas/DomainExecutionProfileChange'
+      required:
+      - change
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -1854,6 +1933,10 @@ components:
           type: string
         displayName:
           type: string
+        executionProfile:
+          $ref: '#/components/schemas/DomainExecutionProfile'
+        executionProfileDrift:
+          type: boolean
         harness:
           type: string
         id:
@@ -1863,6 +1946,8 @@ components:
         issueId:
           type: string
         kind:
+          type: string
+        observedExecutionProfileHash:
           type: string
         previewRevision:
           format: int64
@@ -1905,6 +1990,8 @@ components:
       - createdAt
       - updatedAt
       - status
+      - executionProfile
+      - executionProfileDrift
       - prs
       type: object
     DegradedProject:
@@ -1936,6 +2023,59 @@ components:
       required:
       - state
       - lastActivityAt
+      type: object
+    DomainExecutionProfile:
+      properties:
+        allow_native_subagents:
+          type: boolean
+        authority_source:
+          type: string
+        fast_mode:
+          type: boolean
+        hash:
+          type: string
+        model:
+          type: string
+        reasoning_effort:
+          type: string
+        review_model:
+          type: string
+        review_model_policy:
+          type: string
+        version:
+          type: string
+      required:
+      - version
+      - model
+      - reasoning_effort
+      - fast_mode
+      - review_model_policy
+      - allow_native_subagents
+      - authority_source
+      - hash
+      type: object
+    DomainExecutionProfileChange:
+      properties:
+        authority:
+          type: string
+        changed_at:
+          format: date-time
+          type: string
+        new_profile:
+          $ref: '#/components/schemas/DomainExecutionProfile'
+        old_profile:
+          $ref: '#/components/schemas/DomainExecutionProfile'
+        reason:
+          type: string
+        session_id:
+          type: string
+      required:
+      - session_id
+      - old_profile
+      - new_profile
+      - authority
+      - reason
+      - changed_at
       type: object
     DomainReviewerConfig:
       properties:

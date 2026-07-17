@@ -214,6 +214,7 @@ type fakeCommander struct {
 	spawned         bool
 	spawnedCfg      ports.SpawnConfig
 	killsAtSpawn    int
+	changeErr       error
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
@@ -230,6 +231,26 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 }
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
 	return domain.SessionRecord{}, nil
+}
+func (f *fakeCommander) ChangeExecutionProfile(_ context.Context, id domain.SessionID, requested domain.ExecutionProfile, authority, reason string) (domain.ExecutionProfileChange, error) {
+	if f.changeErr != nil {
+		return domain.ExecutionProfileChange{}, f.changeErr
+	}
+	return domain.ExecutionProfileChange{SessionID: id, NewProfile: requested, Authority: authority, Reason: reason}, nil
+}
+
+func TestExecutionProfileDenialEmitsStructuredAuditEvent(t *testing.T) {
+	commander := &fakeCommander{changeErr: domain.ErrExecutionProfileUnauthorized}
+	sink := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{Manager: commander, Store: newFakeStore(), Telemetry: sink, Clock: func() time.Time { return time.Unix(1, 0) }})
+	_, err := svc.ChangeExecutionProfile(context.Background(), "ao-1", domain.ExecutionProfile{}, "orchestrator", "use a fallback")
+	if err == nil || len(sink.events) != 1 {
+		t.Fatalf("err=%v events=%#v", err, sink.events)
+	}
+	event := sink.events[0]
+	if event.Name != "ao.execution_profile.change_denied" || event.Payload["actor_session"] != "ao-1" || event.Payload["capability"] != "execution_profile.change" || event.Payload["target"] != "ao-1" || event.Payload["policy_reason"] == "" {
+		t.Fatalf("event=%#v", event)
+	}
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {

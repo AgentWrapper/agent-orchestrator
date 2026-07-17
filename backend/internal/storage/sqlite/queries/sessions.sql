@@ -6,34 +6,53 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, preview_revision, capability_class, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    preview_url, preview_revision, capability_class, execution_profile_json,
+    observed_execution_profile_hash, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, capability_class = ?, updated_at = ?
+    preview_url = ?, preview_revision = ?, capability_class = ?,
+    observed_execution_profile_hash = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
 FROM sessions ORDER BY project_id, num;
+
+-- name: SetSessionExecutionProfile :one
+UPDATE sessions
+SET execution_profile_json = ?, observed_execution_profile_hash = ?, updated_at = ?
+WHERE id = ?
+RETURNING id;
+
+-- name: InsertSessionExecutionProfileChange :exec
+INSERT INTO session_execution_profile_changes (
+    session_id, old_profile_json, new_profile_json, authority, reason, changed_at
+) VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: ListSessionExecutionProfileChanges :many
+SELECT session_id, old_profile_json, new_profile_json, authority, reason, changed_at
+FROM session_execution_profile_changes
+WHERE session_id = ?
+ORDER BY changed_at DESC, id DESC;
 
 
 -- name: RenameSession :execrows

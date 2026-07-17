@@ -59,11 +59,12 @@ type Projects interface {
 
 // Deps wires the engine.
 type Deps struct {
-	Store    Store
-	Sessions Sessions
-	PRs      PRs
-	Projects Projects
-	Launcher Launcher
+	Store             Store
+	Sessions          Sessions
+	PRs               PRs
+	Projects          Projects
+	Launcher          Launcher
+	ModelAvailability ModelAvailability
 
 	// Clock and NewID are injectable for deterministic tests.
 	Clock func() time.Time
@@ -72,13 +73,14 @@ type Deps struct {
 
 // Engine is the core code-review engine.
 type Engine struct {
-	store    Store
-	sessions Sessions
-	prs      PRs
-	projects Projects
-	launcher Launcher
-	clock    func() time.Time
-	newID    func() string
+	store             Store
+	sessions          Sessions
+	prs               PRs
+	projects          Projects
+	launcher          Launcher
+	modelAvailability ModelAvailability
+	clock             func() time.Time
+	newID             func() string
 
 	// triggerMu guards triggerLocks; triggerLocks holds one mutex per worker
 	// session so concurrent Trigger calls for the same worker serialise (see
@@ -98,14 +100,15 @@ func New(d Deps) *Engine {
 		newID = uuid.NewString
 	}
 	return &Engine{
-		store:        d.Store,
-		sessions:     d.Sessions,
-		prs:          d.PRs,
-		projects:     d.Projects,
-		launcher:     d.Launcher,
-		clock:        clock,
-		newID:        newID,
-		triggerLocks: make(map[domain.SessionID]*sync.Mutex),
+		store:             d.Store,
+		sessions:          d.Sessions,
+		prs:               d.PRs,
+		projects:          d.Projects,
+		launcher:          d.Launcher,
+		modelAvailability: d.ModelAvailability,
+		clock:             clock,
+		newID:             newID,
+		triggerLocks:      make(map[domain.SessionID]*sync.Mutex),
 	}
 }
 
@@ -138,7 +141,17 @@ type TriggerResult struct {
 	Created          bool
 	Reviews          []PRReviewState
 	CreatedRuns      []domain.ReviewRun
+	Waiting          bool
 }
+
+// ModelAvailability is a local/provider-independent admission probe. It must
+// never choose a fallback model; false parks the trigger in a waiting result.
+type ModelAvailability interface {
+	Available(ctx stdctx.Context, harness domain.ReviewerHarness, model string) bool
+}
+
+// ErrReviewModelUnavailable parks review rather than selecting a fallback.
+var ErrReviewModelUnavailable = errors.New("configured review model unavailable")
 
 // SessionReviews is a worker's review state: the live reviewer handle plus its
 // recorded passes, newest first.
@@ -183,6 +196,12 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	if worker.Metadata.WorkspacePath == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q has no workspace to review", ErrInvalid, workerID)
 	}
+	if err := worker.Metadata.ExecutionProfile.Validate(); err != nil {
+		return TriggerResult{}, fmt.Errorf("worker execution profile: %w", err)
+	}
+	if worker.Metadata.ObservedExecutionProfileHash != worker.Metadata.ExecutionProfile.Hash {
+		return TriggerResult{Waiting: true}, fmt.Errorf("worker execution profile: %w", domain.ErrExecutionProfileDrift)
+	}
 
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
@@ -205,6 +224,10 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	harness, err := e.reviewerHarness(ctx, worker)
 	if err != nil {
 		return TriggerResult{}, err
+	}
+	model := worker.Metadata.ExecutionProfile.EffectiveReviewModel()
+	if e.modelAvailability != nil && !e.modelAvailability.Available(ctx, harness, model) {
+		return TriggerResult{Waiting: true}, fmt.Errorf("%w: %s", ErrReviewModelUnavailable, model)
 	}
 
 	now := e.clock()
@@ -298,14 +321,15 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 
 func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {
 	return LaunchSpec{
-		RunID:         run.ID,
-		WorkerID:      worker.ID,
-		Harness:       harness,
-		WorkspacePath: worker.Metadata.WorkspacePath,
-		PRURL:         run.PRURL,
-		TargetSHA:     run.TargetSHA,
-		ReviewQueue:   queue,
-		ReviewIndex:   index,
+		ExecutionProfile: worker.Metadata.ExecutionProfile,
+		RunID:            run.ID,
+		WorkerID:         worker.ID,
+		Harness:          harness,
+		WorkspacePath:    worker.Metadata.WorkspacePath,
+		PRURL:            run.PRURL,
+		TargetSHA:        run.TargetSHA,
+		ReviewQueue:      queue,
+		ReviewIndex:      index,
 	}
 }
 

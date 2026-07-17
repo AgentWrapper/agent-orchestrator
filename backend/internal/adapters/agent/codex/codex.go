@@ -81,6 +81,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendCapabilityPolicyFlags(&cmd, effectiveCapabilityClass(cfg.Kind, cfg.CapabilityClass), cfg.Permissions)
+	appendExecutionProfileFlags(&cmd, cfg.ExecutionProfile, cfg.Config)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
@@ -122,6 +123,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendCapabilityPolicyFlags(&cmd, effectiveCapabilityClass(cfg.Kind, cfg.CapabilityClass), cfg.Permissions)
+	appendExecutionProfileFlags(&cmd, cfg.ExecutionProfile, cfg.Config)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
@@ -388,6 +390,37 @@ func appendCapabilityPolicyFlags(cmd *[]string, class domain.CapabilityClass, pe
 		"--ask-for-approval", "never",
 		"--disable", "multi_agent",
 	)
+}
+
+func appendExecutionProfileFlags(cmd *[]string, profile domain.ExecutionProfile, config ports.AgentConfig) {
+	model, reasoning := config.Model, config.ReasoningEffort
+	fastMode, allowNative := config.FastMode, config.AllowNativeSubagents
+	profilePresent := !profile.IsZero()
+	if profilePresent {
+		if profile.Model != domain.ExecutionProfileAgentDefault {
+			model = profile.Model
+		} else {
+			model = ""
+		}
+		if profile.ReasoningEffort != domain.ExecutionProfileAgentDefault {
+			reasoning = profile.ReasoningEffort
+		} else {
+			reasoning = ""
+		}
+		fastMode, allowNative = profile.FastMode, profile.AllowNativeSubagents
+	}
+	if model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
+	if reasoning != "" {
+		*cmd = append(*cmd, "-c", "model_reasoning_effort="+codexTOMLConfigString(reasoning))
+	}
+	if fastMode {
+		*cmd = append(*cmd, "-c", `service_tier="fast"`)
+	}
+	if profilePresent && !allowNative {
+		*cmd = append(*cmd, "--disable", "multi_agent")
+	}
 }
 
 // fileExists is a package var so tests can stub it to scope candidate probing.

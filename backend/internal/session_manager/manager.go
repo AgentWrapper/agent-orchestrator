@@ -96,6 +96,8 @@ type Store interface {
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	SetSessionExecutionProfile(ctx context.Context, id domain.SessionID, profile domain.ExecutionProfile, observedHash string, updatedAt time.Time) error
+	ChangeSessionExecutionProfile(ctx context.Context, change domain.ExecutionProfileChange) error
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
@@ -274,7 +276,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	profile, err := domain.NewExecutionProfile(agentConfig, "project_config")
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: execution profile: %w", err)
+	}
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, profile, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
 	}
@@ -312,7 +319,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	capabilityClass := domain.CapabilityClassForKind(cfg.Kind)
 	env[EnvCapabilityClass] = string(capabilityClass)
@@ -333,8 +339,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SystemPromptFile: systemPromptFile,
 		IssueID:          string(cfg.IssueID),
 		Config:           agentConfig,
+		ExecutionProfile: profile,
 		Permissions:      agentConfig.Permissions,
 	}
+	applyExecutionProfileToolPolicy(&launchCfg, profile)
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -371,7 +379,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, CapabilityClass: capabilityClass}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, CapabilityClass: capabilityClass, ExecutionProfile: profile, ObservedExecutionProfileHash: profile.Hash}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -511,6 +519,18 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
+	}
+	if override.ReasoningEffort != "" {
+		merged.ReasoningEffort = override.ReasoningEffort
+	}
+	if override.FastMode {
+		merged.FastMode = true
+	}
+	if override.ReviewModel != "" {
+		merged.ReviewModel = override.ReviewModel
+	}
+	if override.AllowNativeSubagents {
+		merged.AllowNativeSubagents = true
 	}
 	return merged
 }
@@ -810,6 +830,10 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
+	rec, err = m.ensureExecutionProfile(ctx, rec, project)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
 	ws, err := m.restoreSessionWorkspace(ctx, project, rec)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: workspace: %w", id, err)
@@ -834,9 +858,9 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: system prompt file: %w", rec.ID, err)
 	}
 
-	// Restore re-applies the project's resolved agent config so a configured
-	// model/permissions carry across a restore, matching fresh spawn.
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	// Restore pins immutable execution properties from the stored profile.
+	agentConfig := rec.Metadata.ExecutionProfile.AgentConfig()
+	agentConfig.Permissions = effectiveAgentConfig(rec.Kind, project.Config).Permissions
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	capabilityClass := domain.EffectiveCapabilityClass(rec)
 	env[EnvCapabilityClass] = string(capabilityClass)
@@ -844,7 +868,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
-	argv, delivery, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir)
+	argv, delivery, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Metadata.ExecutionProfile, rec.Kind, m.dataDir)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
@@ -859,7 +883,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt, CapabilityClass: capabilityClass}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt, CapabilityClass: capabilityClass, ExecutionProfile: rec.Metadata.ExecutionProfile, ObservedExecutionProfileHash: rec.Metadata.ExecutionProfile.Hash}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
@@ -876,8 +900,10 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			SystemPrompt:     systemPrompt,
 			SystemPromptFile: systemPromptFile,
 			Config:           agentConfig,
+			ExecutionProfile: rec.Metadata.ExecutionProfile,
 			Permissions:      agentConfig.Permissions,
 		}
+		applyExecutionProfileToolPolicy(&launchCfg, rec.Metadata.ExecutionProfile)
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
 			_ = m.lcm.MarkTerminated(ctx, rec.ID)
@@ -1787,7 +1813,7 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 
 // ---- helpers ----
 
-func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
+func seedRecord(cfg ports.SpawnConfig, profile domain.ExecutionProfile, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID:   cfg.ProjectID,
 		IssueID:     cfg.IssueID,
@@ -1797,6 +1823,55 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Harness:     cfg.Harness,
 		DisplayName: cfg.DisplayName,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		Metadata:    domain.SessionMetadata{CapabilityClass: domain.CapabilityClassForKind(cfg.Kind), ExecutionProfile: profile},
+	}
+}
+
+// ensureExecutionProfile provides the explicit, tested compatibility path for
+// pre-0025 sessions. It persists the resolved legacy profile before restoring
+// a workspace or launching a runtime; malformed profiles fail closed.
+func (m *Manager) ensureExecutionProfile(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord) (domain.SessionRecord, error) {
+	if !rec.Metadata.ExecutionProfile.IsZero() {
+		if err := rec.Metadata.ExecutionProfile.Validate(); err != nil {
+			return domain.SessionRecord{}, err
+		}
+		return rec, nil
+	}
+	profile, err := domain.NewExecutionProfile(effectiveAgentConfig(rec.Kind, project.Config), "legacy_compatibility")
+	if err != nil {
+		return domain.SessionRecord{}, err
+	}
+	if err := m.store.SetSessionExecutionProfile(ctx, rec.ID, profile, "", m.clock()); err != nil {
+		return domain.SessionRecord{}, err
+	}
+	rec.Metadata.ExecutionProfile = profile
+	return rec, nil
+}
+
+// ChangeExecutionProfile is the only mutation entrypoint. The domain and store
+// both require explicit human authority, and a changed profile is unobserved
+// until the next launch uses it.
+func (m *Manager) ChangeExecutionProfile(ctx context.Context, id domain.SessionID, requested domain.ExecutionProfile, authority, reason string) (domain.ExecutionProfileChange, error) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.ExecutionProfileChange{}, err
+	}
+	if !ok {
+		return domain.ExecutionProfileChange{}, ErrNotFound
+	}
+	change, err := domain.AuthorizeExecutionProfileChange(id, rec.Metadata.ExecutionProfile, requested, authority, reason, m.clock())
+	if err != nil {
+		return domain.ExecutionProfileChange{}, err
+	}
+	if err := m.store.ChangeSessionExecutionProfile(ctx, change); err != nil {
+		return domain.ExecutionProfileChange{}, err
+	}
+	return change, nil
+}
+
+func applyExecutionProfileToolPolicy(cfg *ports.LaunchConfig, profile domain.ExecutionProfile) {
+	if !profile.AllowNativeSubagents {
+		cfg.DisallowedTools = append(cfg.DisallowedTools, "Agent", "Task")
 	}
 }
 
@@ -2411,7 +2486,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 // a worker with no prompt and no native session id has nothing to restore from.
 // Orchestrators are promptless by design and always relaunch fresh with the
 // system prompt only.
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, profile domain.ExecutionProfile, kind domain.SessionKind, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -2421,7 +2496,11 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if capabilityClass == "" {
 		capabilityClass = domain.CapabilityClassForKind(kind)
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, CapabilityClass: capabilityClass, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions})
+	disallowedTools := []string(nil)
+	if !profile.AllowNativeSubagents {
+		disallowedTools = []string{"Agent", "Task"}
+	}
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, CapabilityClass: capabilityClass, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, ExecutionProfile: profile, Permissions: agentConfig.Permissions, DisallowedTools: disallowedTools})
 	if err != nil {
 		return nil, "", fmt.Errorf("restore command: %w", err)
 	}
@@ -2447,8 +2526,10 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		SystemPrompt:     systemPrompt,
 		SystemPromptFile: systemPromptFile,
 		Config:           agentConfig,
+		ExecutionProfile: profile,
 		Permissions:      agentConfig.Permissions,
 	}
+	applyExecutionProfileToolPolicy(&launchCfg, profile)
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("prompt delivery: %w", err)

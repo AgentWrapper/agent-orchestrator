@@ -61,6 +61,22 @@ func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 	f.sessions[rec.ID] = rec
 	return nil
 }
+func (f *fakeStore) SetSessionExecutionProfile(_ context.Context, id domain.SessionID, profile domain.ExecutionProfile, observed string, updatedAt time.Time) error {
+	rec := f.sessions[id]
+	rec.Metadata.ExecutionProfile = profile
+	rec.Metadata.ObservedExecutionProfileHash = observed
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return nil
+}
+func (f *fakeStore) ChangeSessionExecutionProfile(_ context.Context, change domain.ExecutionProfileChange) error {
+	rec := f.sessions[change.SessionID]
+	rec.Metadata.ExecutionProfile = change.NewProfile
+	rec.Metadata.ObservedExecutionProfileHash = ""
+	rec.UpdatedAt = change.ChangedAt
+	f.sessions[change.SessionID] = rec
+	return nil
+}
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
@@ -664,6 +680,12 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if agent.lastLaunch.CapabilityClass != domain.CapabilityClassAOWorker || rec.Metadata.CapabilityClass != domain.CapabilityClassAOWorker {
 		t.Fatalf("worker capability policy launch=%q metadata=%q", agent.lastLaunch.CapabilityClass, rec.Metadata.CapabilityClass)
+	}
+	if err := rec.Metadata.ExecutionProfile.Validate(); err != nil {
+		t.Fatalf("persisted profile: %v", err)
+	}
+	if rec.Metadata.ExecutionProfile.Model != "worker-model" || rec.Metadata.ObservedExecutionProfileHash != rec.Metadata.ExecutionProfile.Hash {
+		t.Fatalf("execution profile = %#v observed=%q", rec.Metadata.ExecutionProfile, rec.Metadata.ObservedExecutionProfileHash)
 	}
 	if rt.lastCfg.Env[EnvCapabilityClass] != string(domain.CapabilityClassAOWorker) {
 		t.Fatalf("runtime capability class = %q, want ao_worker", rt.lastCfg.Env[EnvCapabilityClass])
@@ -1593,11 +1615,67 @@ func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	rec, err := m.Restore(ctx, "mer-1")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if agent.lastConfig.Model != "restore-model" {
 		t.Fatalf("restore config model = %q, want restore-model (config must carry across restore)", agent.lastConfig.Model)
+	}
+	if rec.Metadata.ExecutionProfile.AuthoritySource != "legacy_compatibility" || rec.Metadata.ExecutionProfile.Hash == "" {
+		t.Fatalf("legacy compatibility profile = %#v", rec.Metadata.ExecutionProfile)
+	}
+}
+
+func TestRestorePinsStoredExecutionProfileAcrossProjectConfigChange(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "new-model"}}}
+	profile, _ := domain.NewExecutionProfile(domain.AgentConfig{Model: "original-model", ReasoningEffort: "high", FastMode: true}, "project_config")
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x", ExecutionProfile: profile, ObservedExecutionProfileHash: profile.Hash})
+	agent := &recordingAgent{}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+	rec, err := m.Restore(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "original-model" || agent.lastConfig.ReasoningEffort != "high" || !agent.lastConfig.FastMode {
+		t.Fatalf("restore config = %#v", agent.lastConfig)
+	}
+	if got := strings.Join(agent.lastRestore.DisallowedTools, ","); got != "Agent,Task" {
+		t.Fatalf("restore subagent policy = %q", got)
+	}
+	if rec.Metadata.ExecutionProfile.Hash != profile.Hash || rec.Metadata.ObservedExecutionProfileHash != profile.Hash {
+		t.Fatalf("restored profile = %#v", rec.Metadata)
+	}
+}
+
+func TestChangeExecutionProfileRejectsNonHumanWithoutMutation(t *testing.T) {
+	m, st, _, _ := newManager()
+	profile, _ := domain.NewExecutionProfile(domain.AgentConfig{Model: "original"}, "project_config")
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Metadata: domain.SessionMetadata{ExecutionProfile: profile, ObservedExecutionProfileHash: profile.Hash}}
+	requested, _ := domain.NewExecutionProfile(domain.AgentConfig{Model: "fallback", FastMode: true}, "project_config")
+	if _, err := m.ChangeExecutionProfile(ctx, "mer-1", requested, "orchestrator", "bypass"); !errors.Is(err, domain.ErrExecutionProfileUnauthorized) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := st.sessions["mer-1"].Metadata.ExecutionProfile.Hash; got != profile.Hash {
+		t.Fatalf("profile mutated: %q", got)
+	}
+}
+
+func TestChangeExecutionProfileRecordsAuthorizedNewProfile(t *testing.T) {
+	m, st, _, _ := newManager()
+	profile, _ := domain.NewExecutionProfile(domain.AgentConfig{Model: "original"}, "project_config")
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Metadata: domain.SessionMetadata{ExecutionProfile: profile, ObservedExecutionProfileHash: profile.Hash}}
+	requested, _ := domain.NewExecutionProfile(domain.AgentConfig{Model: "approved", ReasoningEffort: "high", FastMode: true}, "project_config")
+	change, err := m.ChangeExecutionProfile(ctx, "mer-1", requested, "human", "operator approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if change.OldProfile.Hash != profile.Hash || change.NewProfile.Model != "approved" || change.NewProfile.AuthoritySource != "human" || change.ChangedAt.IsZero() {
+		t.Fatalf("change = %#v", change)
+	}
+	if got := st.sessions["mer-1"].Metadata; got.ExecutionProfile.Hash != change.NewProfile.Hash || got.ObservedExecutionProfileHash != "" {
+		t.Fatalf("stored metadata = %#v", got)
 	}
 }
 

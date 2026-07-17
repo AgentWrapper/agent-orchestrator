@@ -126,7 +126,10 @@ type CleanupSessionsQuery struct {
 // fields are json:"-"; these curated fields are what serialize.
 type SessionView struct {
 	domain.Session
-	Branch string `json:"branch,omitempty"`
+	Branch                       string                  `json:"branch,omitempty"`
+	ExecutionProfile             domain.ExecutionProfile `json:"executionProfile"`
+	ObservedExecutionProfileHash string                  `json:"observedExecutionProfileHash,omitempty"`
+	ExecutionProfileDrift        bool                    `json:"executionProfileDrift"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session, set via POST /sessions/{sessionId}/preview. Empty (omitted) when
 	// no preview has been requested. Pulled from the json:"-" domain Metadata.
@@ -173,6 +176,18 @@ type SessionPreviewResponse struct {
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
+}
+
+// ChangeExecutionProfileRequest is an explicit human profile control event.
+type ChangeExecutionProfileRequest struct {
+	Profile   domain.ExecutionProfile `json:"profile"`
+	Authority string                  `json:"authority"`
+	Reason    string                  `json:"reason"`
+}
+
+// ChangeExecutionProfileResponse returns the durable old/new audit record.
+type ChangeExecutionProfileResponse struct {
+	Change domain.ExecutionProfileChange `json:"change"`
 }
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.

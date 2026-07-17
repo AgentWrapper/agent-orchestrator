@@ -47,6 +47,7 @@ type ReviewerCanceller interface {
 // the reviewer needs are passed explicitly here (and embedded in the prompt /
 // message), never through environment variables.
 type ReviewInvocation struct {
+	ExecutionProfile domain.ExecutionProfile
 	// ReviewerID is a stable id for the reviewer's runtime instance (pane,
 	// native session id), derived from the worker session.
 	ReviewerID string

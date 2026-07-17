@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // PermissionMode controls how much review an agent requires before acting. It
 // lives in domain (not ports) so the typed AgentConfig can carry it; ports
@@ -25,6 +28,14 @@ const (
 type AgentConfig struct {
 	// Model overrides the agent's default model (e.g. claude-opus-4-5).
 	Model string `json:"model,omitempty"`
+	// ReasoningEffort pins the agent's reasoning level for the session.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	// FastMode pins whether the provider's fast service tier is enabled.
+	FastMode bool `json:"fastMode,omitempty"`
+	// ReviewModel pins a distinct reviewer model. Empty means same-model review.
+	ReviewModel string `json:"reviewModel,omitempty"`
+	// AllowNativeSubagents controls native in-process collaboration workers.
+	AllowNativeSubagents bool `json:"allowNativeSubagents,omitempty"`
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`
@@ -39,6 +50,9 @@ func (c AgentConfig) IsZero() bool {
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than silently dropped at spawn.
 func (c AgentConfig) Validate() error {
+	if strings.TrimSpace(c.ReasoningEffort) != c.ReasoningEffort || strings.ContainsAny(c.ReasoningEffort, "\r\n") {
+		return fmt.Errorf("invalid reasoning effort %q", c.ReasoningEffort)
+	}
 	switch c.Permissions {
 	case "", PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto, PermissionModeBypassPermissions:
 		return nil

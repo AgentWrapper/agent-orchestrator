@@ -16,7 +16,7 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
 FROM sessions WHERE id = ?
 `
 
@@ -45,6 +45,8 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.PreviewURL,
 		&i.PreviewRevision,
 		&i.CapabilityClass,
+		&i.ExecutionProfileJson,
+		&i.ObservedExecutionProfileHash,
 	)
 	return i, err
 }
@@ -54,32 +56,35 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, preview_revision, capability_class, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    preview_url, preview_revision, capability_class, execution_profile_json,
+    observed_execution_profile_hash, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
-	ID              domain.SessionID
-	ProjectID       domain.ProjectID
-	Num             int64
-	IssueID         domain.IssueID
-	Kind            domain.SessionKind
-	Harness         domain.AgentHarness
-	DisplayName     string
-	ActivityState   domain.ActivityState
-	ActivityLastAt  time.Time
-	FirstSignalAt   sql.NullTime
-	IsTerminated    bool
-	Branch          string
-	WorkspacePath   string
-	RuntimeHandleID string
-	AgentSessionID  string
-	Prompt          string
-	PreviewURL      string
-	PreviewRevision int64
-	CapabilityClass domain.CapabilityClass
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                           domain.SessionID
+	ProjectID                    domain.ProjectID
+	Num                          int64
+	IssueID                      domain.IssueID
+	Kind                         domain.SessionKind
+	Harness                      domain.AgentHarness
+	DisplayName                  string
+	ActivityState                domain.ActivityState
+	ActivityLastAt               time.Time
+	FirstSignalAt                sql.NullTime
+	IsTerminated                 bool
+	Branch                       string
+	WorkspacePath                string
+	RuntimeHandleID              string
+	AgentSessionID               string
+	Prompt                       string
+	PreviewURL                   string
+	PreviewRevision              int64
+	CapabilityClass              domain.CapabilityClass
+	ExecutionProfileJson         string
+	ObservedExecutionProfileHash string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -103,8 +108,37 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.CapabilityClass,
+		arg.ExecutionProfileJson,
+		arg.ObservedExecutionProfileHash,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const insertSessionExecutionProfileChange = `-- name: InsertSessionExecutionProfileChange :exec
+INSERT INTO session_execution_profile_changes (
+    session_id, old_profile_json, new_profile_json, authority, reason, changed_at
+) VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertSessionExecutionProfileChangeParams struct {
+	SessionID      string
+	OldProfileJson string
+	NewProfileJson string
+	Authority      string
+	Reason         string
+	ChangedAt      time.Time
+}
+
+func (q *Queries) InsertSessionExecutionProfileChange(ctx context.Context, arg InsertSessionExecutionProfileChangeParams) error {
+	_, err := q.db.ExecContext(ctx, insertSessionExecutionProfileChange,
+		arg.SessionID,
+		arg.OldProfileJson,
+		arg.NewProfileJson,
+		arg.Authority,
+		arg.Reason,
+		arg.ChangedAt,
 	)
 	return err
 }
@@ -112,7 +146,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
 FROM sessions ORDER BY project_id, num
 `
 
@@ -147,6 +181,54 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.PreviewURL,
 			&i.PreviewRevision,
 			&i.CapabilityClass,
+			&i.ExecutionProfileJson,
+			&i.ObservedExecutionProfileHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionExecutionProfileChanges = `-- name: ListSessionExecutionProfileChanges :many
+SELECT session_id, old_profile_json, new_profile_json, authority, reason, changed_at
+FROM session_execution_profile_changes
+WHERE session_id = ?
+ORDER BY changed_at DESC, id DESC
+`
+
+type ListSessionExecutionProfileChangesRow struct {
+	SessionID      string
+	OldProfileJson string
+	NewProfileJson string
+	Authority      string
+	Reason         string
+	ChangedAt      time.Time
+}
+
+func (q *Queries) ListSessionExecutionProfileChanges(ctx context.Context, sessionID string) ([]ListSessionExecutionProfileChangesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionExecutionProfileChanges, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionExecutionProfileChangesRow{}
+	for rows.Next() {
+		var i ListSessionExecutionProfileChangesRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.OldProfileJson,
+			&i.NewProfileJson,
+			&i.Authority,
+			&i.Reason,
+			&i.ChangedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -164,7 +246,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, capability_class, execution_profile_json, observed_execution_profile_hash
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -199,6 +281,8 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.PreviewURL,
 			&i.PreviewRevision,
 			&i.CapabilityClass,
+			&i.ExecutionProfileJson,
+			&i.ObservedExecutionProfileHash,
 		); err != nil {
 			return nil, err
 		}
@@ -266,6 +350,32 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	return is_seed, err
 }
 
+const setSessionExecutionProfile = `-- name: SetSessionExecutionProfile :one
+UPDATE sessions
+SET execution_profile_json = ?, observed_execution_profile_hash = ?, updated_at = ?
+WHERE id = ?
+RETURNING id
+`
+
+type SetSessionExecutionProfileParams struct {
+	ExecutionProfileJson         string
+	ObservedExecutionProfileHash string
+	UpdatedAt                    time.Time
+	ID                           domain.SessionID
+}
+
+func (q *Queries) SetSessionExecutionProfile(ctx context.Context, arg SetSessionExecutionProfileParams) (domain.SessionID, error) {
+	row := q.db.QueryRowContext(ctx, setSessionExecutionProfile,
+		arg.ExecutionProfileJson,
+		arg.ObservedExecutionProfileHash,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var id domain.SessionID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const setSessionPreviewURL = `-- name: SetSessionPreviewURL :execrows
 UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ? WHERE id = ?
 `
@@ -292,29 +402,31 @@ UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, capability_class = ?, updated_at = ?
+    preview_url = ?, preview_revision = ?, capability_class = ?,
+    observed_execution_profile_hash = ?, updated_at = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID         domain.IssueID
-	Kind            domain.SessionKind
-	Harness         domain.AgentHarness
-	DisplayName     string
-	ActivityState   domain.ActivityState
-	ActivityLastAt  time.Time
-	FirstSignalAt   sql.NullTime
-	IsTerminated    bool
-	Branch          string
-	WorkspacePath   string
-	RuntimeHandleID string
-	AgentSessionID  string
-	Prompt          string
-	PreviewURL      string
-	PreviewRevision int64
-	CapabilityClass domain.CapabilityClass
-	UpdatedAt       time.Time
-	ID              domain.SessionID
+	IssueID                      domain.IssueID
+	Kind                         domain.SessionKind
+	Harness                      domain.AgentHarness
+	DisplayName                  string
+	ActivityState                domain.ActivityState
+	ActivityLastAt               time.Time
+	FirstSignalAt                sql.NullTime
+	IsTerminated                 bool
+	Branch                       string
+	WorkspacePath                string
+	RuntimeHandleID              string
+	AgentSessionID               string
+	Prompt                       string
+	PreviewURL                   string
+	PreviewRevision              int64
+	CapabilityClass              domain.CapabilityClass
+	ObservedExecutionProfileHash string
+	UpdatedAt                    time.Time
+	ID                           domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -335,6 +447,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.CapabilityClass,
+		arg.ObservedExecutionProfileHash,
 		arg.UpdatedAt,
 		arg.ID,
 	)

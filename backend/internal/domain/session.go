@@ -57,6 +57,11 @@ type SessionMetadata struct {
 	// launched the session. Empty values from pre-policy databases are treated
 	// as the class implied by SessionRecord.Kind.
 	CapabilityClass CapabilityClass `json:"capabilityClass,omitempty"`
+	// ExecutionProfile is persisted before any workspace or runtime is created.
+	ExecutionProfile ExecutionProfile `json:"executionProfile,omitempty"`
+	// ObservedExecutionProfileHash is recorded only after the adapter/runtime
+	// accepted the profile. A mismatch is surfaced as drift by status/doctor.
+	ObservedExecutionProfileHash string `json:"observedExecutionProfileHash,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.

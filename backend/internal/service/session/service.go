@@ -414,6 +414,23 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string)
 	return toAPIError(s.manager.Send(ctx, id, message))
 }
 
+// ChangeExecutionProfile applies an explicit human control event. Denials are
+// emitted as structured audit telemetry before returning to the caller.
+func (s *Service) ChangeExecutionProfile(ctx context.Context, id domain.SessionID, requested domain.ExecutionProfile, authority, reason string) (domain.ExecutionProfileChange, error) {
+	changer, ok := s.manager.(interface {
+		ChangeExecutionProfile(context.Context, domain.SessionID, domain.ExecutionProfile, string, string) (domain.ExecutionProfileChange, error)
+	})
+	if !ok {
+		return domain.ExecutionProfileChange{}, errors.New("execution profile changes are unavailable")
+	}
+	change, err := changer.ChangeExecutionProfile(ctx, id, requested, authority, reason)
+	if err != nil && s.telemetry != nil {
+		sessionID := id
+		s.telemetry.Emit(context.Background(), ports.TelemetryEvent{Name: "ao.execution_profile.change_denied", Source: "session_service", OccurredAt: s.now(), Level: ports.TelemetryLevelWarn, SessionID: &sessionID, Payload: map[string]any{"actor_session": string(id), "capability": "execution_profile.change", "target": string(id), "policy_reason": err.Error()}})
+	}
+	return change, toAPIError(err)
+}
+
 // Rename updates the user-facing session display name.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
 	displayName = strings.TrimSpace(displayName)
@@ -571,6 +588,10 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.Is(err, domain.ErrExecutionProfileUnauthorized):
+		return apierr.Conflict("EXECUTION_PROFILE_CHANGE_UNAUTHORIZED", err.Error(), nil)
+	case errors.Is(err, domain.ErrExecutionProfileMissing), errors.Is(err, domain.ErrExecutionProfileDrift):
+		return apierr.Conflict("EXECUTION_PROFILE_INVALID", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

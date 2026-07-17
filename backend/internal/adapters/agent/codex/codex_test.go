@@ -81,6 +81,22 @@ func TestGetLaunchCommandKeepsIndependentWorkerCapabilities(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandPinsExecutionProfile(t *testing.T) {
+	p := New()
+	p.resolvedBinary = "codex"
+	profile, _ := domain.NewExecutionProfile(domain.AgentConfig{Model: "gpt-5.1", ReasoningEffort: "high", FastMode: true}, "project_config")
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Kind: domain.KindWorker, CapabilityClass: domain.CapabilityClassAOWorker, ExecutionProfile: profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(cmd, " ")
+	for _, want := range []string{"--model gpt-5.1", `model_reasoning_effort='high'`, `service_tier="fast"`, "--disable multi_agent"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("command missing %q: %#v", want, cmd)
+		}
+	}
+}
+
 func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := canonicalTempDir(t)

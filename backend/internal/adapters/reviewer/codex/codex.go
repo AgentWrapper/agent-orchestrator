@@ -34,7 +34,13 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 // sandbox. Auto approval lets the headless session request the narrowly needed
 // network access for posting the review and reporting its result.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	config := inv.ExecutionProfile.AgentConfig()
+	config.Model = inv.ExecutionProfile.EffectiveReviewModel()
+	if config.Model == domain.ExecutionProfileAgentDefault {
+		config.Model = ""
+	}
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+		Config:        config,
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
 		Prompt:        inv.Prompt,

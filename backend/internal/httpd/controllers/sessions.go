@@ -76,6 +76,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
+	r.Post("/sessions/{sessionId}/execution-profile", c.changeExecutionProfile)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
@@ -84,6 +85,27 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
+}
+
+func (c *SessionsController) changeExecutionProfile(w http.ResponseWriter, r *http.Request) {
+	svc, ok := c.Svc.(interface {
+		ChangeExecutionProfile(context.Context, domain.SessionID, domain.ExecutionProfile, string, string) (domain.ExecutionProfileChange, error)
+	})
+	if !ok {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/execution-profile")
+		return
+	}
+	var in ChangeExecutionProfileRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	change, err := svc.ChangeExecutionProfile(r.Context(), sessionID(r), in.Profile, in.Authority, in.Reason)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ChangeExecutionProfileResponse{Change: change})
 }
 
 func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
@@ -717,7 +739,10 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
+	profile := s.Metadata.ExecutionProfile
+	observed := s.Metadata.ObservedExecutionProfileHash
+	drift := profile.IsZero() || profile.Validate() != nil || observed != profile.Hash
+	return SessionView{Session: s, Branch: s.Metadata.Branch, ExecutionProfile: profile, ObservedExecutionProfileHash: observed, ExecutionProfileDrift: drift, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {

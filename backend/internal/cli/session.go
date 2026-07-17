@@ -40,17 +40,32 @@ type sessionRenameRequest struct {
 }
 
 type sessionDTO struct {
-	ID           string          `json:"id"`
-	ProjectID    string          `json:"projectId"`
-	IssueID      string          `json:"issueId,omitempty"`
-	Kind         string          `json:"kind"`
-	Harness      string          `json:"harness,omitempty"`
-	DisplayName  string          `json:"displayName,omitempty"`
-	Activity     sessionActivity `json:"activity"`
-	IsTerminated bool            `json:"isTerminated"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
-	Status       string          `json:"status"`
+	ID                           string              `json:"id"`
+	ProjectID                    string              `json:"projectId"`
+	IssueID                      string              `json:"issueId,omitempty"`
+	Kind                         string              `json:"kind"`
+	Harness                      string              `json:"harness,omitempty"`
+	DisplayName                  string              `json:"displayName,omitempty"`
+	Activity                     sessionActivity     `json:"activity"`
+	IsTerminated                 bool                `json:"isTerminated"`
+	CreatedAt                    time.Time           `json:"createdAt"`
+	UpdatedAt                    time.Time           `json:"updatedAt"`
+	Status                       string              `json:"status"`
+	ExecutionProfile             executionProfileDTO `json:"executionProfile"`
+	ObservedExecutionProfileHash string              `json:"observedExecutionProfileHash,omitempty"`
+	ExecutionProfileDrift        bool                `json:"executionProfileDrift"`
+}
+
+type executionProfileDTO struct {
+	Version              string `json:"version"`
+	Model                string `json:"model"`
+	ReasoningEffort      string `json:"reasoning_effort"`
+	FastMode             bool   `json:"fast_mode"`
+	ReviewModel          string `json:"review_model,omitempty"`
+	ReviewModelPolicy    string `json:"review_model_policy"`
+	AllowNativeSubagents bool   `json:"allow_native_subagents"`
+	AuthoritySource      string `json:"authority_source"`
+	Hash                 string `json:"hash"`
 }
 
 type sessionActivity struct {
