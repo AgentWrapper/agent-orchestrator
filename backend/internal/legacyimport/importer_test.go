@@ -131,7 +131,7 @@ func TestHasLegacyData(t *testing.T) {
 // TestLegacyConfigError_SurfacesParseFailure covers issue #2186 Bug 2: a legacy
 // config.yaml with a syntax error must be surfaced as a parse error, not
 // swallowed as "no data". The tab-indented line below is a YAML syntax error
-// (not a *yaml.TypeError, so it is not a partial decode) — exactly the case
+// (not a *yaml.TypeError, so it is not a partial decode), exactly the case
 // HasLegacyData collapses to false today. HasLegacyData's bool contract for the
 // migration-probe service layer must stay intact (still false on a broken store).
 func TestLegacyConfigError_SurfacesParseFailure(t *testing.T) {
@@ -139,7 +139,7 @@ func TestLegacyConfigError_SurfacesParseFailure(t *testing.T) {
 	mustMkdir(t, root)
 	mustWrite(t, filepath.Join(root, "config.yaml"), "projects:\n\talpha:\n  path: /repos/alpha\n")
 
-	err := LegacyConfigError(root)
+	err := LegacyConfigError(context.Background(), root)
 	if err == nil {
 		t.Fatal("LegacyConfigError = nil for a config.yaml with a syntax error")
 	}
@@ -154,10 +154,10 @@ func TestLegacyConfigError_SurfacesParseFailure(t *testing.T) {
 }
 
 func TestLegacyConfigError_NilWhenAbsentOrEmpty(t *testing.T) {
-	if LegacyConfigError("") != nil {
+	if LegacyConfigError(context.Background(), "") != nil {
 		t.Fatal("LegacyConfigError(\"\") = non-nil, want nil")
 	}
-	if LegacyConfigError(filepath.Join(t.TempDir(), "nope")) != nil {
+	if LegacyConfigError(context.Background(), filepath.Join(t.TempDir(), "nope")) != nil {
 		t.Fatal("LegacyConfigError on a missing root = non-nil, want nil")
 	}
 }

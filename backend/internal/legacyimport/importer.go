@@ -60,7 +60,7 @@ func HasLegacyData(root string) bool {
 // surface a parse failure instead of swallowing it as "no data" (issue #2186);
 // HasLegacyData stays a bool for the migration-probe service layer, which must
 // not error on a missing or broken store.
-func LegacyConfigError(root string) error {
+func LegacyConfigError(ctx context.Context, root string) error {
 	if root == "" {
 		return nil
 	}
