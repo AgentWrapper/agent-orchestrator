@@ -26,8 +26,9 @@ const (
 // project-level instruction file. Kimi has no system-prompt argv flag, and its
 // user-level config lives outside AO's data dir, so a gitignored worktree-local
 // instruction file is the least invasive session-scoped injection point. It
-// also installs Kimi lifecycle hooks into the user's Kimi config so AO can
-// capture Kimi's native session id for true resume.
+// also installs Kimi lifecycle hooks into the AO-managed Kimi config so AO can
+// capture Kimi's native session id for true resume without mutating the user's
+// global Kimi profile.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -74,10 +75,10 @@ func kimiInstructionsPath(workspacePath string) string {
 func installKimiConfigHooks(cfg ports.WorkspaceHookConfig) error {
 	home, ok := kimiCodeHomeFromEnv(cfg.Env)
 	if !ok {
-		return errors.New("kimi: Kimi Code home is unavailable")
+		return errors.New("kimi: AO-managed Kimi Code home is unavailable")
 	}
 	path := filepath.Join(home, "config.toml")
-	data, err := os.ReadFile(path) //nolint:gosec // path is the documented Kimi config under KIMI_CODE_HOME/home.
+	data, err := os.ReadFile(path) //nolint:gosec // path is the AO-managed Kimi config under KIMI_CODE_HOME.
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -93,11 +94,11 @@ func installKimiConfigHooks(cfg ports.WorkspaceHookConfig) error {
 
 func kimiCodeHomeFromEnv(env map[string]string) (string, bool) {
 	if env != nil {
-		if home := strings.TrimSpace(env["KIMI_CODE_HOME"]); home != "" {
+		if home := strings.TrimSpace(env[kimiCodeHomeEnv]); home != "" {
 			return home, true
 		}
 	}
-	return kimiCodeHome()
+	return "", false
 }
 
 func mergeKimiHooksConfig(existing string) string {

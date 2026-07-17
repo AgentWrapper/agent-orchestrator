@@ -108,7 +108,12 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
   }
 
   function readSessionID(value: any): string | null {
-    const id = value?.sessionID ?? value?.sessionId ?? value?.session_id ?? value?.id
+    const id = value?.sessionID ?? value?.sessionId ?? value?.session_id
+    return typeof id === "string" && id.trim().length > 0 ? id.trim() : null
+  }
+
+  function readCreatedSessionID(value: any): string | null {
+    const id = readSessionID(value) ?? value?.id
     return typeof id === "string" && id.trim().length > 0 ? id.trim() : null
   }
 
@@ -147,7 +152,7 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
         switch (event.type) {
           case "session.created": {
             const session = (event as any).properties?.info
-            const sessionID = readSessionID(session)
+            const sessionID = readCreatedSessionID(session)
             if (!sessionID) break
             if (switchedSession(sessionID)) {
               callHookSync("session-start", { session_id: sessionID })

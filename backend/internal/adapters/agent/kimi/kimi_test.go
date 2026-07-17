@@ -322,6 +322,29 @@ func TestGetAgentHooksRewritesManagedKimiConfigBlock(t *testing.T) {
 	}
 }
 
+func TestAugmentRuntimeEnvUsesAODataDir(t *testing.T) {
+	env := map[string]string{kimiCodeHomeEnv: "/outside-ao"}
+	dataDir := filepath.Join(t.TempDir(), "ao")
+
+	(&Plugin{}).AugmentRuntimeEnv(env, dataDir)
+
+	if got, want := env[kimiCodeHomeEnv], kimiCodeHomeDir(dataDir); got != want {
+		t.Fatalf("%s = %q, want %q", kimiCodeHomeEnv, got, want)
+	}
+}
+
+func TestGetAgentHooksRequiresAOManagedKimiHome(t *testing.T) {
+	t.Setenv(kimiCodeHomeEnv, t.TempDir())
+
+	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: t.TempDir(),
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "AO-managed Kimi Code home is unavailable") {
+		t.Fatalf("GetAgentHooks err = %v, want AO-managed Kimi home requirement", err)
+	}
+}
+
 func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 	workspace := t.TempDir()
 	kimiHome := t.TempDir()
