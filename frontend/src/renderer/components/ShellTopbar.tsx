@@ -160,7 +160,7 @@ export function ShellTopbar() {
 							</span>
 							<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
 								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
-									{t("shell.topbar.orchestrator")}
+								{t("shell.topbar.orchestrator")}
 							</span>
 						</div>
 					</div>
@@ -228,32 +228,32 @@ export function ShellTopbar() {
 						) : null}
 						{!isOrchestrator && (
 							<TopbarButton
-									aria-label={t("shell.topbar.openOrchestrator")}
+								aria-label={t("shell.topbar.openOrchestrator")}
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
 								variant="primary"
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-									{isProjectRestarting
-										? t("shell.topbar.restarting")
-										: isSpawning
-											? t("shell.topbar.spawning")
-											: t("shell.topbar.orchestrator")}
+								{isProjectRestarting
+									? t("shell.topbar.restarting")
+									: isSpawning
+										? t("shell.topbar.spawning")
+										: t("shell.topbar.orchestrator")}
 							</TopbarButton>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
 						{!isOrchestrator && (
 							<TopbarButton
-									aria-label={t(
-										isInspectorOpen ? "shell.topbar.closeInspectorPanel" : "shell.topbar.openInspectorPanel",
-									)}
+								aria-label={t(
+									isInspectorOpen ? "shell.topbar.closeInspectorPanel" : "shell.topbar.openInspectorPanel",
+								)}
 								aria-pressed={isInspectorOpen}
 								onClick={toggleInspector}
 								style={noDragStyle}
-									title={t(
-										isInspectorOpen ? "shell.topbar.closeInspectorShortcut" : "shell.topbar.openInspectorShortcut",
-									)}
+								title={t(
+									isInspectorOpen ? "shell.topbar.closeInspectorShortcut" : "shell.topbar.openInspectorShortcut",
+								)}
 								variant="icon"
 							>
 								{isInspectorOpen ? (

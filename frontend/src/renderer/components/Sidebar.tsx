@@ -347,13 +347,13 @@ export function Sidebar({
 					inert={isCollapsed}
 				>
 					<button
-					aria-label={t("shell.sidebar.feedback")}
+						aria-label={t("shell.sidebar.feedback")}
 						className="flex w-full items-center justify-start gap-2.5 rounded-md p-2 text-control font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:text-passive"
 						onClick={() => setIsFeedbackOpen(true)}
 						type="button"
 					>
 						<MessageSquare aria-hidden="true" />
-					<span className="tracking-tight">{t("shell.sidebar.feedback")}</span>
+						<span className="tracking-tight">{t("shell.sidebar.feedback")}</span>
 					</button>
 					<RestartToUpdateRow status={updateStatus} />
 					<DropdownMenu>
@@ -435,7 +435,7 @@ export function Sidebar({
 							<TooltipTrigger asChild>
 								<DropdownMenuTrigger asChild>
 									<button
-									aria-label={t("shell.sidebar.settings")}
+										aria-label={t("shell.sidebar.settings")}
 										className="grid size-control-board place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 										type="button"
 									>
@@ -497,7 +497,7 @@ export function Sidebar({
 				style={noDragStyle}
 			/>
 			<SidebarRail
-			aria-label={t("shell.sidebar.expand")}
+				aria-label={t("shell.sidebar.expand")}
 				className="group-data-[state=expanded]:hidden hover:after:bg-transparent"
 				onClick={() => setOpen(true)}
 				onPointerDown={onCollapsedResizePointerDown}

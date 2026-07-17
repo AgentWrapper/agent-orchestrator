@@ -282,9 +282,11 @@ function ShellLayout() {
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
-					workspaceError={
-						workspaceQuery.isError ? errorMessage(workspaceQuery.error, t("shell.errors.loadProjects")) : undefined
-					}
+						workspaceError={
+							workspaceQuery.isError
+								? errorMessage(workspaceQuery.error, t("shell.errors.loadProjects"))
+								: undefined
+						}
 						workspaces={workspaces}
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
