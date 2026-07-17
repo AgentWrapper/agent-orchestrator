@@ -27,6 +27,7 @@ const (
 // WorkspaceFileStatus describes a session-worktree file relative to HEAD.
 type WorkspaceFileStatus string
 
+// Workspace file status values reported by the session workspace browser.
 const (
 	WorkspaceFileUnmodified WorkspaceFileStatus = "unmodified"
 	WorkspaceFileModified   WorkspaceFileStatus = "modified"
@@ -417,7 +418,7 @@ func readWorkspaceTextFile(file string, limit int) (string, bool, bool, error) {
 	if err != nil {
 		return "", false, false, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }()
 	data, err := io.ReadAll(io.LimitReader(handle, int64(limit+1)))
 	if err != nil {
 		return "", false, false, err
