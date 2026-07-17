@@ -1,3 +1,454 @@
 {
-	"entries": []
+	"entries": [
+		{
+			"file": "src/main.ts",
+			"kind": "new-error",
+			"text": "Secure credential storage is unavailable.",
+			"reason": "Internal secure-storage diagnostic; the remote runtime returns a localized semantic status and filters this detail."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "property:title",
+			"text": "Agent Orchestrator",
+			"reason": "Product name."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "property:message",
+			"text": "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
+			"reason": "Supervisor protocol diagnostic ignored by renderer localization for the not_configured status code."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "property:message",
+			"text": "Daemon port not confirmed from logs or running.json; assuming the configured port.",
+			"reason": "Supervisor protocol diagnostic ignored by renderer localization for the port_unconfirmed status code."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "return:daemonIdentityError",
+			"text": "An older AO daemon is already running, but it does not report its checkout identity. Stop it and restart this app.",
+			"reason": "Supervisor diagnostic ignored by renderer localization for the identity_mismatch status code."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "return:daemonIdentityError",
+			"text": "Another AO daemon is already running from ${...}; expected this checkout at ${...}. Stop the other daemon before using this checkout.",
+			"reason": "Supervisor diagnostic ignored by renderer localization for the identity_mismatch status code."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "return:daemonIdentityError",
+			"text": "An older AO daemon is already running, but it does not report its binary path. Stop it and restart this app.",
+			"reason": "Supervisor diagnostic ignored by renderer localization for the identity_mismatch status code."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "return:daemonIdentityError",
+			"text": "Another AO daemon is already running from ${...}; expected ${...}. Stop the other daemon before using this app.",
+			"reason": "Supervisor diagnostic ignored by renderer localization for the identity_mismatch status code."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "new-error",
+			"text": "Locale controller is not ready",
+			"reason": "Internal IPC initialization invariant, not interface copy."
+		},
+		{
+			"file": "src/main.ts",
+			"kind": "new-error",
+			"text": "cannot resolve ~/.ao run-file path; skipping app-state marker",
+			"reason": "Internal app-state invariant diagnostic, not rendered in the interface."
+		},
+		{
+			"file": "src/main/external-open.ts",
+			"kind": "new-error",
+			"text": "Unsupported external URL",
+			"reason": "Internal guard for fixed application destinations, not interface copy."
+		},
+		{
+			"file": "src/main/locale-controller.ts",
+			"kind": "new-error",
+			"text": "LocaleController has not been initialized",
+			"reason": "Internal lifecycle invariant, not rendered in the interface."
+		},
+		{
+			"file": "src/main/remote-forwarder.ts",
+			"kind": "property:error",
+			"text": "unavailable",
+			"reason": "Wire-envelope error kind; the stable REMOTE_DAEMON_UNAVAILABLE code is localized by the renderer."
+		},
+		{
+			"file": "src/main/remote-forwarder.ts",
+			"kind": "new-error",
+			"text": "Remote AO daemon response aborted.",
+			"reason": "Internal stream teardown diagnostic, never rendered as interface copy."
+		},
+		{
+			"file": "src/main/browser-view-host.ts",
+			"kind": "property:reason",
+			"text": "cancel",
+			"reason": "Browser annotation cancellation protocol enum, not interface copy."
+		},
+		{
+			"file": "src/renderer/components/BrowserPanel.tsx",
+			"kind": "attribute:placeholder",
+			"text": "localhost:5173",
+			"reason": "Literal URL example."
+		},
+		{
+			"file": "src/renderer/components/BrowserPanel.tsx",
+			"kind": "jsx-text",
+			"text": "$ npm run dev -- --host 127.0.0.1",
+			"reason": "Raw terminal preview record; commands must remain byte-for-byte unchanged."
+		},
+		{
+			"file": "src/renderer/components/BrowserPanel.tsx",
+			"kind": "jsx-text",
+			"text": "ready in 418 ms",
+			"reason": "Raw terminal preview record; command output must remain byte-for-byte unchanged."
+		},
+		{
+			"file": "src/renderer/components/BrowserPanel.tsx",
+			"kind": "jsx-text",
+			"text": "Local: http://localhost:5173/",
+			"reason": "Raw terminal preview record; command output must remain byte-for-byte unchanged."
+		},
+		{
+			"file": "src/renderer/components/CenterPane.tsx",
+			"kind": "jsx-text",
+			"text": "px",
+			"reason": "CSS pixel unit."
+		},
+		{
+			"file": "src/renderer/components/CreateProjectFlow.tsx",
+			"kind": "jsx-text",
+			"text": "my-workspace/",
+			"reason": "Workspace path shown in a repository-layout example."
+		},
+		{
+			"file": "src/renderer/components/CreateProjectFlow.tsx",
+			"kind": "jsx-text",
+			"text": "web-app",
+			"reason": "Repository name shown in a repository-layout example."
+		},
+		{
+			"file": "src/renderer/components/CreateProjectFlow.tsx",
+			"kind": "jsx-text",
+			"text": "main",
+			"reason": "Git branch name shown in a repository-layout example."
+		},
+		{
+			"file": "src/renderer/components/PRSummaryDisplay.tsx",
+			"kind": "property:error",
+			"text": "text-error",
+			"reason": "CSS class token in a tone-to-style map, not interface copy."
+		},
+		{
+			"file": "src/renderer/components/ProjectSettingsForm.tsx",
+			"kind": "new-error",
+			"text": "PROJECT_CONFIG_UNAVAILABLE",
+			"reason": "Locale-neutral query sentinel; the component renders a translated load failure."
+		},
+		{
+			"file": "src/renderer/components/ProjectSettingsForm.tsx",
+			"kind": "attribute:placeholder",
+			"text": "main",
+			"reason": "Git branch-name example."
+		},
+		{
+			"file": "src/renderer/components/ProjectSettingsForm.tsx",
+			"kind": "attribute:placeholder",
+			"text": "ao",
+			"reason": "Session-prefix code example."
+		},
+		{
+			"file": "src/renderer/components/RemoteDirectoryPickerDialog.tsx",
+			"kind": "attribute:placeholder",
+			"text": "/home/claude/code/project",
+			"reason": "Server filesystem path example."
+		},
+		{
+			"file": "src/renderer/components/SCMConnectionFields.tsx",
+			"kind": "jsx-text",
+			"text": "GitHub",
+			"reason": "Provider brand name."
+		},
+		{
+			"file": "src/renderer/components/SCMConnectionFields.tsx",
+			"kind": "jsx-text",
+			"text": "GitLab",
+			"reason": "Provider brand name."
+		},
+		{
+			"file": "src/renderer/components/SCMConnectionFields.tsx",
+			"kind": "attribute:placeholder",
+			"text": "group/subgroup/project",
+			"reason": "GitLab repository-path example."
+		},
+		{
+			"file": "src/renderer/components/SCMConnectionFields.tsx",
+			"kind": "attribute:placeholder",
+			"text": "owner/repository",
+			"reason": "GitHub repository-path example."
+		},
+		{
+			"file": "src/renderer/components/ShellTopbar.tsx",
+			"kind": "jsx-expression",
+			"text": "session/${...}",
+			"reason": "Generated Git branch fallback, not interface prose."
+		},
+		{
+			"file": "src/renderer/components/SessionInspector.tsx",
+			"kind": "return:mockReviewTitle",
+			"text": "Browser preview rail renders inside AO",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/components/SessionInspector.tsx",
+			"kind": "return:mockReviewTitle",
+			"text": "Review tab keeps stacked PR rows visible",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/components/SessionInspector.tsx",
+			"kind": "return:mockReviewTitle",
+			"text": "Draft child PR waits for parent review",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/components/SessionInspector.tsx",
+			"kind": "return:mockReviewTitle",
+			"text": "Terminal polish feedback",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/components/SessionInspector.tsx",
+			"kind": "return:mockReviewTitle",
+			"text": "README screenshot assets ready",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/components/SessionInspector.tsx",
+			"kind": "return:mockReviewTitle",
+			"text": "Demo pull request ${...}",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/components/SessionsBoard.tsx",
+			"kind": "return:agentLabel",
+			"text": "Claude",
+			"reason": "Agent provider brand name."
+		},
+		{
+			"file": "src/renderer/components/SessionsBoard.tsx",
+			"kind": "return:agentLabel",
+			"text": "OpenCode",
+			"reason": "Agent provider brand name."
+		},
+		{
+			"file": "src/renderer/components/Sidebar.tsx",
+			"kind": "jsx-text",
+			"text": "Agent Orchestrator",
+			"reason": "Product name."
+		},
+		{
+			"file": "src/renderer/components/TerminalPane.tsx",
+			"kind": "jsx-expression",
+			"text": "reverbcode",
+			"reason": "Workspace-name value in terminal preview data."
+		},
+		{
+			"file": "src/renderer/components/TerminalPane.tsx",
+			"kind": "jsx-expression",
+			"text": "main",
+			"reason": "Git branch value in terminal preview data."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Agent Orchestrator",
+			"reason": "Product name."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Alt+F4",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+Z",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+Y",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+X",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+C",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+V",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+A",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+R",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/components/WindowTitlebar.tsx",
+			"kind": "jsx-text",
+			"text": "Ctrl+Shift+I",
+			"reason": "Keyboard shortcut."
+		},
+		{
+			"file": "src/renderer/hooks/useBrowserView.ts",
+			"kind": "property:title",
+			"text": "AO preview",
+			"reason": "Browser-only preview metadata value, not a UI control label."
+		},
+		{
+			"file": "src/renderer/hooks/useTerminalSession.ts",
+			"kind": "property:reason",
+			"text": "pane_error",
+			"reason": "Telemetry reason enum, not interface copy."
+		},
+		{
+			"file": "src/renderer/hooks/useTerminalSession.ts",
+			"kind": "property:reason",
+			"text": "open_timeout",
+			"reason": "Telemetry reason enum, not interface copy."
+		},
+		{
+			"file": "src/renderer/lib/api-client.ts",
+			"kind": "property:error",
+			"text": "unavailable",
+			"reason": "Wire-envelope error kind; the stable DAEMON_NOT_READY code is localized by the renderer."
+		},
+		{
+			"file": "src/renderer/lib/pr-display.ts",
+			"kind": "return:changeRequestShortLabel",
+			"text": "MR",
+			"reason": "Standard merge-request abbreviation."
+		},
+		{
+			"file": "src/renderer/lib/pr-display.ts",
+			"kind": "return:changeRequestShortLabel",
+			"text": "PR",
+			"reason": "Standard pull-request abbreviation."
+		},
+		{
+			"file": "src/renderer/lib/report-problem.ts",
+			"kind": "return:reportTitle",
+			"text": "AO feedback",
+			"reason": "Fixed English title in the external support draft format."
+		},
+		{
+			"file": "src/renderer/lib/report-problem.ts",
+			"kind": "return:valueOrPlaceholder",
+			"text": "Not provided",
+			"reason": "Fixed English placeholder in the external support draft format."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Project orchestrator",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Build screenshot-ready dashboard data",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Resolve reviewer feedback on terminal polish",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Review stacked browser preview flow",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Wait for CI on project settings copy",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Merge README screenshot asset update",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Fix flaky NewTaskDialog smoke test",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Tighten installation guide",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "Publish troubleshooting section",
+			"reason": "Demo user-data title."
+		},
+		{
+			"file": "src/renderer/lib/mock-data.ts",
+			"kind": "property:title",
+			"text": "PR #${...}",
+			"reason": "Demo server-data title."
+		},
+		{
+			"file": "src/renderer/lib/shell-context.ts",
+			"kind": "new-error",
+			"text": "useShell must be used within the _shell layout route",
+			"reason": "Internal React context invariant, not rendered in the interface."
+		},
+		{
+			"file": "src/renderer/lib/telemetry.ts",
+			"kind": "new-error",
+			"text": "Unknown renderer exception",
+			"reason": "Internal telemetry normalization diagnostic, not interface copy."
+		},
+		{
+			"file": "src/shared/daemon-attach.ts",
+			"kind": "property:message",
+			"text": "An AO daemon is already running, but it is not ready yet.",
+			"reason": "Supervisor diagnostic ignored by renderer localization for the not_ready status code."
+		}
+	]
 }

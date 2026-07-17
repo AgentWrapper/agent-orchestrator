@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { spawnOrchestrator } from "./spawn-orchestrator";
+import { orchestratorErrorDescriptor, orchestratorErrorMessage, spawnOrchestrator } from "./spawn-orchestrator";
 import { apiClient } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
 import { i18n } from "../i18n";
@@ -14,6 +14,10 @@ vi.mock("./api-client", () => ({
 		}
 		return fallback;
 	},
+	safeExternalErrorMessage: (error: unknown) =>
+		error instanceof Error && !/(?:authorization|bearer|token|password|secret)/i.test(error.message)
+			? error.message
+			: undefined,
 }));
 
 vi.mock("./telemetry", () => ({
@@ -105,5 +109,33 @@ describe("spawnOrchestrator", () => {
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
 			body: { projectId: "项目-1", clean: false },
 		});
+	});
+
+	it("keeps its fallback semantic so a mounted consumer can relocalize it", async () => {
+		(apiClient.POST as ReturnType<typeof vi.fn>).mockResolvedValue({
+			data: undefined,
+			error: undefined,
+			response: { status: 503 },
+		});
+		let failure: unknown;
+		try {
+			await spawnOrchestrator("proj", "board");
+		} catch (error) {
+			failure = error;
+		}
+
+		const descriptor = orchestratorErrorDescriptor(failure);
+		await i18n.changeLanguage("zh-CN");
+		expect(orchestratorErrorMessage(descriptor, "unused fallback")).toBe("无法启动协调器（503）");
+	});
+
+	it("uses a locale-neutral fallback descriptor for credential-bearing Error details", () => {
+		const descriptor = orchestratorErrorDescriptor(new Error("Authorization: Bearer orchestrator-secret"));
+
+		expect(descriptor).toEqual({ kind: "fallback" });
+		expect(orchestratorErrorMessage(descriptor, "Could not replace orchestrator")).toBe(
+			"Could not replace orchestrator",
+		);
+		expect(orchestratorErrorMessage(descriptor, "无法替换协调器")).toBe("无法替换协调器");
 	});
 });

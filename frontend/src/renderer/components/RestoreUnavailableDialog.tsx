@@ -3,7 +3,12 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import {
+	orchestratorErrorDescriptor,
+	orchestratorErrorMessage,
+	spawnOrchestrator,
+	type OrchestratorErrorDescriptor,
+} from "../lib/spawn-orchestrator";
 import { isOrchestratorSession } from "../types/workspace";
 import type { WorkspaceSession } from "../types/workspace";
 
@@ -17,7 +22,7 @@ type RestoreUnavailableDialogProps = {
 export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecreated }: RestoreUnavailableDialogProps) {
 	const { t } = useTranslation();
 	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<string | undefined>();
+	const [error, setError] = useState<OrchestratorErrorDescriptor | undefined>();
 	const orchestrator = isOrchestratorSession(session);
 
 	const recreate = async () => {
@@ -28,7 +33,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 			onOpenChange(false);
 			onRecreated(id);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : t("projects.restore.createFailed"));
+			setError(orchestratorErrorDescriptor(err));
 		} finally {
 			setBusy(false);
 		}
@@ -39,15 +44,15 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
-					<Dialog.Title className="text-sm font-medium text-foreground">
-						{t("projects.restore.title")}
-					</Dialog.Title>
+					<Dialog.Title className="text-sm font-medium text-foreground">{t("projects.restore.title")}</Dialog.Title>
 					<Dialog.Description className="mt-2 text-control text-muted-foreground">
-						{orchestrator
-							? t("projects.restore.orchestratorDescription")
-							: t("projects.restore.workerDescription")}
+						{orchestrator ? t("projects.restore.orchestratorDescription") : t("projects.restore.workerDescription")}
 					</Dialog.Description>
-					{error && <div className="mt-3 text-xs text-destructive">{error}</div>}
+					{error && (
+						<div className="mt-3 text-xs text-destructive">
+							{orchestratorErrorMessage(error, t("projects.restore.createFailed"))}
+						</div>
+					)}
 					<div className="mt-4 flex justify-end gap-2">
 						<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
 							{orchestrator ? t("ui.cancel") : t("ui.close")}

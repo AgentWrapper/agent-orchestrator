@@ -183,4 +183,21 @@ describe("migration marker", () => {
 		expect(raw.appPath).toBe("/A.app");
 		expect(raw.migration).toEqual({ status: "failed", error: "x" });
 	});
+
+	it("round-trips optional semantic migration error fields without changing the marker schema", async () => {
+		const dir = await tmp();
+		await writeAppStateMarker({ stateDir: dir, appPath: "/A.app", version: "1.2.3", now: fixedNow });
+		await updateMigration({
+			stateDir: dir,
+			migration: { status: "failed", errorCode: "DIRECTORY_PERMISSION_DENIED", errorDetail: "safe detail" },
+			now: fixedNow,
+		});
+
+		expect(await readMigrationState(dir)).toEqual({
+			status: "failed",
+			errorCode: "DIRECTORY_PERMISSION_DENIED",
+			errorDetail: "safe detail",
+		});
+		expect((await readMarker(dir)).schemaVersion).toBe(2);
+	});
 });

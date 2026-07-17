@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -18,11 +18,18 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (typeof error === "object" && error !== null && "message" in error) {
 			const body = error as { code?: unknown; message: unknown };
+			if (body.code === "DIRECTORY_PERMISSION_DENIED") {
+				return i18n.t("errors.codes.DIRECTORY_PERMISSION_DENIED");
+			}
 			const message = String(body.message);
 			return typeof body.code === "string" && body.code !== "" ? `${message} (${body.code})` : message;
 		}
 		return fallback;
 	},
+	safeExternalErrorMessage: (error: unknown) =>
+		error instanceof Error && !/(?:authorization|bearer|token|password|secret)/i.test(error.message)
+			? error.message
+			: undefined,
 }));
 
 function renderDialog() {
@@ -184,6 +191,68 @@ describe("NewTaskDialog", () => {
 
 		expect(await screen.findByText("Title and brief are required.")).toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("relocalizes a visible application fallback without remounting", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+		expect(await screen.findByText("Title and brief are required.")).toBeInTheDocument();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("标题和任务说明为必填项。")).toBeInTheDocument();
+		expect(screen.queryByText("Title and brief are required.")).not.toBeInTheDocument();
+	});
+
+	it("preserves raw runtime detail across a language switch", async () => {
+		postMock.mockRejectedValueOnce(new Error("raw worker launch detail"));
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+		await user.type(screen.getByLabelText("Title"), "T");
+		await user.type(screen.getByLabelText("Brief"), "B");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+		expect(await screen.findByText("raw worker launch detail")).toBeInTheDocument();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("raw worker launch detail")).toBeInTheDocument();
+	});
+
+	it("filters a credential-bearing runtime failure and retranslates the fallback", async () => {
+		postMock.mockRejectedValueOnce(new Error("Authorization: Bearer new-task-secret"));
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+		await user.type(screen.getByLabelText("Title"), "T");
+		await user.type(screen.getByLabelText("Brief"), "B");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		expect(await screen.findByText("Unable to start task")).toBeInTheDocument();
+		expect(screen.queryByText(/new-task-secret/)).not.toBeInTheDocument();
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("无法启动任务")).toBeInTheDocument();
+		expect(screen.queryByText(/new-task-secret/)).not.toBeInTheDocument();
+	});
+
+	it("relocalizes a refresh-agents API error after it occurs without remounting", async () => {
+		postMock.mockResolvedValueOnce({
+			data: undefined,
+			error: {
+				error: "Forbidden",
+				code: "DIRECTORY_PERMISSION_DENIED",
+				message: "permission denied while probing agents",
+			},
+		});
+		renderDialog();
+		await waitForAgentCatalog();
+
+		await userEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+		expect(await screen.findByText("You do not have permission to access this directory")).toBeInTheDocument();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("没有权限访问该目录")).toBeInTheDocument();
+		expect(screen.queryByText("You do not have permission to access this directory")).not.toBeInTheDocument();
 	});
 
 	it.each([

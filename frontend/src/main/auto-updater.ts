@@ -49,6 +49,10 @@ function broadcast(status: UpdateStatus): void {
 	}
 }
 
+function updaterErrorStatus(error: unknown): UpdateStatus {
+	return error instanceof Error && error.message ? { state: "error", message: error.message } : { state: "error" };
+}
+
 // --- Read-only release-feed helpers (packaged app only; every failure is silent).
 // These regex-parse flat keys out of electron-builder yml files on purpose: no
 // yaml dependency, and a parse miss just means "no info", never an error state
@@ -198,7 +202,7 @@ function wireUpdaterEvents(): void {
 	});
 	autoUpdater.on("error", (err) => {
 		// Never crash on update failure (offline, unsigned macOS, etc.).
-		broadcast({ state: "error", message: err?.message ?? String(err) });
+		broadcast(updaterErrorStatus(err));
 	});
 }
 
@@ -235,7 +239,7 @@ export async function checkForUpdatesNow(stateDir: string): Promise<void> {
 	escalationStateDir = stateDir;
 	wireUpdaterEvents();
 	if (!app.isPackaged) {
-		broadcast({ state: "unsupported", message: "Updates are only available in the installed app." });
+		broadcast({ state: "unsupported" });
 		return;
 	}
 	const settings = await readUpdateSettings(stateDir);
@@ -246,7 +250,7 @@ export async function checkForUpdatesNow(stateDir: string): Promise<void> {
 	try {
 		await autoUpdater.checkForUpdates();
 	} catch (err) {
-		broadcast({ state: "error", message: (err as Error)?.message ?? "Update check failed" });
+		broadcast(updaterErrorStatus(err));
 	}
 }
 
@@ -254,13 +258,13 @@ export async function checkForUpdatesNow(stateDir: string): Promise<void> {
 export async function downloadUpdateNow(): Promise<void> {
 	wireUpdaterEvents();
 	if (!app.isPackaged) {
-		broadcast({ state: "unsupported", message: "Updates are only available in the installed app." });
+		broadcast({ state: "unsupported" });
 		return;
 	}
 	try {
 		await autoUpdater.downloadUpdate();
 	} catch (err) {
-		broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed" });
+		broadcast(updaterErrorStatus(err));
 	}
 }
 

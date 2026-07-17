@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { OrchestratorErrorDescriptor } from "../lib/spawn-orchestrator";
 import { resolveTheme, themeStorageKey, type Theme } from "../lib/theme";
 
 export type { Theme } from "../lib/theme";
@@ -17,16 +18,16 @@ type UiState = {
 	isInspectorOpen: boolean;
 	theme: Theme;
 	restartingProjectIds: ReadonlySet<string>;
-	orchestratorReplacementErrors: Record<string, string>;
-	orchestratorStartupErrors: Record<string, string>;
+	orchestratorReplacementErrors: Record<string, OrchestratorErrorDescriptor>;
+	orchestratorStartupErrors: Record<string, OrchestratorErrorDescriptor>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setTheme: (theme: Theme) => void;
 	toggleTheme: () => void;
 	toggleSidebar: () => void;
 	toggleInspector: () => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
-	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
-	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
+	setOrchestratorReplacementError: (projectId: string, error: OrchestratorErrorDescriptor | null) => void;
+	setOrchestratorStartupError: (projectId: string, error: OrchestratorErrorDescriptor | null) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -86,21 +87,21 @@ export const useUiStore = create<UiState>((set) => ({
 			}
 			return { restartingProjectIds };
 		}),
-	setOrchestratorReplacementError: (projectId, message) =>
+	setOrchestratorReplacementError: (projectId, error) =>
 		set((state) => {
 			const orchestratorReplacementErrors = { ...state.orchestratorReplacementErrors };
-			if (message) {
-				orchestratorReplacementErrors[projectId] = message;
+			if (error) {
+				orchestratorReplacementErrors[projectId] = error;
 			} else {
 				delete orchestratorReplacementErrors[projectId];
 			}
 			return { orchestratorReplacementErrors };
 		}),
-	setOrchestratorStartupError: (projectId, message) =>
+	setOrchestratorStartupError: (projectId, error) =>
 		set((state) => {
 			const orchestratorStartupErrors = { ...state.orchestratorStartupErrors };
-			if (message) {
-				orchestratorStartupErrors[projectId] = message;
+			if (error) {
+				orchestratorStartupErrors[projectId] = error;
 			} else {
 				delete orchestratorStartupErrors[projectId];
 			}

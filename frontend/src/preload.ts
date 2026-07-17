@@ -11,6 +11,7 @@ import type {
 } from "./shared/browser-annotations";
 import type { EditableRemoteServerConfig, RemoteServerConfigUpdate } from "./main/remote-client-runtime";
 import type { LocalePreference, LocaleSnapshot } from "./shared/locale";
+import type { ImportRepoValidationCode } from "./main/import-scan";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -35,6 +36,7 @@ export type ImportRepoScan = {
 	hasRemote: boolean;
 	status?: "ok" | "error";
 	setupCode?: "PROJECT_UNBORN";
+	reasonCode?: ImportRepoValidationCode;
 	reason?: string;
 };
 
@@ -87,8 +89,7 @@ const api = {
 	},
 	locale: {
 		get: () => ipcRenderer.invoke("locale:get") as Promise<LocaleSnapshot>,
-		set: (preference: LocalePreference) =>
-			ipcRenderer.invoke("locale:set", preference) as Promise<LocaleSnapshot>,
+		set: (preference: LocalePreference) => ipcRenderer.invoke("locale:set", preference) as Promise<LocaleSnapshot>,
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,

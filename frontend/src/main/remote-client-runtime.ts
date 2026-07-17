@@ -1,10 +1,26 @@
-import type { DaemonStatus } from "../shared/daemon-status";
-import type { RemoteForwarder } from "./remote-forwarder";
+import { safeDaemonStatusDetail, type DaemonFailureCode, type DaemonStatus } from "../shared/daemon-status";
+import { RemoteForwarderStartError, type RemoteForwarder } from "./remote-forwarder";
 import {
 	validateRemoteServerConfigInput,
+	RemoteServerConfigError,
 	type RemoteServerConfig,
 	type RemoteServerConfigInput,
 } from "./remote-server-config";
+
+type RemoteProbeFailureCode = Extract<
+	DaemonFailureCode,
+	"remote_bad_password" | "remote_rate_limited" | "remote_http_error" | "identity_mismatch"
+>;
+
+class RemoteProbeError extends Error {
+	constructor(
+		readonly code: RemoteProbeFailureCode,
+		readonly httpStatus?: number,
+	) {
+		super(code);
+		this.name = "RemoteProbeError";
+	}
+}
 
 export type PublicRemoteServerConfig = Pick<RemoteServerConfigInput, "host" | "port">;
 export type EditableRemoteServerConfig = PublicRemoteServerConfig & { passwordConfigured: boolean };
@@ -55,7 +71,6 @@ export class RemoteClientRuntime {
 			return this.setStatus({
 				state: "error",
 				code: "not_configured",
-				message: "Configure the remote AO server to continue.",
 			});
 		}
 		this.config = config;
@@ -65,11 +80,7 @@ export class RemoteClientRuntime {
 			this.forwarder = next;
 			return this.setStatus({ state: "ready", port: next.port });
 		} catch (error) {
-			return this.setStatus({
-				state: "error",
-				code: "daemon_unreachable",
-				message: errorMessage(error),
-			});
+			return this.setStatus(remoteFailureStatus(error, "daemon_unreachable"));
 		}
 	}
 
@@ -91,11 +102,7 @@ export class RemoteClientRuntime {
 				saved = await this.deps.writeConfig(normalized);
 			} catch (error) {
 				await candidate.close();
-				return {
-					state: "error",
-					code: "not_configured",
-					message: errorMessage(error),
-				};
+				return remoteFailureStatus(error, "remote_config_save_failed");
 			}
 
 			const previous = this.forwarder;
@@ -106,11 +113,7 @@ export class RemoteClientRuntime {
 			return this.setStatus({ state: "ready", port: this.forwarder.port });
 		} catch (error) {
 			await candidate?.close();
-			return {
-				state: "error",
-				code: "daemon_unreachable",
-				message: errorMessage(error),
-			};
+			return remoteFailureStatus(error, "daemon_unreachable");
 		}
 	}
 
@@ -152,8 +155,26 @@ export class RemoteClientRuntime {
 	}
 }
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : "Remote AO daemon is unavailable.";
+function remoteFailureStatus(error: unknown, fallbackCode: DaemonFailureCode): DaemonStatus {
+	if (error instanceof RemoteServerConfigError) {
+		return { state: "error", code: error.code };
+	}
+	if (error instanceof RemoteProbeError) {
+		return {
+			state: "error",
+			code: error.code,
+			...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
+		};
+	}
+	if (error instanceof RemoteForwarderStartError) {
+		return { state: "error", code: error.code };
+	}
+	const message = error instanceof Error ? safeDaemonStatusDetail(error) : undefined;
+	return {
+		state: "error",
+		code: fallbackCode,
+		...(message ? { message } : {}),
+	};
 }
 
 export async function probeRemoteForwarder(port: number): Promise<void> {
@@ -162,13 +183,18 @@ export async function probeRemoteForwarder(port: number): Promise<void> {
 	try {
 		const response = await fetch(`http://127.0.0.1:${port}/healthz`, { signal: controller.signal });
 		if (!response.ok) {
-			if (response.status === 401) throw new Error("Connection password is invalid.");
-			if (response.status === 429) throw new Error("Too many failed connection attempts. Try again shortly.");
-			throw new Error(`Remote AO daemon returned HTTP ${response.status}.`);
+			if (response.status === 401) throw new RemoteProbeError("remote_bad_password");
+			if (response.status === 429) throw new RemoteProbeError("remote_rate_limited");
+			throw new RemoteProbeError("remote_http_error", response.status);
 		}
-		const body = (await response.json()) as { service?: unknown };
+		let body: { service?: unknown };
+		try {
+			body = (await response.json()) as { service?: unknown };
+		} catch {
+			throw new RemoteProbeError("identity_mismatch");
+		}
 		if (body.service !== "agent-orchestrator-daemon") {
-			throw new Error("The configured server is not an AO daemon.");
+			throw new RemoteProbeError("identity_mismatch");
 		}
 	} finally {
 		clearTimeout(timeout);

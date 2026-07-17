@@ -340,28 +340,26 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.remoteServer.isRemoteClient = vi.fn().mockResolvedValue(true);
 		window.ao!.app.chooseDirectory = vi.fn();
-		getMock.mockImplementation(
-			(path: string, options?: { params?: { query?: { path?: string } } }) => {
-				if (path === "/api/v1/filesystem/directories" && !options?.params?.query?.path) {
-					return Promise.resolve({
-						data: {
-							path: "/home/claude/code",
-							parent: "/home/claude",
-							directories: [{ name: "remote-project", path: "/home/claude/code/remote-project" }],
-						},
-						error: undefined,
-					});
-				}
+		getMock.mockImplementation((path: string, options?: { params?: { query?: { path?: string } } }) => {
+			if (path === "/api/v1/filesystem/directories" && !options?.params?.query?.path) {
 				return Promise.resolve({
 					data: {
-						path: "/home/claude/code/remote-project",
-						parent: "/home/claude/code",
-						directories: [],
+						path: "/home/claude/code",
+						parent: "/home/claude",
+						directories: [{ name: "remote-project", path: "/home/claude/code/remote-project" }],
 					},
 					error: undefined,
 				});
-			},
-		);
+			}
+			return Promise.resolve({
+				data: {
+					path: "/home/claude/code/remote-project",
+					parent: "/home/claude/code",
+					directories: [],
+				},
+				error: undefined,
+			});
+		});
 		renderSidebar({ onCreateProject });
 		await waitFor(() => expect(window.ao!.remoteServer.isRemoteClient).toHaveBeenCalled());
 
@@ -510,7 +508,9 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi
 			.fn()
-			.mockRejectedValue(codedError("工作区仓库缺少远程地址", "WORKSPACE_CHILD_ORIGIN_REQUIRED")) as CreateProjectHandler;
+			.mockRejectedValue(
+				codedError("工作区仓库缺少远程地址", "WORKSPACE_CHILD_ORIGIN_REQUIRED"),
+			) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/Users/test/dev/acme");
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/Users/test/dev/acme",
@@ -523,6 +523,7 @@ describe("Sidebar", () => {
 					remote: "",
 					hasRemote: false,
 					status: "error",
+					reasonCode: "NO_ORIGIN_REMOTE",
 					reason: "Origin remote is required.",
 				},
 				{
@@ -580,9 +581,7 @@ describe("Sidebar", () => {
 		"does not rescan an already registered project for %s",
 		async (code) => {
 			const user = userEvent.setup();
-			const onCreateProject = vi
-				.fn()
-				.mockRejectedValue(codedError("该项目已经登记", code)) as CreateProjectHandler;
+			const onCreateProject = vi.fn().mockRejectedValue(codedError("该项目已经登记", code)) as CreateProjectHandler;
 			window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 			window.ao!.app.scanImportFolder = vi.fn();
 			renderSidebar({ onCreateProject });

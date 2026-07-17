@@ -1,18 +1,14 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n, initializeRendererI18n } from "../i18n";
 import { RemoteDirectoryPickerDialog } from "./RemoteDirectoryPickerDialog";
 
 const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
 
-vi.mock("../lib/api-client", () => ({
+vi.mock("../lib/api-client", async (importOriginal) => ({
+	...((await importOriginal()) as object),
 	apiClient: { GET: getMock, POST: postMock },
-	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
-		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
-			return error.message;
-		}
-		return fallback;
-	},
 }));
 
 function response(path: string, parent: string | null, directories: Array<{ name: string; path: string }>) {
@@ -105,7 +101,10 @@ describe("RemoteDirectoryPickerDialog", () => {
 			.mockResolvedValueOnce(
 				response("/home/claude", "/home", [{ name: "private", path: "/home/claude/private" }]),
 			)
-			.mockResolvedValueOnce({ data: undefined, error: { message: "Permission denied" } });
+			.mockResolvedValueOnce({
+				data: undefined,
+				error: { error: "forbidden", code: "UNRECOGNIZED_DIRECTORY_CODE", message: "Permission denied" },
+			});
 		renderPicker();
 
 		await user.click(await screen.findByRole("button", { name: "Open private" }));
@@ -132,7 +131,10 @@ describe("RemoteDirectoryPickerDialog", () => {
 		const user = userEvent.setup();
 		getMock
 			.mockResolvedValueOnce(response("/home/claude/code", "/home/claude", []))
-			.mockResolvedValueOnce({ data: undefined, error: { message: "Permission denied" } });
+			.mockResolvedValueOnce({
+				data: undefined,
+				error: { error: "forbidden", code: "UNRECOGNIZED_DIRECTORY_CODE", message: "Permission denied" },
+			});
 		renderPicker();
 
 		const pathInput = await screen.findByLabelText("Server path");
@@ -189,7 +191,7 @@ describe("RemoteDirectoryPickerDialog", () => {
 		renderPicker(onSelect);
 
 		await user.click(await screen.findByRole("button", { name: "New folder" }));
-		await user.type(screen.getByLabelText("Folder name"), "new-project");
+		await user.type(screen.getByLabelText("Folder name"), "  new-project  ");
 		await user.click(screen.getByRole("button", { name: "Create" }));
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/filesystem/directories", {
@@ -212,7 +214,7 @@ describe("RemoteDirectoryPickerDialog", () => {
 		getMock.mockResolvedValueOnce(response("/home/ubuntu/code", "/home/ubuntu", []));
 		postMock.mockResolvedValueOnce({
 			data: undefined,
-			error: { message: "Folder already exists" },
+			error: { error: "conflict", code: "UNRECOGNIZED_DIRECTORY_CODE", message: "Folder already exists" },
 			response: new Response(null, { status: 409 }),
 		});
 		renderPicker();
@@ -244,6 +246,10 @@ describe("RemoteDirectoryPickerDialog", () => {
 		expect(screen.getByRole("button", { name: "Go" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Up" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Open existing" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Go to /home" })).toBeDisabled();
+		expect(screen.getByLabelText("Server path")).toBeDisabled();
+		expect(screen.getByLabelText("Folder name")).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Select this folder" })).toBeDisabled();
 		await user.click(createButton);
 		expect(postMock).toHaveBeenCalledTimes(1);
 	});
@@ -272,5 +278,73 @@ describe("RemoteDirectoryPickerDialog", () => {
 
 		await user.click(await screen.findByRole("button", { name: "New folder" }));
 		expect(screen.getByLabelText("Folder name")).toHaveValue("");
+	});
+
+	it("localizes controls while preserving server paths and directory names", async () => {
+		await initializeRendererI18n("zh-CN");
+		getMock.mockResolvedValueOnce(
+			response("/home/ubuntu/原始目录", "/home/ubuntu", [{ name: "raw-folder-42", path: "/home/ubuntu/原始目录/raw-folder-42" }]),
+		);
+		renderPicker();
+
+		expect(await screen.findByRole("dialog", { name: "浏览服务器项目文件夹" })).toBeInTheDocument();
+		expect(screen.getByLabelText("服务器路径")).toHaveValue("/home/ubuntu/原始目录");
+		expect(screen.getByText("raw-folder-42")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "新建文件夹" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "选择此文件夹" })).toBeEnabled();
+	});
+
+	it("updates a local load fallback after a live language change", async () => {
+		getMock.mockResolvedValueOnce(response("/home/ubuntu", "/home", [{ name: "private", path: "/home/ubuntu/private" }]))
+			.mockRejectedValueOnce(null);
+		const user = userEvent.setup();
+		renderPicker();
+
+		await user.click(await screen.findByRole("button", { name: "Open private" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not load server directories");
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByRole("alert")).toHaveTextContent("无法加载服务器目录");
+	});
+
+	it("localizes a stable directory error code after a live language change", async () => {
+		getMock
+			.mockResolvedValueOnce(response("/home/ubuntu", "/home", [{ name: "private", path: "/home/ubuntu/private" }]))
+			.mockResolvedValueOnce({
+				data: undefined,
+				error: {
+					error: "forbidden",
+					code: "DIRECTORY_PERMISSION_DENIED",
+					message: "private raw detail must stay hidden",
+				},
+			});
+		const user = userEvent.setup();
+		renderPicker();
+
+		await user.click(await screen.findByRole("button", { name: "Open private" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to access this directory");
+		expect(screen.getByRole("alert")).not.toHaveTextContent("private raw detail");
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByRole("alert")).toHaveTextContent("没有权限访问该目录");
+	});
+
+	it("preserves unknown structured detail while translating its fallback", async () => {
+		getMock
+			.mockResolvedValueOnce(response("/home/ubuntu", "/home", [{ name: "private", path: "/home/ubuntu/private" }]))
+			.mockResolvedValueOnce({
+				data: undefined,
+				error: {
+					error: "directory",
+					code: "UNRECOGNIZED_DIRECTORY_CODE",
+					message: "raw-directory-detail",
+				},
+			});
+		const user = userEvent.setup();
+		renderPicker();
+
+		await user.click(await screen.findByRole("button", { name: "Open private" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("raw-directory-detail");
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByRole("alert")).toHaveTextContent("无法加载服务器目录");
+		expect(screen.getByRole("alert")).toHaveTextContent("raw-directory-detail");
 	});
 });

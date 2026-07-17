@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowRight, ArrowUp, Check, Folder, FolderPlus, LoaderCircle, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import type { ProjectKind } from "../types/workspace";
@@ -26,9 +27,10 @@ export function RemoteDirectoryPickerDialog({
 	onSelect,
 	open,
 }: RemoteDirectoryPickerDialogProps) {
+	const { t } = useTranslation();
 	const [current, setCurrent] = useState<ListDirectoriesResponse | null>(null);
 	const [path, setPath] = useState("");
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<{ cause: unknown; kind: "load" | "create" } | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [newFolderName, setNewFolderName] = useState("");
 	const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -45,7 +47,7 @@ export function RemoteDirectoryPickerDialog({
 			});
 			if (request !== requestNumber.current) return;
 			if (apiError) {
-				setError(apiErrorMessage(apiError, "Could not load server directories"));
+				setError({ cause: apiError, kind: "load" });
 				return;
 			}
 			if (data) {
@@ -54,7 +56,7 @@ export function RemoteDirectoryPickerDialog({
 			}
 		} catch (err) {
 			if (request === requestNumber.current) {
-				setError(apiErrorMessage(err, "Could not load server directories"));
+				setError({ cause: err ?? {}, kind: "load" });
 			}
 		} finally {
 			if (request === requestNumber.current) setLoading(false);
@@ -90,7 +92,7 @@ export function RemoteDirectoryPickerDialog({
 				body: { parentPath: current.path, name },
 			});
 			if (apiError) {
-				setError(apiErrorMessage(apiError, "Could not create folder"));
+				setError({ cause: apiError, kind: "create" });
 				return;
 			}
 			if (data) {
@@ -99,7 +101,7 @@ export function RemoteDirectoryPickerDialog({
 				await openPath(data.path);
 			}
 		} catch (cause) {
-			setError(apiErrorMessage(cause, "Could not create folder"));
+			setError({ cause: cause ?? {}, kind: "create" });
 		} finally {
 			setCreatingFolder(false);
 		}
@@ -117,14 +119,20 @@ export function RemoteDirectoryPickerDialog({
 					<div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
 						<div className="min-w-0">
 							<Dialog.Title className="text-[18px] font-semibold text-foreground">
-								Browse server {isWorkspace ? "workspace" : "project"} folders
+								{t(isWorkspace ? "remoteDirectory.title.workspace" : "remoteDirectory.title.project")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-1 text-[13px] text-muted-foreground">
-								Choose a folder on the server running Agent Orchestrator.
+								{t("remoteDirectory.description")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
-							<Button type="button" variant="ghost" size="icon-sm" aria-label="Close server folder browser" disabled={disabled}>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								aria-label={t("remoteDirectory.close")}
+								disabled={disabled}
+							>
 								<X className="size-4" aria-hidden="true" />
 							</Button>
 						</Dialog.Close>
@@ -134,7 +142,7 @@ export function RemoteDirectoryPickerDialog({
 						<form className="flex items-end gap-2" onSubmit={submitPath}>
 							<div className="min-w-0 flex-1">
 								<Label htmlFor="remote-directory-path" className="mb-1.5 block text-xs text-muted-foreground">
-									Server path
+									{t("remoteDirectory.path")}
 								</Label>
 								<Input
 									id="remote-directory-path"
@@ -149,9 +157,9 @@ export function RemoteDirectoryPickerDialog({
 								type="submit"
 								variant="outline"
 								size="icon"
-								aria-label="Go"
-								title="Go"
-									disabled={disabled || busy || !path.trim()}
+								aria-label={t("remoteDirectory.go")}
+								title={t("remoteDirectory.go")}
+								disabled={disabled || busy || !path.trim()}
 							>
 								<ArrowRight className="size-4" aria-hidden="true" />
 							</Button>
@@ -162,9 +170,9 @@ export function RemoteDirectoryPickerDialog({
 								type="button"
 								variant="ghost"
 								size="icon-sm"
-								aria-label="Up"
-								title="Up"
-									disabled={disabled || busy || !current?.parent}
+								aria-label={t("remoteDirectory.up")}
+								title={t("remoteDirectory.up")}
+								disabled={disabled || busy || !current?.parent}
 								onClick={() => current?.parent && void openPath(current.parent)}
 							>
 								<ArrowUp className="size-4" aria-hidden="true" />
@@ -181,7 +189,7 @@ export function RemoteDirectoryPickerDialog({
 													<button
 														type="button"
 														className="truncate text-muted-foreground hover:text-foreground"
-														aria-label={`Go to ${breadcrumb.path}`}
+														aria-label={t("remoteDirectory.goTo", { path: breadcrumb.path })}
 														disabled={disabled || busy}
 														onClick={() => void openPath(breadcrumb.path)}
 													>
@@ -202,7 +210,7 @@ export function RemoteDirectoryPickerDialog({
 									onClick={() => setNewFolderOpen(true)}
 								>
 									<FolderPlus className="size-4" aria-hidden="true" />
-									New folder
+									{t("remoteDirectory.newFolder")}
 								</Button>
 							)}
 						</div>
@@ -210,7 +218,7 @@ export function RemoteDirectoryPickerDialog({
 							<form className="flex items-end gap-2" onSubmit={createFolder}>
 								<div className="min-w-0 flex-1">
 									<Label htmlFor="remote-directory-new-folder" className="mb-1.5 block text-xs text-muted-foreground">
-										Folder name
+										{t("remoteDirectory.folderName")}
 									</Label>
 									<Input
 										id="remote-directory-new-folder"
@@ -224,8 +232,8 @@ export function RemoteDirectoryPickerDialog({
 									type="submit"
 									variant="outline"
 									size="icon"
-									aria-label="Create"
-									title="Create"
+									aria-label={t("remoteDirectory.create")}
+									title={t("remoteDirectory.create")}
 									disabled={disabled || busy || !newFolderName.trim()}
 								>
 									{creatingFolder ? (
@@ -239,9 +247,12 @@ export function RemoteDirectoryPickerDialog({
 
 						<div className="h-64 overflow-y-auto rounded-md border border-border bg-background">
 							{loading ? (
-								<div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+								<div
+									className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"
+									role="status"
+								>
 									<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-									Loading folders...
+									{t("remoteDirectory.loading")}
 								</div>
 							) : current?.directories.length ? (
 								<div className="p-1.5">
@@ -250,7 +261,7 @@ export function RemoteDirectoryPickerDialog({
 											type="button"
 											key={directory.path}
 											className="flex h-10 w-full items-center gap-2 rounded-md px-2.5 text-left font-mono text-sm text-foreground hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-											aria-label={`Open ${directory.name}`}
+											aria-label={t("remoteDirectory.open", { name: directory.name })}
 											disabled={disabled || busy}
 											onClick={() => void openPath(directory.path)}
 										>
@@ -260,19 +271,24 @@ export function RemoteDirectoryPickerDialog({
 									))}
 								</div>
 							) : current ? (
-								<div className="flex h-full items-center justify-center text-sm text-muted-foreground">No folders</div>
+								<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+									{t("remoteDirectory.empty")}
+								</div>
 							) : null}
 						</div>
 						{error && (
 							<p className="text-sm text-destructive" role="alert">
-								{error}
+								{apiErrorMessage(
+									error.cause,
+									t(error.kind === "load" ? "remoteDirectory.errors.load" : "remoteDirectory.errors.create"),
+								)}
 							</p>
 						)}
 					</div>
 
 					<div className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-4 sm:px-6">
 						<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
-							Cancel
+							{t("ui.cancel")}
 						</Button>
 						<Button
 							type="button"
@@ -280,7 +296,7 @@ export function RemoteDirectoryPickerDialog({
 							disabled={disabled || busy || !current || path.trim() !== current.path}
 							onClick={() => current && onSelect(current.path)}
 						>
-							Select this folder
+							{t("remoteDirectory.select")}
 						</Button>
 					</div>
 				</Dialog.Content>

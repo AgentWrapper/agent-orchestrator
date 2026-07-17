@@ -1,4 +1,4 @@
-import { apiClient, apiErrorMessage } from "./api-client";
+import { apiClient, apiErrorMessage, safeExternalErrorMessage } from "./api-client";
 import { i18n } from "../i18n";
 import { captureRendererEvent } from "./telemetry";
 
@@ -17,6 +17,39 @@ export type OrchestratorSpawnSource =
 	| "settings"
 	| "restart";
 
+export type OrchestratorErrorDescriptor =
+	| { kind: "detail"; detail: string }
+	| { kind: "spawn"; error: OrchestratorSpawnError }
+	| { kind: "fallback" };
+
+export class OrchestratorSpawnError extends Error {
+	constructor(
+		readonly apiError: unknown,
+		readonly status: number,
+	) {
+		super(spawnErrorMessage(apiError, status));
+		this.name = "OrchestratorSpawnError";
+	}
+}
+
+function spawnErrorMessage(apiError: unknown, status: number): string {
+	const fallback = i18n.t("sessions.errors.spawnFailed", { status });
+	return apiError ? apiErrorMessage(apiError, fallback) : fallback;
+}
+
+export function orchestratorErrorDescriptor(error: unknown): OrchestratorErrorDescriptor {
+	if (error instanceof OrchestratorSpawnError) return { kind: "spawn", error };
+	const detail = safeExternalErrorMessage(error);
+	if (detail) return { kind: "detail", detail };
+	return { kind: "fallback" };
+}
+
+export function orchestratorErrorMessage(error: OrchestratorErrorDescriptor, fallback: string): string {
+	if (error.kind === "detail") return error.detail;
+	if (error.kind === "spawn") return spawnErrorMessage(error.error.apiError, error.error.status);
+	return fallback;
+}
+
 /** Spawn the project's orchestrator session via the daemon API. When clean is
  *  true the daemon first tears down any active orchestrator for the project, then
  *  re-spawns one on the canonical branch (reattaching the existing branch). */
@@ -32,9 +65,7 @@ export async function spawnOrchestrator(
 		});
 
 		if (error || !data?.orchestrator?.id) {
-			const fallback = i18n.t("sessions.errors.spawnFailed", { status: response.status });
-			const message = error ? apiErrorMessage(error, fallback) : fallback;
-			throw new Error(message);
+			throw new OrchestratorSpawnError(error, response.status);
 		}
 
 		void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", { project_id: projectId, source });

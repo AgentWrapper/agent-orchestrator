@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n, initializeRendererI18n } from "../i18n";
 import { PullRequestsPage } from "./PullRequestsPage";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
@@ -18,7 +19,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
-	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
+	apiErrorMessage: (e: unknown, fallback = "error") => (e instanceof Error ? e.message : fallback),
 }));
 
 const pr = (n: number, state: PRState): PullRequestFacts => ({
@@ -30,6 +31,11 @@ const pr = (n: number, state: PRState): PullRequestFacts => ({
 	mergeability: "mergeable",
 	reviewComments: false,
 	updatedAt: "2026-06-15T00:00:00Z",
+});
+
+const gitlabPr = (n: number, state: PRState): PullRequestFacts => ({
+	...pr(n, state),
+	url: `https://gitlab.example.com/group/app/-/merge_requests/${n}`,
 });
 
 const session = (id: string, prs: PullRequestFacts[]): WorkspaceSession => ({
@@ -92,5 +98,31 @@ describe("PullRequestsPage", () => {
 		renderPage();
 		expect(screen.getByText("Pull / merge requests")).toBeInTheDocument();
 		expect(screen.getByText("No open pull or merge requests.")).toBeInTheDocument();
+	});
+
+	it("localizes the table and formats each provider's number independently", async () => {
+		await initializeRendererI18n("zh-CN");
+		setWorkspaces([session("原始标题", [pr(41, "open"), gitlabPr(42, "draft")])]);
+		renderPage();
+
+		expect(screen.getByText("拉取 / 合并请求")).toBeInTheDocument();
+		expect(screen.getByText("#41")).toBeInTheDocument();
+		expect(screen.getByText("!42")).toBeInTheDocument();
+		expect(screen.getAllByText("原始标题")).not.toHaveLength(0);
+		expect(screen.getAllByRole("button", { name: "合并" })).toHaveLength(2);
+	});
+
+	it("retranslates an existing semantic merge error without remounting", async () => {
+		await initializeRendererI18n("en");
+		postMock.mockResolvedValueOnce({ data: undefined, error: {} });
+		setWorkspaces([session("auth", [pr(41, "open")])]);
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(screen.getByRole("button", { name: "Merge" }));
+		expect(await screen.findByText("merge failed")).toBeInTheDocument();
+
+		await i18n.changeLanguage("zh-CN");
+		expect(await screen.findByText("合并失败")).toBeInTheDocument();
 	});
 });

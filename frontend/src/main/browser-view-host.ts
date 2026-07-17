@@ -15,6 +15,7 @@ import type {
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
+import { BROWSER_ERROR } from "../shared/browser-errors";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -119,12 +120,12 @@ const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
 	if (raw === "") {
-		throw new Error("URL is required");
+		throw new Error(BROWSER_ERROR.urlRequired);
 	}
 	const candidate = withDefaultScheme(raw);
 	const url = new URL(candidate);
 	if (!ALLOWED_PROTOCOLS.has(url.protocol)) {
-		throw new Error(`Unsupported browser URL scheme: ${url.protocol}`);
+		throw new Error(BROWSER_ERROR.urlUnsupported);
 	}
 	return url;
 }
@@ -272,14 +273,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
-			throw new Error("Unsupported browser URL");
+			throw new Error(BROWSER_ERROR.urlUnsupported);
 		}
 		try {
 			await entry.view.webContents.loadURL(normalized.href);
 		} catch (err) {
 			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
 			entry.view.setVisible?.(false);
-			entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to load page") };
+			entry.state = {
+				...readNavState(entry),
+				error: err instanceof Error && err.message ? err.message : BROWSER_ERROR.loadFailed,
+			};
 			options.mainWindow.webContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
@@ -515,7 +519,7 @@ function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHos
 	const blockUnsafeNavigation = (event: Electron.Event, url: string) => {
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			event.preventDefault();
-			entry.state = { ...entry.state, error: "Unsupported browser URL" };
+			entry.state = { ...entry.state, error: BROWSER_ERROR.urlUnsupported };
 			options.mainWindow.webContents.send("browser:navState", entry.state);
 		}
 	};
@@ -541,7 +545,7 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
 		entry.view.setVisible?.(false);
-		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
+		entry.state = { ...readNavState(entry), error: errorDescription || BROWSER_ERROR.loadFailed };
 		options.mainWindow.webContents.send("browser:navState", entry.state);
 	});
 }

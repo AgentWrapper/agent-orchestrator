@@ -24,7 +24,7 @@ describe("createUpdateIpcHandlers", () => {
 
 		expect(await handlers.getSettings()).toEqual({ enabled: false, channel: "latest", nightlyAck: false });
 		await handlers.setSettings({ enabled: true, channel: "nightly", nightlyAck: true });
-		expect(handlers.getStatus()).toEqual({ state: "unsupported", message: "Updates are unavailable in remote client builds." });
+		expect(handlers.getStatus()).toEqual({ state: "unsupported" });
 		await handlers.check();
 		await handlers.download();
 		handlers.install();

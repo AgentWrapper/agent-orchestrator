@@ -15,7 +15,10 @@ export interface MigrationState {
 	lastAttemptAt?: string;
 	completedAt?: string;
 	report?: { projectsImported: number; projectsSkipped: number };
+	/** Legacy raw error field. New writes use errorCode/errorDetail. */
 	error?: string;
+	errorCode?: string;
+	errorDetail?: string;
 }
 
 export interface AppStateMarker {

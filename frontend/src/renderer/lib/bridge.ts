@@ -34,8 +34,8 @@ export const aoBridge: AoBridge =
 		},
 		daemon: {
 			getStatus: async () => ({
-				state: "stopped",
-				message: "Electron preload is not available in browser preview.",
+				state: "error",
+				code: "not_configured",
 			}),
 			start: async () => ({ state: "starting" }),
 			stop: async () => ({ state: "stopped" }),
@@ -45,7 +45,7 @@ export const aoBridge: AoBridge =
 			isRemoteClient: async () => false,
 			get: async () => null,
 			revealPassword: async () => null,
-			save: async () => ({ state: "error", code: "not_configured", message: "Electron preload is not available." }),
+			save: async () => ({ state: "error", code: "not_ready" }),
 		},
 		locale: {
 			get: async () => resolveLocaleSnapshot(previewLocalePreference, navigator.language),

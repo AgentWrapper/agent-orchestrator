@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { useTranslation } from "react-i18next";
+import { apiClient } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
+import { formatDateTime } from "../lib/format-time";
+import {
+	migrationActionError,
+	migrationActionErrorMessage,
+	migrationFailureFields,
+	persistedMigrationErrorMessage,
+	type MigrationActionError,
+} from "../lib/migration-errors";
 import { migrationOfferQueryKey } from "../hooks/useMigrationOffer";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { MigrationState, MigrationStatus } from "../../main/app-state";
@@ -31,13 +40,6 @@ async function fetchMigrationSettings(): Promise<MigrationView> {
 	};
 }
 
-const STATUS_LABEL: Record<MigrationStatus, string> = {
-	pending: "Not migrated yet",
-	completed: "Completed",
-	declined: "Declined",
-	failed: "Last attempt failed",
-};
-
 function statusClass(status: MigrationStatus): string {
 	switch (status) {
 		case "completed":
@@ -49,42 +51,54 @@ function statusClass(status: MigrationStatus): string {
 	}
 }
 
-function formatTime(iso?: string): string {
-	if (!iso) return "";
-	const d = new Date(iso);
-	return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
-}
-
 // MigrationSection is a drop-in Settings card for re-running the legacy-AO
 // import. It reads the persisted migration decision + the daemon's availability,
 // shows the last report/error, and exposes a Run / Re-run button that calls the
 // idempotent POST /api/v1/import (safe even when completed/declined/failed).
 // Issue #2205.
 export function MigrationSection() {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: migrationSettingsQueryKey,
 		queryFn: fetchMigrationSettings,
 	});
 
-	const run = useMutation({
+	const run = useMutation<void, MigrationActionError>({
 		mutationFn: async () => {
 			const nowIso = () => new Date().toISOString();
-			const { data, error } = await apiClient.POST("/api/v1/import");
+			let response: Awaited<ReturnType<typeof apiClient.POST>>;
+			try {
+				response = await apiClient.POST("/api/v1/import");
+			} catch (error) {
+				throw migrationActionError("operation", error);
+			}
+			const { data, error } = response;
 			if (error) {
-				const msg = apiErrorMessage(error);
-				await aoBridge.appState.setMigration({ status: "failed", lastAttemptAt: nowIso(), error: msg });
-				throw new Error(msg);
+				try {
+					await aoBridge.appState.setMigration({
+						status: "failed",
+						lastAttemptAt: nowIso(),
+						...migrationFailureFields(error),
+					});
+				} catch (writeError) {
+					throw migrationActionError("operation", writeError);
+				}
+				throw migrationActionError("api", error);
 			}
 			const report = data?.report;
-			await aoBridge.appState.setMigration({
-				status: "completed",
-				lastAttemptAt: nowIso(),
-				completedAt: nowIso(),
-				report: report
-					? { projectsImported: report.projectsImported, projectsSkipped: report.projectsSkipped }
-					: undefined,
-			});
+			try {
+				await aoBridge.appState.setMigration({
+					status: "completed",
+					lastAttemptAt: nowIso(),
+					completedAt: nowIso(),
+					report: report
+						? { projectsImported: report.projectsImported, projectsSkipped: report.projectsSkipped }
+						: undefined,
+				});
+			} catch (error) {
+				throw migrationActionError("operation", error);
+			}
 		},
 		onSettled: () => {
 			void queryClient.invalidateQueries({ queryKey: migrationSettingsQueryKey });
@@ -97,64 +111,77 @@ export function MigrationSection() {
 	const available = query.data?.available ?? false;
 	const legacyRoot = query.data?.legacyRoot ?? "";
 	const report = migration.report;
+	const persistedError = persistedMigrationErrorMessage(migration, t("migration.errors.failed"));
 	const completed = migration.status === "completed";
+	const statusLabel = t(
+		migration.status === "pending"
+			? "migration.status.pending"
+			: migration.status === "completed"
+				? "migration.status.completed"
+				: migration.status === "declined"
+					? "migration.status.declined"
+					: "migration.status.failed",
+	);
+	const attemptTime = formatDateTime(migration.completedAt || migration.lastAttemptAt);
 	const buttonLabel = run.isPending
-		? "Running…"
+		? t("migration.section.running")
 		: completed
-			? "Re-run migration"
+			? t("migration.section.rerun")
 			: migration.status === "failed"
-				? "Retry migration"
-				: "Run migration";
+				? t("migration.section.retry")
+				: t("migration.section.run");
 
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="text-control">Migration</CardTitle>
+				<CardTitle className="text-control">{t("migration.section.title")}</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
-				<p className="text-xs leading-row text-muted-foreground">
-					Import projects and orchestrator sessions from an earlier Agent Orchestrator install. Your old files are never
-					modified, and this is safe to run more than once.
-				</p>
+				<p className="text-xs leading-row text-muted-foreground">{t("migration.section.description")}</p>
 
 				<div className="flex flex-col gap-2 text-xs">
-					<Row label="Status">
-						<span className={statusClass(migration.status)}>{STATUS_LABEL[migration.status]}</span>
+					<Row label={t("migration.section.statusLabel")}>
+						<span className={statusClass(migration.status)}>{statusLabel}</span>
 					</Row>
-					{formatTime(migration.completedAt || migration.lastAttemptAt) && (
-						<Row label={completed ? "Completed" : "Last attempt"}>
-							<span className="text-foreground">{formatTime(migration.completedAt || migration.lastAttemptAt)}</span>
+					{attemptTime && (
+						<Row label={completed ? t("migration.section.completedLabel") : t("migration.section.lastAttempt")}>
+							<span className="text-foreground">{attemptTime}</span>
 						</Row>
 					)}
 					{report && (
-						<Row label="Last report">
+						<Row label={t("migration.section.lastReport")}>
 							<span className="text-foreground">
-								{report.projectsImported} imported, {report.projectsSkipped} already present
+								{t("migration.section.report", {
+									projectsImported: report.projectsImported,
+									projectsSkipped: report.projectsSkipped,
+								})}
 							</span>
 						</Row>
 					)}
-					<Row label="Legacy install">
+					<Row label={t("migration.section.legacyInstall")}>
 						{query.isLoading ? (
-							<span className="text-passive">Checking…</span>
+							<span className="text-passive">{t("migration.section.checking")}</span>
 						) : available ? (
-							<span className="font-mono text-caption text-foreground">{legacyRoot || "found"}</span>
+							<span className="font-mono text-caption text-foreground">
+								{legacyRoot || t("migration.section.found")}
+							</span>
 						) : (
-							<span className="text-passive">None found</span>
+							<span className="text-passive">{t("migration.section.noneFound")}</span>
 						)}
 					</Row>
 				</div>
 
-				{migration.status === "failed" && migration.error && (
-					<p className="text-xs leading-row text-error">
-						{migration.error}. Your legacy projects are untouched (nothing is ever deleted).
-					</p>
+				{!run.isError && persistedError && (
+					<p className="text-xs leading-row text-error">{t("migration.errors.untouched", { error: persistedError })}</p>
 				)}
 				{run.isError && (
 					<p className="text-xs leading-row text-error">
-						{run.error instanceof Error ? run.error.message : "Migration failed."}
+						{migrationActionErrorMessage(run.error, t("migration.errors.failed"))}
 					</p>
 				)}
-				{run.isSuccess && !run.isPending && <p className="text-xs leading-row text-success">Migration complete.</p>}
+				{run.isSuccess && !run.isPending && (
+					<p className="text-xs leading-row text-success">{t("migration.section.complete")}</p>
+				)}
 
 				<div className="flex items-center gap-3">
 					<Button
@@ -167,7 +194,7 @@ export function MigrationSection() {
 						{buttonLabel}
 					</Button>
 					{!available && !query.isLoading && (
-						<span className="text-xs text-passive">Nothing to import from a legacy install.</span>
+						<span className="text-xs text-passive">{t("migration.section.nothingToImport")}</span>
 					)}
 				</div>
 			</CardContent>

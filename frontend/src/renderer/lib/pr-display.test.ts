@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { PullRequestFacts, WorkspaceSession } from "../types/workspace";
 import {
+	changeRequestCollectionName,
+	changeRequestName,
+	changeRequestNumber,
 	changeRequestShortLabel,
 	prBrowserUrl,
 	prDiffSummary,
@@ -9,6 +12,7 @@ import {
 	prSummaryParts,
 	sessionPRDisplaySummaries,
 } from "./pr-display";
+import { initializeRendererI18n } from "../i18n";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -79,6 +83,40 @@ describe("sessionPRDisplaySummaries", () => {
 
 		expect(result.provider).toBe("gitlab");
 		expect(changeRequestShortLabel(result)).toBe("MR");
+	});
+});
+
+describe("provider-aware labels", () => {
+	it("uses provider-specific names and number punctuation in Chinese", async () => {
+		await initializeRendererI18n("zh-CN");
+		const github = summary();
+		const gitlab = summary({
+			provider: "gitlab",
+			url: "https://gitlab.example.com/group/app/-/merge_requests/7",
+			htmlUrl: "https://gitlab.example.com/group/app/-/merge_requests/7",
+		});
+
+		expect(changeRequestName(github)).toBe("拉取请求");
+		expect(changeRequestName(gitlab)).toBe("合并请求");
+		expect(changeRequestNumber(github)).toBe("#7");
+		expect(changeRequestNumber(gitlab)).toBe("!7");
+		expect(changeRequestCollectionName([github, gitlab])).toBe("拉取 / 合并请求");
+	});
+
+	it("uses i18next count rules for provider-specific collections", async () => {
+		await initializeRendererI18n("en");
+
+		expect(changeRequestName({ provider: "github" }, 1)).toBe("Pull request");
+		expect(changeRequestName({ provider: "github" }, 2)).toBe("Pull requests");
+		expect(changeRequestName({ provider: "gitlab" }, 1)).toBe("Merge request");
+		expect(changeRequestName({ provider: "gitlab" }, 2)).toBe("Merge requests");
+	});
+
+	it("treats the enriched provider as authoritative over the URL shape", () => {
+		const enriched = summary({ provider: "gitlab", url: "https://github.com/acme/repo/pull/7" });
+
+		expect(changeRequestShortLabel(enriched)).toBe("MR");
+		expect(changeRequestNumber(enriched)).toBe("!7");
 	});
 });
 
@@ -370,5 +408,35 @@ describe("prSummaryParts", () => {
 			status: "None",
 			summary: "Draft PR · Not ready for review",
 		});
+	});
+
+	it("localizes statuses and counts while preserving external labels and unknown reasons", async () => {
+		await initializeRendererI18n("zh-CN");
+		const parts = prSummaryParts(
+			summary({
+				title: "raw title 42",
+				ci: {
+					state: "failing",
+					failingChecks: [
+						{ name: "raw-check-a", status: "failed", conclusion: "raw-conclusion", url: "https://checks/a" },
+						{ name: "raw-check-b", status: "failed", conclusion: "raw-conclusion", url: "https://checks/b" },
+						{ name: "raw-check-c", status: "failed", conclusion: "raw-conclusion", url: "https://checks/c" },
+						{ name: "raw-check-d", status: "failed", conclusion: "raw-conclusion", url: "https://checks/d" },
+					],
+				},
+				mergeability: {
+					state: "blocked",
+					reasons: ["provider_raw_reason"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+				review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
+			}),
+		);
+
+		expect(parts.map((part) => `${part.label}:${part.status}`)).toEqual(["CI:失败", "合并:已阻止", "审查:需要修改"]);
+		expect(parts[0].links[0]).toMatchObject({ label: "raw-check-a", title: "raw-conclusion" });
+		expect(parts[0].overflowLabel).toBe("+1 项检查");
+		expect(parts[1].links[0]?.label).toBe("provider_raw_reason");
+		expect(prDiffSummary(summary())).toBe("2 个文件 · +10 -3");
 	});
 });

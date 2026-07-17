@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { initializeRendererI18n } from "../i18n";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { PRSummaryParts } from "./PRSummaryDisplay";
 
@@ -76,5 +77,29 @@ describe("PRSummaryParts", () => {
 		expect(screen.getByText("types")).toBeInTheDocument();
 		expect(screen.queryByText("build")).not.toBeInTheDocument();
 		expect(screen.getByText("+1 check")).toBeInTheDocument();
+	});
+
+	it("localizes count nouns without changing check names", async () => {
+		await initializeRendererI18n("zh-CN");
+		render(
+			<PRSummaryParts
+				interactiveLinks={false}
+				pr={summary({
+					ci: {
+						state: "failing",
+						failingChecks: [
+							{ name: "raw-unit", status: "failed", conclusion: "failure" },
+							{ name: "raw-lint", status: "failed", conclusion: "failure" },
+							{ name: "raw-types", status: "failed", conclusion: "failure" },
+							{ name: "raw-build", status: "failed", conclusion: "failure" },
+						],
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByText("raw-unit")).toBeInTheDocument();
+		expect(screen.getByText("+1 项检查")).toBeInTheDocument();
+		expect(screen.getByText(/2 个文件/)).toBeInTheDocument();
 	});
 });

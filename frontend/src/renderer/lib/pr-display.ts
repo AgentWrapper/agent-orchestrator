@@ -1,4 +1,5 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { i18n } from "../i18n";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
@@ -28,6 +29,7 @@ export type PRStatusRow = {
 };
 
 export type PRSummaryPartKey = "ci" | "review" | "merge";
+export type PRSummaryNoun = "check" | "comment" | "file" | "line" | "reason" | "reviewer";
 
 export type PRSummaryLink = {
 	label: string;
@@ -43,7 +45,7 @@ export type PRSummaryPart = {
 	links: PRSummaryLink[];
 	linkTotal?: number;
 	overflowLabel?: string;
-	overflowNoun?: string;
+	overflowNoun?: PRSummaryNoun;
 	tone: PRDisplayTone;
 };
 
@@ -55,16 +57,21 @@ export function changeRequestShortLabel(pr: Pick<SessionPRSummary, "provider">):
 	return pr.provider === "gitlab" ? "MR" : "PR";
 }
 
-export function changeRequestName(pr: Pick<SessionPRSummary, "provider">, plural = false): string {
-	if (pr.provider === "gitlab") return plural ? "Merge requests" : "Merge request";
-	return plural ? "Pull requests" : "Pull request";
+export function changeRequestName(pr: Pick<SessionPRSummary, "provider">, count = 1): string {
+	return i18n.t(pr.provider === "gitlab" ? "changeRequests.names.gitlab" : "changeRequests.names.github", {
+		count,
+	});
 }
 
 export function changeRequestCollectionName(prs: Pick<SessionPRSummary, "provider">[]): string {
 	const providers = new Set(prs.map((pr) => pr.provider));
-	if (providers.size === 1 && providers.has("gitlab")) return prs.length === 1 ? "Merge request" : "Merge requests";
-	if (providers.size <= 1) return prs.length === 1 ? "Pull request" : "Pull requests";
-	return "Pull / merge requests";
+	if (providers.size === 1 && providers.has("gitlab")) return changeRequestName({ provider: "gitlab" }, prs.length);
+	if (providers.size <= 1) return changeRequestName({ provider: "github" }, prs.length);
+	return i18n.t("changeRequests.names.mixed");
+}
+
+export function changeRequestNumber(pr: Pick<SessionPRSummary, "provider" | "number">): string {
+	return `${pr.provider === "gitlab" ? "!" : "#"}${pr.number}`;
 }
 
 export function prBrowserUrl(pr: SessionPRSummary): string {
@@ -101,7 +108,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		number: pr.number,
 		title: session.title,
 		state: pr.state,
-		provider: pr.url.includes("/-/merge_requests/") ? "gitlab" : "github",
+		provider: inferChangeRequestProvider(pr.url),
 		repo: session.workspaceName,
 		author: "",
 		sourceBranch: session.branch,
@@ -132,6 +139,14 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 	};
 }
 
+export function inferChangeRequestProvider(url: string): SessionPRSummary["provider"] {
+	try {
+		return new URL(url).pathname.includes("/-/merge_requests/") ? "gitlab" : "github";
+	} catch {
+		return "github";
+	}
+}
+
 export function prStatusRows(pr: SessionPRSummary): PRStatusRow[] {
 	return prSummaryParts(pr).map((part) => ({
 		key: part.key,
@@ -146,7 +161,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 	return [
 		{
 			key: "ci",
-			label: "CI",
+			label: i18n.t("changeRequests.parts.ci"),
 			status: ciLabel(pr.ci.state),
 			summary: ciSummary(pr),
 			links: ciLinks(pr),
@@ -157,7 +172,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "merge",
-			label: "Merge",
+			label: i18n.t("changeRequests.parts.merge"),
 			status: mergeabilityLabel(pr.mergeability.state),
 			summary: mergeSummary(pr),
 			links: mergeLinks(pr),
@@ -168,7 +183,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "review",
-			label: "Review",
+			label: i18n.t("changeRequests.parts.review"),
 			status: reviewLabel(pr.review.decision),
 			summary: reviewSummary(pr),
 			links: reviewLinks(pr),
@@ -186,7 +201,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 export function prDiffSummary(pr: SessionPRSummary): string | undefined {
 	const parts: string[] = [];
 	if (pr.changedFiles > 0) {
-		parts.push(`${pr.changedFiles} ${pluralize("file", pr.changedFiles)}`);
+		parts.push(countLabel("file", pr.changedFiles));
 	}
 	const lineDelta = formatLineDelta(pr.additions, pr.deletions);
 	if (lineDelta) {
@@ -197,7 +212,7 @@ export function prDiffSummary(pr: SessionPRSummary): string | undefined {
 
 function ciSummary(pr: SessionPRSummary): string | undefined {
 	if (pr.ci.state === "failing") {
-		return pr.ci.failingChecks.length === 0 ? "No failing check link observed" : undefined;
+		return pr.ci.failingChecks.length === 0 ? i18n.t("changeRequests.summaries.noFailingCheckLink") : undefined;
 	}
 	return undefined;
 }
@@ -218,13 +233,13 @@ function reviewSummary(pr: SessionPRSummary): string | undefined {
 		return undefined;
 	}
 	if (pr.state === "draft") {
-		return `Draft ${changeRequestShortLabel(pr)} · Not ready for review`;
+		return i18n.t("changeRequests.summaries.draft", { request: changeRequestShortLabel(pr) });
 	}
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
-		return reviewLinks(pr).length === 0 ? "Requested changes still active" : undefined;
+		return reviewLinks(pr).length === 0 ? i18n.t("changeRequests.summaries.changesActive") : undefined;
 	}
 	if (pr.review.decision === "review_required") {
-		return "Required review not submitted";
+		return i18n.t("changeRequests.summaries.reviewRequired");
 	}
 	return undefined;
 }
@@ -241,7 +256,7 @@ function reviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
 		links.push({
 			label: changeRequestShortLabel(pr),
 			href: prBrowserUrl(pr),
-			title: `Open ${changeRequestName(pr).toLowerCase()}`,
+			title: openChangeRequestTitle(pr),
 		});
 	}
 	return links;
@@ -252,10 +267,10 @@ function mergeSummary(pr: SessionPRSummary): string | undefined {
 		return formatDiffSummary(pr);
 	}
 	if (pr.mergeability.state === "conflicting") {
-		return mergeLinks(pr).length === 0 ? "Conflicts with the base branch" : undefined;
+		return mergeLinks(pr).length === 0 ? i18n.t("changeRequests.summaries.conflicts") : undefined;
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return mergeLinks(pr).length === 0 ? "Provider reports merge is blocked" : undefined;
+		return mergeLinks(pr).length === 0 ? i18n.t("changeRequests.summaries.providerBlocked") : undefined;
 	}
 	return formatDiffSummary(pr);
 }
@@ -301,7 +316,7 @@ function mergeLinkTotal(pr: SessionPRSummary): number {
 	return 0;
 }
 
-function mergeOverflowNoun(pr: SessionPRSummary): string {
+function mergeOverflowNoun(pr: SessionPRSummary): PRSummaryNoun {
 	return (pr.mergeability.conflictFiles ?? []).length > 0 ? "file" : "reason";
 }
 
@@ -336,13 +351,13 @@ function toMergeabilityState(value: string): SessionPRSummary["mergeability"]["s
 function ciLabel(state: SessionPRSummary["ci"]["state"]): string {
 	switch (state) {
 		case "passing":
-			return "Passing";
+			return i18n.t("changeRequests.ci.passing");
 		case "failing":
-			return "Failing";
+			return i18n.t("changeRequests.ci.failing");
 		case "pending":
-			return "Pending";
+			return i18n.t("changeRequests.ci.pending");
 		case "unknown":
-			return "Checking";
+			return i18n.t("changeRequests.ci.checking");
 	}
 }
 
@@ -362,13 +377,13 @@ function ciTone(state: SessionPRSummary["ci"]["state"]): PRDisplayTone {
 function reviewLabel(decision: SessionPRSummary["review"]["decision"]): string {
 	switch (decision) {
 		case "approved":
-			return "Approved";
+			return i18n.t("changeRequests.review.approved");
 		case "changes_requested":
-			return "Changes requested";
+			return i18n.t("changeRequests.review.changesRequested");
 		case "review_required":
-			return "Pending";
+			return i18n.t("changeRequests.review.pending");
 		case "none":
-			return "None";
+			return i18n.t("changeRequests.review.none");
 	}
 }
 
@@ -391,15 +406,15 @@ function reviewTone(
 function mergeabilityLabel(state: SessionPRSummary["mergeability"]["state"]): string {
 	switch (state) {
 		case "mergeable":
-			return "Mergeable";
+			return i18n.t("changeRequests.mergeability.mergeable");
 		case "conflicting":
-			return "Conflict";
+			return i18n.t("changeRequests.mergeability.conflict");
 		case "blocked":
-			return "Blocked";
+			return i18n.t("changeRequests.mergeability.blocked");
 		case "unstable":
-			return "Unstable";
+			return i18n.t("changeRequests.mergeability.unstable");
 		case "unknown":
-			return "Checking";
+			return i18n.t("changeRequests.mergeability.checking");
 	}
 }
 
@@ -419,11 +434,11 @@ function mergeabilityTone(state: SessionPRSummary["mergeability"]["state"]): PRD
 
 function formatDiffSummary(pr: SessionPRSummary): string | undefined {
 	if (pr.changedFiles > 0) {
-		return `${pr.changedFiles} ${pluralize("file", pr.changedFiles)}`;
+		return countLabel("file", pr.changedFiles);
 	}
 	const changedLines = pr.additions + pr.deletions;
 	if (changedLines > 0) {
-		return `${changedLines} ${pluralize("line", changedLines)}`;
+		return countLabel("line", changedLines);
 	}
 	return undefined;
 }
@@ -445,7 +460,7 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
 		href: file.url || href,
-		title: kind === "merge_conflict" ? "Open merge conflicts" : undefined,
+		title: kind === "merge_conflict" ? i18n.t("changeRequests.links.openMergeConflicts") : undefined,
 	}));
 	const reasonLinks =
 		fileLinks.length > 0 || kind === "merge_conflict"
@@ -455,7 +470,15 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 					href,
 				}));
 	const fallbackLink =
-		kind === "merge_conflict" && href ? [{ label: "conflicts", href, title: "Open merge conflicts" }] : [];
+		kind === "merge_conflict" && href
+			? [
+					{
+						label: i18n.t("changeRequests.links.conflicts"),
+						href,
+						title: i18n.t("changeRequests.links.openMergeConflicts"),
+					},
+				]
+			: [];
 	return fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
 }
 
@@ -501,7 +524,9 @@ function reviewerLabel(reviewer: SessionPRSummary["review"]["unresolvedBy"][numb
 }
 
 function reviewerDisplayName(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
-	return reviewer.isBot ? `${reviewer.reviewerId} bot` : reviewer.reviewerId;
+	return reviewer.isBot
+		? i18n.t("changeRequests.links.botReviewer", { reviewer: reviewer.reviewerId })
+		: reviewer.reviewerId;
 }
 
 function reviewAttentionLink(
@@ -513,7 +538,7 @@ function reviewAttentionLink(
 		return {
 			label: reviewerLabel(reviewer),
 			href: reviewer.reviewUrl,
-			title: `Open requested-changes review from ${reviewerDisplayName(reviewer)}`,
+			title: i18n.t("changeRequests.links.openRequestedChanges", { reviewer: reviewerDisplayName(reviewer) }),
 		};
 	}
 	if (inlineURL) {
@@ -522,42 +547,65 @@ function reviewAttentionLink(
 			href: inlineURL,
 			title:
 				reviewer.count > 0
-					? `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)} from ${reviewerDisplayName(reviewer)}`
-					: `Open review comments from ${reviewerDisplayName(reviewer)}`,
+					? i18n.t("changeRequests.links.unresolvedComments", {
+							count: reviewer.count,
+							reviewer: reviewerDisplayName(reviewer),
+						})
+					: i18n.t("changeRequests.links.openReviewComments", { reviewer: reviewerDisplayName(reviewer) }),
 		};
 	}
 	return {
 		label: reviewerLabel(reviewer),
 		href: prBrowserUrl(pr),
-		title: `Open ${changeRequestName(pr).toLowerCase()} for ${reviewerDisplayName(reviewer)}`,
+		title: i18n.t(
+			pr.provider === "gitlab" ? "changeRequests.links.openGitlabFor" : "changeRequests.links.openGithubFor",
+			{ reviewer: reviewerDisplayName(reviewer) },
+		),
 	};
 }
 
 function mergeReasonLabel(reason: string): string {
 	switch (reason) {
 		case "behind_base":
-			return "branch behind base";
+			return i18n.t("changeRequests.reasons.behindBase");
 		case "ci_failing":
-			return "CI failing";
+			return i18n.t("changeRequests.reasons.ciFailing");
 		case "changes_requested":
-			return "changes requested";
+			return i18n.t("changeRequests.reasons.changesRequested");
 		case "review_required":
-			return "review required";
+			return i18n.t("changeRequests.reasons.reviewRequired");
 		case "blocked_by_provider":
-			return "provider blocked";
+			return i18n.t("changeRequests.reasons.providerBlocked");
 		default:
-			return reason.replaceAll("_", " ");
+			return reason;
 	}
 }
 
-function overflowLabel(total: number, shown: number, noun: string): string | undefined {
+function overflowLabel(total: number, shown: number, noun: PRSummaryNoun): string | undefined {
 	const extra = total - shown;
 	if (extra <= 0) {
 		return undefined;
 	}
-	return `+${extra} ${pluralize(noun, extra)}`;
+	return `+${countLabel(noun, extra)}`;
 }
 
-function pluralize(noun: string, count: number): string {
-	return count === 1 ? noun : `${noun}s`;
+export function countLabel(noun: PRSummaryNoun, count: number): string {
+	switch (noun) {
+		case "check":
+			return i18n.t("changeRequests.counts.check", { count });
+		case "comment":
+			return i18n.t("changeRequests.counts.comment", { count });
+		case "file":
+			return i18n.t("changeRequests.counts.file", { count });
+		case "line":
+			return i18n.t("changeRequests.counts.line", { count });
+		case "reason":
+			return i18n.t("changeRequests.counts.reason", { count });
+		case "reviewer":
+			return i18n.t("changeRequests.counts.reviewer", { count });
+	}
+}
+
+function openChangeRequestTitle(pr: Pick<SessionPRSummary, "provider">): string {
+	return i18n.t(pr.provider === "gitlab" ? "changeRequests.links.openGitlab" : "changeRequests.links.openGithub");
 }

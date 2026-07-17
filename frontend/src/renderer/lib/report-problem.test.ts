@@ -7,6 +7,7 @@ import {
 	type ReportProblemInput,
 	type ReportProblemOutput,
 } from "./report-problem";
+import { initializeRendererI18n } from "../i18n";
 
 const diagnostics: ReportProblemDiagnostics = {
 	appVersion: "1.2.3-test",
@@ -147,5 +148,22 @@ describe("report problem drafts", () => {
 		const nextDiagnostics = await collectReportProblemDiagnostics(new Date("2026-07-02T00:00:00.000Z"));
 
 		expect(nextDiagnostics.routeSurface).toBe("session_detail");
+	});
+
+	it("keeps external draft and destination bytes independent from the interface language", async () => {
+		await initializeRendererI18n("en");
+		const outputs: ReportProblemOutput[] = ["github", "discord", "email"];
+		const english = outputs.map((output) => ({
+			output,
+			draft: formatReportProblemDraft(completeInput, diagnostics, output),
+			url: reportProblemDestinationUrl(completeInput, diagnostics, output),
+		}));
+
+		await initializeRendererI18n("zh-CN");
+
+		for (const { output, draft, url } of english) {
+			expect(formatReportProblemDraft(completeInput, diagnostics, output)).toBe(draft);
+			expect(reportProblemDestinationUrl(completeInput, diagnostics, output)).toBe(url);
+		}
 	});
 });

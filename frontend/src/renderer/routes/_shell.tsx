@@ -14,10 +14,10 @@ import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useA
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
-import { refreshDaemonStatus } from "../lib/daemon-status";
+import { daemonStatusMessage, refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { orchestratorErrorDescriptor, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
@@ -95,7 +95,7 @@ function ShellLayout() {
 			void captureRendererEvent("ao.renderer.project_add_requested");
 			const status = await refreshDaemonStatus();
 			if (status.state !== "ready" || !status.port) {
-				throw new Error(status.message || t("shell.errors.daemonNotReady"));
+				throw new Error(daemonStatusMessage(status, t, t("shell.errors.daemonNotReady")));
 			}
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
@@ -144,9 +144,7 @@ function ShellLayout() {
 				});
 			} catch (spawnError) {
 				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
-				const message = spawnError instanceof Error ? spawnError.message : t("shell.errors.startOrchestrator");
-				const startupMessage = t("shell.errors.projectAddedButStartFailed", { detail: message });
-				setOrchestratorStartupError(workspace.id, startupMessage);
+				setOrchestratorStartupError(workspace.id, orchestratorErrorDescriptor(spawnError));
 			}
 		},
 		[navigate, queryClient, setOrchestratorStartupError, t, updateWorkspaces],
@@ -283,9 +281,7 @@ function ShellLayout() {
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
 						workspaceError={
-							workspaceQuery.isError
-								? errorMessage(workspaceQuery.error, t("shell.errors.loadProjects"))
-								: undefined
+							workspaceQuery.isError ? errorMessage(workspaceQuery.error, t("shell.errors.loadProjects")) : undefined
 						}
 						workspaces={workspaces}
 					/>

@@ -20,7 +20,7 @@ describe("preload remoteServer bridge", () => {
 	let app: {
 		scanImportFolder(input: { path: string; mode: "project" | "workspace" }): Promise<{
 			path: string;
-			repos: Array<{ setupCode?: "PROJECT_UNBORN" }>;
+			repos: Array<{ setupCode?: "PROJECT_UNBORN"; reasonCode?: "NO_COMMITS" }>;
 		}>;
 	};
 	let remoteServer: {
@@ -52,6 +52,17 @@ describe("preload remoteServer bridge", () => {
 			mode: "project",
 		});
 		expect(result.repos[0]?.setupCode).toBe("PROJECT_UNBORN");
+	});
+
+	it("preserves the stable repository validation code from the scan IPC", async () => {
+		invoke.mockResolvedValueOnce({
+			path: "/repo/unborn",
+			repos: [{ reasonCode: "NO_COMMITS" }],
+		});
+
+		const result = await app.scanImportFolder({ path: "/repo/unborn", mode: "project" });
+
+		expect(result.repos[0]?.reasonCode).toBe("NO_COMMITS");
 	});
 
 	it("uses a separate IPC call for explicit password reveal", async () => {

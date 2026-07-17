@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
+import type { TFunction } from "i18next";
 import { type FormEvent, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
@@ -8,12 +9,44 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorMessage, safeExternalErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 
 type Project = components["schemas"]["Project"];
+
+const newTaskFallbackKeys = [
+	"sessions.newTask.required",
+	"sessions.newTask.projectUnavailable",
+	"sessions.newTask.startFailed",
+	"sessions.newTask.missingSession",
+] as const;
+
+type NewTaskFallbackKey = (typeof newTaskFallbackKeys)[number];
+
+type NewTaskError =
+	| { kind: "fallback"; key: NewTaskFallbackKey }
+	| { kind: "api"; cause: unknown }
+	| { kind: "detail"; detail: string };
+
+function isNewTaskError(value: unknown): value is NewTaskError {
+	if (typeof value !== "object" || value === null || !("kind" in value)) return false;
+	const candidate = value as { kind: unknown; key?: unknown; cause?: unknown; detail?: unknown };
+	if (candidate.kind === "api") return "cause" in candidate;
+	if (candidate.kind === "detail") return typeof candidate.detail === "string";
+	return (
+		candidate.kind === "fallback" &&
+		typeof candidate.key === "string" &&
+		newTaskFallbackKeys.includes(candidate.key as NewTaskFallbackKey)
+	);
+}
+
+function newTaskErrorMessage(error: NewTaskError, t: TFunction): string {
+	if (error.kind === "detail") return error.detail;
+	if (error.kind === "api") return apiErrorMessage(error.cause, t("sessions.newTask.startFailed"));
+	return t(error.key);
+}
 
 type NewTaskDialogProps = {
 	open: boolean;
@@ -35,7 +68,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [error, setError] = useState<string | undefined>();
+	const [error, setError] = useState<NewTaskError | undefined>();
 
 	const projectQuery = useQuery({
 		queryKey: ["project", projectId],
@@ -44,8 +77,10 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
 				params: { path: { id: projectId as string } },
 			});
-			if (apiError) throw new Error(apiErrorMessage(apiError));
-			if (data?.status !== "ok") throw new Error(t("sessions.newTask.projectUnavailable"));
+			if (apiError) throw { kind: "api", cause: apiError } satisfies NewTaskError;
+			if (data?.status !== "ok") {
+				throw { kind: "fallback", key: "sessions.newTask.projectUnavailable" } satisfies NewTaskError;
+			}
 			return data.project as Project;
 		},
 	});
@@ -86,7 +121,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		const cleanPrompt = prompt.trim();
 		const cleanBranch = branch.trim();
 		if (!cleanTitle || !cleanPrompt) {
-			setError(t("sessions.newTask.required"));
+			setError({ kind: "fallback", key: "sessions.newTask.required" });
 			return;
 		}
 
@@ -104,15 +139,24 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 					branch: cleanBranch || undefined,
 				},
 			});
-			if (apiError) throw new Error(apiErrorMessage(apiError, t("sessions.newTask.startFailed")));
-			if (!data?.session?.id) throw new Error(t("sessions.newTask.missingSession"));
+			if (apiError) throw { kind: "api", cause: apiError } satisfies NewTaskError;
+			if (!data?.session?.id) {
+				throw { kind: "fallback", key: "sessions.newTask.missingSession" } satisfies NewTaskError;
+			}
 			void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: projectId });
 			onCreated(data.session.id);
 			onOpenChange(false);
 		} catch (err) {
 			void captureRendererEvent("ao.renderer.task_create_failed", { project_id: projectId });
 			void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
-			setError(err instanceof Error ? err.message : t("sessions.newTask.startFailed"));
+			const detail = safeExternalErrorMessage(err);
+			setError(
+				isNewTaskError(err)
+					? err
+					: detail
+						? { kind: "detail", detail }
+						: { kind: "fallback", key: "sessions.newTask.startFailed" },
+			);
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -212,15 +256,14 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 
 						{error && (
 							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-								{error}
+								{newTaskErrorMessage(error, t)}
 							</div>
 						)}
 
 						{refreshAgentsMutation.isError && (
 							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-								{refreshAgentsMutation.error instanceof Error
-									? refreshAgentsMutation.error.message
-									: t("sessions.newTask.refreshFailed")}
+								{safeExternalErrorMessage(refreshAgentsMutation.error) ??
+									apiErrorMessage(refreshAgentsMutation.error, t("sessions.newTask.refreshFailed"))}
 							</div>
 						)}
 

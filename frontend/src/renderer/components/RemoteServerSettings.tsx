@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import type { DaemonStatus } from "../../shared/daemon-status";
+import { useTranslation } from "react-i18next";
+import { safeDaemonStatusDetail, type DaemonStatus } from "../../shared/daemon-status";
 import { aoBridge } from "../lib/bridge";
+import { daemonStatusMessage } from "../lib/daemon-status";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -9,11 +11,16 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 
 type FormProps = {
-	actionLabel: string;
+	action: "connect" | "save";
 	onConnected?: (status: DaemonStatus) => void;
 };
 
-function ConnectionForm({ actionLabel, onConnected }: FormProps) {
+type ConnectionError =
+	| { kind: "load" | "reveal"; cause?: unknown }
+	| { kind: "connect"; status?: DaemonStatus; cause?: unknown };
+
+function ConnectionForm({ action, onConnected }: FormProps) {
+	const { t } = useTranslation();
 	const id = useId();
 	const [host, setHost] = useState("");
 	const [port, setPort] = useState("3011");
@@ -24,7 +31,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 	const [showPassword, setShowPassword] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<ConnectionError | null>(null);
 	const [saved, setSaved] = useState(false);
 	const mounted = useRef(true);
 	const passwordRef = useRef("");
@@ -47,7 +54,9 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 				setPasswordConfigured(config.passwordConfigured);
 			})
 			.catch((cause) => {
-				if (active) setError(cause instanceof Error ? cause.message : "Could not load server settings.");
+				if (active) {
+					setError({ kind: "load", cause });
+				}
 			})
 			.finally(() => {
 				if (active) setLoading(false);
@@ -61,6 +70,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 	}, []);
 
 	const togglePasswordVisibility = async () => {
+		setError(null);
 		if (showPassword) {
 			revealGeneration.current += 1;
 			if (revealedSavedPassword && !passwordEdited) updatePassword("");
@@ -72,7 +82,18 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 			const generation = revealGeneration.current + 1;
 			revealGeneration.current = generation;
 			setShowPassword(true);
-			const revealed = await aoBridge.remoteServer.revealPassword();
+			let revealed: string | null;
+			try {
+				revealed = await aoBridge.remoteServer.revealPassword();
+			} catch (cause) {
+				if (!mounted.current || generation !== revealGeneration.current) return;
+				revealGeneration.current += 1;
+				updatePassword("");
+				setRevealedSavedPassword(false);
+				setShowPassword(false);
+				setError({ kind: "reveal", cause });
+				return;
+			}
 			if (!mounted.current || generation !== revealGeneration.current) return;
 			if (revealed === null) {
 				setShowPassword(false);
@@ -105,7 +126,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 		try {
 			const status = await aoBridge.remoteServer.save(input);
 			if (status.state !== "ready") {
-				setError(status.message || "Could not connect to the AO server.");
+				setError({ kind: "connect", status });
 				return;
 			}
 			if (passwordEdited) {
@@ -117,14 +138,39 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 			setSaved(true);
 			onConnected?.(status);
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Could not connect to the AO server.");
+			setError({ kind: "connect", cause });
 		} finally {
 			setSaving(false);
 		}
 	};
 
+	const errorMessage = (() => {
+		if (!error) return "";
+		const fallback = t(
+			error.kind === "load"
+				? "remoteServer.errors.load"
+				: error.kind === "reveal"
+					? "remoteServer.errors.reveal"
+					: "remoteServer.errors.connect",
+		);
+		if (error.kind === "connect") {
+			if (error.status) return daemonStatusMessage(error.status, t, fallback);
+			return daemonStatusMessage(
+				{
+					state: "error",
+					code: "daemon_unreachable",
+					...(error.cause instanceof Error ? { message: error.cause.message } : {}),
+				},
+				t,
+				fallback,
+			);
+		}
+		const detail = safeDaemonStatusDetail(error.cause);
+		return detail ? t("daemonStatus.withDetail", { summary: fallback, detail }) : fallback;
+	})();
+
 	if (loading) {
-		return <Loader2 aria-label="Loading server settings" className="h-4 w-4 animate-spin text-muted-foreground" />;
+		return <Loader2 aria-label={t("remoteServer.loading")} className="h-4 w-4 animate-spin text-muted-foreground" />;
 	}
 
 	return (
@@ -132,13 +178,13 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 			<div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
 				<div className="flex min-w-0 flex-col gap-1.5">
 					<Label htmlFor={`${id}-host`} className="text-xs text-muted-foreground">
-						Server IP or hostname
+						{t("remoteServer.host")}
 					</Label>
 					<Input id={`${id}-host`} value={host} onChange={(event) => setHost(event.target.value)} required autoFocus />
 				</div>
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor={`${id}-port`} className="text-xs text-muted-foreground">
-						Port
+						{t("remoteServer.port")}
 					</Label>
 					<Input
 						id={`${id}-port`}
@@ -153,7 +199,7 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 			</div>
 			<div className="flex flex-col gap-1.5">
 				<Label htmlFor={`${id}-password`} className="text-xs text-muted-foreground">
-					Connection password
+					{t("remoteServer.password")}
 				</Label>
 				<div className="relative">
 					<Input
@@ -176,8 +222,8 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 						variant="ghost"
 						size="icon-sm"
 						className="absolute right-1 top-1/2 -translate-y-1/2"
-						aria-label={showPassword ? "Hide password" : "Show password"}
-						title={showPassword ? "Hide password" : "Show password"}
+						aria-label={t(showPassword ? "remoteServer.hidePassword" : "remoteServer.showPassword")}
+						title={t(showPassword ? "remoteServer.hidePassword" : "remoteServer.showPassword")}
 						onClick={() => void togglePasswordVisibility()}
 					>
 						{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -187,10 +233,10 @@ function ConnectionForm({ actionLabel, onConnected }: FormProps) {
 			<div className="flex min-h-8 items-center gap-3">
 				<Button type="submit" variant="primary" disabled={saving}>
 					{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-					{actionLabel}
+					{t(action === "connect" ? "remoteServer.connect" : "remoteServer.save")}
 				</Button>
-				{error && <span className="text-xs text-error">{error}</span>}
-				{saved && !error && <span className="text-xs text-success">Saved.</span>}
+				{error && <span className="text-xs text-error">{errorMessage}</span>}
+				{saved && !error && <span className="text-xs text-success">{t("remoteServer.saved")}</span>}
 			</div>
 		</form>
 	);
@@ -203,6 +249,7 @@ export function RemoteServerDialog({
 	open: boolean;
 	onConnected?: (status: DaemonStatus) => void;
 }) {
+	const { t } = useTranslation();
 	const [remote, setRemote] = useState(false);
 	useEffect(() => {
 		void aoBridge.remoteServer.isRemoteClient().then(setRemote);
@@ -217,15 +264,16 @@ export function RemoteServerDialog({
 				onPointerDownOutside={(event) => event.preventDefault()}
 			>
 				<DialogHeader>
-					<DialogTitle className="text-[15px]">Connect to AO server</DialogTitle>
+					<DialogTitle className="text-[15px]">{t("remoteServer.dialogTitle")}</DialogTitle>
 				</DialogHeader>
-				<ConnectionForm actionLabel="Connect" onConnected={onConnected} />
+				<ConnectionForm action="connect" onConnected={onConnected} />
 			</DialogContent>
 		</Dialog>
 	);
 }
 
 export function RemoteServerSettingsSection() {
+	const { t } = useTranslation();
 	const [remote, setRemote] = useState<boolean | null>(null);
 	useEffect(() => {
 		void aoBridge.remoteServer.isRemoteClient().then(setRemote);
@@ -234,10 +282,10 @@ export function RemoteServerSettingsSection() {
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="text-control">Remote server</CardTitle>
+				<CardTitle className="text-control">{t("remoteServer.title")}</CardTitle>
 			</CardHeader>
 			<CardContent>
-				<ConnectionForm actionLabel="Save connection" />
+				<ConnectionForm action="save" />
 			</CardContent>
 		</Card>
 	);

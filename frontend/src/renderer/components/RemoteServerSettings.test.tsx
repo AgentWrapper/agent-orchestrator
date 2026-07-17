@@ -1,11 +1,14 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n, initializeRendererI18n } from "../i18n";
 import { RemoteServerDialog, RemoteServerSettingsSection } from "./RemoteServerSettings";
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 	let resolve: (value: T) => void = () => undefined;
-	const promise = new Promise<T>((done) => { resolve = done; });
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
 	return { promise, resolve };
 }
 
@@ -40,10 +43,10 @@ describe("RemoteServerSettings", () => {
 		expect(onConnected).toHaveBeenCalledWith({ state: "ready", port: 4317 });
 	});
 
-	it("keeps the dialog open and shows a connection error", async () => {
+	it("keeps the dialog open and retranslates a semantic connection error", async () => {
 		vi.mocked(window.ao!.remoteServer.save).mockResolvedValueOnce({
 			state: "error",
-			code: "daemon_unreachable",
+			code: "remote_bad_password",
 			message: "Connection password is invalid.",
 		});
 		const user = userEvent.setup();
@@ -53,8 +56,46 @@ describe("RemoteServerSettings", () => {
 		await user.type(screen.getByLabelText("Connection password"), "wrong");
 		await user.click(screen.getByRole("button", { name: "Connect" }));
 
-		expect(await screen.findByText("Connection password is invalid.")).toBeInTheDocument();
+		expect(await screen.findByText("The connection password is incorrect.")).toBeInTheDocument();
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("连接密码不正确。")).toBeInTheDocument();
+		expect(screen.queryByText("Connection password is invalid.")).not.toBeInTheDocument();
+	});
+
+	it("preserves a safe raw save failure while retranslating its prefix", async () => {
+		vi.mocked(window.ao!.remoteServer.save).mockRejectedValueOnce(new Error("connect ECONNREFUSED 192.168.2.220:3011"));
+		const user = userEvent.setup();
+		render(<RemoteServerDialog open />);
+
+		await user.type(await screen.findByLabelText("Server IP or hostname"), "server");
+		await user.type(screen.getByLabelText("Connection password"), "wrong");
+		await user.click(screen.getByRole("button", { name: "Connect" }));
+
+		expect(
+			await screen.findByText("Could not reach the AO daemon: connect ECONNREFUSED 192.168.2.220:3011"),
+		).toBeInTheDocument();
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("无法连接 AO 守护进程：connect ECONNREFUSED 192.168.2.220:3011")).toBeInTheDocument();
+	});
+
+	it("localizes a forwarder bind failure without exposing an app-owned English diagnostic", async () => {
+		await initializeRendererI18n("zh-CN");
+		vi.mocked(window.ao!.remoteServer.save).mockResolvedValueOnce({
+			state: "error",
+			code: "remote_forwarder_bind_failed",
+			message: "Remote forwarder did not bind a TCP port",
+		});
+		const user = userEvent.setup();
+		render(<RemoteServerDialog open />);
+
+		await user.type(await screen.findByLabelText("服务器 IP 或主机名"), "server");
+		await user.type(screen.getByLabelText("连接密码"), "secret");
+		await user.click(screen.getByRole("button", { name: "连接" }));
+
+		expect(await screen.findByText("无法启动本地远程转发器。")).toBeInTheDocument();
+		expect(screen.queryByText("Remote forwarder did not bind a TCP port")).not.toBeInTheDocument();
 	});
 
 	it("loads a masked placeholder and retrieves the saved password only on explicit reveal", async () => {
@@ -220,5 +261,49 @@ describe("RemoteServerSettings", () => {
 
 		await waitFor(() => expect(window.ao!.remoteServer.isRemoteClient).toHaveBeenCalled());
 		expect(container).toBeEmptyDOMElement();
+	});
+
+	it("localizes remote settings while preserving host, port, and the masked password state", async () => {
+		await initializeRendererI18n("zh-CN");
+		window.ao!.remoteServer.get = vi.fn(async () => ({
+			host: "gitlab.internal",
+			port: 3011,
+			passwordConfigured: true,
+		}));
+		render(<RemoteServerSettingsSection />);
+
+		expect(await screen.findByText("远程服务器")).toBeInTheDocument();
+		expect(await screen.findByLabelText("服务器 IP 或主机名")).toHaveValue("gitlab.internal");
+		expect(screen.getByLabelText("端口")).toHaveValue(3011);
+		const password = screen.getByLabelText("连接密码");
+		expect(password).toHaveAttribute("type", "password");
+		expect(password).toHaveAttribute("placeholder", "********");
+		expect(window.ao!.remoteServer.revealPassword).not.toHaveBeenCalled();
+		expect(screen.getByRole("button", { name: "显示密码" })).toBeInTheDocument();
+	});
+
+	it("updates a local load fallback after a live language change", async () => {
+		window.ao!.remoteServer.get = vi.fn(async () => Promise.reject(null));
+		render(<RemoteServerSettingsSection />);
+
+		expect(await screen.findByText("Could not load server settings.")).toBeInTheDocument();
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("无法加载服务器设置。")).toBeInTheDocument();
+	});
+
+	it("hides the field and updates a reveal fallback when secure storage rejects", async () => {
+		window.ao!.remoteServer.get = vi.fn(async () => ({ host: "claude.local", port: 3011, passwordConfigured: true }));
+		window.ao!.remoteServer.revealPassword = vi.fn(async () => Promise.reject(null));
+		const user = userEvent.setup();
+		render(<RemoteServerSettingsSection />);
+
+		const password = await screen.findByLabelText("Connection password");
+		await user.click(screen.getByRole("button", { name: "Show password" }));
+
+		expect(await screen.findByText("Could not reveal the saved password.")).toBeInTheDocument();
+		expect(password).toHaveAttribute("type", "password");
+		expect(password).toHaveValue("");
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("无法显示已保存的密码。")).toBeInTheDocument();
 	});
 });

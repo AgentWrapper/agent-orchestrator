@@ -15,18 +15,25 @@ vi.mock("../lib/api-client", () => ({
 		PUT: putMock,
 		POST: postMock,
 	},
-	apiErrorMessage: (error: unknown) => {
+	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error) {
+			if ((error as { code?: unknown }).code === "AGENT_BINARY_NOT_FOUND") {
+				return i18n.t("errors.codes.AGENT_BINARY_NOT_FOUND");
+			}
 			return String((error as { message: unknown }).message);
 		}
-		return "Request failed";
+		return fallback;
 	},
+	safeExternalErrorMessage: (error: unknown) =>
+		error instanceof Error && !/(?:authorization|bearer|token|password|secret)/i.test(error.message)
+			? error.message
+			: undefined,
 }));
 
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { initializeRendererI18n } from "../i18n";
+import { i18n, initializeRendererI18n } from "../i18n";
 import type { WorkspaceSummary } from "../types/workspace";
 
 function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
@@ -373,23 +380,23 @@ describe("ProjectSettingsForm", () => {
 	it("preserves project-level GitLab intake and previews subgroup repositories", async () => {
 		mockProject(
 			{
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@gitlab.example.com:group/subgroup/project-one.git",
-					defaultBranch: "main",
-					config: {
-						scm: { provider: "gitlab", connectionId: "gitlab-main" },
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-						trackerIntake: {
-							enabled: true,
-							provider: "gitlab",
-							assignee: "alice",
-							labels: ["ready", "backend"],
-						},
+				id: "proj-1",
+				name: "Project One",
+				kind: "single_repo",
+				path: "/repo/project-one",
+				repo: "git@gitlab.example.com:group/subgroup/project-one.git",
+				defaultBranch: "main",
+				config: {
+					scm: { provider: "gitlab", connectionId: "gitlab-main" },
+					worker: { agent: "codex" },
+					orchestrator: { agent: "claude-code" },
+					trackerIntake: {
+						enabled: true,
+						provider: "gitlab",
+						assignee: "alice",
+						labels: ["ready", "backend"],
 					},
+				},
 			},
 			[
 				{
@@ -598,5 +605,67 @@ describe("ProjectSettingsForm", () => {
 		});
 		expect(screen.getByText("协调器重启失败：missing goose binary")).toBeInTheDocument();
 		expect(screen.getByText("已保存。")).toBeInTheDocument();
+	});
+
+	it("relocalizes a stable orchestrator replacement error after save without remounting", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: {
+				error: "Bad Request",
+				code: "AGENT_BINARY_NOT_FOUND",
+				message: "agent binary not found on PATH",
+			},
+			response: { status: 400 },
+		});
+
+		renderSettings();
+		await chooseOption(await screen.findByRole("combobox", { name: "Default orchestrator agent" }), "Goose");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		expect(
+			await screen.findByText("Orchestrator restart failed: The selected agent is not installed"),
+		).toBeInTheDocument();
+
+		await act(async () => initializeRendererI18n("zh-CN"));
+		expect(screen.getByText("协调器重启失败：未安装所选智能体")).toBeInTheDocument();
+	});
+
+	it("filters credential-bearing replacement failures and retranslates the fallback", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+		postMock.mockRejectedValueOnce(new Error("Authorization: Bearer settings-secret"));
+
+		renderSettings();
+		await chooseOption(await screen.findByRole("combobox", { name: "Default orchestrator agent" }), "Goose");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(
+			await screen.findByText("Orchestrator restart failed: The project orchestrator could not be replaced."),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/settings-secret/)).not.toBeInTheDocument();
+		await act(async () => initializeRendererI18n("zh-CN"));
+		expect(screen.getByText("协调器重启失败：无法替换项目协调器。")).toBeInTheDocument();
+		expect(screen.queryByText(/settings-secret/)).not.toBeInTheDocument();
 	});
 });

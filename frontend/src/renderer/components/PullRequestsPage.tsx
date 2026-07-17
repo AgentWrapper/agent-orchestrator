@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import {
@@ -8,7 +9,12 @@ import {
 	sessionScmSummaryQueryOptions,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
-import { comparePRDisplaySummaries, prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
+import {
+	changeRequestNumber,
+	comparePRDisplaySummaries,
+	prDiffSummary,
+	sessionPRDisplaySummaries,
+} from "../lib/pr-display";
 import type { WorkspaceSession } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Badge } from "./ui/badge";
@@ -37,6 +43,7 @@ type PRRow = {
 // /prs/{number}/merge and /resolve-comments. Per-PR CI/review facts also live on
 // the session route's inspector.
 export function PullRequestsPage() {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
 	const sessions = (workspaceQuery.data ?? []).flatMap((w) => w.sessions);
@@ -52,22 +59,22 @@ export function PullRequestsPage() {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<DashboardSubhead
-				title="Pull / merge requests"
-				subtitle="Open pull and merge requests across every agent session."
+				title={t("pullRequests.title")}
+				subtitle={t("pullRequests.subtitle")}
 				count={rows.length}
 			/>
 
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				{rows.length === 0 ? (
-					<p className="py-10 text-center text-xs text-passive">No open pull or merge requests.</p>
+					<p className="py-10 text-center text-xs text-passive">{t("pullRequests.empty")}</p>
 				) : (
 					<Table>
 						<TableHeader>
 							<TableRow>
-								<TableHead className="w-pr-col-number">PR / MR</TableHead>
-								<TableHead>Worker</TableHead>
-								<TableHead className="w-pr-col-state">State</TableHead>
-								<TableHead className="w-pr-table-actions text-right">Actions</TableHead>
+								<TableHead className="w-pr-col-number">{t("pullRequests.columns.request")}</TableHead>
+								<TableHead>{t("pullRequests.columns.worker")}</TableHead>
+								<TableHead className="w-pr-col-state">{t("pullRequests.columns.state")}</TableHead>
+								<TableHead className="w-pr-table-actions text-right">{t("pullRequests.columns.actions")}</TableHead>
 							</TableRow>
 						</TableHeader>
 						<TableBody>
@@ -92,8 +99,14 @@ export function PullRequestsPage() {
 }
 
 function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+	const [note, setNote] = useState<
+		| { kind: "merged"; method: string }
+		| { kind: "resolved" }
+		| { kind: "mergeError" | "resolveError"; error: unknown }
+		| null
+	>(null);
 	const refresh = () => {
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
@@ -104,14 +117,14 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 			const { data, error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
 				params: { path: { id: String(row.pr.number) } },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) throw error;
 			return data;
 		},
 		onSuccess: (data) => {
-			setNote({ ok: true, text: `merged (${data?.method ?? "squash"})` });
+			setNote({ kind: "merged", method: data?.method ?? "squash" });
 			refresh();
 		},
-		onError: (e) => setNote({ ok: false, text: e instanceof Error ? e.message : "merge failed" }),
+		onError: (error) => setNote({ kind: "mergeError", error }),
 	});
 
 	const resolve = useMutation({
@@ -119,20 +132,20 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 			const { error } = await apiClient.POST("/api/v1/prs/{id}/resolve-comments", {
 				params: { path: { id: String(row.pr.number) } },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) throw error;
 		},
 		onSuccess: () => {
-			setNote({ ok: true, text: "comments resolved" });
+			setNote({ kind: "resolved" });
 			refresh();
 		},
-		onError: (e) => setNote({ ok: false, text: e instanceof Error ? e.message : "resolve failed" }),
+		onError: (error) => setNote({ kind: "resolveError", error }),
 	});
 
 	const actionable = row.pr.state === "open" || row.pr.state === "draft";
 
 	return (
 		<TableRow className="cursor-pointer" onClick={onOpen}>
-			<TableCell className="font-mono text-xs text-muted-foreground">#{row.pr.number}</TableCell>
+			<TableCell className="font-mono text-xs text-muted-foreground">{changeRequestNumber(row.pr)}</TableCell>
 			<TableCell className="max-w-0">
 				<div className="truncate text-control text-foreground">{row.pr.title || row.session.title}</div>
 				<div className="truncate font-mono text-micro text-passive">
@@ -149,12 +162,26 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 			</TableCell>
 			<TableCell>
 				<Badge variant="outline" className={cn("h-5 px-1.5 text-micro font-medium", stateTone[row.pr.state])}>
-					{row.pr.state}
+					{t(`changeRequests.states.${row.pr.state}`)}
 				</Badge>
 			</TableCell>
 			<TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
 				{note ? (
-					<span className={cn("text-caption", note.ok ? "text-success" : "text-error")}>{note.text}</span>
+					<span
+						className={cn(
+							"text-caption",
+							note.kind === "merged" || note.kind === "resolved" ? "text-success" : "text-error",
+						)}
+					>
+						{note.kind === "merged"
+							? t("pullRequests.notes.merged", { method: note.method })
+							: note.kind === "resolved"
+								? t("pullRequests.notes.resolved")
+								: apiErrorMessage(
+										note.error,
+										t(note.kind === "mergeError" ? "pullRequests.errors.merge" : "pullRequests.errors.resolve"),
+									)}
+					</span>
 				) : actionable ? (
 					<div className="flex items-center justify-end gap-1.5">
 						<Button
@@ -164,7 +191,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 							disabled={resolve.isPending}
 							onClick={() => resolve.mutate()}
 						>
-							{resolve.isPending ? "…" : "Resolve"}
+							{resolve.isPending ? "…" : t("pullRequests.actions.resolve")}
 						</Button>
 						<Button
 							size="sm"
@@ -173,7 +200,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 							disabled={merge.isPending}
 							onClick={() => merge.mutate()}
 						>
-							{merge.isPending ? "Merging…" : "Merge"}
+							{merge.isPending ? t("pullRequests.actions.merging") : t("pullRequests.actions.merge")}
 						</Button>
 					</div>
 				) : (

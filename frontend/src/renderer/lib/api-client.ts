@@ -13,6 +13,7 @@ const initialApiBaseUrl = explicitApiBaseUrl ?? (import.meta.env.DEV ? devApiBas
 let runtimeApiBaseUrl: string | null = explicitApiBaseUrl ?? null;
 
 const baseUrlListeners = new Set<() => void>();
+const daemonNotReadyCode = "DAEMON_NOT_READY";
 
 export function getApiBaseUrl(): string {
 	return runtimeApiBaseUrl ?? "";
@@ -168,10 +169,13 @@ async function runtimeFetch(input: Request): Promise<Response> {
 	const baseUrl = runtimeApiBaseUrl;
 	if (baseUrl === null) {
 		reportApiError(operation, "daemon_unavailable", 503);
-		return new Response(JSON.stringify({ message: "AO daemon is not ready." }), {
-			status: 503,
-			headers: { "Content-Type": "application/json" },
-		});
+		return new Response(
+			JSON.stringify({ error: "unavailable", code: daemonNotReadyCode, message: daemonNotReadyCode }),
+			{
+				status: 503,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
 	}
 
 	const send = async (): Promise<Response> => {
@@ -237,6 +241,8 @@ export function apiErrorCode(error: unknown): string | undefined {
 }
 
 const STABLE_API_ERROR_CODES = [
+	"DAEMON_NOT_READY",
+	"REMOTE_DAEMON_UNAVAILABLE",
 	"BAD_PASSWORD",
 	"LOCKED_OUT",
 	"ORIGIN_FORBIDDEN",
@@ -408,6 +414,26 @@ function structuredAPIMessage(error: unknown): string | undefined {
 	const message = body.message.trim();
 	if (containsCredential(message)) return undefined;
 	return message;
+}
+
+export interface APIErrorSnapshot {
+	code?: string;
+	detail?: string;
+}
+
+/** Return only locale-neutral API error data that is safe to persist. */
+export function apiErrorSnapshot(error: unknown): APIErrorSnapshot {
+	const code = apiErrorCode(error);
+	if (code && Object.hasOwn(ERROR_CODE_KEYS, code)) return { code };
+	const detail = structuredAPIMessage(error);
+	return detail ? { detail } : {};
+}
+
+/** Preserve useful local operation failures without exposing credential-bearing text. */
+export function safeExternalErrorMessage(error: unknown): string | undefined {
+	if (!(error instanceof Error)) return undefined;
+	const message = error.message.trim();
+	return message && !containsCredential(message) ? message : undefined;
 }
 
 export function apiErrorMessage(error: unknown, fallback: string = i18n.t("errors.generic")): string {

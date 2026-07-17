@@ -7,7 +7,8 @@ const { spawnMock } = vi.hoisted(() => ({
 	spawnMock: vi.fn(),
 }));
 
-vi.mock("./spawn-orchestrator", () => ({
+vi.mock("./spawn-orchestrator", async (importOriginal) => ({
+	...(await importOriginal<typeof import("./spawn-orchestrator")>()),
 	spawnOrchestrator: spawnMock,
 }));
 
@@ -40,7 +41,10 @@ describe("restartProjectOrchestrator", () => {
 		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(1, "proj-1", null);
-		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, "proj-1", "missing goose binary");
+		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, "proj-1", {
+			kind: "detail",
+			detail: "missing goose binary",
+		});
 		expect(setProjectRestarting).toHaveBeenNthCalledWith(1, "proj-1", true);
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
 		expect(onError).toHaveBeenCalledWith(failure);
@@ -66,7 +70,10 @@ describe("restartProjectOrchestrator", () => {
 			onError,
 		});
 
-		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", "missing goose binary");
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", {
+			kind: "detail",
+			detail: "missing goose binary",
+		});
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
 		expect(onError).toHaveBeenCalledWith(failure);
 		expect(navigate).not.toHaveBeenCalled();
@@ -87,7 +94,7 @@ describe("restartProjectOrchestrator", () => {
 			setOrchestratorReplacementError,
 		});
 
-		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", "无法替换协调器");
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", { kind: "fallback" });
 		expect(setOrchestratorReplacementError.mock.calls.flat().join(" ")).not.toContain("secret");
 	});
 });

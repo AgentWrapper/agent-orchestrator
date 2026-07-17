@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { initializeRendererI18n } from "../i18n";
 import type { MuxConnectionState, TerminalMux } from "../lib/terminal-mux";
 import type { WorkspaceSession } from "../types/workspace";
 import { useTerminalSession, type AttachableTerminal } from "./useTerminalSession";
@@ -29,6 +30,7 @@ type FakeMux = {
 	events: string[];
 	disposed: boolean;
 	emitData(id: string, text: string): void;
+	emitBytes(id: string, bytes: Uint8Array): void;
 	emitOpened(id: string): void;
 	emitExit(id: string): void;
 	emitError(id: string, message: string): void;
@@ -78,6 +80,7 @@ function createFakeMux(): FakeMux {
 			},
 		},
 		emitData: (id, text) => data.get(id)?.forEach((listener) => listener(new TextEncoder().encode(text))),
+		emitBytes: (id, bytes) => data.get(id)?.forEach((listener) => listener(bytes)),
 		emitOpened: (id) => opened.get(id)?.forEach((listener) => listener()),
 		emitExit: (id) => exit.get(id)?.forEach((listener) => listener()),
 		emitError: (id, message) => error.get(id)?.forEach((listener) => listener(message)),
@@ -88,6 +91,7 @@ function createFakeMux(): FakeMux {
 
 type FakeTerminal = AttachableTerminal & {
 	lines: string[];
+	writes: Uint8Array[];
 	clears: number;
 	typeKeys(data: string): void;
 	paste(data: string): void;
@@ -104,8 +108,12 @@ function createFakeTerminal(): FakeTerminal {
 		cols: 80,
 		rows: 24,
 		lines: [],
+		writes: [],
 		clears: 0,
-		write: (bytes) => terminal.lines.push(new TextDecoder().decode(bytes)),
+		write: (bytes) => {
+			terminal.writes.push(bytes);
+			terminal.lines.push(new TextDecoder().decode(bytes));
+		},
 		writeln: (line) => terminal.lines.push(line),
 		clear: () => {
 			terminal.clears += 1;
@@ -156,9 +164,10 @@ beforeEach(() => {
 	vi.useFakeTimers();
 });
 
-afterEach(() => {
+afterEach(async () => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
+	await initializeRendererI18n("en");
 });
 
 describe("useTerminalSession", () => {
@@ -192,6 +201,17 @@ describe("useTerminalSession", () => {
 		terminal.emitResize(120, 40);
 		act(() => void vi.advanceTimersByTime(100));
 		expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
+	});
+
+	it("passes arbitrary PTY bytes to the terminal unchanged", () => {
+		const { terminal, muxes } = setup();
+		const bytes = new Uint8Array([0x00, 0x1b, 0xff, 0xc3, 0x28, 0x0a]);
+
+		act(() => muxes[0].emitBytes("handle-1", bytes));
+
+		expect(terminal.writes).toHaveLength(1);
+		expect(terminal.writes[0]).toBe(bytes);
+		expect(Array.from(terminal.writes[0])).toEqual([0x00, 0x1b, 0xff, 0xc3, 0x28, 0x0a]);
 	});
 
 	it("forwards every explicit input source after the attachment opens", () => {
@@ -261,6 +281,19 @@ describe("useTerminalSession", () => {
 		expect(view.result.current.state).toBe("exited");
 		expect(terminal.lines.some((line) => line.includes("[process exited]"))).toBe(true);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
+	});
+
+	it("uses the event-time language for exit markers without reconnecting", async () => {
+		const { view, terminal, muxes } = setup();
+		act(() => muxes[0].emitOpened("handle-1"));
+
+		await act(async () => initializeRendererI18n("zh-CN"));
+		view.rerender({ daemonReady: true });
+
+		expect(muxes).toHaveLength(1);
+		expect(muxes[0].opens).toEqual([["handle-1", 80, 24]]);
+		act(() => muxes[0].emitExit("handle-1"));
+		expect(terminal.lines).toContain("\r\n\x1b[2m[进程已退出]\x1b[0m");
 	});
 
 	it("reconnects when a restored session becomes live with the same terminal handle", () => {
@@ -338,6 +371,16 @@ describe("useTerminalSession", () => {
 		act(() => muxes[0].emitConnection("closed"));
 		act(() => void vi.advanceTimersByTime(60_000));
 		expect(muxes).toHaveLength(1);
+	});
+
+	it("localizes the injected error marker and preserves raw mux detail", async () => {
+		await initializeRendererI18n("zh-CN");
+		const { view, terminal, muxes } = setup();
+
+		act(() => muxes[0].emitError("handle-1", "raw mux detail: no such pane"));
+
+		expect(view.result.current.error).toBe("raw mux detail: no such pane");
+		expect(terminal.lines).toContain("\r\n\x1b[2m[终端错误] raw mux detail: no such pane\x1b[0m");
 	});
 
 	it("reattaches with a fresh mux after a socket drop, clearing the stale screen", () => {

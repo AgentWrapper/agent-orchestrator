@@ -10,8 +10,18 @@ import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import { RemoteDirectoryPickerDialog } from "./RemoteDirectoryPickerDialog";
 import { Button } from "./ui/button";
+import type { ImportRepoValidationCode } from "../../main/import-scan";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
+
+const IMPORT_REPO_REASON_KEYS = {
+	LINKED_WORKTREE: "projects.create.repositoryReasons.linkedWorktree",
+	BARE_REPOSITORY: "projects.create.repositoryReasons.bareRepository",
+	RESERVED_NAME: "projects.create.repositoryReasons.reservedName",
+	NO_COMMITS: "projects.create.repositoryReasons.noCommits",
+	NO_CHECKED_OUT_BRANCH: "projects.create.repositoryReasons.noCheckedOutBranch",
+	NO_ORIGIN_REMOTE: "projects.create.repositoryReasons.noOriginRemote",
+} as const satisfies Record<ImportRepoValidationCode, string>;
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 
@@ -332,16 +342,8 @@ function CreateProjectModeDialog({
 						</Dialog.Close>
 					</div>
 					<div className="grid min-h-0 gap-3 overflow-y-auto px-4 pb-4 sm:grid-cols-2 sm:px-6 sm:pb-6">
-						<ProjectModeButton
-							disabled={disabled}
-							kind="workspace"
-							onClick={() => onSelect("workspace")}
-						/>
-						<ProjectModeButton
-							disabled={disabled}
-							kind="single_repo"
-							onClick={() => onSelect("single_repo")}
-						/>
+						<ProjectModeButton disabled={disabled} kind="workspace" onClick={() => onSelect("workspace")} />
+						<ProjectModeButton disabled={disabled} kind="single_repo" onClick={() => onSelect("single_repo")} />
 					</div>
 				</Dialog.Content>
 			</Dialog.Portal>
@@ -349,15 +351,7 @@ function CreateProjectModeDialog({
 	);
 }
 
-function ProjectModeButton({
-	disabled,
-	kind,
-	onClick,
-}: {
-	disabled: boolean;
-	kind: ProjectKind;
-	onClick: () => void;
-}) {
+function ProjectModeButton({ disabled, kind, onClick }: { disabled: boolean; kind: ProjectKind; onClick: () => void }) {
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
 	const label = isWorkspace ? t("projects.create.workspace") : t("projects.create.project");
@@ -394,9 +388,7 @@ function ProjectModeButton({
 					</span>
 				)}
 			</span>
-			<span className="block text-[15px] font-semibold text-foreground sm:text-[16px]">
-				{label}
-			</span>
+			<span className="block text-[15px] font-semibold text-foreground sm:text-[16px]">{label}</span>
 			<span className="mt-2 block text-[12px] leading-5 text-muted-foreground sm:min-h-[40px] sm:text-[13px]">
 				{isWorkspace ? t("projects.create.workspaceDescription") : t("projects.create.projectDescription")}
 			</span>
@@ -481,7 +473,7 @@ function CreateProjectFolderDialog({
 										</div>
 									</div>
 									<Button type="button" variant="outline" disabled={disabled} onClick={onChooseFolder}>
-									{t("projects.create.change")}
+										{t("projects.create.change")}
 									</Button>
 								</div>
 
@@ -532,9 +524,7 @@ function CreateProjectFolderDialog({
 									{isWorkspace ? t("projects.create.chooseFolder") : t("projects.create.chooseProjectFolder")}
 								</span>
 								<span className="mt-2 max-w-full text-pretty text-[12px] text-muted-foreground sm:text-[13px]">
-									{isWorkspace
-										? t("projects.create.workspacePickerHint")
-										: t("projects.create.projectPickerHint")}
+									{isWorkspace ? t("projects.create.workspacePickerHint") : t("projects.create.projectPickerHint")}
 								</span>
 							</button>
 						)}
@@ -593,7 +583,9 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Impor
 				)}
 			>
 				{failed
-					? (repo.reason ?? t("projects.create.repositoryCannotImport"))
+					? repo.reasonCode
+						? t(IMPORT_REPO_REASON_KEYS[repo.reasonCode])
+						: t("projects.create.repositoryCannotImport")
 					: `${repo.branch} ${remoteDisplay(repo.remote)}`}
 			</div>
 		</div>

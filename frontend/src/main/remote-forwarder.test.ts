@@ -193,7 +193,10 @@ describe("remote-forwarder", () => {
 		failUpstream?.();
 
 		const destroyed = await Promise.race([
-			reader.read().then(() => false, () => true),
+			reader.read().then(
+				() => false,
+				() => true,
+			),
 			new Promise<false>((resolve) => setTimeout(() => resolve(false), 250)),
 		]);
 		await reader.cancel().catch(() => undefined);
@@ -203,7 +206,9 @@ describe("remote-forwarder", () => {
 	it("cancels a blackholed upstream request when the forwarder closes", async () => {
 		let upstreamSocket: net.Socket | undefined;
 		let acceptUpstream: () => void = () => undefined;
-		const accepted = new Promise<void>((resolve) => { acceptUpstream = resolve; });
+		const accepted = new Promise<void>((resolve) => {
+			acceptUpstream = resolve;
+		});
 		const blackhole = net.createServer((socket) => {
 			upstreamSocket = socket;
 			socket.resume();
@@ -219,7 +224,10 @@ describe("remote-forwarder", () => {
 		const upstreamClosed = socketEnded(upstreamSocket!);
 
 		await forwarder.close();
-		const closed = await Promise.race([upstreamClosed, new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))]);
+		const closed = await Promise.race([
+			upstreamClosed,
+			new Promise<false>((resolve) => setTimeout(() => resolve(false), 250)),
+		]);
 		upstreamSocket?.destroy();
 
 		expect(closed).toBe(true);
@@ -228,7 +236,9 @@ describe("remote-forwarder", () => {
 	it("cancels the upstream request when the downstream request is aborted", async () => {
 		let upstreamRequest: http.IncomingMessage | undefined;
 		let receiveUpstream: () => void = () => undefined;
-		const received = new Promise<void>((resolve) => { receiveUpstream = resolve; });
+		const received = new Promise<void>((resolve) => {
+			receiveUpstream = resolve;
+		});
 		const upstream = http.createServer((request) => {
 			upstreamRequest = request;
 			receiveUpstream();
@@ -243,7 +253,10 @@ describe("remote-forwarder", () => {
 		const upstreamClosed = once(upstreamRequest!, "aborted").then(() => true);
 
 		request.destroy();
-		const closed = await Promise.race([upstreamClosed, new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))]);
+		const closed = await Promise.race([
+			upstreamClosed,
+			new Promise<false>((resolve) => setTimeout(() => resolve(false), 250)),
+		]);
 		upstream.closeAllConnections();
 
 		expect(closed).toBe(true);
@@ -252,7 +265,9 @@ describe("remote-forwarder", () => {
 	it("cancels a pending WebSocket upgrade when the client disconnects", async () => {
 		let upstreamSocket: net.Socket | undefined;
 		let acceptUpstream: () => void = () => undefined;
-		const accepted = new Promise<void>((resolve) => { acceptUpstream = resolve; });
+		const accepted = new Promise<void>((resolve) => {
+			acceptUpstream = resolve;
+		});
 		const blackhole = net.createServer((socket) => {
 			upstreamSocket = socket;
 			socket.resume();
@@ -276,7 +291,10 @@ describe("remote-forwarder", () => {
 		const upstreamClosed = socketEnded(upstreamSocket!);
 
 		client.destroy();
-		const closed = await Promise.race([upstreamClosed, new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))]);
+		const closed = await Promise.race([
+			upstreamClosed,
+			new Promise<false>((resolve) => setTimeout(() => resolve(false), 250)),
+		]);
 		upstreamSocket?.destroy();
 
 		expect(closed).toBe(true);
@@ -356,6 +374,10 @@ describe("remote-forwarder", () => {
 
 		const response = await fetch(`http://127.0.0.1:${forwarder.port}/healthz`);
 		expect(response.status).toBe(502);
-		expect(await response.json()).toEqual({ message: "Remote AO daemon is unavailable." });
+		expect(await response.json()).toEqual({
+			error: "unavailable",
+			code: "REMOTE_DAEMON_UNAVAILABLE",
+			message: "REMOTE_DAEMON_UNAVAILABLE",
+		});
 	});
 });

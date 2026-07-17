@@ -4,14 +4,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-const { showMessageBox } = vi.hoisted(() => ({
+const { appState, checkForUpdates, downloadUpdate, showMessageBox } = vi.hoisted(() => ({
+	appState: { isPackaged: true },
+	checkForUpdates: vi.fn(),
+	downloadUpdate: vi.fn(),
 	showMessageBox: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
 	app: {
 		getVersion: vi.fn(() => "0.10.3"),
-		isPackaged: true,
+		get isPackaged() {
+			return appState.isPackaged;
+		},
 	},
 	BrowserWindow: {
 		getAllWindows: vi.fn(() => []),
@@ -22,10 +27,12 @@ vi.mock("electron", () => ({
 vi.mock("electron-updater", () => ({
 	autoUpdater: {
 		on: vi.fn(),
+		checkForUpdates,
+		downloadUpdate,
 	},
 }));
 
-import { ensureUpdatePrefs } from "./auto-updater";
+import { checkForUpdatesNow, downloadUpdateNow, ensureUpdatePrefs, getUpdateStatus } from "./auto-updater";
 import { mainI18n } from "./i18n";
 import { readUpdateSettings, writeUpdateSettings } from "./update-settings";
 
@@ -34,6 +41,9 @@ describe("ensureUpdatePrefs", () => {
 
 	beforeEach(async () => {
 		stateDir = await mkdtemp(path.join(os.tmpdir(), "ao-auto-updater-"));
+		appState.isPackaged = true;
+		checkForUpdates.mockReset();
+		downloadUpdate.mockReset();
 		showMessageBox.mockReset();
 	});
 
@@ -128,5 +138,23 @@ describe("ensureUpdatePrefs", () => {
 			channel: "latest",
 			nightlyAck: false,
 		});
+	});
+
+	it("reports unsupported updater state without an English main-process message", async () => {
+		appState.isPackaged = false;
+
+		await checkForUpdatesNow(stateDir);
+		expect(getUpdateStatus()).toEqual({ state: "unsupported" });
+
+		await downloadUpdateNow();
+		expect(getUpdateStatus()).toEqual({ state: "unsupported" });
+	});
+
+	it("does not invent an English fallback for non-Error updater failures", async () => {
+		checkForUpdates.mockRejectedValueOnce({ reason: "offline" });
+
+		await checkForUpdatesNow(stateDir);
+
+		expect(getUpdateStatus()).toEqual({ state: "error" });
 	});
 });

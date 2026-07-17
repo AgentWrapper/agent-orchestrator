@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { DaemonFailureCode } from "../shared/daemon-status";
 
 export const REMOTE_SERVER_CONFIG_FILE_NAME = "remote-server.json";
 
@@ -25,13 +26,25 @@ type StoredRemoteServerConfig = {
 	updatedAt: string;
 };
 
+type RemoteServerConfigFailureCode = Extract<
+	DaemonFailureCode,
+	"remote_host_required" | "remote_port_invalid" | "remote_password_required"
+>;
+
+export class RemoteServerConfigError extends Error {
+	constructor(readonly code: RemoteServerConfigFailureCode) {
+		super(code);
+		this.name = "RemoteServerConfigError";
+	}
+}
+
 export function validateRemoteServerConfigInput(input: RemoteServerConfigInput): RemoteServerConfigInput {
 	const host = input.host.trim();
-	if (!host) throw new Error("Server host is required");
+	if (!host) throw new RemoteServerConfigError("remote_host_required");
 	if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
-		throw new Error("Server port must be an integer from 1 to 65535");
+		throw new RemoteServerConfigError("remote_port_invalid");
 	}
-	if (!input.password) throw new Error("Connection password is required");
+	if (!input.password) throw new RemoteServerConfigError("remote_password_required");
 	return { host, port: input.port, password: input.password };
 }
 

@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { MigrationState } from "../../main/app-state";
+import { i18n, initializeRendererI18n } from "../i18n";
 import { MigrationPopup } from "./MigrationPopup";
 
 const { getMock, postMock, getMigration, setMigration } = vi.hoisted(() => ({
@@ -11,24 +13,24 @@ const { getMock, postMock, getMigration, setMigration } = vi.hoisted(() => ({
 	setMigration: vi.fn(),
 }));
 
-vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: postMock },
-	apiErrorMessage: (e: unknown, fb = "Request failed") =>
-		e instanceof Error ? e.message : ((e as { message?: string })?.message ?? fb),
-}));
+vi.mock("../lib/api-client", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/api-client")>();
+	return { ...actual, apiClient: { GET: getMock, POST: postMock } };
+});
 vi.mock("../lib/bridge", () => ({ aoBridge: { appState: { getMigration, setMigration } } }));
 
 function renderPopup() {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	render(
+	const view = render(
 		<QueryClientProvider client={qc}>
 			<MigrationPopup />
 		</QueryClientProvider>,
 	);
-	return qc;
+	return { qc, ...view };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+	await initializeRendererI18n("en");
 	getMock.mockReset();
 	postMock.mockReset();
 	getMigration.mockReset();
@@ -40,6 +42,21 @@ beforeEach(() => {
 });
 
 describe("MigrationPopup", () => {
+	it("switches the offer language without changing the discovered legacy root", async () => {
+		renderPopup();
+
+		expect(await screen.findByText(/Import projects from your earlier AO/i)).toBeInTheDocument();
+		expect(screen.getByText("/home/u/.agent-orchestrator")).toBeInTheDocument();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+
+		expect(screen.getByText("从早期 AO 导入项目？")).toBeInTheDocument();
+		expect(screen.getByText("/home/u/.agent-orchestrator")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "继续" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "跳过" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "不迁移" })).toBeInTheDocument();
+	});
+
 	it("shows when a legacy install is available and the marker is pending", async () => {
 		renderPopup();
 		expect(await screen.findByText(/Import projects from your earlier AO/i)).toBeInTheDocument();
@@ -79,11 +96,100 @@ describe("MigrationPopup", () => {
 	});
 
 	it("a failed import shows the lossless reassurance and marks failed", async () => {
-		postMock.mockResolvedValue({ data: undefined, error: { message: "disk full" } });
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { error: "Conflict", code: "FUTURE_CODE", message: "disk full" },
+		});
 		renderPopup();
 		await screen.findByText(/Import projects from your earlier AO/i);
 		await userEvent.click(screen.getByRole("button", { name: "Proceed" }));
 		expect(await screen.findByText(/nothing is ever deleted/i)).toBeInTheDocument();
-		expect(setMigration).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", error: "disk full" }));
+		expect(setMigration).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", errorDetail: "disk full" }));
+		expect(setMigration).not.toHaveBeenCalledWith(expect.objectContaining({ error: expect.anything() }));
+	});
+
+	it("relocalizes a visible application fallback while preserving an external error", async () => {
+		postMock.mockResolvedValueOnce({ data: undefined, error: {} });
+		renderPopup();
+		await screen.findByText(/Import projects from your earlier AO/i);
+		await userEvent.click(screen.getByRole("button", { name: "Proceed" }));
+		expect(await screen.findByText(/Migration failed: Migration failed\./i)).toBeInTheDocument();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText(/迁移失败：迁移失败。/)).toBeInTheDocument();
+
+		postMock.mockResolvedValueOnce({
+			data: undefined,
+			error: { error: "Conflict", code: "FUTURE_CODE", message: "EACCES /srv/legacy" },
+		});
+		await userEvent.click(screen.getByRole("button", { name: "重试" }));
+		expect(await screen.findByText(/EACCES \/srv\/legacy/)).toBeInTheDocument();
+	});
+
+	it("replays a failed marker and translates its semantic code in the current locale", async () => {
+		let persisted: MigrationState = { status: "pending" };
+		getMigration.mockImplementation(async () => persisted);
+		setMigration.mockImplementation(async (next) => {
+			persisted = next;
+		});
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: {
+				error: "Forbidden",
+				code: "DIRECTORY_PERMISSION_DENIED",
+				message: "Directory permission denied; token=do-not-show",
+			},
+		});
+
+		const view = renderPopup();
+		await userEvent.click(await screen.findByRole("button", { name: "Proceed" }));
+		await waitFor(() =>
+			expect(setMigration).toHaveBeenCalledWith(
+				expect.objectContaining({ status: "failed", errorCode: "DIRECTORY_PERMISSION_DENIED" }),
+			),
+		);
+		view.unmount();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		renderPopup();
+		expect(await screen.findByText(/没有权限访问该目录/)).toBeInTheDocument();
+		expect(screen.queryByText(/do-not-show/)).not.toBeInTheDocument();
+	});
+
+	it.each([
+		["POST rejects", () => postMock.mockRejectedValueOnce(new Error("connection reset by peer"))],
+		["completed state write rejects", () => setMigration.mockRejectedValueOnce(new Error("app state is read-only"))],
+	] as const)("catches %s and always releases busy", async (_name, arrange) => {
+		arrange();
+		renderPopup();
+		await userEvent.click(await screen.findByRole("button", { name: "Proceed" }));
+
+		const detail = _name === "POST rejects" ? "connection reset by peer" : "app state is read-only";
+		expect(await screen.findByText(new RegExp(detail))).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+	});
+
+	it("catches a failed-marker write rejection and replaces the API error with the write failure", async () => {
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { error: "Conflict", code: "FUTURE_CODE", message: "disk full" },
+		});
+		setMigration.mockRejectedValueOnce(new Error("cannot persist migration state"));
+		renderPopup();
+		await userEvent.click(await screen.findByRole("button", { name: "Proceed" }));
+
+		expect(await screen.findByText(/cannot persist migration state/)).toBeInTheDocument();
+		expect(screen.queryByText(/disk full/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+	});
+
+	it("catches a decline-marker write rejection and restores both actions", async () => {
+		setMigration.mockRejectedValueOnce(new Error("cannot persist decline"));
+		renderPopup();
+		await userEvent.click(await screen.findByRole("button", { name: "Don't Migrate" }));
+
+		expect(await screen.findByText(/cannot persist decline/)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Don't Migrate" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
 	});
 });

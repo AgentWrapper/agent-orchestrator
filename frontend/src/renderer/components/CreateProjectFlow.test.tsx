@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
-import { initializeRendererI18n } from "../i18n";
+import { i18n, initializeRendererI18n } from "../i18n";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 
 function codedError(message: string, code: string) {
@@ -13,9 +13,11 @@ function codedError(message: string, code: string) {
 }
 
 function renderFlow({
+	mode = "single_repo",
 	onCreateProject,
 	onInitializeProject,
 }: {
+	mode?: "choose" | "single_repo" | "workspace";
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
 }) {
@@ -36,7 +38,7 @@ function renderFlow({
 	});
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<CreateProjectFlow onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
+			<CreateProjectFlow mode={mode} onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
 				{({ choosePath, disabled, label }) => (
 					<button type="button" disabled={disabled} onClick={choosePath}>
 						{label}
@@ -201,5 +203,43 @@ describe("CreateProjectFlow stable error control flow", () => {
 
 		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/project"));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(2));
+	});
+
+	it("renders a stable repository validation code in the current language", async () => {
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/project",
+			repos: [
+				{
+					name: "project",
+					path: "/repo/project",
+					relativePath: ".",
+					branch: "main",
+					remote: "",
+					hasRemote: false,
+					status: "error",
+					reasonCode: "NO_ORIGIN_REMOTE",
+					reason: "Origin remote is required.",
+				},
+			],
+		});
+		const onCreateProject = vi
+			.fn()
+			.mockRejectedValueOnce(codedError("Workspace registration failed", "WORKSPACE_CHILD_ORIGIN_REQUIRED"));
+		renderFlow({
+			mode: "choose",
+			onCreateProject,
+			onInitializeProject: vi.fn().mockResolvedValue(undefined),
+		});
+
+		await userEvent.click(screen.getByRole("button", { name: "New project" }));
+		await userEvent.click(await screen.findByRole("button", { name: /^Project/ }));
+		await chooseAgent(await screen.findByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseAgent(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
+
+		expect(await screen.findByText("Origin remote is required.")).toBeInTheDocument();
+		await act(async () => i18n.changeLanguage("zh-CN"));
+		expect(screen.getByText("必须配置 origin 远程仓库。")).toBeInTheDocument();
+		expect(screen.queryByText("Origin remote is required.")).not.toBeInTheDocument();
 	});
 });

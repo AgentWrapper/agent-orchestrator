@@ -1,29 +1,50 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n, initializeRendererI18n } from "../i18n";
+import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
 const postMock = vi.fn();
 let terminalLinkHandler: ((uri: string) => void) | undefined;
+let terminalInitErrorHandler: ((error: unknown) => void) | undefined;
+const terminalSession = vi.hoisted(() => ({
+	state: "idle" as "idle" | "connecting" | "attached" | "reattaching" | "exited" | "error",
+	error: undefined as string | undefined,
+}));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
-	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+	apiErrorMessage: (error: unknown, fallback: string) => {
+		const code = (error as { code?: string } | null)?.code;
+		return code === "AGENT_BINARY_NOT_FOUND" ? i18n.t("errors.codes.AGENT_BINARY_NOT_FOUND") : fallback;
+	},
+	apiErrorSnapshot: (error: unknown) => {
+		const code = (error as { code?: string } | null)?.code;
+		return code ? { code } : {};
+	},
+	safeExternalErrorMessage: (error: unknown) => (error instanceof Error ? error.message : undefined),
 }));
 
 vi.mock("./XtermTerminal", () => ({
-	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void }) => {
+	XtermTerminal: (props: {
+		ariaLabel: string;
+		onError?: (error: unknown) => void;
+		onLinkOpen?: (uri: string) => void;
+	}) => {
 		terminalLinkHandler = props.onLinkOpen;
-		return <div data-testid="xterm" />;
+		terminalInitErrorHandler = props.onError;
+		return <div aria-label={props.ariaLabel} data-testid="xterm" role="application" />;
 	},
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: () => ({
 		attach: vi.fn(),
-		state: "idle",
-		error: undefined,
+		state: terminalSession.state,
+		error: terminalSession.error,
 	}),
 }));
 
@@ -51,15 +72,18 @@ beforeEach(() => {
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: {} });
 	terminalLinkHandler = undefined;
+	terminalInitErrorHandler = undefined;
+	terminalSession.state = "idle";
+	terminalSession.error = undefined;
 });
 
-function renderPane(session?: WorkspaceSession) {
+function renderPane(session?: WorkspaceSession, terminalTarget?: TerminalTarget) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const previousAO = window.ao;
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			<TerminalPane daemonReady fontSize={12} session={session} terminalTarget={terminalTarget} theme="dark" />
 		</QueryClientProvider>,
 	);
 	return {
@@ -108,6 +132,92 @@ describe("TerminalPane empty states", () => {
 			).toBeInTheDocument();
 			expect(screen.queryByText(/worker terminal/i)).not.toBeInTheDocument();
 		} finally {
+			view.restore();
+		}
+	});
+
+	it("localizes the empty state and terminal accessible name without changing the product name", async () => {
+		await initializeRendererI18n("zh-CN");
+		const view = renderPane();
+		try {
+			expect(screen.getByRole("application", { name: "会话终端" })).toBeInTheDocument();
+			expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
+			expect(screen.getByText("尚未选择会话。请选择一个工作智能体以连接其终端。")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+});
+
+describe("TerminalPane localized terminal state", () => {
+	it("localizes a terminal error while preserving its raw mux detail", async () => {
+		await initializeRendererI18n("zh-CN");
+		terminalSession.state = "error";
+		terminalSession.error = "raw mux detail: no such pane";
+		const view = renderPane({ ...worker, terminalHandleId: "handle-1" });
+		try {
+			expect(screen.getByText("终端错误：raw mux detail: no such pane")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("localizes the terminated-session restore control", async () => {
+		await initializeRendererI18n("zh-CN");
+		terminalSession.state = "exited";
+		const view = renderPane({ ...worker, status: "terminated", terminalHandleId: "handle-1" });
+		try {
+			expect(screen.getByText("终端已结束")).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "恢复会话" })).toBeInTheDocument();
+			expect(screen.getByText(/恢复会话以连接实时终端/)).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("relocalizes a restore API error after it occurs without remounting", async () => {
+		terminalSession.state = "exited";
+		postMock.mockResolvedValueOnce({
+			error: {
+				error: "Bad Request",
+				code: "AGENT_BINARY_NOT_FOUND",
+				message: "agent binary not found on PATH",
+			},
+		});
+		const view = renderPane({ ...worker, status: "terminated", terminalHandleId: "handle-1" });
+		try {
+			await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
+			expect(await screen.findByText("The selected agent is not installed")).toBeInTheDocument();
+
+			await act(async () => initializeRendererI18n("zh-CN"));
+			expect(screen.getByText("未安装所选智能体")).toBeInTheDocument();
+			expect(screen.queryByText("The selected agent is not installed")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("localizes reviewer-ended guidance without offering session restore", async () => {
+		await initializeRendererI18n("zh-CN");
+		terminalSession.state = "exited";
+		const view = renderPane(worker, { kind: "reviewer", handleId: "review-handle", harness: "codex" });
+		try {
+			expect(screen.getByText(/此审查终端已结束/)).toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "恢复会话" })).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("localizes the xterm initialization failure", async () => {
+		await initializeRendererI18n("zh-CN");
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const view = renderPane({ ...worker, terminalHandleId: "handle-1" });
+		try {
+			act(() => terminalInitErrorHandler?.(new Error("raw gpu detail")));
+			expect(screen.getByText(/此 GPU\/驱动程序上的终端初始化失败/)).toBeInTheDocument();
+		} finally {
+			consoleError.mockRestore();
 			view.restore();
 		}
 	});

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { MigrationSection } from "./MigrationSection";
@@ -10,6 +11,7 @@ import { LanguageSettingsSection } from "./LanguageSettingsSection";
 // section is a self-contained card. Connect Mobile lives in the sidebar Settings
 // menu, not here.
 export function GlobalSettingsForm() {
+	const { t } = useTranslation();
 	const [remoteClient, setRemoteClient] = useState<boolean | null>(null);
 	useEffect(() => {
 		void aoBridge.remoteServer.isRemoteClient().then(setRemoteClient);
@@ -17,7 +19,7 @@ export function GlobalSettingsForm() {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Global settings" subtitle="Settings that apply across all projects" />
+			<DashboardSubhead title={t("settings.global.title")} subtitle={t("settings.global.subtitle")} />
 			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
 				<div className="mx-auto flex max-w-2xl flex-col gap-4">
 					<LanguageSettingsSection />

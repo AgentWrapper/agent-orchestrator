@@ -20,11 +20,14 @@ const USER_FACING_PROPERTIES = new Set([
 	"title",
 	"placeholder",
 	"message",
+	"error",
 	"detail",
 	"label",
 	"description",
 	"subtitle",
+	"reason",
 ]);
+const USER_MESSAGE_FUNCTION_NAME = /(?:error|message|label|title|detail|description|placeholder|reason)/i;
 
 function normalizeText(value) {
 	return value.replace(/\s+/g, " ").trim();
@@ -50,7 +53,122 @@ function jsxExpressionContext(node) {
 	while (current) {
 		if (isTranslationCall(current)) return null;
 		if (ts.isJsxExpression(current)) return current;
-		if (ts.isSourceFile(current) || ts.isJsxElement(current) || ts.isJsxFragment(current)) return null;
+		if (
+			ts.isSourceFile(current) ||
+			ts.isJsxAttribute(current) ||
+			ts.isJsxElement(current) ||
+			ts.isJsxFragment(current) ||
+			ts.isJsxOpeningElement(current) ||
+			ts.isJsxSelfClosingElement(current)
+		) {
+			return null;
+		}
+		current = current.parent;
+	}
+	return null;
+}
+
+function isRenderedExpressionValue(node, context) {
+	let current = node;
+	while (current.parent && current.parent !== context) {
+		const parent = current.parent;
+		if (ts.isParenthesizedExpression(parent)) {
+			current = parent;
+			continue;
+		}
+		if (ts.isConditionalExpression(parent)) {
+			if (current === parent.condition) return false;
+			current = parent;
+			continue;
+		}
+		if (ts.isBinaryExpression(parent)) {
+			const operator = parent.operatorToken.kind;
+			if (operator === ts.SyntaxKind.PlusToken) {
+				current = parent;
+				continue;
+			}
+			if (operator === ts.SyntaxKind.AmpersandAmpersandToken) {
+				if (current !== parent.right) return false;
+				current = parent;
+				continue;
+			}
+			if (operator === ts.SyntaxKind.BarBarToken || operator === ts.SyntaxKind.QuestionQuestionToken) {
+				current = parent;
+				continue;
+			}
+		}
+		return false;
+	}
+	return current.parent === context;
+}
+
+function literalText(node) {
+	if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+	if (!ts.isTemplateExpression(node)) return null;
+	return `${node.head.text}${node.templateSpans.map((span) => `\${...}${span.literal.text}`).join("")}`;
+}
+
+function expressionValueLiterals(node) {
+	if (isTranslationCall(node)) return [];
+	const text = literalText(node);
+	if (text !== null) return [{ node, text }];
+	if (
+		ts.isParenthesizedExpression(node) ||
+		ts.isAsExpression(node) ||
+		ts.isSatisfiesExpression(node) ||
+		ts.isNonNullExpression(node)
+	) {
+		return expressionValueLiterals(node.expression);
+	}
+	if (ts.isConditionalExpression(node)) {
+		return [...expressionValueLiterals(node.whenTrue), ...expressionValueLiterals(node.whenFalse)];
+	}
+	if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "String") {
+		return node.arguments.flatMap(expressionValueLiterals);
+	}
+	if (ts.isBinaryExpression(node)) {
+		const operator = node.operatorToken.kind;
+		if (operator === ts.SyntaxKind.AmpersandAmpersandToken) return expressionValueLiterals(node.right);
+		if (
+			operator === ts.SyntaxKind.PlusToken ||
+			operator === ts.SyntaxKind.BarBarToken ||
+			operator === ts.SyntaxKind.QuestionQuestionToken
+		) {
+			return [...expressionValueLiterals(node.left), ...expressionValueLiterals(node.right)];
+		}
+	}
+	return [];
+}
+
+function isErrorConstructor(node) {
+	return ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Error";
+}
+
+function isFunctionLike(node) {
+	return (
+		ts.isFunctionDeclaration(node) ||
+		ts.isFunctionExpression(node) ||
+		ts.isArrowFunction(node) ||
+		ts.isMethodDeclaration(node) ||
+		ts.isGetAccessorDeclaration(node) ||
+		ts.isSetAccessorDeclaration(node)
+	);
+}
+
+function functionLikeName(node) {
+	if ("name" in node && node.name) return propertyName(node.name);
+	if (ts.isVariableDeclaration(node.parent)) return propertyName(node.parent.name);
+	if (ts.isPropertyAssignment(node.parent)) return propertyName(node.parent.name);
+	return null;
+}
+
+function enclosingUserMessageFunction(node) {
+	let current = node.parent;
+	while (current) {
+		if (isFunctionLike(current)) {
+			const name = functionLikeName(current);
+			return name && USER_MESSAGE_FUNCTION_NAME.test(name) ? name : null;
+		}
 		current = current.parent;
 	}
 	return null;
@@ -67,7 +185,7 @@ function shouldSkip(relativePath) {
 }
 
 function sourceFiles(root) {
-	const starts = [join(root, "src", "main"), join(root, "src", "renderer")];
+	const starts = [join(root, "src", "main"), join(root, "src", "renderer"), join(root, "src", "shared")];
 	for (const name of ["main.ts", "preload.ts", "annotate-preload.ts"]) {
 		starts.push(join(root, "src", name));
 	}
@@ -105,6 +223,8 @@ export function auditVisibleLiterals({ root, allowlist }) {
 		}),
 	);
 	const violations = [];
+	const allowlistHits = [];
+	const hitAllowlistKeys = new Set();
 
 	for (const filePath of sourceFiles(root)) {
 		const file = relative(root, filePath).split(sep).join("/");
@@ -123,7 +243,13 @@ export function auditVisibleLiterals({ root, allowlist }) {
 			if (!text || !containsEnglish(text)) return;
 			const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 			const violation = { file, kind, line, text };
-			if (!allowed.has(allowlistKey(violation))) violations.push(violation);
+			const key = allowlistKey(violation);
+			if (allowed.has(key)) {
+				hitAllowlistKeys.add(key);
+				allowlistHits.push(violation);
+			} else {
+				violations.push(violation);
+			}
 		};
 
 		const visit = (node) => {
@@ -134,31 +260,44 @@ export function auditVisibleLiterals({ root, allowlist }) {
 				if (USER_FACING_ATTRIBUTES.has(name) && node.initializer) {
 					if (ts.isStringLiteral(node.initializer)) {
 						report(node.initializer, `attribute:${name}`, node.initializer.text);
-					} else if (
-						ts.isJsxExpression(node.initializer) &&
-						node.initializer.expression &&
-						(ts.isStringLiteral(node.initializer.expression) ||
-							ts.isNoSubstitutionTemplateLiteral(node.initializer.expression))
-					) {
-						report(node.initializer.expression, `attribute:${name}`, node.initializer.expression.text);
+					} else if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
+						for (const value of expressionValueLiterals(node.initializer.expression)) {
+							report(value.node, `attribute:${name}`, value.text);
+						}
 					}
 				}
 			}
 
 			if (ts.isPropertyAssignment(node)) {
 				const name = propertyName(node.name);
-				if (
-					name &&
-					USER_FACING_PROPERTIES.has(name) &&
-					(ts.isStringLiteral(node.initializer) || ts.isNoSubstitutionTemplateLiteral(node.initializer))
-				) {
-					report(node.initializer, `property:${name}`, node.initializer.text);
+				if (name && USER_FACING_PROPERTIES.has(name)) {
+					for (const value of expressionValueLiterals(node.initializer)) {
+						report(value.node, `property:${name}`, value.text);
+					}
 				}
 			}
 
-			if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+			if (isErrorConstructor(node) && node.arguments?.[0]) {
+				for (const value of expressionValueLiterals(node.arguments[0])) {
+					report(value.node, "new-error", value.text);
+				}
+			}
+
+			if (ts.isReturnStatement(node) && node.expression) {
+				const name = enclosingUserMessageFunction(node);
+				if (name) {
+					for (const value of expressionValueLiterals(node.expression)) {
+						report(value.node, `return:${name}`, value.text);
+					}
+				}
+			}
+
+			if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) {
 				const context = jsxExpressionContext(node);
-				if (context && !ts.isJsxAttribute(context.parent)) report(node, "jsx-expression", node.text);
+				if (context && !ts.isJsxAttribute(context.parent) && isRenderedExpressionValue(node, context)) {
+					const text = literalText(node);
+					if (text !== null) report(node, "jsx-expression", text);
+				}
 			}
 
 			ts.forEachChild(node, visit);
@@ -166,18 +305,25 @@ export function auditVisibleLiterals({ root, allowlist }) {
 		visit(sourceFile);
 	}
 
-	return violations;
+	return {
+		violations,
+		allowlistHits,
+		staleAllowlist: allowlist.filter((entry) => !hitAllowlistKeys.has(allowlistKey(entry))),
+	};
 }
 
 function run() {
 	const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 	const allowlistPath = join(root, "scripts", "i18n-allowlist.json");
 	const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8")).entries;
-	const violations = auditVisibleLiterals({ root, allowlist });
+	const { violations, staleAllowlist } = auditVisibleLiterals({ root, allowlist });
 	for (const violation of violations) {
 		console.error(`${violation.file}:${violation.line} ${violation.kind} ${violation.text}`);
 	}
-	if (violations.length > 0) process.exitCode = 1;
+	for (const entry of staleAllowlist) {
+		console.error(`stale allowlist ${entry.file} ${entry.kind} ${entry.text}: ${entry.reason}`);
+	}
+	if (violations.length > 0 || staleAllowlist.length > 0) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) run();

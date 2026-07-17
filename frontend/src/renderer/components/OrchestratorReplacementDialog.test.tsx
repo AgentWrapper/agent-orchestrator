@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initializeRendererI18n } from "../i18n";
@@ -40,11 +40,27 @@ afterEach(async () => {
 });
 
 describe("OrchestratorReplacementDialog", () => {
+	it("relocalizes its application fallback without remounting", async () => {
+		render(
+			<OrchestratorReplacementDialog
+				projectId="project-raw-id"
+				error={{ kind: "fallback" }}
+				workspaces={workspaces}
+				onOpenChange={() => undefined}
+				onRetry={() => undefined}
+			/>,
+		);
+
+		expect(screen.getByText("The project orchestrator could not be replaced.")).toBeInTheDocument();
+		await act(async () => initializeRendererI18n("zh-CN"));
+		expect(screen.getByText("无法替换项目协调器。")).toBeInTheDocument();
+	});
+
 	it("renders English application copy and keeps raw server detail", () => {
 		render(
 			<OrchestratorReplacementDialog
 				projectId="project-raw-id"
-				error="raw server replacement detail"
+				error={{ kind: "detail", detail: "raw server replacement detail" }}
 				workspaces={workspaces}
 				onOpenChange={() => undefined}
 				onRetry={() => undefined}
@@ -63,7 +79,7 @@ describe("OrchestratorReplacementDialog", () => {
 		render(
 			<OrchestratorReplacementDialog
 				projectId="project-raw-id"
-				error="raw server replacement detail"
+				error={{ kind: "detail", detail: "raw server replacement detail" }}
 				workspaces={workspaces}
 				onOpenChange={() => undefined}
 				onRetry={onRetry}

@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { initializeRendererI18n } from "../i18n";
 import { SessionInspector } from "./SessionInspector";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
@@ -193,7 +194,51 @@ describe("SessionInspector PR section", () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		expect(await screen.findByText("Merge request")).toBeInTheDocument();
-		expect(prSection("Merge request").getByText("MR #7")).toBeInTheDocument();
+		expect(prSection("Merge request").getByText("MR !7")).toBeInTheDocument();
+	});
+
+	it("localizes inspector copy while keeping a GitLab summary's raw title and branches", async () => {
+		await initializeRendererI18n("zh-CN");
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return {
+					data: {
+						prs: [
+							{
+								url: "https://gitlab.example.com/group/app/-/merge_requests/7",
+								htmlUrl: "https://gitlab.example.com/group/app/-/merge_requests/7",
+								number: 7,
+								title: "raw 标题 7",
+								state: "open",
+								provider: "gitlab",
+								repo: "group/app",
+								author: "raw-author",
+								sourceBranch: "raw/source",
+								targetBranch: "raw-target",
+								headSha: "abc",
+								additions: 2,
+								deletions: 1,
+								changedFiles: 1,
+								ci: { state: "passing", failingChecks: [] },
+								review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+								mergeability: { state: "mergeable", reasons: [], prUrl: "" },
+								updatedAt: "2026-06-15T00:00:00Z",
+							},
+						],
+					},
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [] } };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+
+		expect(await screen.findByText("合并请求")).toBeInTheDocument();
+		expect(screen.getByText("MR !7")).toBeInTheDocument();
+		expect(screen.getByText("raw 标题 7")).toBeInTheDocument();
+		expect(screen.getByText(/raw\/source -> raw-target/)).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "审查" })).toBeInTheDocument();
+		expect(screen.getByText("概览")).toBeInTheDocument();
 	});
 
 	it("shows the empty state when there are no PRs", () => {
@@ -474,7 +519,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
-		expect(screen.getByText("Pull / merge requests")).toBeInTheDocument();
+		expect(screen.getByText("Pull requests")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
@@ -485,6 +530,41 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
+	});
+
+	it("uses the project SCM provider for review row punctuation", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [reviewState(3, "needs_review")] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: {
+								scm: { provider: "gitlab", connectionId: "self-hosted", repository: "group/app" },
+							},
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Merge request")).toBeInTheDocument();
+		expect(screen.getByText("!3")).toBeInTheDocument();
+		expect(screen.queryByText("#3")).not.toBeInTheDocument();
+		expect(screen.getByText("Reviewable change 3")).toBeInTheDocument();
 	});
 
 	it("shows a no-needed-reviews notice instead of opening the terminal when the backend reuses runs", async () => {

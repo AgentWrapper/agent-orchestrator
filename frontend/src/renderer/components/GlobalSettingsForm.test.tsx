@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { initializeRendererI18n } from "../i18n";
+import { i18n, initializeRendererI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 
 const {
@@ -43,6 +43,11 @@ vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (e: unknown, fb = "Request failed") =>
 		e instanceof Error ? e.message : ((e as { message?: string })?.message ?? fb),
+	apiErrorSnapshot: (error: unknown) => {
+		const message = (error as { message?: unknown })?.message;
+		return typeof message === "string" && message ? { detail: message } : {};
+	},
+	safeExternalErrorMessage: (error: unknown) => (error instanceof Error ? error.message : undefined),
 }));
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
@@ -97,6 +102,24 @@ beforeEach(async () => {
 });
 
 describe("GlobalSettingsForm", () => {
+	it("localizes the heading and composed settings sections without remounting", async () => {
+		renderForm();
+
+		expect(await screen.findByText("Global settings")).toBeInTheDocument();
+		expect(screen.getByText("Settings that apply across all projects")).toBeInTheDocument();
+		expect(screen.getByText("Language")).toBeInTheDocument();
+		expect(screen.getByText("Updates")).toBeInTheDocument();
+		expect(screen.getByText("Migration")).toBeInTheDocument();
+
+		await act(async () => i18n.changeLanguage("zh-CN"));
+
+		expect(screen.getByText("全局设置")).toBeInTheDocument();
+		expect(screen.getByText("适用于所有项目的设置")).toBeInTheDocument();
+		expect(screen.getByText("语言")).toBeInTheDocument();
+		expect(screen.getByText("更新")).toBeInTheDocument();
+		expect(screen.getByText("迁移")).toBeInTheDocument();
+	});
+
 	it("renders Language before the Updates and Migration sections", async () => {
 		renderForm();
 		const language = await screen.findByText("Language");
@@ -211,6 +234,6 @@ describe("GlobalSettingsForm", () => {
 		const btn = await screen.findByRole("button", { name: "Run migration" });
 		await userEvent.click(btn);
 		expect(await screen.findByText(/disk full/i)).toBeInTheDocument();
-		expect(setMigration).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", error: "disk full" }));
+		expect(setMigration).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", errorDetail: "disk full" }));
 	});
 });

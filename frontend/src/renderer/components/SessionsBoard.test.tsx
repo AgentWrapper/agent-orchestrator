@@ -104,4 +104,99 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("修复登录流程")).toBeInTheDocument();
 		expect(screen.getByText("功能/登录保护")).toBeInTheDocument();
 	});
+
+	it("shows distinct symbol-only branches but hides an exactly matching one", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s-distinct",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "!!!",
+							provider: "claude-code",
+							branch: "???",
+							status: "working",
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "s-exact",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "@@@",
+							provider: "claude-code",
+							branch: "@@@",
+							status: "working",
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("!!!")).toBeInTheDocument();
+		expect(screen.getByText("???")).toBeInTheDocument();
+		expect(screen.getAllByText("@@@")).toHaveLength(1);
+	});
+
+	it("formats mixed GitHub and GitLab numbers with provider-specific punctuation", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "mixed changes",
+							provider: "claude-code",
+							branch: "feat/mixed",
+							status: "pr_open",
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [
+								{
+									url: "https://github.com/acme/app/pull/7",
+									number: 7,
+									state: "open",
+									ci: "passing",
+									review: "approved",
+									mergeability: "mergeable",
+									reviewComments: false,
+									updatedAt: "2026-01-01T00:00:00Z",
+								},
+								{
+									url: "https://gitlab.example.com/acme/app/-/merge_requests/8",
+									number: 8,
+									state: "open",
+									ci: "passing",
+									review: "approved",
+									mergeability: "mergeable",
+									reviewComments: false,
+									updatedAt: "2026-01-01T00:00:00Z",
+								},
+							],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(await screen.findByText("#7")).toBeInTheDocument();
+		expect(screen.getByText("!8")).toBeInTheDocument();
+	});
 });

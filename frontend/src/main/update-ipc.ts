@@ -12,10 +12,7 @@ export type UpdateIpcDeps = {
 };
 
 const disabledSettings: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false };
-const unsupportedStatus: UpdateStatus = {
-	state: "unsupported",
-	message: "Updates are unavailable in remote client builds.",
-};
+const unsupportedStatus: UpdateStatus = { state: "unsupported" };
 
 export function createUpdateIpcHandlers(deps: UpdateIpcDeps) {
 	return {

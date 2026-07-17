@@ -6,7 +6,12 @@ import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useA
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import {
+	orchestratorErrorDescriptor,
+	orchestratorErrorMessage,
+	spawnOrchestrator,
+	type OrchestratorErrorDescriptor,
+} from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
@@ -101,7 +106,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		form.scmProvider === "github" && form.scmConnectionId === "github-default",
 	);
 	const [savedAt, setSavedAt] = useState<number | null>(null);
-	const [replacementError, setReplacementError] = useState<{ detail?: string } | null>(null);
+	const [replacementError, setReplacementError] = useState<OrchestratorErrorDescriptor | null>(null);
 	const [validationError, setValidationError] = useState<"agents" | "intake" | "scm" | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
@@ -173,7 +178,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				try {
 					await spawnOrchestrator(projectId, "settings", true);
 				} catch (error) {
-					return { replacementError: { detail: error instanceof Error ? error.message : undefined } };
+					return { replacementError: orchestratorErrorDescriptor(error) };
 				}
 			}
 			return { replacementError: null };
@@ -345,9 +350,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							type="checkbox"
 							className="size-icon-base accent-accent"
 							checked={form.coordinatorAutoWake}
-							onChange={(event) =>
-								setForm((current) => ({ ...current, coordinatorAutoWake: event.target.checked }))
-							}
+							onChange={(event) => setForm((current) => ({ ...current, coordinatorAutoWake: event.target.checked }))}
 						/>
 						{t("projects.agents.autoWake")}
 					</label>
@@ -363,12 +366,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						</button>
 					</div>
 					{refreshAgentsMutation.isError && (
-						<p className="text-xs leading-row text-error">
-							{t("projects.agents.refreshFailed")}
-						</p>
+						<p className="text-xs leading-row text-error">{t("projects.agents.refreshFailed")}</p>
 					)}
 					{missingRequiredAgent && (
-					<p className="text-xs leading-row text-error">{t("projects.settings.agentsRequired")}</p>
+						<p className="text-xs leading-row text-error">{t("projects.settings.agentsRequired")}</p>
 					)}
 					<Field label={t("projects.settings.modelOverride")} htmlFor="model">
 						<input
@@ -441,7 +442,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				{replacementError && !mutation.isPending && !mutation.isError && (
 					<span className="text-xs text-warning">
 						{t("projects.settings.restartFailed", {
-							detail: replacementError.detail ?? t("projects.replacement.fallback"),
+							detail: orchestratorErrorMessage(replacementError, t("projects.replacement.fallback")),
 						})}
 					</span>
 				)}

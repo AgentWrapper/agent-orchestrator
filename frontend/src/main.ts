@@ -23,11 +23,7 @@ import {
 	quitAndInstallUpdate,
 	getUpdateStatus,
 } from "./main/auto-updater";
-import {
-	readUpdateSettings,
-	writeUpdateSettings,
-	type UpdateSettings,
-} from "./main/update-settings";
+import { readUpdateSettings, writeUpdateSettings, type UpdateSettings } from "./main/update-settings";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -57,22 +53,19 @@ import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/exter
 import { RemoteClientRuntime, probeRemoteForwarder } from "./main/remote-client-runtime";
 import type { RemoteServerConfigUpdate } from "./main/remote-client-runtime";
 import { startRemoteForwarder } from "./main/remote-forwarder";
-import {
-	readRemoteServerConfig,
-	writeRemoteServerConfig,
-	type ConfigCrypto,
-} from "./main/remote-server-config";
+import { readRemoteServerConfig, writeRemoteServerConfig, type ConfigCrypto } from "./main/remote-server-config";
 import { resolveRemoteClientBuild, resolveRemoteClientIdentity } from "./main/remote-client-build";
 import { createUpdateIpcHandlers } from "./main/update-ipc";
-import { scanRepoSetupCode, type ImportRepoSetupCode } from "./main/import-scan";
+import {
+	scanRepoSetupCode,
+	scanRepoValidationCode,
+	type ImportRepoSetupCode,
+	type ImportRepoValidationCode,
+} from "./main/import-scan";
 import { mainI18n, mainT } from "./main/i18n";
 import { LocaleController } from "./main/locale-controller";
 import { readLocalePreference, writeLocalePreference } from "./main/locale-settings";
-import {
-	buildAboutDialogOptions,
-	rebuildApplicationMenu,
-	resolveDirectoryChooserTitle,
-} from "./main/application-menu";
+import { buildAboutDialogOptions, rebuildApplicationMenu, resolveDirectoryChooserTitle } from "./main/application-menu";
 import type { LocalePreference, LocaleSnapshot } from "./shared/locale";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -140,7 +133,7 @@ type GitRepoScanResult = {
 	hasRemote: boolean;
 	status: "ok" | "error";
 	setupCode?: ImportRepoSetupCode;
-	reason?: string;
+	reasonCode?: ImportRepoValidationCode;
 };
 
 type ImportFolderScanResult = {
@@ -609,11 +602,12 @@ async function inspectExistingDaemon(
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	if (isRemoteClientBuild) {
-		return remoteClientRuntime?.getStatus() ?? {
-			state: "error",
-			code: "not_configured",
-			message: "Remote client runtime is not ready.",
-		};
+		return (
+			remoteClientRuntime?.getStatus() ?? {
+				state: "error",
+				code: "not_ready",
+			}
+		);
 	}
 	if (daemonProcess) {
 		return daemonStatus;
@@ -635,7 +629,6 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	) {
 		setDaemonStatus({
 			state: "stopped",
-			message: "AO daemon is no longer reachable.",
 			code: "daemon_unreachable",
 		});
 	}
@@ -645,7 +638,7 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 async function startDaemon(): Promise<DaemonStatus> {
 	if (isRemoteClientBuild) {
 		if (!remoteClientRuntime) {
-			setDaemonStatus({ state: "error", code: "not_configured", message: "Remote client runtime is not ready." });
+			setDaemonStatus({ state: "error", code: "not_ready" });
 			return daemonStatus;
 		}
 		return remoteClientRuntime.start();
@@ -813,8 +806,8 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (launch.source === "bundled" && !existsSync(launch.command)) {
 		setDaemonStatus({
 			state: "error",
-			message: `Bundled AO daemon binary was not found at ${launch.command}. Rebuild the desktop package.`,
 			code: "binary_missing",
+			executablePath: launch.command,
 		});
 		return daemonStatus;
 	}
@@ -940,7 +933,6 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}
 		setDaemonStatus({
 			state: "stopped",
-			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
 			code: "exited",
 			exitCode: code,
 			signal,
@@ -993,7 +985,7 @@ ipcMain.handle("remoteServer:get", () => remoteClientRuntime?.getEditableConfig(
 ipcMain.handle("remoteServer:revealPassword", () => remoteClientRuntime?.revealPassword() ?? null);
 ipcMain.handle("remoteServer:save", (_event, input: RemoteServerConfigUpdate) => {
 	if (!remoteClientRuntime) {
-		return { state: "error", code: "not_configured", message: "Remote client runtime is not ready." } satisfies DaemonStatus;
+		return { state: "error", code: "not_ready" } satisfies DaemonStatus;
 	}
 	return remoteClientRuntime.saveConfig(input);
 });
@@ -1160,7 +1152,7 @@ async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoS
 				remote: "",
 				hasRemote: false,
 				status: "error",
-				reason: "Linked worktree children cannot be imported.",
+				reasonCode: "LINKED_WORKTREE",
 			};
 		}
 	} catch {
@@ -1174,7 +1166,7 @@ async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoS
 					remote: "",
 					hasRemote: false,
 					status: "error",
-					reason: "Bare repositories cannot be imported.",
+					reasonCode: "BARE_REPOSITORY",
 				};
 			}
 		} catch {
@@ -1191,7 +1183,7 @@ async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoS
 	]);
 	const hasHead = headResult.status === "fulfilled";
 	const isBare = bareResult.status === "fulfilled" ? bareResult.value === "true" : undefined;
-	const validationReason = scanRepoValidationReason(
+	const validationCode = scanRepoValidationCode(
 		name,
 		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
 		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
@@ -1205,25 +1197,10 @@ async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoS
 		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
 		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
 		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		status: validationReason ? "error" : "ok",
+		status: validationCode ? "error" : "ok",
 		setupCode: scanRepoSetupCode(name, isBare, hasHead),
-		reason: validationReason,
+		reasonCode: validationCode,
 	};
-}
-
-function scanRepoValidationReason(
-	name: string,
-	branch: string,
-	hasRemote: boolean,
-	isBare: boolean,
-	hasHead: boolean,
-): string | undefined {
-	if (name === "__root__") return "Repository name is reserved by AO.";
-	if (isBare) return "Bare repositories cannot be imported.";
-	if (!hasHead) return "Repository must have at least one commit.";
-	if (branch === "HEAD") return "Repository must have a checked-out branch.";
-	if (!hasRemote) return "Origin remote is required.";
-	return undefined;
 }
 
 async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

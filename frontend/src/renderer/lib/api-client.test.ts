@@ -3,11 +3,13 @@ import {
 	apiClient,
 	apiErrorCode,
 	apiErrorMessage,
+	apiErrorSnapshot,
 	ERROR_CODE_KEYS,
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
 	setApiBaseUrl,
+	safeExternalErrorMessage,
 	subscribeApiBaseUrl,
 } from "./api-client";
 import { i18n } from "../i18n";
@@ -126,7 +128,12 @@ describe("apiClient runtime base URL", () => {
 
 		const { error } = await apiClient.GET("/api/v1/projects");
 
-		expect(error).toEqual({ message: "AO daemon is not ready." });
+		expect(error).toEqual({
+			error: "unavailable",
+			code: "DAEMON_NOT_READY",
+			message: "DAEMON_NOT_READY",
+		});
+		expect(apiErrorMessage(error)).toBe("The AO daemon is not ready");
 		expect(getApiBaseUrl()).toBe("");
 		expect(hasTrustedApiBaseUrl()).toBe(false);
 		expect(fetchSpy).not.toHaveBeenCalled();
@@ -307,7 +314,7 @@ describe("apiErrorMessage", () => {
 	});
 
 	it("localizes every explicitly mapped daemon code in both locales", async () => {
-		expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(132);
+		expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(134);
 		expect(Object.keys(ERROR_CODE_KEYS)).toEqual(
 			expect.arrayContaining([
 				"INVALID_BODY",
@@ -322,6 +329,8 @@ describe("apiErrorMessage", () => {
 				"INVALID_ACTIVITY_STATE",
 				"SSE_UNSUPPORTED",
 				"INVALID_AFTER",
+				"DAEMON_NOT_READY",
+				"REMOTE_DAEMON_UNAVAILABLE",
 			]),
 		);
 
@@ -410,5 +419,38 @@ describe("apiErrorMessage", () => {
 		expect(apiErrorMessage({ error: "Conflict", code: "FUTURE_CODE", message: detail }, "Could not continue")).toBe(
 			"Could not continue",
 		);
+	});
+});
+
+describe("apiErrorSnapshot", () => {
+	it("serializes a known code without its diagnostic message", () => {
+		expect(
+			apiErrorSnapshot({
+				error: "Forbidden",
+				code: "DIRECTORY_PERMISSION_DENIED",
+				message: "Directory permission denied; token=do-not-show",
+			}),
+		).toEqual({ code: "DIRECTORY_PERMISSION_DENIED" });
+	});
+
+	it("serializes only a safe detail from an unknown complete envelope", () => {
+		expect(apiErrorSnapshot({ error: "Conflict", code: "FUTURE_CODE", message: "disk full on /srv/legacy" })).toEqual({
+			detail: "disk full on /srv/legacy",
+		});
+		expect(
+			apiErrorSnapshot({ error: "Conflict", code: "FUTURE_CODE", message: "Authorization: Bearer top-secret" }),
+		).toEqual({});
+	});
+});
+
+describe("safeExternalErrorMessage", () => {
+	it("returns a non-sensitive local Error message", () => {
+		expect(safeExternalErrorMessage(new Error("connection reset by peer"))).toBe("connection reset by peer");
+	});
+
+	it("rejects empty, non-Error, and credential-bearing messages", () => {
+		expect(safeExternalErrorMessage(new Error("  "))).toBeUndefined();
+		expect(safeExternalErrorMessage("connection reset by peer")).toBeUndefined();
+		expect(safeExternalErrorMessage(new Error("token=top-secret"))).toBeUndefined();
 	});
 });

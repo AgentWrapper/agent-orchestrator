@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
 	REMOTE_SERVER_CONFIG_FILE_NAME,
+	RemoteServerConfigError,
 	readRemoteServerConfig,
 	validateRemoteServerConfigInput,
 	writeRemoteServerConfig,
@@ -36,13 +37,19 @@ describe("remote-server-config", () => {
 	});
 
 	it.each([
-		[{ host: "", port: 3011, password: "secret" }, "Server host is required"],
-		[{ host: "server", port: 0, password: "secret" }, "Server port must be an integer from 1 to 65535"],
-		[{ host: "server", port: 65536, password: "secret" }, "Server port must be an integer from 1 to 65535"],
-		[{ host: "server", port: 30.5, password: "secret" }, "Server port must be an integer from 1 to 65535"],
-		[{ host: "server", port: 3011, password: "" }, "Connection password is required"],
-	] as const)("rejects invalid input %#", (input, message) => {
-		expect(() => validateRemoteServerConfigInput(input)).toThrow(message);
+		[{ host: "", port: 3011, password: "secret" }, "remote_host_required"],
+		[{ host: "server", port: 0, password: "secret" }, "remote_port_invalid"],
+		[{ host: "server", port: 65536, password: "secret" }, "remote_port_invalid"],
+		[{ host: "server", port: 30.5, password: "secret" }, "remote_port_invalid"],
+		[{ host: "server", port: 3011, password: "" }, "remote_password_required"],
+	] as const)("rejects invalid input with semantic code %#", (input, code) => {
+		try {
+			validateRemoteServerConfigInput(input);
+			throw new Error("expected validation to fail");
+		} catch (error) {
+			expect(error).toBeInstanceOf(RemoteServerConfigError);
+			expect(error).toMatchObject({ code });
+		}
 	});
 
 	it("returns null when no saved configuration exists", async () => {

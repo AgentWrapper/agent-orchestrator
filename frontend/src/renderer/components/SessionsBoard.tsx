@@ -21,9 +21,14 @@ import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import {
+	orchestratorErrorDescriptor,
+	orchestratorErrorMessage,
+	spawnOrchestrator,
+	type OrchestratorErrorDescriptor,
+} from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
-import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { changeRequestNumber, prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 
@@ -92,7 +97,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
-	const [spawnError, setSpawnError] = useState<string | null>(null);
+	const [spawnError, setSpawnError] = useState<OrchestratorErrorDescriptor | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const orchestratorStartupError = useUiStore((state) =>
 		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
@@ -102,7 +107,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
-	const visibleSpawnError = spawnError ?? orchestratorStartupError;
+	const visibleSpawnError = spawnError
+		? orchestratorErrorMessage(spawnError, t("sessions.errors.spawnFailedGeneric"))
+		: orchestratorStartupError
+			? t("shell.errors.projectAddedButStartFailed", {
+					detail: orchestratorErrorMessage(orchestratorStartupError, t("shell.errors.startOrchestrator")),
+				})
+			: null;
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
 	useEffect(() => setSpawnError(null), [projectId]);
@@ -167,7 +178,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
-			setSpawnError(err instanceof Error ? err.message : t("sessions.errors.spawnFailedGeneric"));
+			setSpawnError(orchestratorErrorDescriptor(err));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -439,14 +450,16 @@ type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 	const { t } = useTranslation();
-	const labels = new Set(group.prs.map((pr) => boardChangeRequestShortLabel(pr.provider, t)));
+	const providers = new Set(group.prs.map((pr) => pr.provider));
 	const requestLabel =
-		labels.size === 1 ? labels.values().next().value : t("sessions.board.changeRequests.mixedAbbreviation");
+		providers.size === 1
+			? boardChangeRequestShortLabel(group.prs[0].provider, t)
+			: t("sessions.board.changeRequests.mixedAbbreviation");
 	const statusLabel = t(`sessions.board.changeRequests.status.${group.status.state}`);
 	return (
 		<span
 			aria-label={t("sessions.board.changeRequests.groupAria", {
-				numbers: group.prs.map((pr) => `#${pr.number}`).join(", "),
+				numbers: group.prs.map(changeRequestNumber).join(", "),
 				status: statusLabel,
 			})}
 			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
@@ -460,7 +473,7 @@ function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 						rel="noreferrer"
 						target="_blank"
 					>
-						#{pr.number}
+						{changeRequestNumber(pr)}
 					</a>
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
@@ -492,12 +505,15 @@ function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
 }
 
 function sameLabel(a: string, b: string): boolean {
+	if (a === b) return true;
 	const normalize = (value: string) =>
 		value
 			.toLowerCase()
 			.replace(/^(feat|fix|chore|refactor|session)\//, "")
 			.replace(/[^\p{L}\p{N}]+/gu, "");
-	return normalize(a) === normalize(b);
+	const normalizedA = normalize(a);
+	const normalizedB = normalize(b);
+	return normalizedA !== "" && normalizedB !== "" && normalizedA === normalizedB;
 }
 
 function agentLabel(provider: WorkspaceSession["provider"]): string {

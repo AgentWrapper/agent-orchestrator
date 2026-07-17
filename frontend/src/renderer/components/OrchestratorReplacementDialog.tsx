@@ -2,12 +2,13 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, RotateCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { orchestratorErrorMessage, type OrchestratorErrorDescriptor } from "../lib/spawn-orchestrator";
 import { findProjectOrchestrator, type WorkspaceSummary } from "../types/workspace";
 import { TopbarButton } from "./TopbarButton";
 
 type OrchestratorReplacementDialogProps = {
 	projectId: string | null;
-	error?: string;
+	error?: OrchestratorErrorDescriptor;
 	workspaces: WorkspaceSummary[];
 	onOpenChange: (open: boolean) => void;
 	onRetry: (projectId: string) => void;
@@ -48,7 +49,9 @@ export function OrchestratorReplacementDialog({
 								{t("projects.replacement.title")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-2 text-[13px] leading-5 text-muted-foreground">
-								{error ?? t("projects.replacement.fallback")}
+								{error
+									? orchestratorErrorMessage(error, t("projects.replacement.fallback"))
+									: t("projects.replacement.fallback")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>

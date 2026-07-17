@@ -8,7 +8,17 @@ export type RemoteForwarder = {
 	close(): Promise<void>;
 };
 
-const unavailableBody = JSON.stringify({ message: "Remote AO daemon is unavailable." });
+export class RemoteForwarderStartError extends Error {
+	readonly code = "remote_forwarder_bind_failed" as const;
+
+	constructor() {
+		super("remote_forwarder_bind_failed");
+		this.name = "RemoteForwarderStartError";
+	}
+}
+
+const unavailableCode = "REMOTE_DAEMON_UNAVAILABLE";
+const unavailableBody = JSON.stringify({ error: "unavailable", code: unavailableCode, message: unavailableCode });
 const connectTimeoutMs = 5_000;
 const hopByHopHeaders = new Set([
 	"connection",
@@ -124,13 +134,15 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		return request;
 	};
 	const server = http.createServer((request, response) => {
-		const upstream = trackOutboundRequest(http.request({
-			hostname: config.host,
-			port: config.port,
-			method: request.method,
-			path: request.url,
-			headers: upstreamHeaders(request.headers, config),
-		}));
+		const upstream = trackOutboundRequest(
+			http.request({
+				hostname: config.host,
+				port: config.port,
+				method: request.method,
+				path: request.url,
+				headers: upstreamHeaders(request.headers, config),
+			}),
+		);
 		const cancelUpstream = () => {
 			destroyOutboundRequest(upstream, "Downstream request closed.");
 		};
@@ -162,13 +174,15 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 	});
 
 	server.on("upgrade", (request, clientSocket, clientHead) => {
-		const upstream = trackOutboundRequest(http.request({
-			hostname: config.host,
-			port: config.port,
-			method: request.method,
-			path: request.url,
-			headers: upstreamHeaders(request.headers, config, true),
-		}));
+		const upstream = trackOutboundRequest(
+			http.request({
+				hostname: config.host,
+				port: config.port,
+				method: request.method,
+				path: request.url,
+				headers: upstreamHeaders(request.headers, config, true),
+			}),
+		);
 		const cancelPendingUpgrade = () => {
 			destroyOutboundRequest(upstream, "Downstream WebSocket closed before upgrade.");
 		};
@@ -210,7 +224,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 	const address = server.address();
 	if (!address || typeof address === "string") {
 		await new Promise<void>((resolve) => server.close(() => resolve()));
-		throw new Error("Remote forwarder did not bind a TCP port");
+		throw new RemoteForwarderStartError();
 	}
 
 	return {

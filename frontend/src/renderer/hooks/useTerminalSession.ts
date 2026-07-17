@@ -9,6 +9,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { i18n } from "../i18n";
 import { getApiBaseUrl } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
@@ -203,7 +204,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				clearOpenTimer(generation);
 				r.inputReady = false;
-				terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m");
+				terminal.writeln(`\r\n\x1b[2m[${i18n.t("terminal.markers.processExited")}]\x1b[0m`);
 				transition("exited");
 				invalidateWorkspaces();
 			}),
@@ -211,7 +212,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				clearOpenTimer(generation);
 				r.inputReady = false;
-				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
+				terminal.writeln(`\r\n\x1b[2m[${i18n.t("terminal.markers.error")}] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
 				void captureRendererEvent("ao.renderer.terminal_attach_failed", { reason: "pane_error" });
