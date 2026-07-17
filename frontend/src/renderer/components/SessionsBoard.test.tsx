@@ -234,6 +234,28 @@ describe("SessionsBoard", () => {
 		expect(postMock).not.toHaveBeenCalled();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
+
+	it("opens a merged Done session from the card body without showing restore", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+
+		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByText("merged worker"));
+
+		expect(postMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "p1", sessionId: "s-merged" },
+		});
+	});
 });
 
 function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {

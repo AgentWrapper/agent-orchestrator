@@ -346,7 +346,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								<SessionCard
 									key={s.id}
 									session={s}
-									interactive={false}
+									onOpen={s.status === "terminated" ? undefined : () => openSession(s)}
+									interactive={s.status !== "terminated"}
 									restoreAction={s.status === "terminated" ? (event) => void restoreDoneSession(event, s) : undefined}
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}

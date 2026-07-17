@@ -372,6 +372,36 @@ func TestHooks_ClaudeCodeBlankSessionIDIsIgnored(t *testing.T) {
 	}
 }
 
+func TestHooks_RegisteredHarnessSessionStartReportsAgentSessionID(t *testing.T) {
+	for _, agent := range []string{"opencode", "qwen", "kilocode"} {
+		t.Run(agent, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "ao-7")
+			cfg := setConfigEnv(t)
+			srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+			writeRunFileFor(t, cfg, srv)
+
+			_, _, err := executeCLI(t, Deps{
+				In:           strings.NewReader(`{"session_id":"` + agent + `-native-1"}`),
+				ProcessAlive: func(int) bool { return true },
+			}, "hooks", agent, "session-start")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if capture.hits != 1 {
+				t.Fatalf("daemon calls = %d, want 1", capture.hits)
+			}
+			var req setActivityAPIRequest
+			if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+				t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+			}
+			want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: agent + "-native-1"}
+			if req != want {
+				t.Fatalf("body = %+v, want %+v", req, want)
+			}
+		})
+	}
+}
+
 func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
