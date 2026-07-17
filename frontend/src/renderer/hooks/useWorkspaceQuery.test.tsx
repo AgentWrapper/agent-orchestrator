@@ -1,16 +1,29 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	hasTrustedApiBaseUrlMock: vi.fn(() => true),
-}));
+const { getMock, hasTrustedApiBaseUrlMock, subscribeApiBaseUrlMock, emitApiBaseUrlChange } = vi.hoisted(() => {
+	const listeners = new Set<() => void>();
+	return {
+		getMock: vi.fn(),
+		hasTrustedApiBaseUrlMock: vi.fn(() => true),
+		subscribeApiBaseUrlMock: vi.fn((listener: () => void) => {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		}),
+		emitApiBaseUrlChange: () => {
+			for (const listener of listeners) listener();
+		},
+	};
+});
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
+	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
@@ -38,14 +51,44 @@ beforeEach(() => {
 });
 
 describe("useWorkspaceQuery", () => {
-	it("returns an empty workspace list while the daemon base URL is untrusted", async () => {
+	it("stays pending and does not fetch while the daemon base URL is untrusted", async () => {
 		hasTrustedApiBaseUrlMock.mockReturnValue(false);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
-		await waitFor(() => expect(result.current.isSuccess).toBe(true));
-		expect(result.current.data).toEqual([]);
+		// Gated off: the query never resolves to a *successful* empty list — doing
+		// so would flash the first-run onboarding over projects about to load
+		// (#2514) — and it never touches the API before the daemon is known.
+		await waitFor(() => expect(result.current.isPending).toBe(true));
+		expect(result.current.isSuccess).toBe(false);
+		expect(result.current.fetchStatus).toBe("idle");
+		expect(result.current.data).toBeUndefined();
 		expect(getMock).not.toHaveBeenCalled();
+	});
+
+	it("fetches once the base URL becomes trusted (no onboarding flash on cold start)", async () => {
+		hasTrustedApiBaseUrlMock.mockReturnValue(false);
+		respondWith({
+			projects: {
+				data: { projects: [{ id: "p1", name: "Repo", kind: "single_repo", path: "/tmp/p1" }] },
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+
+		// Cold start: gated off, nothing fetched, no empty list to flash onboarding.
+		await waitFor(() => expect(result.current.isPending).toBe(true));
+		expect(getMock).not.toHaveBeenCalled();
+
+		// Daemon reports ready → base URL trusted → subscribers notified → refetch.
+		hasTrustedApiBaseUrlMock.mockReturnValue(true);
+		act(() => {
+			emitApiBaseUrlChange();
+		});
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+		expect(result.current.data?.map((workspace) => workspace.id)).toEqual(["p1"]);
 	});
 
 	it("maps projects and their sessions, applying provider/status/title fallbacks", async () => {

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
 import type { components } from "../../api/schema";
-import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiClient, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
 import {
 	type PRState,
@@ -27,12 +28,25 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 export const workspaceQueryKey = ["workspaces"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
+// Thrown when fetchWorkspaces runs before the daemon's API base URL is known.
+// The port is discovered at runtime (only once the daemon reports ready), so
+// before that there is no authoritative project list. Callers gate on
+// hasTrustedApiBaseUrl(); this exists so a missed gate fails as an error rather
+// than resolving to a *successful* empty list — which would flash the first-run
+// onboarding page over existing projects (#2514).
+export class ApiBaseUrlNotTrustedError extends Error {
+	constructor() {
+		super("workspace query ran before the daemon API base URL was trusted");
+		this.name = "ApiBaseUrlNotTrustedError";
+	}
+}
+
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (usePreviewData) {
 		return mockWorkspaces;
 	}
 	if (!hasTrustedApiBaseUrl()) {
-		return [];
+		throw new ApiBaseUrlNotTrustedError();
 	}
 
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =
@@ -79,5 +93,12 @@ export const workspaceQueryOptions = {
 };
 
 export function useWorkspaceQuery() {
-	return useQuery(workspaceQueryOptions);
+	// Gate the query on a trusted API base URL, tracked reactively so it flips on
+	// the moment the daemon reports ready (setApiBaseUrl notifies subscribers).
+	// While untrusted the query stays *pending* (never a successful empty list),
+	// so SessionsBoard shows its loading shell instead of flashing onboarding
+	// over projects that are about to load (#2514). Preview mode has no daemon and
+	// serves mock data, so it is always enabled.
+	const trusted = useSyncExternalStore(subscribeApiBaseUrl, hasTrustedApiBaseUrl, hasTrustedApiBaseUrl);
+	return useQuery({ ...workspaceQueryOptions, enabled: usePreviewData || trusted });
 }

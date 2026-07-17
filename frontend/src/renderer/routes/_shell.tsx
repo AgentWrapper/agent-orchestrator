@@ -11,7 +11,7 @@ import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
@@ -28,6 +28,11 @@ export const Route = createFileRoute("/_shell")({
 	// nav target is warm before the click.
 	loader: async ({ context }) => {
 		await refreshDaemonStatus().catch(() => undefined);
+		// Only warm the cache once the daemon's API base URL is trusted. Prefetching
+		// before that runs fetchWorkspaces against an unknown daemon and would cache
+		// a bogus empty result, flashing onboarding over existing projects (#2514).
+		// The reactive `enabled` gate in useWorkspaceQuery refetches once ready.
+		if (!hasTrustedApiBaseUrl()) return undefined;
 		return context.queryClient.ensureQueryData(workspaceQueryOptions);
 	},
 	component: ShellLayout,

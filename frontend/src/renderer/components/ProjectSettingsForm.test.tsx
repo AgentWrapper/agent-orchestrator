@@ -22,6 +22,10 @@ vi.mock("../lib/api-client", () => ({
 		}
 		return "Request failed";
 	},
+	// Gated off so useWorkspaceQuery reads only the seeded cache (setQueryData)
+	// instead of refetching over it — these tests drive settings, not discovery.
+	hasTrustedApiBaseUrl: () => false,
+	subscribeApiBaseUrl: () => () => {},
 }));
 
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
