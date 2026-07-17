@@ -47,8 +47,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				app: {
 					getVersion: async () => version,
 					chooseDirectory: async () => null,
+					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 				},
+				terminal: { saveDroppedFile: async () => "" },
+				window: { setOverlay: async () => undefined },
+				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: {
 					writeText: async () => undefined,
 					readText: async () => "",
@@ -70,6 +74,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setBounds: () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
 					clear: async (viewId: string) => navState(viewId),
+					capture: async () => "",
+					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
 					reload: async (viewId: string) => navState(viewId),
@@ -380,8 +386,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				app: {
 					getVersion: async () => version,
 					chooseDirectory: async () => null,
+					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 				},
+				terminal: { saveDroppedFile: async () => "" },
+				window: { setOverlay: async () => undefined },
+				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: { writeText: async () => undefined, readText: async () => "" },
 				daemon: {
 					getStatus: async () => status,
@@ -399,6 +409,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
 					clear: async (viewId: string) => navState(viewId),
+					capture: async () => "",
+					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
 					reload: async (viewId: string) => navState(viewId),

@@ -40,10 +40,11 @@ jobs:
       - name: Run vitest suite
         run: npx vitest run
 
-  e2e-t0:
-    # Runs the @T0 Playwright smoke suite (issue #2483) so the new browser-harness
-    # coverage actually blocks PRs instead of silently regressing. playwright.config
-    # starts `dev:web` itself (webServer); we only need the browser installed.
+  e2e-smoke:
+    # Runs the @T0 and @P0 Playwright smoke suites (issue #2483) so the new
+    # browser-harness coverage actually blocks PRs instead of silently regressing.
+    # playwright.config starts `dev:web` itself (webServer); we only need the
+    # browser installed.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -62,5 +63,5 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Run T0 smoke suite
-        run: CI=true npm run test:e2e:t0
+      - name: Run T0 + P0 smoke suite
+        run: CI=true npm run test:e2e:smoke

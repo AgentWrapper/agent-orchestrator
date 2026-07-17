@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installFakeBridge } from "./support/fake-bridge";
+import { installFakeAgent, installFakeBridge } from "./support/fake-bridge";
 
 // P0 — Data-directory invariant (issue #2483 P0 comment, frontend slice).
 //
@@ -13,7 +13,14 @@ import { installFakeBridge } from "./support/fake-bridge";
 // the ~/.ao filesystem assertions stay in the pod data-dir script.
 
 test("P0 renderer reflects daemon data-dir readiness @P0 @DATADIR", async ({ page }) => {
-	await installFakeBridge(page, { daemonState: "ready", daemonPort: 8080 });
+	// Use installFakeAgent so the board card is served through the
+	// window.__aoFakeAgent.snapshot() workspace seam — the daemon-backed source —
+	// not the static mockWorkspaces fallback. Otherwise the card assertion below
+	// would pass even if daemon/data-dir-backed hydration were broken (false green).
+	await installFakeAgent(page, {
+		daemonPort: 8080,
+		workers: [{ id: "datadir", title: "Persisted worker", status: "working" }],
+	});
 	await page.goto("/");
 
 	// A ready daemon on a port ⇒ its data dir + config skeleton initialized.
