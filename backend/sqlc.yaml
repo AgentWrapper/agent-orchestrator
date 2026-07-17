@@ -108,6 +108,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ActivityState"
+          - column: "sessions.capability_class"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "CapabilityClass"
           - column: "review.session_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

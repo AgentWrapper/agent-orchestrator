@@ -885,6 +885,41 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 }
 
+func TestClaimPRDeniesNonWorkerCapabilityClassesAndAuditsAttempt(t *testing.T) {
+	for _, class := range []domain.CapabilityClass{
+		domain.CapabilityClassOrchestrator,
+		domain.CapabilityClassNativeSubagent,
+	} {
+		t.Run(string(class), func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+				Metadata: domain.SessionMetadata{WorkspacePath: "/ws", CapabilityClass: class},
+			}
+			sink := &fakeTelemetrySink{}
+			svc := NewWithDeps(Deps{Store: st, Telemetry: sink})
+
+			_, err := svc.ClaimPR(context.Background(), "mer-1", "42", ClaimPROptions{AllowTakeover: true})
+			if !errors.Is(err, ErrSessionNotClaimable) {
+				t.Fatalf("err = %v, want %v", err, ErrSessionNotClaimable)
+			}
+			if len(sink.events) != 1 {
+				t.Fatalf("events = %#v, want one denial", sink.events)
+			}
+			ev := sink.events[0]
+			if ev.Name != "ao.capability.denied" || ev.SessionID == nil || *ev.SessionID != "mer-1" {
+				t.Fatalf("event = %+v", ev)
+			}
+			if ev.Payload["actor_session"] != domain.SessionID("mer-1") ||
+				ev.Payload["capability"] != domain.CapabilityClaimPR ||
+				ev.Payload["target"] != "42" ||
+				ev.Payload["policy_reason"] != domain.IndependentWorkerPolicyReason {
+				t.Fatalf("denial payload = %+v", ev.Payload)
+			}
+		})
+	}
+}
+
 func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}

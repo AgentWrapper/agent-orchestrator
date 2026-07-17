@@ -181,6 +181,7 @@ type Session struct {
 	FirstSignalAt   sql.NullTime
 	PreviewURL      string
 	PreviewRevision int64
+	CapabilityClass domain.CapabilityClass
 }
 
 type SessionWorktree struct {

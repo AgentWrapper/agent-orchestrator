@@ -662,6 +662,12 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	if rt.lastCfg.Env[EnvSessionID] == "" {
 		t.Fatal("runtime env missing AO_SESSION_ID")
 	}
+	if agent.lastLaunch.CapabilityClass != domain.CapabilityClassAOWorker || rec.Metadata.CapabilityClass != domain.CapabilityClassAOWorker {
+		t.Fatalf("worker capability policy launch=%q metadata=%q", agent.lastLaunch.CapabilityClass, rec.Metadata.CapabilityClass)
+	}
+	if rt.lastCfg.Env[EnvCapabilityClass] != string(domain.CapabilityClassAOWorker) {
+		t.Fatalf("runtime capability class = %q, want ao_worker", rt.lastCfg.Env[EnvCapabilityClass])
+	}
 
 	// A project with no stored config yields a zero AgentConfig (adapter defaults)
 	// when the spawn explicitly names its agent.
@@ -2070,7 +2076,7 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2081,14 +2087,14 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"You are the human-facing orchestrator for project mer",
 		`ao spawn --project mer --prompt "<clear worker task>"`,
 		"Before running `ao spawn`, count the `--name` label yourself",
-		"coordination-only by default",
+		"coordination-only. This is an enforced capability boundary",
 		"always spawn or redirect a worker session",
 		"Never edit source files, resolve merge conflicts, run implementation-focused changes",
 		"spawn or redirect a worker session instead of doing the work yourself",
 		"Use `ao send` for session communication",
 		"`ao session ls --project mer`",
 		"`ao session get <worker-session-id>`",
-		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
+		"Delegate implementation, fixes, tests, and PR ownership only to independent AO worker sessions",
 		"skills/using-ao/SKILL.md",
 	} {
 		if !strings.Contains(systemPrompt, want) {
@@ -2103,6 +2109,12 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	// must deliver nothing to the agent, leaving it idle at an empty input box.
 	if agent.lastLaunch.Prompt != "" {
 		t.Fatalf("prompt = %q, want empty (no kickoff turn)", agent.lastLaunch.Prompt)
+	}
+	if agent.lastLaunch.CapabilityClass != domain.CapabilityClassOrchestrator || rec.Metadata.CapabilityClass != domain.CapabilityClassOrchestrator {
+		t.Fatalf("orchestrator capability policy launch=%q metadata=%q", agent.lastLaunch.CapabilityClass, rec.Metadata.CapabilityClass)
+	}
+	if rt.lastCfg.Env[EnvCapabilityClass] != string(domain.CapabilityClassOrchestrator) {
+		t.Fatalf("runtime capability class = %q, want orchestrator", rt.lastCfg.Env[EnvCapabilityClass])
 	}
 }
 

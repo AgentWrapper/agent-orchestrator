@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -32,8 +33,51 @@ func sessionHookFlags() []string {
 	return []string{
 		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks codex session-start",timeout=5}]}]`,
 		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=5}]}]`,
+		"-c", `hooks.PreToolUse=[{hooks=[{type="command",command="ao hooks codex pre-tool-use",timeout=5}]}]`,
 		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=5}]}]`,
 		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=5}]}]`,
+	}
+}
+
+func TestGetLaunchCommandEnforcesOrchestratorCapabilityBoundary(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:            domain.KindOrchestrator,
+		CapabilityClass: domain.CapabilityClassOrchestrator,
+		Permissions:     ports.PermissionModeBypassPermissions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range [][]string{
+		{"--sandbox", "read-only"},
+		{"--ask-for-approval", "never"},
+		{"--disable", "multi_agent"},
+	} {
+		if !containsSubsequence(cmd, want) {
+			t.Fatalf("orchestrator command %#v missing %v", cmd, want)
+		}
+	}
+	if containsSubsequence(cmd, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
+		t.Fatalf("orchestrator command bypasses sandbox: %#v", cmd)
+	}
+}
+
+func TestGetLaunchCommandKeepsIndependentWorkerCapabilities(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:            domain.KindWorker,
+		CapabilityClass: domain.CapabilityClassAOWorker,
+		Permissions:     ports.PermissionModeBypassPermissions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
+		t.Fatalf("worker command lost implementation permissions: %#v", cmd)
+	}
+	if containsSubsequence(cmd, []string{"--disable", "multi_agent"}) {
+		t.Fatalf("worker command unexpectedly disables native features: %#v", cmd)
 	}
 }
 
@@ -502,6 +546,27 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	)
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandReappliesOrchestratorCapabilityBoundary(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Kind:            domain.KindOrchestrator,
+		CapabilityClass: domain.CapabilityClassOrchestrator,
+		Permissions:     ports.PermissionModeBypassPermissions,
+		Session: ports.SessionRef{Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: "thread-123",
+		}},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (%#v, %v, %v), want command", cmd, ok, err)
+	}
+	if !containsSubsequence(cmd, []string{"--sandbox", "read-only", "--ask-for-approval", "never", "--disable", "multi_agent"}) {
+		t.Fatalf("orchestrator restore command missing capability boundary: %#v", cmd)
+	}
+	if containsSubsequence(cmd, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
+		t.Fatalf("orchestrator restore command bypasses sandbox: %#v", cmd)
 	}
 }
 

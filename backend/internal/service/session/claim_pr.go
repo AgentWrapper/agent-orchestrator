@@ -69,7 +69,9 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	if rec.IsTerminated {
 		return ClaimPRResult{}, sessionmanagerAPIError("SESSION_TERMINATED", "Session is terminated")
 	}
-	if rec.Kind == domain.KindOrchestrator {
+	capabilityClass := domain.EffectiveCapabilityClass(rec)
+	if !capabilityClass.AllowsImplementation() {
+		s.emitCapabilityDenied(rec, capabilityClass, domain.CapabilityClaimPR, ref)
 		return ClaimPRResult{}, ErrSessionNotClaimable
 	}
 	if strings.TrimSpace(rec.Metadata.WorkspacePath) == "" {
@@ -133,6 +135,29 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 		res.TakenOverFrom = []domain.SessionID{outcome.PreviousOwner}
 	}
 	return res, nil
+}
+
+func (s *Service) emitCapabilityDenied(rec domain.SessionRecord, class domain.CapabilityClass, capability domain.ImplementationCapability, target string) {
+	if s.telemetry == nil {
+		return
+	}
+	projectID := rec.ProjectID
+	sessionID := rec.ID
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.capability.denied",
+		Source:     "session_service",
+		OccurredAt: s.now(),
+		Level:      ports.TelemetryLevelWarn,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload: map[string]any{
+			"actor_session": sessionID,
+			"actor_class":   class,
+			"capability":    capability,
+			"target":        target,
+			"policy_reason": domain.IndependentWorkerPolicyReason,
+		},
+	})
 }
 
 func (s *Service) fetchClaimObservation(ctx context.Context, ref ports.SCMPRRef) (ports.SCMObservation, error) {
