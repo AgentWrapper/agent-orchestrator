@@ -82,8 +82,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleOpenFiles = useCallback(() => {
 		setBrowserPoppedOut(false);
-		setFilesPoppedOut(true);
-	}, []);
+		setFilesPoppedOut(false);
+		setInspectorView("files");
+		if (!useUiStore.getState().isInspectorOpen) toggleInspector();
+	}, [toggleInspector]);
+
+	const handleToggleFilesPopOut = useCallback(
+		(next: boolean) => {
+			if (next) setBrowserPoppedOut(false);
+			setFilesPoppedOut(next);
+			setInspectorView("files");
+			if (!useUiStore.getState().isInspectorOpen) toggleInspector();
+		},
+		[toggleInspector],
+	);
 
 	const handleToggleBrowserPopOut = useCallback((next: boolean) => {
 		if (next) setFilesPoppedOut(false);
@@ -232,6 +244,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}
+									filesView={
+										session ? (
+											<SessionFilesView
+												onClose={() => setInspectorView("summary")}
+												onToggleMaximized={handleToggleFilesPopOut}
+												sessionId={session.id}
+											/>
+										) : null
+									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
 									onOpenReviewerTerminal={({ handleId, harness }) =>
@@ -250,7 +271,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			</ResizablePanelGroup>
 			{filesPoppedOut && session ? (
 				<div className="absolute inset-0 z-30 bg-background">
-					<SessionFilesView onClose={() => setFilesPoppedOut(false)} sessionId={session.id} />
+					<SessionFilesView
+						isMaximized
+						onClose={() => {
+							setFilesPoppedOut(false);
+							setInspectorView("summary");
+						}}
+						onToggleMaximized={handleToggleFilesPopOut}
+						sessionId={session.id}
+					/>
 				</div>
 			) : null}
 			{/* Maximized browser: a fixed overlay across the app workspace,

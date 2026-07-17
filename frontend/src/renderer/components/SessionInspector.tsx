@@ -122,6 +122,7 @@ export function SessionInspector({
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
 	onOpenFiles,
+	filesView,
 	browserView,
 	view: viewProp,
 	onViewChange,
@@ -133,6 +134,7 @@ export function SessionInspector({
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	onOpenFiles?: () => void;
+	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
 	view?: InspectorView;
@@ -186,6 +188,7 @@ export function SessionInspector({
 					view === "browser" &&
 						!browserPoppedOut &&
 						"p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
+					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
 				{view === "summary" ? <SummaryView session={session} /> : null}
@@ -200,7 +203,7 @@ export function SessionInspector({
 						session={session}
 					/>
 				) : null}
-				{view === "files" ? <FilesView onOpenFiles={onOpenFiles} /> : null}
+				{view === "files" ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : null}
 			</div>
 		</aside>
 	);
@@ -887,11 +890,18 @@ function BrowserView({
 	);
 }
 
-function FilesView({ onOpenFiles }: { onOpenFiles?: () => void }) {
+function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFiles?: () => void }) {
+	if (filesView) {
+		return (
+			<div className="h-full min-h-0" role="tabpanel">
+				{filesView}
+			</div>
+		);
+	}
 	return (
 		<div role="tabpanel">
 			<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 px-5 py-10 text-center")}>
-				<p className="text-md-sm text-muted-foreground">Files are open in the expanded workspace.</p>
+				<p className="text-md-sm text-muted-foreground">Files are not available for this session.</p>
 				<Button disabled={!onOpenFiles} onClick={() => onOpenFiles?.()} size="sm" type="button" variant="outline">
 					Open files
 				</Button>

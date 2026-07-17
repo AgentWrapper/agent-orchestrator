@@ -139,13 +139,16 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).not.toHaveClass("flex-1");
 	});
 
-	it("opens the expanded files panel from the Files tab", async () => {
+	it("renders the supplied files view when the Files tab opens", async () => {
 		const onOpenFiles = vi.fn();
-		renderWithQuery(<SessionInspector onOpenFiles={onOpenFiles} session={session([])} />);
+		renderWithQuery(
+			<SessionInspector filesView={<div>workspace file review</div>} onOpenFiles={onOpenFiles} session={session([])} />,
+		);
 
 		await userEvent.click(screen.getByRole("tab", { name: "Files" }));
 
 		expect(onOpenFiles).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("workspace file review")).toBeInTheDocument();
 	});
 });
 

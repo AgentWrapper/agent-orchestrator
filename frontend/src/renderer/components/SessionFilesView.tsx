@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Copy, Download, FileText, RefreshCw, Search, X } from "lucide-react";
+import {
+	ChevronDown,
+	ChevronRight,
+	Copy,
+	Download,
+	FileText,
+	Maximize2,
+	Minimize2,
+	RefreshCw,
+	Search,
+	X,
+} from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
@@ -14,6 +25,8 @@ type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 type SessionFilesViewProps = {
 	sessionId: string;
 	onClose: () => void;
+	isMaximized?: boolean;
+	onToggleMaximized?: (next: boolean) => void;
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
@@ -34,7 +47,12 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 	unmodified: "border-border bg-raised text-passive",
 };
 
-export function SessionFilesView({ sessionId, onClose }: SessionFilesViewProps) {
+export function SessionFilesView({
+	sessionId,
+	onClose,
+	isMaximized = false,
+	onToggleMaximized,
+}: SessionFilesViewProps) {
 	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
@@ -136,6 +154,21 @@ export function SessionFilesView({ sessionId, onClose }: SessionFilesViewProps) 
 				>
 					<RefreshCw className={cn("size-icon-sm", filesQuery.isFetching && "animate-spin")} aria-hidden="true" />
 				</Button>
+				{onToggleMaximized ? (
+					<Button
+						aria-label={isMaximized ? "Minimize files" : "Maximize files"}
+						onClick={() => onToggleMaximized(!isMaximized)}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						{isMaximized ? (
+							<Minimize2 className="size-icon-sm" aria-hidden="true" />
+						) : (
+							<Maximize2 className="size-icon-sm" aria-hidden="true" />
+						)}
+					</Button>
+				) : null}
 				<Button aria-label="Close files" onClick={onClose} size="icon-sm" type="button" variant="ghost">
 					<X className="size-icon-sm" aria-hidden="true" />
 				</Button>

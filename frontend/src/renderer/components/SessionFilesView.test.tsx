@@ -128,4 +128,22 @@ describe("SessionFilesView", () => {
 		expect(codePane).toHaveClass("text-terminal-foreground");
 		expect(codePane).not.toHaveClass("text-terminal");
 	});
+
+	it("lets the caller toggle between rail and maximized layouts", async () => {
+		const onToggleMaximized = vi.fn();
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} onToggleMaximized={onToggleMaximized} sessionId="sess-1" />);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Maximize files" }));
+		expect(onToggleMaximized).toHaveBeenCalledWith(true);
+	});
+
+	it("shows a minimize action while maximized", async () => {
+		const onToggleMaximized = vi.fn();
+		renderWithQuery(
+			<SessionFilesView isMaximized onClose={vi.fn()} onToggleMaximized={onToggleMaximized} sessionId="sess-1" />,
+		);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Minimize files" }));
+		expect(onToggleMaximized).toHaveBeenCalledWith(false);
+	});
 });

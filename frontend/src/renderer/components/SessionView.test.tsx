@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
@@ -70,9 +70,15 @@ vi.mock("./BrowserPanel", () => ({
 	}),
 }));
 vi.mock("./SessionFilesView", () => ({
-	SessionFilesView: ({ onClose }: { onClose: () => void }) => (
-		<button type="button" onClick={onClose}>
-			files center
+	SessionFilesView: ({
+		isMaximized,
+		onToggleMaximized,
+	}: {
+		isMaximized?: boolean;
+		onToggleMaximized?: (next: boolean) => void;
+	}) => (
+		<button type="button" onClick={() => onToggleMaximized?.(!isMaximized)}>
+			{isMaximized ? "files center" : "files rail"}
 		</button>
 	),
 }));
@@ -99,10 +105,12 @@ vi.mock("../hooks/useBrowserView", () => ({
 }));
 vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({
+		filesView,
 		onOpenFiles,
 		onToggleBrowserPopOut,
 		view,
 	}: {
+		filesView?: ReactNode;
 		onOpenFiles?: () => void;
 		onToggleBrowserPopOut?: () => void;
 		view?: string;
@@ -114,6 +122,7 @@ vi.mock("./SessionInspector", () => ({
 			<button type="button" onClick={onOpenFiles}>
 				open files
 			</button>
+			{view === "files" ? filesView : null}
 		</div>
 	),
 }));
@@ -347,16 +356,32 @@ describe("SessionView", () => {
 		expect(browserDestroy).not.toHaveBeenCalled();
 	});
 
-	it("opens the files view over the session workspace and closes it without unmounting the terminal", () => {
+	it("opens the files view in the inspector rail first", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+
+		expect(
+			within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" }),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+	});
+
+	it("lets the user maximize and minimize the files view explicitly", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		fireEvent.click(within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" }));
 
 		expect(screen.getByRole("button", { name: "files center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "files center" }));
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
+		expect(
+			within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" }),
+		).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
 
