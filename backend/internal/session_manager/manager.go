@@ -2414,10 +2414,10 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, nil
 	}
-	// OpenCode restore must continue the captured native transcript. Replaying
-	// the saved prompt would silently create a new OpenCode conversation under a
-	// "restore" action, so require a native resume command for that harness.
-	if harness == domain.HarnessOpenCode {
+	// OpenCode and Cursor restore must continue the captured native transcript.
+	// Replaying the saved prompt would silently create a new conversation under
+	// a "restore" action, so require a native resume command for those harnesses.
+	if harness == domain.HarnessOpenCode || harness == domain.HarnessCursor {
 		return nil, "", ErrNotResumable
 	}
 	// Other adapters keep the historical fallback: a saved prompt is replayed
