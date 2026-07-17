@@ -188,10 +188,6 @@ export function SessionFilesView({
 							>
 								{expandedVisibleCount > 0 ? "Collapse all" : "Expand all"}
 							</Button>
-							<Button aria-label="Diff layout" disabled size="sm" type="button" variant="outline">
-								Stacked
-								<ChevronDown className="size-icon-sm" aria-hidden="true" />
-							</Button>
 						</div>
 					</div>
 					<ReviewFileList
