@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
+import { useTranslation } from "react-i18next";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionInspector, type InspectorView } from "./SessionInspector";
@@ -38,6 +39,7 @@ type SessionViewProps = {
 // flex-grow transition in styles.css. Content keeps a stable min-width inside
 // the clipped panel so nothing reflows mid-animation; split width persists.
 export function SessionView({ sessionId }: SessionViewProps) {
+	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const { theme } = useUiStore();
@@ -176,7 +178,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	if (!session && !workspaceQuery.isLoading) {
 		return (
 			<div className="grid h-full place-items-center bg-background p-6 text-center font-mono text-xs text-passive">
-				Session not found. It may have been cleaned up — pick another from the sidebar.
+				{t("sessions.view.missing")}
 			</div>
 		);
 	}

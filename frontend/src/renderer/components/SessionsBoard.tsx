@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { DashboardSubhead } from "./DashboardSubhead";
 import {
 	type AttentionZone,
@@ -21,7 +23,7 @@ import { NewTaskDialog } from "./NewTaskDialog";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
-import { changeRequestShortLabel, prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 
@@ -39,9 +41,9 @@ type SessionsBoardProps = {
 // The four kanban columns, left→right by flow (work → review → merge), ported
 // verbatim from agent-orchestrator (SIMPLE_KANBAN_LEVELS + AttentionZone +
 // mc-board.css). "done" is archived, not a column.
+type BoardZone = Exclude<AttentionZone, "done">;
 type Column = {
-	level: AttentionZone;
-	label: string;
+	level: BoardZone;
 	glow: string;
 	dot: string;
 	dotGlow: boolean;
@@ -50,7 +52,6 @@ type Column = {
 const COLUMNS: Column[] = [
 	{
 		level: "working",
-		label: "Working",
 		glow: "color-mix(in srgb, var(--color-working) 7%, transparent)",
 		dot: "var(--color-working)",
 		dotGlow: true,
@@ -58,7 +59,6 @@ const COLUMNS: Column[] = [
 	},
 	{
 		level: "action",
-		label: "Needs you",
 		glow: "color-mix(in srgb, var(--color-warning) 6%, transparent)",
 		dot: "var(--color-warning)",
 		dotGlow: true,
@@ -66,7 +66,6 @@ const COLUMNS: Column[] = [
 	},
 	{
 		level: "pending",
-		label: "In review",
 		glow: "var(--color-overlay-faint)",
 		dot: "var(--color-text-muted)",
 		dotGlow: false,
@@ -74,7 +73,6 @@ const COLUMNS: Column[] = [
 	},
 	{
 		level: "merge",
-		label: "Ready to merge",
 		glow: "color-mix(in srgb, var(--color-success) 7%, transparent)",
 		dot: "var(--color-success)",
 		dotGlow: true,
@@ -83,6 +81,7 @@ const COLUMNS: Column[] = [
 ];
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
@@ -168,7 +167,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
-			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
+			setSpawnError(err instanceof Error ? err.message : t("sessions.errors.spawnFailedGeneric"));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -203,28 +202,28 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</TopbarKillError>
 			)}
 			<TopbarButton
-				aria-label="New task"
+				aria-label={t("sessions.board.newTask")}
 				disabled={isProjectRestarting}
 				onClick={() => setIsNewTaskOpen(true)}
 				variant="accent"
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
-				New task
+				{t("sessions.board.newTask")}
 			</TopbarButton>
 			<TopbarButton
-				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				aria-label={orchestrator ? t("sessions.board.orchestrator") : t("sessions.board.spawnOrchestrator")}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{isProjectRestarting
-					? "Restarting..."
+					? t("sessions.board.restarting")
 					: isSpawning
-						? "Spawning..."
+						? t("sessions.board.spawning")
 						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
+							? t("sessions.board.orchestrator")
+							: t("sessions.board.spawnOrchestrator")}
 			</TopbarButton>
 		</>
 	) : isLinux ? (
@@ -237,11 +236,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    header above it would describe a board that isn't rendered
 			    (review feedback on #2432). */}
 			{!showWelcome && (
-				<DashboardSubhead
-					title="Board"
-					subtitle="Live agent sessions flowing from work → review → merge."
-					actions={actions}
-				/>
+				<DashboardSubhead title={t("sessions.board.title")} subtitle={t("sessions.board.subtitle")} actions={actions} />
 			)}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
@@ -252,13 +247,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
 							<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
 								<RotateCw className="size-3.5" aria-hidden="true" />
-								Restart
+								{t("sessions.board.restart")}
 							</TopbarButton>
 						) : null}
 					</div>
 				) : null}
 				{workspaceQuery.isError ? (
-					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
+					<p className="py-10 text-center text-xs text-passive">{t("sessions.board.loadFailed")}</p>
 				) : showWelcome ? (
 					<BoardWelcome />
 				) : showProjectEmpty ? (
@@ -304,7 +299,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						>
 							<path d="m9 18 6-6-6-6" />
 						</svg>
-						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Done / Terminated</span>
+						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">
+							{t("sessions.board.doneTerminated")}
+						</span>
 						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{done.length}</span>
 					</button>
 					{doneExpanded && (
@@ -342,6 +339,7 @@ function ZoneColumn({
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 }) {
+	const { t } = useTranslation();
 	return (
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
@@ -357,7 +355,9 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClass)}>{col.label}</span>
+				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClass)}>
+					{t(`sessions.board.columns.${col.level}`)}
+				</span>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
@@ -372,11 +372,12 @@ function ZoneColumn({
 }
 
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
+	const { t } = useTranslation();
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const badge = sessionBadge(session, prSummaries[0]);
+	const badge = sessionBadge(session, t, prSummaries[0]);
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (event.currentTarget !== event.target) return;
 		if (event.key !== "Enter" && event.key !== " ") return;
@@ -394,7 +395,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					{issueId && (
 						<span
 							className="inline-flex max-w-branch-chip items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-							title={`Intake issue: ${issueId}`}
+							title={t("sessions.board.intakeIssue", { issueId })}
 						>
 							{issueId}
 						</span>
@@ -419,11 +420,11 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 				onClick={(event) => event.stopPropagation()}
 			>
 				{prSummaries.length === 0 ? (
-					"no change request yet"
+					t("sessions.board.noChangeRequest")
 				) : (
 					<div className="flex flex-col gap-1">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} />
+							<BoardPRGroup group={group} key={group.status.state} />
 						))}
 					</div>
 				)}
@@ -432,15 +433,22 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	);
 }
 
-type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
+type BoardPRLifecycleState = "closed" | "open" | "draft" | "merged";
+type BoardPRLifecycleStatus = { state: BoardPRLifecycleState; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group }: { group: BoardPRGroup }) {
-	const labels = new Set(group.prs.map(changeRequestShortLabel));
-	const requestLabel = labels.size === 1 ? labels.values().next().value : "PR/MR";
+	const { t } = useTranslation();
+	const labels = new Set(group.prs.map((pr) => boardChangeRequestShortLabel(pr.provider, t)));
+	const requestLabel =
+		labels.size === 1 ? labels.values().next().value : t("sessions.board.changeRequests.mixedAbbreviation");
+	const statusLabel = t(`sessions.board.changeRequests.status.${group.status.state}`);
 	return (
 		<span
-			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
+			aria-label={t("sessions.board.changeRequests.groupAria", {
+				numbers: group.prs.map((pr) => `#${pr.number}`).join(", "),
+				status: statusLabel,
+			})}
 			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
 		>
 			<span>{requestLabel}</span>
@@ -457,30 +465,30 @@ function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
-			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
+			<span className={cn("font-medium", group.status.className)}>{statusLabel}</span>
 		</span>
 	);
 }
 
 function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
-	const groups = new Map<BoardPRLifecycleStatus["label"], BoardPRGroup>();
+	const groups = new Map<BoardPRLifecycleState, BoardPRGroup>();
 	for (const pr of prs) {
 		const status = prLifecycleStatus(pr);
-		const group = groups.get(status.label);
+		const group = groups.get(status.state);
 		if (group) {
 			group.prs.push(pr);
 		} else {
-			groups.set(status.label, { status, prs: [pr] });
+			groups.set(status.state, { status, prs: [pr] });
 		}
 	}
 	return Array.from(groups.values());
 }
 
 function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
-	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
-	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
-	if (pr.state === "closed") return { label: "closed", className: "text-error" };
-	return { label: "open", className: "text-success" };
+	if (pr.state === "draft") return { state: "draft", className: "text-passive" };
+	if (pr.state === "merged") return { state: "merged", className: "text-accent" };
+	if (pr.state === "closed") return { state: "closed", className: "text-error" };
+	return { state: "open", className: "text-success" };
 }
 
 function sameLabel(a: string, b: string): boolean {
@@ -488,7 +496,7 @@ function sameLabel(a: string, b: string): boolean {
 		value
 			.toLowerCase()
 			.replace(/^(feat|fix|chore|refactor|session)\//, "")
-			.replace(/[^a-z0-9]+/g, "");
+			.replace(/[^\p{L}\p{N}]+/gu, "");
 	return normalize(a) === normalize(b);
 }
 
@@ -505,35 +513,50 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 
 function sessionBadge(
 	session: WorkspaceSession,
+	t: TFunction,
 	change?: Pick<SessionPRSummary, "provider">,
 ): { label: string; className: string } {
-	const requestLabel = change ? changeRequestShortLabel(change) : "PR";
+	const requestLabel = change
+		? boardChangeRequestShortLabel(change.provider, t)
+		: t("sessions.board.changeRequests.pullAbbreviation");
 	switch (session.status) {
 		case "needs_input":
-			return { label: "Input needed", className: "text-warning" };
+			return { label: t("sessions.board.badges.inputNeeded"), className: "text-warning" };
 		case "no_signal":
-			return { label: "No signal", className: "text-passive" };
+			return { label: t("sessions.board.badges.noSignal"), className: "text-passive" };
 		case "ci_failed":
-			return { label: "CI failed", className: "text-error" };
+			return { label: t("sessions.board.badges.ciFailed"), className: "text-error" };
 		case "changes_requested":
-			return { label: "Changes requested", className: "text-warning" };
+			return { label: t("sessions.board.badges.changesRequested"), className: "text-warning" };
 		case "review_pending":
-			return { label: "Review pending", className: "text-muted-foreground" };
+			return { label: t("sessions.board.badges.reviewPending"), className: "text-muted-foreground" };
 		case "draft":
-			return { label: `Draft ${requestLabel}`, className: "text-muted-foreground" };
+			return {
+				label: t("sessions.board.badges.draftRequest", { request: requestLabel }),
+				className: "text-muted-foreground",
+			};
 		case "pr_open":
-			return { label: `${requestLabel} open`, className: "text-muted-foreground" };
+			return {
+				label: t("sessions.board.badges.requestOpen", { request: requestLabel }),
+				className: "text-muted-foreground",
+			};
 		case "approved":
-			return { label: "Approved", className: "text-success" };
+			return { label: t("sessions.board.badges.approved"), className: "text-success" };
 		case "mergeable":
-			return { label: "Ready", className: "text-success" };
+			return { label: t("sessions.board.badges.ready"), className: "text-success" };
 		case "merged":
-			return { label: "Merged", className: "text-passive" };
+			return { label: t("sessions.board.badges.merged"), className: "text-passive" };
 		case "terminated":
-			return { label: "Terminated", className: "text-passive" };
+			return { label: t("sessions.board.badges.terminated"), className: "text-passive" };
 		case "idle":
-			return { label: "Idle", className: "text-passive" };
+			return { label: t("sessions.board.badges.idle"), className: "text-passive" };
 		default:
-			return { label: "Working", className: "text-working" };
+			return { label: t("sessions.board.badges.working"), className: "text-working" };
 	}
+}
+
+function boardChangeRequestShortLabel(provider: SessionPRSummary["provider"], t: TFunction): string {
+	return provider === "gitlab"
+		? t("sessions.board.changeRequests.mergeAbbreviation")
+		: t("sessions.board.changeRequests.pullAbbreviation");
 }

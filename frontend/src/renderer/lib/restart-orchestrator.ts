@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { i18n } from "../i18n";
 import { spawnOrchestrator } from "./spawn-orchestrator";
 
 type NavigateToSession = (options: {
@@ -46,7 +47,7 @@ export async function restartProjectOrchestrator({
 		await refreshWorkspaceState(queryClient);
 		setOrchestratorReplacementError(
 			projectId,
-			error instanceof Error ? error.message : "Could not replace orchestrator",
+			error instanceof Error ? error.message : i18n.t("sessions.errors.replaceFailed"),
 		);
 		onError?.(error);
 	} finally {

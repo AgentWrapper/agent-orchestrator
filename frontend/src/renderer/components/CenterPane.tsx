@@ -1,5 +1,6 @@
 import { ChevronLeft, Maximize2, Minimize2, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
@@ -31,6 +32,7 @@ function initialTerminalFontSize(): number {
 }
 
 export function CenterPane({ session, theme, daemonReady, terminalTarget, onSelectWorkerTerminal }: CenterPaneProps) {
+	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
 	const lastWheelZoomAtRef = useRef(0);
@@ -97,19 +99,23 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 			<div className="flex h-toolbar shrink-0 items-center border-b border-border bg-background px-5">
 				<div className="flex min-w-0 items-center gap-3">
 					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-						TERMINAL
+						{t("sessions.center.terminal")}
 					</span>
 					<span className="min-w-0 truncate font-mono text-control font-semibold text-passive">
-						{!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
+						{!session
+							? t("sessions.center.noSession")
+							: isOrchestratorSession(session)
+								? t("sessions.center.orchestrator")
+								: session.title}
 					</span>
 				</div>
 				<div className="ml-auto flex items-center gap-3 font-mono text-passive">
 					<button
-						aria-label="Decrease terminal font size"
+						aria-label={t("sessions.center.decreaseFont")}
 						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
 						disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
 						onClick={() => updateFontSize(-1)}
-						title="Decrease terminal font size"
+						title={t("sessions.center.decreaseFont")}
 						type="button"
 					>
 						-
@@ -118,21 +124,23 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 						{fontSize}px
 					</span>
 					<button
-						aria-label="Increase terminal font size"
+						aria-label={t("sessions.center.increaseFont")}
 						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
 						disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
 						onClick={() => updateFontSize(1)}
-						title="Increase terminal font size"
+						title={t("sessions.center.increaseFont")}
 						type="button"
 					>
 						+
 					</button>
 					<button
-						aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}
+						aria-label={
+							isFullscreen ? t("sessions.center.exitFullscreenAria") : t("sessions.center.openFullscreenAria")
+						}
 						aria-pressed={isFullscreen}
 						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 						onClick={() => void toggleFullscreen()}
-						title={isFullscreen ? "Exit fullscreen" : "Fullscreen terminal"}
+						title={isFullscreen ? t("sessions.center.exitFullscreenTitle") : t("sessions.center.fullscreenTitle")}
 						type="button"
 					>
 						{isFullscreen ? (
@@ -146,17 +154,17 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 			{target.kind === "reviewer" ? (
 				<div className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border bg-background px-4">
 					<button
-						aria-label="Back to agent terminal"
+						aria-label={t("sessions.center.backToAgent")}
 						className="inline-flex h-control-board-sm items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-semibold leading-none text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 						onClick={onSelectWorkerTerminal}
 						type="button"
 					>
 						<ChevronLeft aria-hidden="true" className="size-icon-lg" />
-						<span>agent</span>
+						<span>{t("sessions.center.agent")}</span>
 					</button>
 					<span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-success-bright">
 						<Shield aria-hidden="true" className="size-icon-lg" />
-						Reviewer
+						{t("sessions.center.reviewer")}
 					</span>
 					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
 				</div>

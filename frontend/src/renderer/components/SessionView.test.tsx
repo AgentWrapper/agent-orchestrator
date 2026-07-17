@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { i18n } from "../i18n";
 
 type FakePanelHandle = {
 	collapse: Mock;
@@ -180,6 +181,13 @@ describe("SessionView", () => {
 		useUiStore.setState({ isInspectorOpen: true });
 		panels.clear();
 		browserDestroy.mockReset();
+	});
+
+	it("localizes the missing-session message", async () => {
+		await i18n.changeLanguage("zh-CN");
+		render(<SessionView sessionId="missing-session" />);
+
+		expect(screen.getByText("未找到会话。它可能已被清理，请从侧边栏选择其他会话。")).toBeInTheDocument();
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

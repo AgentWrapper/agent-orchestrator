@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n } from "../i18n";
 
 const { navigateMock, workspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -67,5 +68,40 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		expect(screen.getByText("Idle")).toBeInTheDocument();
+	});
+
+	it("localizes board state without hiding distinct Chinese branch and title values", async () => {
+		await i18n.changeLanguage("zh-CN");
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "修复登录流程",
+							provider: "claude-code",
+							branch: "功能/登录保护",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("空闲")).toBeInTheDocument();
+		expect(screen.getByText("工作中")).toBeInTheDocument();
+		expect(screen.getByText("修复登录流程")).toBeInTheDocument();
+		expect(screen.getByText("功能/登录保护")).toBeInTheDocument();
 	});
 });

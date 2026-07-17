@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { i18n } from "../i18n";
 
 const { spawnMock } = vi.hoisted(() => ({
 	spawnMock: vi.fn(),
@@ -69,5 +70,24 @@ describe("restartProjectOrchestrator", () => {
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
 		expect(onError).toHaveBeenCalledWith(failure);
 		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it("uses a localized safe fallback for an unknown restart failure", async () => {
+		await i18n.changeLanguage("zh-CN");
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+		const setOrchestratorReplacementError = vi.fn();
+		spawnMock.mockRejectedValue({ diagnostic: "Bearer secret" });
+
+		await restartProjectOrchestrator({
+			projectId: "proj-1",
+			queryClient,
+			navigate: vi.fn(),
+			setProjectRestarting: vi.fn(),
+			setOrchestratorReplacementError,
+		});
+
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", "无法替换协调器");
+		expect(setOrchestratorReplacementError.mock.calls.flat().join(" ")).not.toContain("secret");
 	});
 });

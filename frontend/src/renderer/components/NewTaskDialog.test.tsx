@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { i18n } from "../i18n";
 
 const { getMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -77,6 +78,31 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskDialog", () => {
+	it("localizes the form while preserving Chinese task data in the request", async () => {
+		await i18n.changeLanguage("zh-CN");
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		expect(screen.getByRole("heading", { name: "新建任务" })).toBeInTheDocument();
+		await user.type(screen.getByLabelText("标题"), "修复登录流程");
+		await user.type(screen.getByLabelText("任务说明"), "保留用户输入并验证请求体。 ");
+		await user.type(screen.getByLabelText("分支"), "功能/登录保护");
+		await user.click(screen.getByRole("button", { name: "启动任务" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions", {
+			body: {
+				projectId: "proj-1",
+				kind: "worker",
+				harness: undefined,
+				issueId: "修复登录流程",
+				prompt: "保留用户输入并验证请求体。",
+				branch: "功能/登录保护",
+			},
+		});
+	});
+
 	it("aligns the Agent and Branch fields with matching labels and compact controls", async () => {
 		renderDialog();
 		await waitForAgentCatalog();

@@ -1,4 +1,5 @@
 import { apiClient, apiErrorMessage } from "./api-client";
+import { i18n } from "../i18n";
 import { captureRendererEvent } from "./telemetry";
 
 // Every UI entry point that spawns an orchestrator: the board CTA, the topbar
@@ -8,7 +9,13 @@ import { captureRendererEvent } from "./telemetry";
 // each call site remembering to instrument itself. Keep in sync with the
 // allowed-source list in telemetry.ts.
 export type OrchestratorSpawnSource =
-	"board" | "restore_dialog" | "topbar" | "sidebar" | "project_add" | "settings" | "restart";
+	| "board"
+	| "restore_dialog"
+	| "topbar"
+	| "sidebar"
+	| "project_add"
+	| "settings"
+	| "restart";
 
 /** Spawn the project's orchestrator session via the daemon API. When clean is
  *  true the daemon first tears down any active orchestrator for the project, then
@@ -25,9 +32,8 @@ export async function spawnOrchestrator(
 		});
 
 		if (error || !data?.orchestrator?.id) {
-			const message = error
-				? apiErrorMessage(error, `Failed to spawn orchestrator (${response.status})`)
-				: `Failed to spawn orchestrator (${response.status})`;
+			const fallback = i18n.t("sessions.errors.spawnFailed", { status: response.status });
+			const message = error ? apiErrorMessage(error, fallback) : fallback;
 			throw new Error(message);
 		}
 

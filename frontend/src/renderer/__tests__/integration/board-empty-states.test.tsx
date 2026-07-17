@@ -39,6 +39,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 import { SessionsBoard } from "../../components/SessionsBoard";
 import { ShellProvider, type ShellContextValue } from "../../lib/shell-context";
 import { useUiStore } from "../../stores/ui-store";
+import { i18n } from "../../i18n";
 
 type Project = { id: string; name: string; path: string };
 type Session = Record<string, unknown>;
@@ -114,6 +115,16 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
+	it("renders the first-launch actions in Simplified Chinese", async () => {
+		await i18n.changeLanguage("zh-CN");
+		respondWith([], []);
+		renderBoard(<SessionsBoard />);
+
+		expect(await screen.findByText("欢迎使用 Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "添加第一个项目" })).toBeInTheDocument();
+		expect(screen.queryByText("Welcome to Agent Orchestrator")).not.toBeInTheDocument();
+	});
+
 	it("shows the welcome instead of empty columns when no projects exist", async () => {
 		respondWith([], []);
 		renderBoard(<SessionsBoard />);

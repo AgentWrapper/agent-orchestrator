@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { spawnOrchestrator } from "./spawn-orchestrator";
 import { apiClient } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
+import { i18n } from "../i18n";
 
 vi.mock("./api-client", () => ({
 	apiClient: { POST: vi.fn() },
@@ -90,5 +91,19 @@ describe("spawnOrchestrator", () => {
 		await expect(spawnOrchestrator("proj", "board")).rejects.toThrow(
 			"agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)",
 		);
+	});
+
+	it("uses the current locale for the safe fallback without changing the request", async () => {
+		await i18n.changeLanguage("zh-CN");
+		(apiClient.POST as ReturnType<typeof vi.fn>).mockResolvedValue({
+			data: undefined,
+			error: undefined,
+			response: { status: 503 },
+		});
+
+		await expect(spawnOrchestrator("项目-1", "board")).rejects.toThrow("无法启动协调器（503）");
+		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
+			body: { projectId: "项目-1", clean: false },
+		});
 	});
 });
