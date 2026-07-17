@@ -276,6 +276,10 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          # The CI app has data-plane vault access only (no subscription RBAC role),
+          # so `az login` finds no subscriptions. Reading a secret is a data-plane
+          # call and needs none — allow login to proceed without one (least privilege).
+          allow-no-subscriptions: true
       - name: Fetch DAYTONA_API_KEY from Key Vault
         if: ${{ inputs.skip_e2e_gate != true && vars.AZURE_CLIENT_ID != '' }}
         continue-on-error: true
