@@ -77,11 +77,13 @@ type CleanupSkipped struct {
 	Reason    string           `json:"reason"`
 }
 
+// RestoreResult reports a restored session and the restore mode that was used.
 type RestoreResult struct {
 	Session domain.Session
 	Mode    sessionmanager.RestoreMode
 }
 
+// RestoreMode is an alias for sessionmanager.RestoreMode.
 type RestoreMode = sessionmanager.RestoreMode
 
 type scmProvider interface {
@@ -399,6 +401,8 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	return result.Session, err
 }
 
+// RestoreWithMode relaunches a terminated session and returns the restored session
+// with the restore mode that was used.
 func (s *Service) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
 	var rec domain.SessionRecord
 	var mode sessionmanager.RestoreMode

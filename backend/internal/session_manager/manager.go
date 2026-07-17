@@ -61,9 +61,12 @@ var (
 type RestoreMode string
 
 const (
+	// RestoreModeNativeResume indicates the session continued its native agent transcript.
 	RestoreModeNativeResume RestoreMode = "native_resume"
+	// RestoreModePromptReplay indicates the session relaunched from AO's saved prompt.
 	RestoreModePromptReplay RestoreMode = "prompt_replay"
-	RestoreModeFreshLaunch  RestoreMode = "fresh_launch"
+	// RestoreModeFreshLaunch indicates the session relaunched without native or prompt resume.
+	RestoreModeFreshLaunch RestoreMode = "fresh_launch"
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -790,6 +793,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	return rec, err
 }
 
+// RestoreWithMode relaunches a terminated session and reports which restore mode was used.
 func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (domain.SessionRecord, RestoreMode, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
