@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Activity,
 	Bot,
+	Check,
 	ChevronDown,
 	ChevronRight,
 	CircleAlert,
@@ -31,6 +32,12 @@ const MANAGED_ASSISTANT_MODEL = "gpt-5.6-sol";
 const QUICK_REQUEST_MODEL = MANAGED_ASSISTANT_MODEL;
 
 type DecisionRole = "sol" | "fable" | "k3";
+type DiscussionRole = "assistant" | DecisionRole;
+type RoleSetupState = "waiting" | "starting" | "ready" | "failed";
+
+function initialRoleSetupStates(): Record<DiscussionRole, RoleSetupState> {
+	return { assistant: "waiting", sol: "waiting", fable: "waiting", k3: "waiting" };
+}
 
 type ParticipantDefinition = {
 	id: DecisionRole;
@@ -275,6 +282,9 @@ export function SuggestionDiscussionPanel({
 	const [discussion, setDiscussion] = useState<LiveSuggestionDiscussion | undefined>(() =>
 		readLiveDiscussion(projectId),
 	);
+	const [roleSetupStates, setRoleSetupStates] = useState<Record<DiscussionRole, RoleSetupState>>(
+		initialRoleSetupStates,
+	);
 	const [message, setMessage] = useState("");
 	const [isStarting, setIsStarting] = useState(false);
 	const [isSending, setIsSending] = useState(false);
@@ -339,7 +349,11 @@ export function SuggestionDiscussionPanel({
 		if (!cleanTitle || isStarting || discussion) return;
 		setIsStarting(true);
 		setError(undefined);
+		setRoleSetupStates({ ...initialRoleSetupStates(), assistant: "starting" });
 		const startedSessionIds: string[] = [];
+		const setRoleSetupState = (role: DiscussionRole, state: RoleSetupState) => {
+			setRoleSetupStates((current) => ({ ...current, [role]: state }));
+		};
 		try {
 			const [projectResponse, sessionsResponse] = await Promise.all([
 				apiClient.GET("/api/v1/projects/{id}", { params: { path: { id: projectId } } }),
@@ -364,26 +378,46 @@ export function SuggestionDiscussionPanel({
 				},
 			});
 			startedSessionIds.push(assistantId);
+			setRoleSetupState("assistant", "ready");
 
 			const participantIds = {} as Record<DecisionRole, string>;
-			// AO creates a git worktree for every worker. Start these one at a time so
-			// concurrent git metadata writes cannot make an otherwise healthy agent fail.
-			for (const participant of PARTICIPANTS) {
-				const sessionId = await createAgentSession({
-						projectId,
-						harness: participant.harness,
-						issueId: `${SUGGESTION_LIVE_DISCUSSION_ISSUE_PREFIX}${discussionId}:${participant.id}`,
-						displayName: participant.name,
-						prompt: buildDecisionAgentPrompt(participant, assistantId, projectPath),
-						agentConfig: {
-							model: participant.model,
-							reasoningEffort: participant.effort,
-							permissions: "bypass-permissions",
-						},
-				});
-				startedSessionIds.push(sessionId);
-				participantIds[participant.id] = sessionId;
-			}
+			setRoleSetupStates((current) => ({
+				...current,
+				sol: "starting",
+				fable: "starting",
+				k3: "starting",
+			}));
+			// The backend serializes only the shared Git worktree metadata step. The
+			// remaining agent preparation and runtime launches can safely overlap.
+			const participantResults = await Promise.allSettled(
+				PARTICIPANTS.map(async (participant) => {
+					try {
+						const sessionId = await createAgentSession({
+							projectId,
+							harness: participant.harness,
+							issueId: `${SUGGESTION_LIVE_DISCUSSION_ISSUE_PREFIX}${discussionId}:${participant.id}`,
+							displayName: participant.name,
+							prompt: buildDecisionAgentPrompt(participant, assistantId, projectPath),
+							agentConfig: {
+								model: participant.model,
+								reasoningEffort: participant.effort,
+								permissions: "bypass-permissions",
+							},
+						});
+						startedSessionIds.push(sessionId);
+						participantIds[participant.id] = sessionId;
+						setRoleSetupState(participant.id, "ready");
+						return sessionId;
+					} catch (cause) {
+						setRoleSetupState(participant.id, "failed");
+						throw cause;
+					}
+				}),
+			);
+			const failedParticipant = participantResults.find(
+				(result): result is PromiseRejectedResult => result.status === "rejected",
+			);
+			if (failedParticipant) throw failedParticipant.reason;
 			const liveDiscussion: LiveSuggestionDiscussion = {
 				id: discussionId,
 				title: cleanTitle,
@@ -404,6 +438,15 @@ export function SuggestionDiscussionPanel({
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		} catch (cause) {
 			await stopDiscussionSessions(startedSessionIds);
+			setRoleSetupStates((current) => {
+				const hasExplicitFailure = Object.values(current).some((state) => state === "failed");
+				return {
+					assistant: !hasExplicitFailure || current.assistant === "failed" ? "failed" : "waiting",
+					sol: current.sol === "failed" ? "failed" : "waiting",
+					fable: current.fable === "failed" ? "failed" : "waiting",
+					k3: current.k3 === "failed" ? "failed" : "waiting",
+				};
+			});
 			setError(cause instanceof Error ? cause.message : "Could not start the live discussion");
 		} finally {
 			setIsStarting(false);
@@ -440,6 +483,7 @@ export function SuggestionDiscussionPanel({
 			await stopDiscussionSessions([discussion.assistantId, ...Object.values(discussion.participantIds)]);
 			writeLiveDiscussion(projectId, undefined);
 			setDiscussion(undefined);
+			setRoleSetupStates(initialRoleSetupStates());
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Could not end the live discussion");
@@ -538,6 +582,7 @@ export function SuggestionDiscussionPanel({
 							name="Assistant"
 							description="Sol · listener, notes, wake-ups"
 							color="border-emerald-500/30 bg-emerald-500/8 text-emerald-300"
+							status={discussion ? "ready" : roleSetupStates.assistant}
 							onOpen={discussion ? () => onOpenSession(discussion.assistantId) : undefined}
 						/>
 						{PARTICIPANTS.map((participant) => (
@@ -546,6 +591,7 @@ export function SuggestionDiscussionPanel({
 								description={`${participant.model} · decision agent`}
 								key={participant.id}
 								name={participant.name}
+								status={discussion ? "ready" : roleSetupStates[participant.id]}
 								onOpen={
 									discussion ? () => onOpenSession(discussion.participantIds[participant.id]) : undefined
 								}
@@ -815,20 +861,40 @@ function RoleCard({
 	description,
 	color,
 	onOpen,
+	status,
 }: {
 	name: string;
 	description: string;
 	color: string;
 	onOpen?: () => void;
+	status: RoleSetupState;
 }) {
+	const statusLabel = status[0].toUpperCase() + status.slice(1);
+	const statusClass =
+		status === "ready"
+			? "opacity-100 shadow-sm"
+			: status === "starting"
+				? "opacity-70"
+				: status === "failed"
+					? "opacity-100 ring-1 ring-destructive/50"
+					: "opacity-40 grayscale";
 	return (
 		<button
-			className={`rounded-lg border p-3 text-left transition ${color} ${onOpen ? "hover:brightness-110" : "cursor-default"}`}
+			aria-label={`${name}: ${statusLabel}`}
+			className={`rounded-lg border p-3 text-left transition-all duration-300 ${color} ${statusClass} ${onOpen ? "hover:brightness-110" : "cursor-default"}`}
 			disabled={!onOpen}
 			onClick={onOpen}
 			type="button"
 		>
-			<div className="text-sm font-semibold">{name}</div>
+			<div className="flex items-center justify-between gap-2 text-sm font-semibold">
+				{name}
+				<span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide" role="status">
+					{status === "ready" ? <Check className="size-3.5" aria-hidden="true" /> : null}
+					{status === "starting" ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+					{status === "failed" ? <CircleAlert className="size-3.5" aria-hidden="true" /> : null}
+					{statusLabel}
+				</span>
+			</div>
 			<div className="mt-1 text-[11px] leading-4 opacity-80">{description}</div>
 		</button>
 	);

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SUGGESTION_LIVE_DISCUSSION_ISSUE_PREFIX } from "../types/workspace";
 import {
@@ -152,7 +152,7 @@ describe("SuggestionsPage", () => {
 		await screen.findByText("Shared live transcript");
 		const creates = postMock.mock.calls.filter(([path]) => path === "/api/v1/sessions");
 		expect(creates).toHaveLength(4);
-		expect(maxConcurrentSessionCreates).toBe(1);
+		expect(maxConcurrentSessionCreates).toBe(3);
 		expect(creates.map(([, request]) => request.body)).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
@@ -190,6 +190,58 @@ describe("SuggestionsPage", () => {
 		);
 		expect(onSessionStarted).not.toHaveBeenCalled();
 		expect(window.localStorage.getItem("ao.suggestion-live.v1.mer")).toContain("mer-assistant");
+		for (const name of ["Assistant", "Sol", "Fable", "K3"]) {
+			expect(screen.getByRole("button", { name: `${name}: Ready` })).toBeInTheDocument();
+		}
+	});
+
+	it("shows each live-discussion agent becoming ready independently", async () => {
+		const pendingSessions = new Map<string, () => void>();
+		const sessionIds: Record<string, string> = {
+			"Discussion Assistant": "mer-assistant",
+			Sol: "mer-sol",
+			Fable: "mer-fable",
+			K3: "mer-k3",
+		};
+		postMock.mockImplementation((path: string, options: { body?: { displayName?: string } }) => {
+			if (path !== "/api/v1/sessions") return Promise.resolve({ data: { ok: true } });
+			const displayName = options.body?.displayName ?? "";
+			return new Promise((resolve) => {
+				pendingSessions.set(displayName, () => resolve({ data: { session: { id: sessionIds[displayName] } } }));
+			});
+		});
+		renderPage();
+		await screen.findByText("Explore a shared cache");
+
+		fireEvent.change(screen.getByLabelText("Suggestion title"), { target: { value: "Stage agent startup" } });
+		fireEvent.click(screen.getByRole("button", { name: "Set up live session" }));
+		fireEvent.click(screen.getByRole("button", { name: "Start live discussion" }));
+
+		expect(await screen.findByRole("button", { name: "Assistant: Starting" })).toBeInTheDocument();
+		for (const name of ["Sol", "Fable", "K3"]) {
+			expect(screen.getByRole("button", { name: `${name}: Waiting` })).toBeInTheDocument();
+		}
+
+		await waitFor(() => expect(pendingSessions.has("Discussion Assistant")).toBe(true));
+		await act(async () => pendingSessions.get("Discussion Assistant")?.());
+		expect(await screen.findByRole("button", { name: "Assistant: Ready" })).toBeInTheDocument();
+		for (const name of ["Sol", "Fable", "K3"]) {
+			expect(await screen.findByRole("button", { name: `${name}: Starting` })).toBeInTheDocument();
+		}
+
+		await waitFor(() => expect(pendingSessions.has("K3")).toBe(true));
+		await act(async () => pendingSessions.get("K3")?.());
+		expect(await screen.findByRole("button", { name: "K3: Ready" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Sol: Starting" })).toBeInTheDocument();
+
+		await act(async () => {
+			pendingSessions.get("Sol")?.();
+			pendingSessions.get("Fable")?.();
+		});
+		await screen.findByText("Shared live transcript");
+		for (const name of ["Assistant", "Sol", "Fable", "K3"]) {
+			expect(screen.getByRole("button", { name: `${name}: Ready` })).toBeInTheDocument();
+		}
 	});
 
 	it("keeps the Assistant neutral and decision prompts read-only and bounded", () => {

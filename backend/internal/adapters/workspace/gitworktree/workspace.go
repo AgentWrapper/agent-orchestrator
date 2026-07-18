@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -74,11 +75,12 @@ type Options struct {
 // Workspace creates per-session git worktrees under a managed root. It
 // implements ports.Workspace.
 type Workspace struct {
-	binary        string
-	managedRoot   string
-	defaultBranch string
-	repos         RepoResolver
-	run           commandRunner
+	binary             string
+	managedRoot        string
+	defaultBranch      string
+	repos              RepoResolver
+	run                commandRunner
+	worktreeMetadataMu sync.Mutex
 }
 
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
@@ -122,6 +124,12 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	// Git worktrees share metadata in the source repository. Keep that small
+	// critical section exclusive while callers continue provisioning and
+	// launching their sessions concurrently after Create returns.
+	w.worktreeMetadataMu.Lock()
+	defer w.worktreeMetadataMu.Unlock()
+
 	repo, err := w.repoPath(cfg.ProjectID)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -153,6 +161,9 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 	if err := validateWorkspaceProjectConfig(cfg); err != nil {
 		return ports.WorkspaceProjectInfo{}, err
 	}
+	w.worktreeMetadataMu.Lock()
+	defer w.worktreeMetadataMu.Unlock()
+
 	rootRepo, err := physicalAbs(cfg.RootRepoPath)
 	if err != nil {
 		return ports.WorkspaceProjectInfo{}, fmt.Errorf("gitworktree: root repo path: %w", err)
@@ -233,6 +244,9 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 // rollback because normal interactive cleanup still goes through Destroy and
 // the full dirty-preserve matrix is implemented separately.
 func (w *Workspace) DestroyWorkspaceProject(ctx context.Context, info ports.WorkspaceProjectInfo) error {
+	w.worktreeMetadataMu.Lock()
+	defer w.worktreeMetadataMu.Unlock()
+
 	var firstErr error
 	for i := len(info.Worktrees) - 1; i >= 0; i-- {
 		wt := info.Worktrees[i]
@@ -259,6 +273,9 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	if info.Path == "" {
 		return fmt.Errorf("%w: empty path", ErrUnsafePath)
 	}
+	w.worktreeMetadataMu.Lock()
+	defer w.worktreeMetadataMu.Unlock()
+
 	repo, err := w.repoPathForInfo(info)
 	if err != nil {
 		return err
@@ -311,6 +328,9 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	if info.Path == "" {
 		return fmt.Errorf("%w: empty path", ErrUnsafePath)
 	}
+	w.worktreeMetadataMu.Lock()
+	defer w.worktreeMetadataMu.Unlock()
+
 	repo, err := w.repoPathForInfo(info)
 	if err != nil {
 		return err
@@ -549,6 +569,9 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	w.worktreeMetadataMu.Lock()
+	defer w.worktreeMetadataMu.Unlock()
+
 	repo, err := w.repoPathForConfig(cfg)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err

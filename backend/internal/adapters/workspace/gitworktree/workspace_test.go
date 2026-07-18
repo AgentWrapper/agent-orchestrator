@@ -3,12 +3,14 @@ package gitworktree
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -208,6 +210,77 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 	if info.Path != path || info.Branch != "ao/proj-orchestrator" {
 		t.Fatalf("info = %#v, want path %q branch ao/proj-orchestrator", info, path)
+	}
+}
+
+func TestCreateSerializesSharedWorktreeMetadata(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	worktreeAdds := make(chan struct{}, 2)
+	releaseAdds := make(chan struct{})
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc123\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			worktreeAdds <- struct{}{}
+			<-releaseAdds
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected git invocation: %v", args)
+		}
+	}
+
+	errCh := make(chan error, 2)
+	create := func(session, branch string) {
+		_, createErr := ws.Create(context.Background(), ports.WorkspaceConfig{
+			ProjectID: "proj",
+			SessionID: domain.SessionID(session),
+			Branch:    branch,
+		})
+		errCh <- createErr
+	}
+
+	go create("proj-1", "ao/proj-1")
+	select {
+	case <-worktreeAdds:
+	case <-time.After(time.Second):
+		t.Fatal("first Create never reached git worktree add")
+	}
+
+	go create("proj-2", "ao/proj-2")
+	concurrent := false
+	select {
+	case <-worktreeAdds:
+		concurrent = true
+	case <-time.After(75 * time.Millisecond):
+	}
+	close(releaseAdds)
+
+	if !concurrent {
+		select {
+		case <-worktreeAdds:
+		case <-time.After(time.Second):
+			t.Fatal("second Create never reached git worktree add")
+		}
+	}
+	for range 2 {
+		if createErr := <-errCh; createErr != nil {
+			t.Fatalf("Create: %v", createErr)
+		}
+	}
+	if concurrent {
+		t.Fatal("concurrent Create calls entered git worktree add together")
 	}
 }
 
