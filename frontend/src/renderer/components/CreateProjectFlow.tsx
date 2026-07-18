@@ -273,12 +273,7 @@ function CreateProjectModeDialog({
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(896px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
-					<ImportModePicker
-						disabled={disabled}
-						onClose={() => onOpenChange(false)}
-						onSelect={onSelect}
-						dialog
-					/>
+					<ImportModePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
@@ -379,10 +374,7 @@ function ProjectModeButton({
 		>
 			<span className="flex w-full flex-col items-start">
 				<span
-					className={cn(
-						"flex w-full justify-center",
-						isWorkspace ? "h-[178px] items-start" : "h-[120px] items-center",
-					)}
+					className={cn("flex w-full justify-center", isWorkspace ? "h-[178px] items-start" : "h-[120px] items-center")}
 				>
 					{isWorkspace ? (
 						<span className="flex h-[178px] w-full max-w-[240px] flex-col items-start gap-3 rounded-lg border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)] p-4">
@@ -411,10 +403,7 @@ function ProjectModeButton({
 						<span className="flex h-[50px] w-fit items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] px-4 py-3">
 							<span className="mr-2 size-2 shrink-0 rounded-full bg-[var(--color-import-dot)]" aria-hidden="true" />
 							<span className="text-[14px] font-bold leading-5 text-[var(--color-text-import-title)]">web-app</span>
-							<span
-								className="px-1 text-[16px] leading-6 text-[var(--color-text-import-sep)]"
-								aria-hidden="true"
-							>
+							<span className="px-1 text-[16px] leading-6 text-[var(--color-text-import-sep)]" aria-hidden="true">
 								·
 							</span>
 							<span className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">main</span>
