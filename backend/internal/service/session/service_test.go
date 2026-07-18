@@ -1290,3 +1290,74 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+// TestSpawnScratchDefaultsProjectAndHarness covers the zero-project spawn path:
+// an empty projectId is treated as Scratch and an empty harness falls back to the
+// daemon's configured default harness.
+func TestSpawnScratchDefaultsProjectAndHarness(t *testing.T) {
+	st := newFakeStore()
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{
+		Manager:        fc,
+		Store:          st,
+		DefaultHarness: domain.HarnessCodex,
+	})
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{Prompt: "explore an idea"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("manager.Spawn was not invoked")
+	}
+	if fc.spawnedCfg.ProjectID != domain.ScratchProjectID {
+		t.Fatalf("projectId = %q, want scratch", fc.spawnedCfg.ProjectID)
+	}
+	if fc.spawnedCfg.Harness != domain.HarnessCodex {
+		t.Fatalf("harness = %q, want codex default", fc.spawnedCfg.Harness)
+	}
+}
+
+// TestSpawnScratchExplicitHarnessWins asserts that an explicit --harness overrides
+// the default for scratch spawns.
+func TestSpawnScratchExplicitHarnessWins(t *testing.T) {
+	st := newFakeStore()
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{
+		Manager:        fc,
+		Store:          st,
+		DefaultHarness: domain.HarnessClaudeCode,
+	})
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{Harness: domain.HarnessCodex, Prompt: "explore"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if fc.spawnedCfg.Harness != domain.HarnessCodex {
+		t.Fatalf("harness = %q, want explicit codex", fc.spawnedCfg.Harness)
+	}
+}
+
+// TestSpawnScratchNoDefaultHarnessPassesThroughEmptyHarness covers the case where
+// the daemon has no default harness configured and the scratch spawn request
+// names none. The service leaves the harness empty and lets the manager validate
+// it downstream.
+func TestSpawnScratchNoDefaultHarnessPassesThroughEmptyHarness(t *testing.T) {
+	st := newFakeStore()
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{Prompt: "explore"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("manager.Spawn was not invoked")
+	}
+	if fc.spawnedCfg.ProjectID != domain.ScratchProjectID {
+		t.Fatalf("projectId = %q, want scratch", fc.spawnedCfg.ProjectID)
+	}
+	if fc.spawnedCfg.Harness != "" {
+		t.Fatalf("harness = %q, want empty", fc.spawnedCfg.Harness)
+	}
+}

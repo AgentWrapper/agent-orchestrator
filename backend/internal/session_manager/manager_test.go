@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -4790,4 +4792,54 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 		m.flipped = true
 	}
 	return nil
+}
+
+// TestSpawn_ScratchCreatesBareRepoAndWorktree exercises the project-less spawn
+// path end-to-end with a real gitworktree adapter. It verifies that a throwaway
+// bare repo is created under the data dir and that the session worktree is
+// materialised from it without changing the workspace adapter.
+func TestSpawn_ScratchCreatesBareRepoAndWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dataDir := t.TempDir()
+	ws, err := gitworktree.New(gitworktree.Options{
+		ManagedRoot:  filepath.Join(dataDir, "worktrees"),
+		RepoResolver: gitworktree.StaticRepoResolver{},
+	})
+	if err != nil {
+		t.Fatalf("gitworktree.New: %v", err)
+	}
+	st := newFakeStore()
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  lookPath,
+	})
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: domain.ScratchProjectID, Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "explore"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	repoPath := filepath.Join(dataDir, "scratch", string(s.ID))
+	if info, err := os.Stat(filepath.Join(repoPath, "HEAD")); err != nil || info.IsDir() {
+		t.Fatalf("scratch bare repo missing HEAD at %s: %v", repoPath, err)
+	}
+	if out, err := exec.Command("git", "-C", repoPath, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("scratch repo has no HEAD: %v (%s)", err, out)
+	}
+	if agent.lastLaunch.WorkspacePath == "" {
+		t.Fatal("workspace path was not set")
+	}
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "Scratch") && !strings.Contains(agent.lastLaunch.SystemPrompt, "scratch") {
+		t.Fatalf("system prompt should reference scratch context; got:\n%s", agent.lastLaunch.SystemPrompt)
+	}
 }

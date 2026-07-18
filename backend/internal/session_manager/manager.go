@@ -408,6 +408,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // unregistered yet still have live sessions, and an empty config simply means
 // every field falls back to its default.
 func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (domain.ProjectRecord, error) {
+	if projectID == domain.ScratchProjectID {
+		return domain.ProjectRecord{ID: string(projectID), DisplayName: "Scratch", Kind: domain.ProjectKindScratch}, nil
+	}
 	row, ok, err := m.store.GetProject(ctx, string(projectID))
 	if err != nil {
 		return domain.ProjectRecord{}, fmt.Errorf("load project: %w", err)
@@ -418,7 +421,71 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 	return row, nil
 }
 
+// ensureScratchRepo creates a disposable bare git repository for a scratch
+// session under the data dir. The existing gitworktree adapter materialises the
+// session worktree from this repo, so no workspace machinery changes are needed.
+func (m *Manager) ensureScratchRepo(ctx context.Context, id domain.SessionID) (string, error) {
+	if strings.TrimSpace(m.dataDir) == "" {
+		return "", fmt.Errorf("scratch session %s: data dir is not configured", id)
+	}
+	repoPath := filepath.Join(m.dataDir, "scratch", string(id))
+	if err := os.MkdirAll(repoPath, 0o700); err != nil {
+		return "", fmt.Errorf("scratch session %s: create repo dir: %w", id, err)
+	}
+	// A bare repo keeps the backing repository and the checked-out worktree
+	// separate, which matches how registered projects are used.
+	if _, err := aoprocess.CommandContext(ctx, "git", "init", "--bare", repoPath).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("scratch session %s: git init: %w", id, err)
+	}
+	if err := initEmptyCommit(ctx, repoPath); err != nil {
+		return "", fmt.Errorf("scratch session %s: initial commit: %w", id, err)
+	}
+	return repoPath, nil
+}
+
+// initEmptyCommit creates an initial empty commit on the default branch in a
+// bare repository so the gitworktree adapter has a base ref to create worktrees.
+func initEmptyCommit(ctx context.Context, repoPath string) error {
+	emptyTree := "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+	commitCmd := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "commit-tree", "-m", "initial commit", emptyTree)
+	commitCmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Agent Orchestrator",
+		"GIT_AUTHOR_EMAIL=ao@example.com",
+		"GIT_COMMITTER_NAME=Agent Orchestrator",
+		"GIT_COMMITTER_EMAIL=ao@example.com",
+	)
+	out, err := commitCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("commit-tree: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	commitSHA := strings.TrimSpace(string(out))
+	branch := "refs/heads/" + domain.DefaultBranchName
+	if _, err := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "update-ref", branch, commitSHA).CombinedOutput(); err != nil {
+		return fmt.Errorf("update-ref %s: %w", branch, err)
+	}
+	if _, err := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "symbolic-ref", "HEAD", branch).CombinedOutput(); err != nil {
+		return fmt.Errorf("set HEAD: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
+	if project.Kind.WithDefault() == domain.ProjectKindScratch {
+		repoPath, err := m.ensureScratchRepo(ctx, id)
+		if err != nil {
+			return ports.WorkspaceInfo{}, nil, err
+		}
+		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
+			ProjectID:     cfg.ProjectID,
+			SessionID:     id,
+			Kind:          cfg.Kind,
+			SessionPrefix: sessionPrefix(project),
+			Branch:        branch,
+			BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+			RepoPath:      repoPath,
+		})
+		return ws, nil, err
+	}
 	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
 		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 			ProjectID:     cfg.ProjectID,

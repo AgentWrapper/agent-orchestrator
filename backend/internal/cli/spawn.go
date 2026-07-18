@@ -23,6 +23,13 @@ import (
 // daemon's spawn handler so a direct API call is held to the same limit.
 const maxDisplayNameLen = 20
 
+// Scratch project constants mirrored from domain so the CLI can default spawns
+// to the built-in pseudo-project without importing domain.
+const (
+	scratchProjectID   = "scratch"
+	scratchProjectKind = "scratch"
+)
+
 type spawnOptions struct {
 	project        string
 	harness        string
@@ -92,7 +99,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			opts.harness = harness
 
-			if !opts.skipAgentCheck {
+			if !opts.skipAgentCheck && strings.TrimSpace(opts.harness) != "" {
 				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
 					return err
 				}
@@ -206,7 +213,13 @@ func (c *commandContext) resolveSpawnProject(ctx context.Context, explicit strin
 	if ok {
 		return project, nil
 	}
-	return projectDetails{}, usageError{fmt.Errorf("project could not be resolved; pass --project or run `ao project add --path <repo-path> --worker-agent <agent>`")}
+	// No registered project context: fall back to the built-in Scratch pseudo-project
+	// so a freeform `ao spawn --prompt "..."` works without project registration.
+	return scratchProjectDetails(), nil
+}
+
+func scratchProjectDetails() projectDetails {
+	return projectDetails{ID: string(scratchProjectID), Name: "Scratch", Kind: string(scratchProjectKind)}
 }
 
 func (c *commandContext) resolveProjectFromSession(ctx context.Context, sessionID string) (projectDetails, error) {
@@ -242,6 +255,10 @@ func (c *commandContext) resolveProjectFromCWD(ctx context.Context) (projectDeta
 	bestLen := -1
 	ambiguous := false
 	for _, summary := range list.Projects {
+		if summary.ID == scratchProjectID {
+			// The built-in Scratch pseudo-project is not tied to the filesystem.
+			continue
+		}
 		project, err := c.fetchProjectDetails(ctx, summary.ID)
 		if err != nil {
 			return projectDetails{}, false, err
@@ -305,6 +322,11 @@ func resolveSpawnHarness(explicit string, project projectDetails) (string, error
 		if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
 			return harness, nil
 		}
+	}
+	if project.ID == scratchProjectID {
+		// Scratch spawns defer harness resolution to the daemon's configured
+		// default agent, so a zero-project `ao spawn --prompt ...` works.
+		return "", nil
 	}
 	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>`", project.ID)}
 }

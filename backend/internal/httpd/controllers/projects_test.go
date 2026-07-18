@@ -138,9 +138,9 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 
 	mustJSON(t, body, &list)
 
-	if len(list.Projects) != 0 {
+	if len(list.Projects) != 1 || list.Projects[0].ID != "scratch" {
 
-		t.Fatalf("initial project count = %d, want 0", len(list.Projects))
+		t.Fatalf("initial projects = %#v, want scratch only", list.Projects)
 
 	}
 
@@ -191,7 +191,17 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 		t.Fatalf("GET projects after add = %d, want 200; body=%s", status, body)
 	}
 	mustJSON(t, body, &list)
-	if len(list.Projects) != 1 || list.Projects[0].Path != repo {
+	if len(list.Projects) != 2 {
+		t.Fatalf("project count = %d, want 2 (scratch + registered)", len(list.Projects))
+	}
+	var gotAO *projectSummary
+	for i := range list.Projects {
+		if list.Projects[i].ID == "ao" {
+			gotAO = &list.Projects[i]
+			break
+		}
+	}
+	if gotAO == nil || gotAO.Path != repo {
 		t.Fatalf("project summary path = %#v, want path %q", list.Projects, repo)
 	}
 
@@ -336,9 +346,9 @@ func TestProjectsAPI_Delete(t *testing.T) {
 
 	mustJSON(t, body, &list)
 
-	if len(list.Projects) != 0 {
+	if len(list.Projects) != 1 || list.Projects[0].ID != "scratch" {
 
-		t.Fatalf("active projects after archive = %d, want 0", len(list.Projects))
+		t.Fatalf("active projects after archive = %#v, want scratch only", list.Projects)
 
 	}
 

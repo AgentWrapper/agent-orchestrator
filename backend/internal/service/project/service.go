@@ -100,13 +100,19 @@ func NewWithDeps(d Deps) *Service {
 	return s
 }
 
-// List returns every active registered project.
+// List returns every active registered project, with the built-in Scratch
+// pseudo-project pinned at the front.
 func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	projects, err := m.store.ListProjects(ctx)
 	if err != nil {
 		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load projects")
 	}
-	out := make([]Summary, 0, len(projects))
+	out := make([]Summary, 0, len(projects)+1)
+	out = append(out, Summary{
+		ID:   domain.ScratchProjectID,
+		Name: "Scratch",
+		Kind: domain.ProjectKindScratch,
+	})
 	for _, row := range projects {
 		out = append(out, Summary{
 			ID:                domain.ProjectID(row.ID),

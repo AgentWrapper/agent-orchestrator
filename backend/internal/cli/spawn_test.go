@@ -18,31 +18,48 @@ func authorizedAgentsJSON(agent string) string {
 	return `{"supported":[` + info + `],"installed":[` + info + `],"authorized":[` + info + `]}`
 }
 
-// TestSpawnCommand_MissingProjectContext asserts `ao spawn` gives a project
-// setup hint when neither --project, AO_PROJECT_ID, nor cwd can resolve one.
-func TestSpawnCommand_MissingProjectContext(t *testing.T) {
+// TestSpawnCommand_MissingProjectContextDefaultsToScratch asserts `ao spawn`
+// falls back to the built-in Scratch pseudo-project when no project context is
+// available, so a freeform spawn works without registration.
+func TestSpawnCommand_MissingProjectContextDefaultsToScratch(t *testing.T) {
 	cfg := setConfigEnv(t)
+	// Isolate from the outer shell's AO_PROJECT_ID/AO_SESSION_ID so the CLI
+	// exercises the Scratch fallback path.
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_SESSION_ID", "")
 	var requests []string
+	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
 			_, _ = io.WriteString(w, `{"projects":[]}`)
-			return
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"scratch-1","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex", "--name", "worker")
-	if err == nil {
-		t.Fatal("expected an error when project context is missing")
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex", "--name", "scratch idea", "--prompt", "explore an idea")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
-	if !strings.Contains(err.Error(), "ao project add --path <repo-path> --worker-agent <agent>") {
-		t.Fatalf("error = %v, want project add hint", err)
+	if !strings.Contains(out, "spawned session scratch-1") {
+		t.Fatalf("output missing spawn: %s", out)
 	}
-	if want := []string{"GET /api/v1/projects"}; !reflect.DeepEqual(requests, want) {
+	if req.ProjectID != "scratch" || req.Harness != "codex" {
+		t.Fatalf("spawn request = %#v", req)
+	}
+	if want := []string{"GET /api/v1/projects", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}; !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}
 }
@@ -218,6 +235,8 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 
 func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 	cfg := setConfigEnv(t)
+	// Ensure AO_SESSION_ID wins over any inherited AO_PROJECT_ID.
+	t.Setenv("AO_PROJECT_ID", "")
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +277,8 @@ func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 
 func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 	cfg := setConfigEnv(t)
+	// Ensure the test reaches AO_SESSION_ID resolution despite inherited context.
+	t.Setenv("AO_PROJECT_ID", "")
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -286,6 +307,9 @@ func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 
 func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 	cfg := setConfigEnv(t)
+	// Isolate from inherited project/session context so CWD resolution is tested.
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_SESSION_ID", "")
 	repo := filepath.Join(t.TempDir(), "repo")
 	subdir := filepath.Join(repo, "pkg")
 	if err := os.MkdirAll(subdir, 0o755); err != nil {
@@ -698,5 +722,51 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 	}
 	if req.ProjectID != "demo" || req.Harness != "codex" {
 		t.Fatalf("spawn request = %#v", req)
+	}
+}
+
+// TestSpawnScratchDefaultsAgentPreflightSkipped asserts that a scratch spawn with
+// no explicit --agent skips the local agent preflight; the daemon resolves the
+// default harness server-side.
+func TestSpawnScratchDefaultsAgentPreflightSkipped(t *testing.T) {
+	cfg := setConfigEnv(t)
+	// Isolate from the outer shell's AO_PROJECT_ID/AO_SESSION_ID so the CLI
+	// exercises the Scratch fallback path.
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_SESSION_ID", "")
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
+			_, _ = io.WriteString(w, `{"projects":[]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"scratch-2","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--name", "freeform", "--prompt", "no agent specified")
+	if err != nil {
+		t.Fatalf("spawn failed: %v", err)
+	}
+	if !strings.Contains(out, "spawned session scratch-2") {
+		t.Fatalf("output missing spawn: %s", out)
+	}
+	if req.ProjectID != "scratch" || req.Harness != "" {
+		t.Fatalf("spawn request = %#v, want scratch project with empty harness", req)
+	}
+	for _, r := range requests {
+		if strings.HasPrefix(r, "POST /api/v1/agents") {
+			t.Fatalf("agent preflight should be skipped for scratch default, got %s", r)
+		}
 	}
 }
