@@ -28,6 +28,7 @@ const REVIEW_CONVERSATION_POLL_MS = 1_000;
 const REVIEW_START_GRACE_MS = 5_000;
 const REVIEW_SETTLE_GRACE_MS = 2_000;
 const REVIEW_RESPONSE_TIMEOUT_MS = 30_000;
+const REVIEW_AGENT_MODEL = "gpt-5.6-sol";
 const reviewAgentLaunches = new Map<string, Promise<string | undefined>>();
 
 type ReviewConversationEntry = {
@@ -92,6 +93,7 @@ export type ReviewSourceContext = {
 
 type OrchestratorReviewBoardProps = {
 	daemonReady: boolean;
+	embedded?: boolean;
 	orchestrator: WorkspaceSession;
 	sessions: WorkspaceSession[];
 	theme: Theme;
@@ -514,6 +516,7 @@ function newestReviewHelper(sessions: WorkspaceSession[], issueId: string): Work
 
 export function OrchestratorReviewBoard({
 	daemonReady,
+	embedded = false,
 	orchestrator,
 	sessions,
 	theme,
@@ -777,6 +780,7 @@ export function OrchestratorReviewBoard({
 							displayName: "Review agent",
 							prompt,
 							agentConfig: {
+								model: REVIEW_AGENT_MODEL,
 								reasoningEffort: "low",
 							},
 						},
@@ -981,7 +985,9 @@ export function OrchestratorReviewBoard({
 	}
 
 	return (
-		<div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
+		<div
+			className={`relative flex min-h-0 flex-col overflow-hidden bg-background ${embedded ? "max-h-[42vh] shrink-0 rounded-lg border border-border" : "h-full"}`}
+		>
 			{bridgeHelper ? (
 				<ReviewAgentBridge
 					key={`${bridgeHelper.id}:${bridgeHelper.terminalHandleId ?? "starting"}`}
@@ -993,13 +999,15 @@ export function OrchestratorReviewBoard({
 					theme={theme}
 				/>
 			) : null}
-			<div className="shrink-0 border-b border-border bg-surface/45 px-6 py-4">
+			<div className={`shrink-0 border-b border-border bg-surface/45 ${embedded ? "px-4 py-3" : "px-6 py-4"}`}>
 				<div className="mx-auto flex max-w-5xl items-center gap-4">
 					<div className="grid size-10 shrink-0 place-items-center rounded-xl border border-accent/25 bg-accent/10 text-accent">
 						<Sparkles className="size-5" aria-hidden="true" />
 					</div>
 					<div className="min-w-0 flex-1">
-						<div className="text-sm font-semibold text-foreground">Your review board</div>
+						<div className="text-sm font-semibold text-foreground">
+							{embedded ? "Review decisions" : "Your review board"}
+						</div>
 						<div className="mt-0.5 text-xs text-muted-foreground">
 							Concrete decisions appear here with a direct answer path. Everything else stays linked to its task.
 						</div>
@@ -1046,14 +1054,20 @@ export function OrchestratorReviewBoard({
 				</div>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-auto px-6 py-8">
+			<div className={`min-h-0 flex-1 overflow-auto ${embedded ? "px-4 py-4" : "px-6 py-8"}`}>
 				{allClear ? (
-					<div className="mx-auto grid min-h-72 max-w-xl place-items-center rounded-2xl border border-dashed border-border bg-surface/30 p-8 text-center">
+					<div
+						className={`mx-auto grid max-w-xl place-items-center rounded-2xl border border-dashed border-border bg-surface/30 text-center ${embedded ? "min-h-24 p-4" : "min-h-72 p-8"}`}
+					>
 						<div>
-							<div className="mx-auto grid size-12 place-items-center rounded-full bg-success/10 text-success">
+							<div
+								className={`${embedded ? "size-9" : "size-12"} mx-auto grid place-items-center rounded-full bg-success/10 text-success`}
+							>
 								<Check className="size-6" aria-hidden="true" />
 							</div>
-							<h2 className="mt-4 text-base font-semibold text-foreground">Nothing needs your answer</h2>
+							<h2 className={`${embedded ? "mt-2 text-sm" : "mt-4 text-base"} font-semibold text-foreground`}>
+								Nothing needs your answer
+							</h2>
 							<p className="mt-2 text-sm leading-relaxed text-muted-foreground">
 								Orbit will place a task here when an agent pauses, loses signal, fails checks, or receives review
 								feedback.
@@ -1077,7 +1091,7 @@ export function OrchestratorReviewBoard({
 
 						{helperWorking && cards.length === 0 ? (
 							<div
-								className="mx-auto grid min-h-64 w-full max-w-xl place-items-center rounded-2xl border border-dashed border-border bg-surface/30 p-8 text-center"
+							className={`mx-auto grid w-full max-w-xl place-items-center rounded-2xl border border-dashed border-border bg-surface/30 text-center ${embedded ? "min-h-32 p-4" : "min-h-64 p-8"}`}
 								role="status"
 							>
 								<div>

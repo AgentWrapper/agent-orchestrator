@@ -255,7 +255,7 @@ describe("Sidebar", () => {
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
 		renderSidebar();
 
-		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
+		expect(screen.getByLabelText("Open Project One task board")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
 	});
@@ -264,7 +264,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		renderSidebar();
 
-		await user.click(screen.getByLabelText("Open Project One dashboard"));
+		await user.click(screen.getByLabelText("Open Project One task board"));
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
 	});

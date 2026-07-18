@@ -822,7 +822,7 @@ describe("review board", () => {
 				kind: "worker",
 				displayName: "Review agent",
 				issueId: reviewAgentIssueId,
-				agentConfig: { reasoningEffort: "low" },
+				agentConfig: { model: "gpt-5.6-sol", reasoningEffort: "low" },
 			},
 		});
 		expect(postMock.mock.calls[0]?.[1]?.body).not.toHaveProperty("harness");

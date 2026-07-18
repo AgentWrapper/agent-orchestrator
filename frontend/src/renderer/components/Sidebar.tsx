@@ -634,7 +634,7 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label={`Open ${workspace.name} dashboard`}
+							aria-label={`Open ${workspace.name} task board`}
 							className={HOVER_ACTION_CLASS}
 							onClick={() => selection.goProject(workspace.id)}
 							type="button"
@@ -642,7 +642,7 @@ function ProjectItem({
 							<LayoutDashboard aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
-					<TooltipContent>Dashboard</TooltipContent>
+					<TooltipContent>Task board</TooltipContent>
 				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>

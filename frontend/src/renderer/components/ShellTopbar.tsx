@@ -65,7 +65,7 @@ const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: 
 // variant is derived from the route, not props: a sessionId in the URL swaps
 // the lead to the session identity (orchestrator crumb + mode badge, or worker
 // branch + status pill) and the actions to board/orchestrator + inspector
-// controls (orchestrators open the Kanban board; workers open their orchestrator);
+// controls (orchestrators open the task board; workers open their orchestrator);
 // otherwise it's the dashboard crumb plus the Orchestrator launcher when a
 // project is in scope. Merges the old DashboardTopbar/Topbar pair —
 // agent-orchestrator keeps those as two components aligned only by CSS.
@@ -220,9 +220,9 @@ export function ShellTopbar() {
 									<Lightbulb className="size-icon-md" aria-hidden="true" />
 									Suggestions
 								</TopbarButton>
-								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="accent">
+								<TopbarButton aria-label="Open task board" onClick={openBoard} style={noDragStyle} variant="accent">
 									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
-									Kanban
+									Task board
 								</TopbarButton>
 							</>
 						) : null}

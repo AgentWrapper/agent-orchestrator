@@ -337,7 +337,7 @@ export function workerStatusPulses(status: WorkerDisplayStatus): boolean {
 }
 
 /**
- * Kanban attention zone, ordered by human-action urgency — ported from
+ * Task-board attention zone, ordered by human-action urgency — ported from
  * agent-orchestrator's getAttentionLevel (packages/web/src/lib/types.ts),
  * collapsed to its default "simple" set and rebound to reverbcode's
  * {@link SessionStatus}. The board groups sessions into these columns so the

@@ -41,7 +41,6 @@ describe("CenterPane toolbar session label", () => {
 		render(
 			<CenterPane
 				session={{ ...worker, id: "sess-orch", kind: "orchestrator" }}
-				projectSessions={[worker]}
 				theme="dark"
 				daemonReady
 			/>,
@@ -51,11 +50,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByAltText("Claude logo")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Show conversation" })).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByTestId("terminal-body")).toHaveAttribute("data-view-mode", "conversation");
-		expect(screen.getByRole("button", { name: "Show review board" })).toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole("button", { name: "Show review board" }));
-		expect(screen.getByRole("button", { name: "Show review board" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByTestId("terminal-body")).toHaveAttribute("data-view-mode", "review");
+		expect(screen.queryByRole("button", { name: "Show review board" })).not.toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "Show terminal" }));
 		expect(screen.getByRole("button", { name: "Show terminal" })).toHaveAttribute("aria-pressed", "true");

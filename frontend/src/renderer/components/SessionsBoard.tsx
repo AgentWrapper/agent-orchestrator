@@ -38,7 +38,9 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
 import { cn } from "../lib/utils";
+import { useShell } from "../lib/shell-context";
 import { useUiStore } from "../stores/ui-store";
+import { OrchestratorReviewBoard } from "./OrchestratorReviewBoard";
 
 const isLinux =
 	typeof navigator !== "undefined" &&
@@ -99,6 +101,7 @@ const COLUMNS: Column[] = [
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const { daemonStatus } = useShell();
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
@@ -109,6 +112,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const theme = useUiStore((state) => state.theme);
 	const orchestratorStartupError = useUiStore((state) =>
 		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
 	);
@@ -253,12 +257,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			{/* The first-launch welcome carries its own orientation; a "Board"
+			{/* The first-launch welcome carries its own orientation; a "Task board"
 			    header above it would describe a board that isn't rendered
 			    (review feedback on #2432). */}
 			{!showWelcome && (
 				<DashboardSubhead
-					title="Board"
+					title="Task board"
 					subtitle={
 						projectId
 							? `Coordinate ${workspace?.name ?? "this project"} from one live view.`
@@ -282,6 +286,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					</div>
 				) : null}
 				{projectId ? <RepositoryStewardCard projectId={projectId} /> : null}
+				{projectId && orchestrator && workspace ? (
+					<OrchestratorReviewBoard
+						daemonReady={daemonStatus.state === "ready"}
+						embedded
+						orchestrator={orchestrator}
+						sessions={workspace.sessions}
+						theme={theme}
+					/>
+				) : null}
 				{!workspaceQuery.isError && !showWelcome && !showProjectEmpty ? (
 					<BoardOverview
 						activeCount={activeCount}

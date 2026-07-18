@@ -15,6 +15,18 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: workspaceQueryMock,
 }));
 
+vi.mock("../lib/shell-context", () => ({
+	useShell: () => ({ daemonStatus: { state: "ready" } }),
+}));
+
+vi.mock("./OrchestratorReviewBoard", () => ({
+	OrchestratorReviewBoard: ({ embedded, orchestrator }: { embedded?: boolean; orchestrator: { id: string } }) => (
+		<section aria-label="Embedded review decisions" data-embedded={embedded} data-orchestrator={orchestrator.id}>
+			Review decisions
+		</section>
+	),
+}));
+
 vi.mock("./AutoBypassToggle", () => ({
 	AutoBypassToggle: () => <button type="button">Auto bypass</button>,
 }));
@@ -75,9 +87,53 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		expect(screen.getByText("Idle")).toBeInTheDocument();
+		expect(screen.getByText("Task board")).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "Board overview" })).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "Working: 1 session" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Auto bypass" })).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "Repository steward" })).toBeInTheDocument();
+	});
+
+	it("puts review decisions on the project task board", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "p1-orchestrator",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "Orbit",
+							provider: "codex",
+							kind: "orchestrator",
+							status: "working",
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "Choose release policy",
+							provider: "codex",
+							kind: "worker",
+							status: "needs_input",
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const review = screen.getByRole("region", { name: "Embedded review decisions" });
+		expect(review).toHaveAttribute("data-embedded", "true");
+		expect(review).toHaveAttribute("data-orchestrator", "p1-orchestrator");
 	});
 });
