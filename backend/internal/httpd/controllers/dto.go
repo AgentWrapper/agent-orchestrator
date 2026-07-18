@@ -9,8 +9,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
-	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	repostewardsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/reposteward"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	suggestionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/suggestion"
 )
 
@@ -199,6 +199,23 @@ type SpawnSessionRequest struct {
 // SessionResponse is the { session } body shared by session create/get.
 type SessionResponse struct {
 	Session SessionView `json:"session"`
+}
+
+// SessionConversationEntry is one clean item from a provider's structured
+// local conversation record. It deliberately excludes raw PTY output.
+type SessionConversationEntry struct {
+	ID        string `json:"id"`
+	Role      string `json:"role" enum:"user,assistant"`
+	Kind      string `json:"kind" enum:"message,update"`
+	Text      string `json:"text"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+// SessionConversationResponse powers the desktop-style conversation surface.
+type SessionConversationResponse struct {
+	SessionID domain.SessionID           `json:"sessionId"`
+	Source    string                     `json:"source" enum:"claude,codex,unavailable"`
+	Entries   []SessionConversationEntry `json:"entries"`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.

@@ -3,6 +3,8 @@ import {
 	attentionZone,
 	canonicalTrackerIssueId,
 	findProjectOrchestrator,
+	isReviewTranslatorSession,
+	isSuggestionDiscussionSession,
 	newestActiveOrchestrator,
 	orchestratorHealth,
 	sessionIsActive,
@@ -11,6 +13,7 @@ import {
 	toSessionActivity,
 	toSessionStatus,
 	workerDisplayStatus,
+	workerSessions,
 	workerStatusPulses,
 	openPRs,
 	mergedPRCount,
@@ -46,6 +49,19 @@ function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 		...overrides,
 	};
 }
+
+describe("workerSessions", () => {
+	it("keeps user workers but hides orchestrators and page-owned internal agents", () => {
+		const stoppedWorker = sessionWith({ id: "stopped", status: "terminated" });
+		const orchestrator = sessionWith({ id: "orchestrator", kind: "orchestrator" });
+		const helper = sessionWith({ id: "helper", issueId: "ao-review-translator:abc" });
+		const discussionAgent = sessionWith({ id: "discussion", issueId: "ao-suggestion-live:live-1:sol" });
+
+		expect(isReviewTranslatorSession(helper)).toBe(true);
+		expect(isSuggestionDiscussionSession(discussionAgent)).toBe(true);
+		expect(workerSessions([orchestrator, helper, discussionAgent, stoppedWorker])).toEqual([stoppedWorker]);
+	});
+});
 
 const pr = (overrides: Partial<PullRequestFacts> & { number: number; state: PRState }): PullRequestFacts => ({
 	url: `https://example.com/pr/${overrides.number}`,

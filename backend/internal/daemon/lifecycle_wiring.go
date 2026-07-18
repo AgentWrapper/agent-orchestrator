@@ -130,6 +130,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:   mgr,
 		Store:     store,
+		DataDir:   cfg.DataDir,
 		PRClaimer: store,
 		SCM:       scmProvider,
 		Tracker:   tracker,

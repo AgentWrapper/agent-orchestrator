@@ -36,6 +36,7 @@ type SessionService interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
+	Conversation(ctx context.Context, id domain.SessionID) (sessionsvc.ConversationSnapshot, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
@@ -69,6 +70,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions", c.spawn)
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
+	r.Get("/sessions/{sessionId}/conversation", c.conversation)
 	r.Get("/sessions/{sessionId}/preview", c.preview)
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
 	r.Delete("/sessions/{sessionId}/preview", c.clearPreview)
@@ -714,6 +716,29 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
 
 func sessionView(s domain.Session) SessionView {
 	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
+}
+
+func (c *SessionsController) conversation(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/conversation")
+		return
+	}
+	snapshot, err := c.Svc.Conversation(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	entries := make([]SessionConversationEntry, 0, len(snapshot.Entries))
+	for _, entry := range snapshot.Entries {
+		entries = append(entries, SessionConversationEntry{
+			ID: entry.ID, Role: entry.Role, Kind: entry.Kind, Text: entry.Text, Timestamp: entry.Timestamp,
+		})
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionConversationResponse{
+		SessionID: snapshot.SessionID,
+		Source:    snapshot.Source,
+		Entries:   entries,
+	})
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {

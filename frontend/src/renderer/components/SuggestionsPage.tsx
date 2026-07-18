@@ -22,7 +22,6 @@ type SuggestionDraft = {
 	title: string;
 	note: string;
 	priority: SuggestionPriority;
-	discussionSessionId?: string;
 };
 
 function suggestionDraftStorageKey(projectId: string): string {
@@ -41,9 +40,6 @@ function readSuggestionDraft(projectId: string): SuggestionDraft {
 			title: typeof value.title === "string" ? value.title : "",
 			note: typeof value.note === "string" ? value.note : "",
 			priority: priority === "later" || priority === "important" ? priority : "normal",
-			...(typeof value.discussionSessionId === "string"
-				? { discussionSessionId: value.discussionSessionId }
-				: {}),
 		};
 	} catch {
 		return empty;
@@ -53,7 +49,7 @@ function readSuggestionDraft(projectId: string): SuggestionDraft {
 function writeSuggestionDraft(projectId: string, draft: SuggestionDraft): void {
 	if (typeof window === "undefined") return;
 	try {
-		if (!draft.title && !draft.note && !draft.discussionSessionId && draft.priority === "normal") {
+		if (!draft.title && !draft.note && draft.priority === "normal") {
 			window.localStorage?.removeItem(suggestionDraftStorageKey(projectId));
 			return;
 		}
@@ -66,22 +62,21 @@ function writeSuggestionDraft(projectId: string, draft: SuggestionDraft): void {
 export function SuggestionsPage({
 	projectId,
 	onSessionStarted,
+	onOpenProject,
 }: {
 	projectId: string;
 	onSessionStarted: (sessionId: string) => void;
+	onOpenProject: () => void;
 }) {
 	const queryClient = useQueryClient();
 	const [title, setTitle] = useState(() => readSuggestionDraft(projectId).title);
 	const [note, setNote] = useState(() => readSuggestionDraft(projectId).note);
 	const [priority, setPriority] = useState<SuggestionPriority>(() => readSuggestionDraft(projectId).priority);
-	const [discussionSessionId, setDiscussionSessionId] = useState(
-		() => readSuggestionDraft(projectId).discussionSessionId,
-	);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
-		writeSuggestionDraft(projectId, { title, note, priority, discussionSessionId });
-	}, [discussionSessionId, note, priority, projectId, title]);
+		writeSuggestionDraft(projectId, { title, note, priority });
+	}, [note, priority, projectId, title]);
 
 	const suggestions = useQuery({
 		queryKey: suggestionsQueryKey(projectId),
@@ -112,7 +107,6 @@ export function SuggestionsPage({
 			setTitle("");
 			setNote("");
 			setPriority("normal");
-			setDiscussionSessionId(undefined);
 			setError(null);
 			await refresh();
 		},
@@ -223,14 +217,9 @@ export function SuggestionsPage({
 						</button>
 					</div>
 					<SuggestionDiscussionPanel
-						lastSessionId={discussionSessionId}
 						note={note}
+						onOpenProject={onOpenProject}
 						onOpenSession={onSessionStarted}
-						onStarted={(sessionId) => {
-							setDiscussionSessionId(sessionId);
-							writeSuggestionDraft(projectId, { title, note, priority, discussionSessionId: sessionId });
-							onSessionStarted(sessionId);
-						}}
 						projectId={projectId}
 						title={title}
 					/>

@@ -85,6 +85,8 @@ type scmProvider interface {
 type Service struct {
 	manager             commander
 	store               Store
+	dataDir             string
+	homeDir             string
 	prClaimer           ports.PRClaimer
 	scm                 scmProvider
 	tracker             ports.Tracker
@@ -108,8 +110,13 @@ func New(manager *sessionmanager.Manager, store Store) *Service {
 // path keeps existing tests and callers small; daemon wiring uses NewWithDeps
 // to supply SCM observation for PR claiming.
 type Deps struct {
-	Manager   commander
-	Store     Store
+	Manager commander
+	Store   Store
+	// DataDir locates AO-owned provider state such as the isolated Codex home.
+	DataDir string
+	// HomeDir is injectable for tests; production leaves it empty to use the
+	// current user's home directory.
+	HomeDir   string
 	PRClaimer ports.PRClaimer
 	SCM       scmProvider
 	Tracker   ports.Tracker
@@ -123,7 +130,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, dataDir: d.DataDir, homeDir: d.HomeDir, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w

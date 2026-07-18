@@ -166,8 +166,21 @@ export type WorkspaceSession = {
  */
 export const SUGGESTION_DISCUSSION_ISSUE_PREFIX = "ao-suggestion-discussion:";
 
+/** Four-session live discussion owned by the Suggestions page. */
+export const SUGGESTION_LIVE_DISCUSSION_ISSUE_PREFIX = "ao-suggestion-live:";
+
+/** Internal worker used only to translate review facts into plain-English choices. */
+export const REVIEW_TRANSLATOR_ISSUE_PREFIX = "ao-review-translator:";
+
 export function isSuggestionDiscussionSession(session?: WorkspaceSession): boolean {
-	return Boolean(session?.issueId?.startsWith(SUGGESTION_DISCUSSION_ISSUE_PREFIX));
+	return Boolean(
+		session?.issueId?.startsWith(SUGGESTION_DISCUSSION_ISSUE_PREFIX) ||
+			session?.issueId?.startsWith(SUGGESTION_LIVE_DISCUSSION_ISSUE_PREFIX),
+	);
+}
+
+export function isReviewTranslatorSession(session?: WorkspaceSession): boolean {
+	return Boolean(session?.issueId?.startsWith(REVIEW_TRANSLATOR_ISSUE_PREFIX));
 }
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in
@@ -289,7 +302,9 @@ function timestamp(value?: string): number {
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
-	return sessions.filter((s) => !isOrchestratorSession(s));
+	return sessions.filter(
+		(s) => !isOrchestratorSession(s) && !isReviewTranslatorSession(s) && !isSuggestionDiscussionSession(s),
+	);
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {

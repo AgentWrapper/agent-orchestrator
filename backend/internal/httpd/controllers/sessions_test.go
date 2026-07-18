@@ -24,6 +24,7 @@ import (
 
 type fakeSessionService struct {
 	sessions        map[domain.SessionID]domain.Session
+	conversation    sessionsvc.ConversationSnapshot
 	sent            string
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
@@ -90,6 +91,16 @@ func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return s, nil
+}
+
+func (f *fakeSessionService) Conversation(_ context.Context, id domain.SessionID) (sessionsvc.ConversationSnapshot, error) {
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.ConversationSnapshot{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.conversation.SessionID == "" {
+		return sessionsvc.ConversationSnapshot{SessionID: id, Source: "unavailable", Entries: []sessionsvc.ConversationEntry{}}, nil
+	}
+	return f.conversation, nil
 }
 
 func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
@@ -337,6 +348,37 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_ConversationReturnsStructuredEntries(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.conversation = sessionsvc.ConversationSnapshot{
+		SessionID: "ao-1",
+		Source:    "claude",
+		Entries: []sessionsvc.ConversationEntry{
+			{ID: "u1", Role: "user", Kind: "message", Text: "Check the build"},
+			{ID: "a1", Role: "assistant", Kind: "message", Text: "The build is green."},
+		},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/conversation", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET conversation = %d, want 200; body=%s", status, body)
+	}
+	assertJSON(t, headers)
+	var got struct {
+		SessionID string `json:"sessionId"`
+		Source    string `json:"source"`
+		Entries   []struct {
+			Kind string `json:"kind"`
+			Text string `json:"text"`
+		} `json:"entries"`
+	}
+	mustJSON(t, body, &got)
+	if got.SessionID != "ao-1" || got.Source != "claude" || len(got.Entries) != 2 || got.Entries[1].Text != "The build is green." {
+		t.Fatalf("conversation = %#v", got)
 	}
 }
 

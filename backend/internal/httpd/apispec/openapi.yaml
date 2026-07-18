@@ -1349,6 +1349,45 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/conversation:
+    get:
+      operationId: getSessionConversation
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersSessionConversationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read a clean structured conversation for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -2127,6 +2166,49 @@ components:
       required:
       - sessionId
       - reason
+      type: object
+    ControllersSessionConversationEntry:
+      properties:
+        id:
+          type: string
+        kind:
+          enum:
+          - message
+          - update
+          type: string
+        role:
+          enum:
+          - user
+          - assistant
+          type: string
+        text:
+          type: string
+        timestamp:
+          type: string
+      required:
+      - id
+      - role
+      - kind
+      - text
+      type: object
+    ControllersSessionConversationResponse:
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/ControllersSessionConversationEntry'
+          type: array
+        sessionId:
+          type: string
+        source:
+          enum:
+          - claude
+          - codex
+          - unavailable
+          type: string
+      required:
+      - sessionId
+      - source
+      - entries
       type: object
     ControllersSessionView:
       properties:

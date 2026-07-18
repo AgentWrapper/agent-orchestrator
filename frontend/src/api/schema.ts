@@ -504,6 +504,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a clean structured conversation for a session */
+        get: operations["getSessionConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -784,6 +801,21 @@ export interface components {
         CleanupSkippedSession: {
             reason: string;
             sessionId: string;
+        };
+        ControllersSessionConversationEntry: {
+            id: string;
+            /** @enum {string} */
+            kind: "message" | "update";
+            /** @enum {string} */
+            role: "user" | "assistant";
+            text: string;
+            timestamp?: string;
+        };
+        ControllersSessionConversationResponse: {
+            entries: components["schemas"]["ControllersSessionConversationEntry"][];
+            sessionId: string;
+            /** @enum {string} */
+            source: "claude" | "codex" | "unavailable";
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -2999,6 +3031,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersSessionConversationResponse"];
                 };
             };
             /** @description Not Found */

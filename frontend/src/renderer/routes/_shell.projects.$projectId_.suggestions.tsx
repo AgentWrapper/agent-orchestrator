@@ -11,6 +11,12 @@ function ProjectSuggestionsRoute() {
 	return (
 		<SuggestionsPage
 			key={projectId}
+			onOpenProject={() =>
+				void navigate({
+					to: "/projects/$projectId",
+					params: { projectId },
+				})
+			}
 			projectId={projectId}
 			onSessionStarted={(sessionId) =>
 				void navigate({
