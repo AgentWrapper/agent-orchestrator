@@ -18,7 +18,7 @@
 
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 export function parseArgs(argv) {
@@ -128,6 +128,21 @@ export function parsePodVerdict(out) {
 	return { passed: v.passed === true, infra: v.infra === true };
 }
 
+/**
+ * Validate the required inputs before doing any work. Throws a single message
+ * naming every missing input, so a user-visible boundary error is actionable.
+ * @param {{apiKey?:string, repo?:string, tag?:string}} args
+ */
+export function validateGateArgs({ apiKey, repo, tag } = {}) {
+	const missing = [];
+	if (!apiKey) missing.push("DAYTONA_API_KEY (env)");
+	if (!repo) missing.push("--repo");
+	if (!tag) missing.push("--tag");
+	if (missing.length > 0) {
+		throw new Error(`ao-e2e-pod-gate: missing required input(s): ${missing.join(", ")}`);
+	}
+}
+
 // GitHub release Linux .deb URL for a tag. Forge publishes to v<version>; the
 // asset is agent-orchestrator_<version>_amd64.deb (version = tag without "v").
 export function releaseDebUrl(repo, tag) {
@@ -143,9 +158,8 @@ export function releaseDebUrl(repo, tag) {
 // npm registries at boot unless the sandbox image has it baked — see that
 // script's header.) The SDK is dynamically imported so the pure-function tests
 // (deriveGateOutcome/parseArgs) load this module without needing @daytona/sdk.
-async function runPodSuite({ repo, tag, apiKey, timeoutMs = 20 * 60_000 }) {
-	if (!apiKey) throw new Error("DAYTONA_API_KEY is required");
-	if (!repo || !tag) throw new Error("--repo and --tag are required");
+async function runPodSuite({ repo, tag, apiKey, suite, artifactsDir, timeoutMs = 20 * 60_000 }) {
+	validateGateArgs({ apiKey, repo, tag });
 
 	const podDir = join(dirname(fileURLToPath(import.meta.url)), "..", "test", "e2e-pod");
 	const debUrl = releaseDebUrl(repo, tag);
@@ -163,16 +177,34 @@ async function runPodSuite({ repo, tag, apiKey, timeoutMs = 20 * 60_000 }) {
 		for (const f of ["playwright.electron.config.ts", "real-app.spec.ts", "boot-real.sh"]) {
 			await sandbox.fs.uploadFile(await readFile(join(podDir, f)), `/home/daytona/${f}`);
 		}
+		const suiteEnv = suite ? `AO_SUITE=${suite} ` : "";
 		const r = await sandbox.process.executeCommand(
-			"AO_DEB_PATH=/home/daytona/app.deb bash /home/daytona/boot-real.sh",
+			`AO_DEB_PATH=/home/daytona/app.deb ${suiteEnv}bash /home/daytona/boot-real.sh`,
 			"/home/daytona",
 			undefined,
 			Math.floor(timeoutMs / 1000),
 		);
 		const out = r.result ?? "";
 		process.stdout.write(out);
+		// Persist artifacts BEFORE teardown: the full pod log always, plus the
+		// Playwright results tarball if the pod produced one. Best-effort — artifact
+		// capture never fails the gate.
+		if (artifactsDir) {
+			try {
+				mkdirSync(artifactsDir, { recursive: true });
+				writeFileSync(join(artifactsDir, "pod.log"), out);
+				try {
+					const tgz = await sandbox.fs.downloadFile("/home/daytona/artifacts.tgz");
+					if (tgz) writeFileSync(join(artifactsDir, "artifacts.tgz"), Buffer.isBuffer(tgz) ? tgz : Buffer.from(tgz));
+				} catch {
+					/* no results tarball produced; the pod log is still saved */
+				}
+			} catch {
+				/* artifact capture is best-effort */
+			}
+		}
 		const { passed, infra } = parsePodVerdict(out);
-		return { passed, infra, timedOut: Date.now() - startedAt >= timeoutMs, artifacts: null };
+		return { passed, infra, timedOut: Date.now() - startedAt >= timeoutMs };
 	} finally {
 		if (sandbox) await sandbox.delete().catch(() => {});
 	}
@@ -184,12 +216,23 @@ async function main(argv) {
 	console.log(`  repo=${args.repo ?? "(unset)"} tag=${args.tag ?? "(unset)"} suite=${args.suite ?? "T0"}`);
 	console.log(`  DAYTONA_API_KEY: ${process.env.DAYTONA_API_KEY ? "present" : "absent"}`);
 
+	// Where downloaded pod artifacts land (the workflow uploads this dir); the
+	// check links to the workflow run, where that upload is attached.
+	const artifactsDir =
+		process.env.AO_ARTIFACTS_DIR || join(dirname(fileURLToPath(import.meta.url)), "..", "e2e-artifacts");
+	const runUrl =
+		process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+			? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+			: null;
+
 	let outcome;
 	try {
 		const res = await runPodSuite({
 			repo: args.repo,
 			tag: args.tag,
 			apiKey: process.env.DAYTONA_API_KEY,
+			suite: args.suite,
+			artifactsDir,
 		});
 		// A pod-side setup/toolchain failure (res.infra) is NOT a release result:
 		// map it to ranOk:false so it becomes a NEUTRAL infra outcome, not red.
@@ -197,11 +240,11 @@ async function main(argv) {
 			ranOk: !res.infra,
 			testsPassed: res.passed,
 			timedOut: res.timedOut,
-			artifactsUrl: res.artifacts,
+			artifactsUrl: runUrl,
 		});
 	} catch (err) {
 		console.error(`ao-e2e-pod-gate: run failed: ${err.message}`);
-		outcome = deriveGateOutcome({ ranOk: false });
+		outcome = deriveGateOutcome({ ranOk: false, artifactsUrl: runUrl });
 	}
 
 	const verdict = {

@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveGateOutcome, parseArgs, parsePodVerdict } from "./ao-e2e-pod-gate.mjs";
+import { deriveGateOutcome, parseArgs, parsePodVerdict, validateGateArgs } from "./ao-e2e-pod-gate.mjs";
 
 test("passed -> success / exit 0", () => {
 	const o = deriveGateOutcome({ ranOk: true, testsPassed: true });
@@ -124,6 +124,22 @@ test("pod infra verdict maps to NEUTRAL, real app fail maps to RED", () => {
 	const appOutcome = deriveGateOutcome({ ranOk: !appFail.infra, testsPassed: appFail.passed });
 	assert.equal(appOutcome.classification, "app_failed");
 	assert.equal(appOutcome.conclusion, "failure");
+});
+
+test("validateGateArgs accepts a complete set", () => {
+	assert.doesNotThrow(() => validateGateArgs({ apiKey: "k", repo: "o/r", tag: "v1.0.0" }));
+});
+
+test("validateGateArgs throws on each missing required input", () => {
+	assert.throws(() => validateGateArgs({ repo: "o/r", tag: "v1" }), /DAYTONA_API_KEY/);
+	assert.throws(() => validateGateArgs({ apiKey: "k", tag: "v1" }), /--repo/);
+	assert.throws(() => validateGateArgs({ apiKey: "k", repo: "o/r" }), /--tag/);
+	assert.throws(() => validateGateArgs({}), /DAYTONA_API_KEY.*--repo.*--tag/);
+	assert.throws(() => validateGateArgs(), /missing required/);
+});
+
+test("validateGateArgs treats empty strings as missing", () => {
+	assert.throws(() => validateGateArgs({ apiKey: "", repo: "", tag: "" }), /DAYTONA_API_KEY.*--repo.*--tag/);
 });
 
 test("parseArgs reads the gate CLI flags", () => {

@@ -81,15 +81,24 @@ test("REAL-001 packaged app launches + window paints @T0 @real", async () => {
 	const { app } = await launchIsolated();
 	const win = await app.firstWindow();
 	expect(win).toBeTruthy();
-	// Prove the renderer actually mounted AND painted real content — not just that
-	// a window object exists. Poll inside the page for: document finished loading,
-	// real DOM rendered beyond the empty index.html shell, and visible text present.
-	// (A bare `<div id="root">` from index.html is childElementCount>=1 before React
-	// runs, so we look at visible innerText, which only appears once the app paints.)
+	// Prove the AO renderer mounted — not just that *some* document painted. A
+	// non-empty innerText alone would also pass on a Chromium/Electron error page,
+	// so we assert an AO-specific signal:
+	//   1. document.readyState === "complete"          (load finished)
+	//   2. the AO brand string is present, via the app's own <title> (index.html
+	//      sets "Agent Orchestrator" and nothing in the renderer overwrites it) OR
+	//      visible brand text the shell renders (titlebar/sidebar/first-run welcome)
+	//   3. some real visible text painted
+	// An error page has neither the AO title nor AO brand text, so it fails here.
 	await expect
 		.poll(
 			() =>
-				win.evaluate(() => document.readyState === "complete" && (document.body?.innerText?.trim().length ?? 0) > 0),
+				win.evaluate(() => {
+					const brand = "Agent Orchestrator";
+					const text = document.body?.innerText ?? "";
+					const isAO = document.title.includes(brand) || text.includes(brand);
+					return document.readyState === "complete" && isAO && text.trim().length > 0;
+				}),
 			{ timeout: 30_000, intervals: [500] },
 		)
 		.toBe(true);

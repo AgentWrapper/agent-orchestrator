@@ -8,12 +8,18 @@
 # electron), and emits a final `AO_VERDICT {json}` line the runner parses.
 #
 # Verdict contract (parsed by scripts/ao-e2e-pod-gate.mjs):
-#   {"passed":true}               -> app smoke passed        (green)
-#   {"passed":false}              -> app smoke FAILED         (red app_failed)
-#   {"passed":false,"infra":true} -> setup/toolchain problem  (neutral, NOT red)
-# Only the Playwright app-test run below may emit passed:false. Every step before
-# it (apt, dpkg, npm) is setup — its failure emits infra:true so an apt/npm/
-# registry outage never masquerades as a release-build failure.
+#   {"passed":true}               -> app smoke passed         (green)
+#   {"passed":false}              -> app smoke FAILED          (red app_failed)
+#   {"passed":false,"infra":true} -> setup/toolchain problem   (neutral, NOT red)
+#
+# The infra/app split is by CAUSE, not by which step ran:
+#   - Toolchain/registry setup (apt update/install of xvfb/tmux, npm install of
+#     @playwright/test) failing = infra (neutral): a Daytona/registry outage, not
+#     the release build's fault.
+#   - The RELEASE PACKAGE itself failing (a .deb that cannot install or does not
+#     contain a runnable app binary) = app_failed (RED). A broken/uninstallable
+#     package is the product result covered by INS-001, not infra.
+#   - The Playwright app-test run's pass/fail = app result.
 #
 # Toolchain (xvfb, tmux, @playwright/test) is installed only if ABSENT, so a
 # prebuilt sandbox image with these baked in runs fully egress-free. On a stock
@@ -24,12 +30,22 @@
 set -o pipefail
 cd /home/daytona
 DEB="${AO_DEB_PATH:-/home/daytona/app.deb}"
+# Optional tag filter (e.g. AO_SUITE=T0 -> playwright --grep @T0). Empty = all.
+SUITE="${AO_SUITE:-}"
 
 # Emit an INFRA verdict and stop. Setup/toolchain problems are NOT the release
 # build's fault — the runner maps infra:true to a NEUTRAL gate result, never red.
 fail_infra() {
 	echo "== INFRA FAILURE ($1): $2 =="
 	echo "AO_VERDICT {\"passed\":false,\"infra\":true,\"stage\":\"$1\",\"reason\":\"$2\"}"
+	exit 0
+}
+
+# Emit an APP_FAILED verdict and stop. The release PACKAGE is bad (won't install
+# or ships no runnable binary) — a real release-build failure, mapped to RED.
+fail_app() {
+	echo "== APP FAILURE ($1): $2 =="
+	echo "AO_VERDICT {\"passed\":false,\"suite\":\"real-app-t0\",\"stage\":\"$1\",\"reason\":\"$2\"}"
 	exit 0
 }
 
@@ -42,16 +58,20 @@ fi
 command -v xvfb-run >/dev/null 2>&1 || fail_infra "xvfb-missing" "xvfb-run unavailable after install"
 
 echo "== install release build: $DEB =="
-sudo dpkg -i "$DEB" >/dev/null 2>&1
-# apt-get -f resolves the .deb's runtime deps; a failure here is a registry/network
-# problem, not the build's fault -> infra.
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq >/dev/null 2>&1 ||
-	fail_infra "apt-deps" "resolving .deb runtime dependencies failed (registry/network)"
+# dpkg unpacks the package's files even if dependency configuration is deferred;
+# apt-get -f then resolves runtime deps (best-effort — a registry hiccup here does
+# not by itself condemn the build). The authoritative check is whether the package
+# actually installed a runnable app binary, below.
+dpkg_rc=0
+sudo dpkg -i "$DEB" >/dev/null 2>&1 || dpkg_rc=$?
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq >/dev/null 2>&1 || true
 APP="$(command -v agent-orchestrator || echo /usr/lib/agent-orchestrator/agent-orchestrator)"
-# If the binary is missing after install, we can't test the app -> treat as infra
-# (a build that installs but won't launch is caught below as a real app failure).
-[ -x "$APP" ] || fail_infra "app-missing" "app binary not found after install: $APP"
-echo "app: $APP"
+# A missing/non-executable app binary means the RELEASE PACKAGE is broken or
+# uninstallable — a product/build failure (INS-001), not infra. Fail RED.
+if [ ! -x "$APP" ]; then
+	fail_app "package-install" "release .deb did not install a runnable app binary (dpkg rc=$dpkg_rc, path=$APP)"
+fi
+echo "app: $APP (dpkg rc=$dpkg_rc)"
 
 echo "== playwright lib (install only if absent; uses the app's own electron) =="
 if [ ! -x node_modules/.bin/playwright ]; then
@@ -61,15 +81,21 @@ if [ ! -x node_modules/.bin/playwright ]; then
 fi
 [ -x node_modules/.bin/playwright ] || fail_infra "playwright-missing" "playwright unavailable after install"
 
-echo "== real-app e2e under xvfb =="
+echo "== real-app e2e under xvfb${SUITE:+ (suite @$SUITE)} =="
 # From here PW is the REAL app-test result: 0 = app passed, non-zero = app failed.
-# Setup is done; only the app under test decides pass/fail now.
+# Setup is done and the package installed a runnable binary; only the app under
+# test decides pass/fail now.
 export AO_APP_BIN="$APP"
-xvfb-run -a npx playwright test -c playwright.electron.config.ts 2>&1
+xvfb-run -a npx playwright test -c playwright.electron.config.ts ${SUITE:+--grep "@$SUITE"} 2>&1
 PW=$?
 
+# Bundle the Playwright results (json report + any traces/screenshots) so the
+# runner can download them before teardown and attach them to the check. Best-
+# effort: if nothing was produced, the runner still keeps the full pod log.
+tar czf /home/daytona/artifacts.tgz -C /home/daytona test-results playwright-report 2>/dev/null || true
+
 if [ "$PW" = 0 ]; then
-	echo 'AO_VERDICT {"passed":true,"suite":"real-app-t0"}'
+	echo "AO_VERDICT {\"passed\":true,\"suite\":\"real-app-t0\"${SUITE:+,\"grep\":\"@$SUITE\"}}"
 else
 	echo "AO_VERDICT {\"passed\":false,\"suite\":\"real-app-t0\",\"playwright_exit\":$PW}"
 fi
