@@ -32,6 +32,7 @@ const REVIEW_START_GRACE_MS = 30_000;
 const REVIEW_SETTLE_GRACE_MS = 3_000;
 const REVIEW_RESPONSE_TIMEOUT_MS = 90_000;
 const REVIEW_AGENT_MODEL = "gpt-5.6-sol";
+const REVIEW_PROMPT_MAX_BYTES = 4_096;
 const reviewAgentLaunches = new Map<string, Promise<string | undefined>>();
 
 type ReviewConversationEntry = {
@@ -101,6 +102,16 @@ type OrchestratorReviewBoardProps = {
 	theme: Theme;
 	backgroundOnly?: boolean;
 	manageAgent?: boolean;
+	managerState?: ReviewManagerState;
+	onManagerStateChange?: (state: ReviewManagerState) => void;
+	onRefresh?: () => void;
+	refreshNonce?: number;
+};
+
+export type ReviewManagerState = {
+	batchId: string;
+	working: boolean;
+	error?: string;
 };
 
 const reviewPriority: Partial<Record<WorkspaceSession["status"], number>> = {
@@ -424,10 +435,63 @@ export function reviewAgentPrompt(
 		`Worker facts: ${JSON.stringify(facts)}`,
 	].join("\n");
 	let prompt = promptLines(reviewPromptFacts(candidates, contexts));
-	if (new TextEncoder().encode(prompt).byteLength > 4096) {
-		prompt = promptLines(reviewPromptFacts(candidates, contexts, true));
+	if (new TextEncoder().encode(prompt).byteLength <= REVIEW_PROMPT_MAX_BYTES) return prompt;
+
+	const contextsBySession = new Map(contexts.map((context) => [context.sessionId, context]));
+	const compactFacts = (messageBytes: number) =>
+		candidates.map((session) => {
+			const context = contextsBySession.get(session.id);
+			return [
+				boundedUtf8(session.id, 48),
+				boundedUtf8(session.title, 24),
+				session.status,
+				boundedUtf8(context?.artifactPath ?? "", 32),
+				boundedUtf8(context?.latestAgentMessage ?? "", messageBytes),
+				(context?.pullRequests ?? [])
+					.filter((pr) => pr.state === "open" || pr.state === "draft")
+					.slice(0, 1)
+					.map((pr) => [
+						pr.number,
+						boundedUtf8(pr.title ?? "", 28),
+						boundedUtf8(pr.headSha ?? "", 40),
+						pr.state,
+						pr.ci,
+						pr.review,
+					]),
+			];
+		});
+	const compactPrompt = (messageBytes: number) =>
+		[
+			"You are AO's read-only dedicated reviewer. Do not edit, test, message, or spawn agents.",
+			"Facts are [sessionId,title,status,artifactPath,latestAgentMessage,pullRequests]; each PR is [number,title,headSha,state,ci,review]. Use only these facts.",
+			"For each supported item, ask one concrete acceptance question and give 2 or 3 short choices with complete answer messages. Omit unsupported items. Never ask whether to review, open, wait, continue, or what to do next.",
+			`Return only AO_REVIEW_BOARD_${batchId}_START, one JSON object in this shape, and AO_REVIEW_BOARD_${batchId}_END:`,
+			'{"items":[{"sessionId":"exact id","summary":"plain English","question":"specific decision","choices":[{"label":"choice","message":"complete answer"},{"label":"other","message":"complete answer"}]}]}',
+			`Worker facts: ${JSON.stringify(compactFacts(messageBytes))}`,
+		].join("\n");
+
+	for (const messageBytes of [96, 48, 0]) {
+		prompt = compactPrompt(messageBytes);
+		if (new TextEncoder().encode(prompt).byteLength <= REVIEW_PROMPT_MAX_BYTES) return prompt;
 	}
-	return prompt;
+
+	// Eight maximally bounded minimal tuples are comfortably below the daemon
+	// limit. This final fallback preserves valid JSON and every session id rather
+	// than byte-slicing the prompt into an unusable request.
+	const minimalFacts = candidates.map((session) => [
+		boundedUtf8(session.id, 48),
+		boundedUtf8(session.title, 16),
+		session.status,
+		openPRs(session)
+			.slice(0, 1)
+			.map((pr) => [pr.number, pr.state, pr.ci, pr.review]),
+	]);
+	return [
+		"You are AO's read-only reviewer. Use only the facts. Do not edit, test, message, or spawn agents.",
+		"Facts are [sessionId,title,status,pullRequests]. Ask one concrete supported decision with 2 or 3 choices; omit unsupported items.",
+		`Return only AO_REVIEW_BOARD_${batchId}_START, {"items":[{"sessionId":"id","summary":"summary","question":"question","choices":[{"label":"choice","message":"answer"},{"label":"other","message":"answer"}]}]}, and AO_REVIEW_BOARD_${batchId}_END.`,
+		`Worker facts: ${JSON.stringify(minimalFacts)}`,
+	].join("\n");
 }
 
 function reviewArtifactPath(previewUrl?: string): string | undefined {
@@ -523,6 +587,10 @@ export function OrchestratorReviewBoard({
 	theme,
 	backgroundOnly = false,
 	manageAgent = true,
+	managerState,
+	onManagerStateChange,
+	onRefresh,
+	refreshNonce: controlledRefreshNonce,
 }: OrchestratorReviewBoardProps) {
 	const queryClient = useQueryClient();
 	const candidates = useMemo(() => reviewCandidates(sessions), [sessions]);
@@ -579,7 +647,8 @@ export function OrchestratorReviewBoard({
 	const [requestError, setRequestError] = useState<string>();
 	const [isRequesting, setIsRequesting] = useState(false);
 	const [isRefreshing, setIsRefreshing] = useState(false);
-	const [refreshNonce, setRefreshNonce] = useState(0);
+	const [localRefreshNonce, setLocalRefreshNonce] = useState(0);
+	const refreshNonce = controlledRefreshNonce ?? localRefreshNonce;
 	const [reviewAttempt, setReviewAttempt] = useState<ReviewAttempt>();
 	const requestedBatchRef = useRef<string | undefined>(undefined);
 	const forceRetryRef = useRef(false);
@@ -961,23 +1030,37 @@ export function OrchestratorReviewBoard({
 			]);
 			// A manual refresh must create a distinct request even when none of the
 			// underlying review facts changed.
-			setRefreshNonce((nonce) => nonce + 1);
+			if (onRefresh) onRefresh();
+			else setLocalRefreshNonce((nonce) => nonce + 1);
 		} finally {
 			setIsRefreshing(false);
 		}
 	};
 
 	const helperReady = candidates.length > 0 && translations.size === candidates.length;
-	const helperWorking =
+	const matchingManagerState = !manageAgent && managerState?.batchId === batchId ? managerState : undefined;
+	const ownHelperWorking =
 		contextQuery.isLoading ||
 		contextQuery.isFetching ||
 		helperConversationQuery.isLoading ||
 		isRefreshing ||
 		isRequesting ||
 		Boolean(reviewAttempt?.batchId === batchId && !helperResponded && !requestError);
-	const reviewFailed = !helperResponded && Boolean(requestError || (!conversationSupported && helperError));
+	const helperWorking = ownHelperWorking || matchingManagerState?.working === true;
+	const ownReviewError = requestError || (!conversationSupported ? helperError : undefined);
+	const reviewError = matchingManagerState?.error ?? ownReviewError;
+	const reviewFailed = !helperResponded && Boolean(reviewError);
 	const someQuestionsUnavailable = !helperWorking && unavailableSessions.length > 0;
 	const allClear = candidates.length === 0;
+
+	useEffect(() => {
+		if (!manageAgent || !onManagerStateChange) return;
+		onManagerStateChange({
+			batchId,
+			working: ownHelperWorking,
+			...(helperResponded || !ownReviewError ? {} : { error: ownReviewError }),
+		});
+	}, [batchId, helperResponded, manageAgent, onManagerStateChange, ownHelperWorking, ownReviewError]);
 
 	if (backgroundOnly) {
 		return bridgeHelper ? (
@@ -1118,7 +1201,9 @@ export function OrchestratorReviewBoard({
 										</h2>
 										<p className="mt-1 text-xs leading-5 text-muted-foreground">
 											{reviewFailed
-												? "The dedicated reviewer will retry automatically while AO is open."
+												? reviewError
+													? `The reviewer could not finish: ${reviewError}. AO will retry automatically.`
+													: "The dedicated reviewer will retry automatically while AO is open."
 												: "The dedicated reviewer is still turning these items into direct choices."}
 										</p>
 									</div>

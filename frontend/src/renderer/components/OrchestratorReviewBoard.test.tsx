@@ -326,6 +326,7 @@ describe("review selection and translation", () => {
 		const contexts = candidates.map((candidate, index) => ({
 			sessionId: candidate.id,
 			artifactPath: `docs/${"界".repeat(80)}-${index}.md`,
+			latestAgentMessage: `Detailed implementation evidence ${"界".repeat(700)}`,
 			pullRequests: [
 				{
 					number: index + 1,
@@ -340,9 +341,9 @@ describe("review selection and translation", () => {
 			],
 		}));
 
-		expect(new TextEncoder().encode(reviewAgentPrompt(candidates, "deadbeef", contexts)).byteLength).toBeLessThanOrEqual(
-			4096,
-		);
+		const prompt = reviewAgentPrompt(candidates, "deadbeef", contexts);
+		expect(new TextEncoder().encode(prompt).byteLength).toBeLessThanOrEqual(4096);
+		for (const candidate of candidates) expect(prompt).toContain(candidate.id);
 	});
 
 	it("keeps a review batch stable across database-only timestamp refreshes", () => {
@@ -363,6 +364,30 @@ describe("review selection and translation", () => {
 });
 
 describe("review board", () => {
+	it("shows the background manager error and sends dialog refreshes back to it", async () => {
+		const candidate = worker({ prs: [openPr] });
+		const onRefresh = vi.fn();
+		const batchId = reviewBatchId([candidate], 0);
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<OrchestratorReviewBoard
+					daemonReady={false}
+					manageAgent={false}
+					managerState={{ batchId, working: false, error: "prompt is too long (PROMPT_TOO_LONG)" }}
+					onRefresh={onRefresh}
+					orchestrator={orchestrator}
+					refreshNonce={0}
+					sessions={[orchestrator, candidate]}
+					theme="dark"
+				/>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByText(/prompt is too long \(PROMPT_TOO_LONG\)/i)).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+		await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
+	});
+
 	it("keeps missing context queued for the dedicated reviewer", () => {
 		renderBoard([worker()]);
 

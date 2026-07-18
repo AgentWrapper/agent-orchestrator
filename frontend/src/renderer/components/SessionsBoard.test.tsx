@@ -22,16 +22,26 @@ vi.mock("../lib/shell-context", () => ({
 vi.mock("./OrchestratorReviewBoard", () => ({
 	OrchestratorReviewBoard: ({
 		backgroundOnly,
+		onRefresh,
 		orchestrator,
+		refreshNonce,
 	}: {
 		backgroundOnly?: boolean;
+		onRefresh?: () => void;
 		orchestrator: { id: string };
+		refreshNonce?: number;
 	}) => (
 		<section
 			aria-label={backgroundOnly ? "Background reviewer" : "Review decisions panel"}
 			data-orchestrator={orchestrator.id}
+			data-refresh-nonce={refreshNonce}
 		>
 			Review decisions
+			{backgroundOnly ? null : (
+				<button onClick={onRefresh} type="button">
+					Refresh review
+				</button>
+			)}
 		</section>
 	),
 }));
@@ -148,6 +158,10 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 		const review = screen.getByRole("region", { name: "Review decisions panel" });
 		expect(review).toHaveAttribute("data-orchestrator", "p1-orchestrator");
-		expect(screen.getByRole("region", { name: "Background reviewer", hidden: true })).toBeInTheDocument();
+		const background = screen.getByRole("region", { name: "Background reviewer", hidden: true });
+		expect(background).toBeInTheDocument();
+		fireEvent.click(within(review).getByRole("button", { name: "Refresh review" }));
+		expect(review).toHaveAttribute("data-refresh-nonce", "1");
+		expect(background).toHaveAttribute("data-refresh-nonce", "1");
 	});
 });
