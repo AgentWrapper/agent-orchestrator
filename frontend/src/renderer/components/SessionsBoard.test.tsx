@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { navigateMock, workspaceQueryMock } = vi.hoisted(() => ({
@@ -20,8 +20,17 @@ vi.mock("../lib/shell-context", () => ({
 }));
 
 vi.mock("./OrchestratorReviewBoard", () => ({
-	OrchestratorReviewBoard: ({ embedded, orchestrator }: { embedded?: boolean; orchestrator: { id: string } }) => (
-		<section aria-label="Embedded review decisions" data-embedded={embedded} data-orchestrator={orchestrator.id}>
+	OrchestratorReviewBoard: ({
+		backgroundOnly,
+		orchestrator,
+	}: {
+		backgroundOnly?: boolean;
+		orchestrator: { id: string };
+	}) => (
+		<section
+			aria-label={backgroundOnly ? "Background reviewer" : "Review decisions panel"}
+			data-orchestrator={orchestrator.id}
+		>
 			Review decisions
 		</section>
 	),
@@ -94,7 +103,7 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("region", { name: "Repository steward" })).toBeInTheDocument();
 	});
 
-	it("puts review decisions on the project task board", () => {
+	it("opens review decisions from the In review lane", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -132,8 +141,13 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const review = screen.getByRole("region", { name: "Embedded review decisions" });
-		expect(review).toHaveAttribute("data-embedded", "true");
+		expect(screen.getByRole("region", { name: "Background reviewer" })).toBeInTheDocument();
+		const inReview = screen.getByRole("region", { name: "In review: 0 sessions" });
+		fireEvent.click(within(inReview).getByRole("button", { name: "Review decisions" }));
+
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		const review = screen.getByRole("region", { name: "Review decisions panel" });
 		expect(review).toHaveAttribute("data-orchestrator", "p1-orchestrator");
+		expect(screen.queryByRole("region", { name: "Background reviewer" })).not.toBeInTheDocument();
 	});
 });

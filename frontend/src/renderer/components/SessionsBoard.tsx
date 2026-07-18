@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -41,6 +41,7 @@ import { cn } from "../lib/utils";
 import { useShell } from "../lib/shell-context";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorReviewBoard } from "./OrchestratorReviewBoard";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 
 const isLinux =
 	typeof navigator !== "undefined" &&
@@ -109,6 +110,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
+	const [reviewOpen, setReviewOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -286,10 +288,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					</div>
 				) : null}
 				{projectId ? <RepositoryStewardCard projectId={projectId} /> : null}
-				{projectId && orchestrator && workspace ? (
+				{projectId && orchestrator && workspace && !reviewOpen ? (
 					<OrchestratorReviewBoard
+						backgroundOnly
 						daemonReady={daemonStatus.state === "ready"}
-						embedded
 						orchestrator={orchestrator}
 						sessions={workspace.sessions}
 						theme={theme}
@@ -321,7 +323,24 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					) : (
 						<div className="grid h-full grid-cols-4 gap-2.5">
 							{COLUMNS.map((col) => (
-								<ZoneColumn key={col.level} col={col} sessions={byZone.get(col.level) ?? []} onOpen={openSession} />
+								<ZoneColumn
+									key={col.level}
+									bodyAction={
+										col.level === "pending" && projectId && orchestrator ? (
+											<button
+												className="mb-2.5 inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-3 text-xs font-semibold text-accent transition hover:bg-accent/15 active:translate-y-px active:scale-[0.99]"
+												onClick={() => setReviewOpen(true)}
+												type="button"
+											>
+												<Sparkles className="size-3.5" aria-hidden="true" />
+												Review decisions
+											</button>
+										) : undefined
+									}
+									col={col}
+									sessions={byZone.get(col.level) ?? []}
+									onOpen={openSession}
+								/>
 							))}
 						</div>
 					)}
@@ -378,6 +397,22 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
 				onOpenChange={setIsNewTaskOpen}
 			/>
+			{projectId && orchestrator && workspace ? (
+				<Dialog onOpenChange={setReviewOpen} open={reviewOpen}>
+					<DialogContent className="h-[min(88vh,900px)] max-w-6xl gap-0 overflow-hidden p-0">
+						<DialogTitle className="sr-only">Review decisions</DialogTitle>
+						<DialogDescription className="sr-only">
+							Answer the decisions required by work in the In review lane.
+						</DialogDescription>
+						<OrchestratorReviewBoard
+							daemonReady={daemonStatus.state === "ready"}
+							orchestrator={orchestrator}
+							sessions={workspace.sessions}
+							theme={theme}
+						/>
+					</DialogContent>
+				</Dialog>
+			) : null}
 		</div>
 	);
 }
@@ -442,10 +477,12 @@ function BoardOverview({
 }
 
 function ZoneColumn({
+	bodyAction,
 	col,
 	sessions,
 	onOpen,
 }: {
+	bodyAction?: ReactNode;
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
@@ -469,6 +506,7 @@ function ZoneColumn({
 				<span className="board-zone__count">{sessions.length}</span>
 			</div>
 			<div className="board-zone__body">
+				{bodyAction}
 				{sessions.length === 0 ? (
 					<div className="board-zone__empty">
 						<Icon aria-hidden="true" />
