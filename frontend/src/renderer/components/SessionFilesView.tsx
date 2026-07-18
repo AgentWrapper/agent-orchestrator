@@ -1,17 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	ChevronDown,
-	ChevronRight,
-	Copy,
-	Download,
-	FileText,
-	Maximize2,
-	Minimize2,
-	RefreshCw,
-	Search,
-	X,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Maximize2, Minimize2, RefreshCw, Search, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
@@ -267,16 +256,6 @@ function ReviewFileCard({
 		queryFn: () => loadWorkspaceFile(sessionId, file.path),
 	});
 
-	const copyPath = () => {
-		void navigator.clipboard?.writeText(file.path);
-	};
-
-	const downloadFile = async () => {
-		const detail = detailQuery.data ?? (await detailQuery.refetch()).data;
-		if (!detail || detail.binary) return;
-		downloadTextFile(detail.path, detail.deleted ? detail.diff : detail.content || detail.diff);
-	};
-
 	return (
 		<article className="overflow-hidden rounded-md border border-border bg-surface shadow-sm">
 			<div className="flex min-h-14 items-center gap-3 px-4">
@@ -297,26 +276,6 @@ function ReviewFileCard({
 					<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</button>
-				<div className="flex shrink-0 items-center gap-1">
-					<Button
-						aria-label={`Download ${file.path}`}
-						onClick={downloadFile}
-						size="icon-sm"
-						type="button"
-						variant="ghost"
-					>
-						<Download className="size-icon-sm" aria-hidden="true" />
-					</Button>
-					<Button
-						aria-label={`Copy path for ${file.path}`}
-						onClick={copyPath}
-						size="icon-sm"
-						type="button"
-						variant="ghost"
-					>
-						<Copy className="size-icon-sm" aria-hidden="true" />
-					</Button>
-				</div>
 			</div>
 			{expanded ? (
 				<div id={`workspace-diff-${file.path}`} className="border-t border-border">
@@ -364,7 +323,7 @@ function CodePanel({ notice, text, variant }: { notice?: string; text: string; v
 			{notice ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning">{notice}</div>
 			) : null}
-			<pre className="min-h-0 flex-1 overflow-auto bg-terminal py-3 font-mono text-xs leading-row text-terminal-foreground">
+			<pre className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal py-3 font-mono text-xs leading-row text-terminal-foreground">
 				{lines.map((line, index) => (
 					<div className={cn("min-w-max px-4", variant === "diff" && diffLineClass(line))} key={`${index}-${line}`}>
 						<span className="mr-4 inline-block w-8 select-none text-right text-passive">{index + 1}</span>
@@ -383,17 +342,6 @@ function ChangeBadges({ additions, deletions }: { additions: number; deletions: 
 			{deletions > 0 ? <span className="rounded bg-error/20 px-1.5 py-0.5 text-error">-{deletions}</span> : null}
 		</span>
 	);
-}
-
-function downloadTextFile(path: string, text: string) {
-	if (typeof document === "undefined") return;
-	const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-	const url = URL.createObjectURL(blob);
-	const anchor = document.createElement("a");
-	anchor.href = url;
-	anchor.download = path.replace(/[\\/]/g, "__") || "workspace-file.txt";
-	anchor.click();
-	URL.revokeObjectURL(url);
 }
 
 function PanelMessage({ action, children }: { action?: ReactNode; children: ReactNode }) {

@@ -95,6 +95,8 @@ describe("SessionFilesView", () => {
 		expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
 		expect(screen.getByText("2 files changed")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy path for src/App.tsx" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
 
@@ -128,6 +130,7 @@ describe("SessionFilesView", () => {
 
 		const codePane = (await screen.findByText("+const value = 1;")).closest("pre");
 		expect(codePane).toHaveClass("text-terminal-foreground");
+		expect(codePane).toHaveClass("session-files-diff-scrollbar");
 		expect(codePane).not.toHaveClass("text-terminal");
 	});
 

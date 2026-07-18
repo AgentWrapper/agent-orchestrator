@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,20 @@ func writeWorkspaceFile(t *testing.T, root, rel, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func linkWorkspaceDir(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return
+	} else if runtime.GOOS != "windows" {
+		t.Skipf("creating symlink: %v", err)
+	} else {
+		cmd := exec.Command("cmd", "/c", "mklink", "/J", link, target)
+		if out, junctionErr := cmd.CombinedOutput(); junctionErr != nil {
+			t.Skipf("creating symlink or junction: symlink: %v; junction: %v\n%s", err, junctionErr, out)
+		}
 	}
 }
 
@@ -296,6 +311,21 @@ func TestGetWorkspaceFileRejectsTraversal(t *testing.T) {
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
 	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "../secrets.txt")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_PATH" {
+		t.Fatalf("err = %v, want bad request INVALID_WORKSPACE_PATH", err)
+	}
+}
+
+func TestGetWorkspaceFileRejectsIntermediateSymlinkEscape(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	outside := t.TempDir()
+	writeWorkspaceFile(t, outside, "secret.txt", "outside workspace\n")
+	linkWorkspaceDir(t, outside, filepath.Join(repo, "link"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "link/secret.txt")
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_PATH" {
 		t.Fatalf("err = %v, want bad request INVALID_WORKSPACE_PATH", err)

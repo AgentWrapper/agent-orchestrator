@@ -367,28 +367,33 @@ func confinedWorkspaceFile(root, rel string) (string, os.FileInfo, error) {
 	if err != nil {
 		return "", nil, apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
 	}
-	target := filepath.Join(rootAbs, filepath.FromSlash(clean))
+	rootResolved, err := resolvedFilesystemPath(rootAbs)
+	if err != nil {
+		return "", nil, apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
+	}
+	rootInfo, err := os.Stat(rootResolved)
+	if err != nil || !rootInfo.IsDir() {
+		return "", nil, apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
+	}
+	target := filepath.Join(rootResolved, filepath.FromSlash(clean))
 	targetAbs, err := filepath.Abs(target)
-	if err != nil || !pathWithin(rootAbs, targetAbs) {
+	if err != nil || !pathWithin(rootResolved, targetAbs) {
 		return "", nil, apierr.Invalid("INVALID_WORKSPACE_PATH", "path escapes session workspace", nil)
 	}
-	info, err := os.Lstat(targetAbs)
-	if err != nil {
-		return "", nil, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
-	}
-	resolved := targetAbs
-	if info.Mode()&os.ModeSymlink != 0 {
-		resolved, err = filepath.EvalSymlinks(targetAbs)
+	resolved := rootResolved
+	for _, part := range strings.Split(clean, "/") {
+		resolved = filepath.Join(resolved, part)
+		resolved, err = resolvedFilesystemPath(resolved)
 		if err != nil {
 			return "", nil, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
 		}
-		if !pathWithin(rootAbs, resolved) {
+		if !pathWithin(rootResolved, resolved) {
 			return "", nil, apierr.Invalid("INVALID_WORKSPACE_PATH", "path escapes session workspace", nil)
 		}
-		info, err = os.Stat(resolved)
-		if err != nil {
-			return "", nil, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
-		}
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", nil, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
 	}
 	if info.IsDir() {
 		return "", nil, apierr.Invalid("WORKSPACE_PATH_IS_DIRECTORY", "Workspace path is a directory", nil)
