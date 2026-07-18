@@ -4,7 +4,6 @@ import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, S
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
-	newestActiveOrchestrator,
 	sessionIsActive,
 	type WorkspaceSession,
 	type WorkspaceSummary,
@@ -13,7 +12,7 @@ import {
 import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { useOpenOrchestrator } from "../hooks/useOpenOrchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
@@ -396,11 +395,9 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
-	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const [isSpawning, setIsSpawning] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
@@ -408,28 +405,12 @@ function ProjectItem({
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
-	// button: navigate to it when present, otherwise spawn one first.
-	const orchestrator = newestActiveOrchestrator(workspace.sessions);
-
-	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
-	// spawn one via the daemon and follow it once the workspace refetches.
-	const openOrchestrator = async () => {
-		if (isProjectRestarting) return;
-		if (orchestrator) {
-			selection.goSession(workspace.id, orchestrator.id);
-			return;
-		}
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			selection.goSession(workspace.id, sessionId);
-		} catch (err) {
-			console.error("Failed to spawn orchestrator:", err);
-		} finally {
-			setIsSpawning(false);
-		}
-	};
+	// button and the pinned orchestrator row in the session tree.
+	const { orchestrator, openOrchestrator, isSpawning } = useOpenOrchestrator(
+		workspace.id,
+		workspace.sessions,
+		"sidebar",
+	);
 
 	const onProjectClick = () => {
 		if (!expanded) {
@@ -570,8 +551,14 @@ function ProjectItem({
 			</div>
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
-			{expanded && sessions.length > 0 && (
+			{expanded && (
 				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-4.5 translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
+					<OrchestratorRow
+						orchestrator={orchestrator}
+						active={Boolean(orchestrator) && selection.activeSessionId === orchestrator?.id}
+						disabled={isSpawning || isProjectRestarting}
+						onOpen={() => void openOrchestrator()}
+					/>
 					{sessions.map((session) => (
 						<SessionRow
 							key={session.id}
@@ -706,6 +693,51 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				type="button"
 			>
 				<Pencil aria-hidden="true" />
+			</button>
+		</SidebarMenuSubItem>
+	);
+}
+
+// Pinned orchestrator row at the top of a project's session group. Shows the
+// same live status dot as worker rows and navigates to the orchestrator session,
+// spawning one first when none is running.
+function OrchestratorRow({
+	orchestrator,
+	active,
+	disabled,
+	onOpen,
+}: {
+	orchestrator?: WorkspaceSession;
+	active: boolean;
+	disabled?: boolean;
+	onOpen: () => void;
+}) {
+	return (
+		<SidebarMenuSubItem>
+			<button
+				aria-current={active ? "page" : undefined}
+				aria-label={orchestrator ? "Open Orchestrator" : "Spawn Orchestrator"}
+				className={cn(
+					"relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-1.5 text-left outline-hidden transition-[color]",
+					"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
+					"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					"disabled:pointer-events-none disabled:opacity-50",
+					active && "text-foreground before:bg-accent",
+				)}
+				disabled={disabled}
+				onClick={onOpen}
+				type="button"
+			>
+				{orchestrator ? (
+					<SessionDot session={orchestrator} />
+				) : (
+					<span aria-hidden="true" className="mt-px h-1.5 w-1.5 shrink-0 rounded-full bg-passive" />
+				)}
+				<span className="min-w-0 flex-1">
+					<span className={cn("block truncate text-xs", active ? "text-foreground" : "text-muted-foreground")}>
+						Orchestrator
+					</span>
+				</span>
 			</button>
 		</SidebarMenuSubItem>
 	);
