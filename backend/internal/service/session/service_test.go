@@ -350,9 +350,11 @@ type fakeCommander struct {
 	sent            []domain.SessionID
 	cleanupProjects []domain.ProjectID
 	killErr         error
+	killResult      *bool
 	retireErr       error
 	sendErr         error
 	cleanupErr      error
+	cleanupResult   *sessionmanager.CleanupResult
 	spawnErr        error
 	spawnRecord     domain.SessionRecord
 	spawned         bool
@@ -385,6 +387,9 @@ func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, erro
 		return false, f.killErr
 	}
 	f.killed = append(f.killed, id)
+	if f.killResult != nil {
+		return *f.killResult, nil
+	}
 	return true, nil
 }
 func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.SessionID) error {
@@ -405,6 +410,9 @@ func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (se
 	f.cleanupProjects = append(f.cleanupProjects, project)
 	if f.cleanupErr != nil {
 		return sessionmanager.CleanupResult{}, f.cleanupErr
+	}
+	if f.cleanupResult != nil {
+		return *f.cleanupResult, nil
 	}
 	return sessionmanager.CleanupResult{
 		Cleaned: []domain.SessionID{"mer-1"},
@@ -439,7 +447,7 @@ func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if err := svc.TeardownProject(context.Background(), "mer"); err != nil {
+	if _, err := svc.TeardownProject(context.Background(), "mer"); err != nil {
 		t.Fatalf("TeardownProject: %v", err)
 	}
 	if len(fc.killed) != 1 || fc.killed[0] != "mer-1" {
@@ -450,19 +458,86 @@ func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
 	}
 }
 
-func TestTeardownProjectStopsOnKillError(t *testing.T) {
+func TestTeardownProjectReportsKillErrorBlockerAndContinues(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
 	boom := errors.New("boom")
-	fc := &fakeCommander{killErr: boom}
+	fc := &fakeCommander{
+		killErr:       boom,
+		cleanupResult: &sessionmanager.CleanupResult{Cleaned: []domain.SessionID{}, Skipped: []sessionmanager.CleanupSkip{}},
+	}
 	svc := &Service{manager: fc, store: st}
 
-	err := svc.TeardownProject(context.Background(), "mer")
-	if !errors.Is(err, boom) {
-		t.Fatalf("TeardownProject err = %v, want boom", err)
+	out, err := svc.TeardownProject(context.Background(), "mer")
+	if err != nil {
+		t.Fatalf("TeardownProject err = %v, want nil", err)
 	}
-	if len(fc.cleanupProjects) != 0 {
-		t.Fatalf("cleanup projects = %#v, want none after kill failure", fc.cleanupProjects)
+	if len(out.Blockers) != 1 || out.Blockers[0].SessionID != "mer-1" || out.Blockers[0].Reason != "session teardown failed" {
+		t.Fatalf("blockers = %#v, want mer-1 session teardown failed", out.Blockers)
+	}
+	if len(fc.cleanupProjects) != 1 || fc.cleanupProjects[0] != "mer" {
+		t.Fatalf("cleanup projects = %#v, want cleanup to still aggregate terminal outcomes", fc.cleanupProjects)
+	}
+}
+
+func TestTeardownProjectReportsLiveDirtyWorktreeBlocker(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	preserved := false
+	fc := &fakeCommander{
+		killResult:    &preserved,
+		cleanupResult: &sessionmanager.CleanupResult{Cleaned: []domain.SessionID{}, Skipped: []sessionmanager.CleanupSkip{}},
+	}
+	svc := &Service{manager: fc, store: st}
+
+	out, err := svc.TeardownProject(context.Background(), "mer")
+	if err != nil {
+		t.Fatalf("TeardownProject: %v", err)
+	}
+	if len(out.Killed) != 1 || out.Killed[0].SessionID != "mer-1" || out.Killed[0].WorkspaceFreed || out.Killed[0].Terminated {
+		t.Fatalf("killed = %#v, want preserved live session outcome", out.Killed)
+	}
+	if len(out.Blockers) != 1 || out.Blockers[0].Phase != "kill" || out.Blockers[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("blockers = %#v, want dirty kill blocker", out.Blockers)
+	}
+}
+
+func TestTeardownProjectAllowsStalePrunableWorktreeCleanup(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+	fc := &fakeCommander{cleanupResult: &sessionmanager.CleanupResult{
+		Cleaned: []domain.SessionID{"mer-1"},
+		Skipped: []sessionmanager.CleanupSkip{},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	out, err := svc.TeardownProject(context.Background(), "mer")
+	if err != nil {
+		t.Fatalf("TeardownProject: %v", err)
+	}
+	if len(out.Blockers) != 0 {
+		t.Fatalf("blockers = %#v, want none for pruned stale worktree", out.Blockers)
+	}
+	if len(out.Cleaned) != 1 || out.Cleaned[0] != "mer-1" {
+		t.Fatalf("cleaned = %#v, want mer-1", out.Cleaned)
+	}
+}
+
+func TestTeardownProjectReportsNonDirtyCleanupFailureBlocker(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+	fc := &fakeCommander{cleanupResult: &sessionmanager.CleanupResult{
+		Cleaned: []domain.SessionID{},
+		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-1", Reason: "workspace teardown failed"}},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	out, err := svc.TeardownProject(context.Background(), "mer")
+	if err != nil {
+		t.Fatalf("TeardownProject: %v", err)
+	}
+	if len(out.Blockers) != 1 || out.Blockers[0].SessionID != "mer-1" || out.Blockers[0].Phase != "cleanup" || out.Blockers[0].Reason != "workspace teardown failed" {
+		t.Fatalf("blockers = %#v, want cleanup teardown failure blocker", out.Blockers)
 	}
 }
 

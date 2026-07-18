@@ -91,6 +91,30 @@ type RestoreOutcome struct {
 	Mode    RestoreModeView `json:"restoreMode"`
 }
 
+// ProjectTeardownOutcome reports the per-session effects of removing a project.
+// Blockers are safe, user-facing reasons that should stop project archival.
+type ProjectTeardownOutcome struct {
+	Killed   []ProjectTeardownKilled  `json:"killed"`
+	Cleaned  []domain.SessionID       `json:"cleaned"`
+	Blockers []ProjectTeardownBlocker `json:"blockers"`
+}
+
+// ProjectTeardownKilled is one live session that project teardown asked the
+// session manager to stop.
+type ProjectTeardownKilled struct {
+	SessionID      domain.SessionID `json:"sessionId"`
+	WorkspaceFreed bool             `json:"workspaceFreed"`
+	Terminated     bool             `json:"terminated"`
+}
+
+// ProjectTeardownBlocker is one session workspace that prevented project
+// removal from safely completing.
+type ProjectTeardownBlocker struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Phase     string           `json:"phase"`
+	Reason    string           `json:"reason"`
+}
+
 type scmProvider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
@@ -500,23 +524,62 @@ func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 }
 
 // TeardownProject stops every live session in a project, then asks the session
-// manager to reclaim terminal workspaces. Dirty worktrees are preserved by Kill
-// and Cleanup; callers only see hard teardown failures.
-func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID) error {
+// manager to reclaim terminal workspaces. Dirty or otherwise unremoved
+// workspaces are returned as structured blockers so project removal can answer
+// with an actionable conflict instead of an opaque internal error.
+func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID) (ProjectTeardownOutcome, error) {
+	out := ProjectTeardownOutcome{
+		Killed:   []ProjectTeardownKilled{},
+		Cleaned:  []domain.SessionID{},
+		Blockers: []ProjectTeardownBlocker{},
+	}
 	recs, err := s.listRecords(ctx, project)
 	if err != nil {
-		return err
+		return out, err
 	}
 	for _, rec := range recs {
 		if rec.IsTerminated {
 			continue
 		}
-		if _, err := s.Kill(ctx, rec.ID); err != nil {
-			return err
+		freed, err := s.Kill(ctx, rec.ID)
+		if err != nil {
+			out.Blockers = append(out.Blockers, ProjectTeardownBlocker{
+				SessionID: rec.ID,
+				Phase:     "kill",
+				Reason:    "session teardown failed",
+			})
+			continue
+		}
+		terminated, err := s.sessionTerminated(ctx, rec.ID)
+		if err != nil {
+			return out, err
+		}
+		out.Killed = append(out.Killed, ProjectTeardownKilled{
+			SessionID:      rec.ID,
+			WorkspaceFreed: freed,
+			Terminated:     terminated,
+		})
+		if !terminated {
+			out.Blockers = append(out.Blockers, ProjectTeardownBlocker{
+				SessionID: rec.ID,
+				Phase:     "kill",
+				Reason:    "workspace has uncommitted changes",
+			})
 		}
 	}
-	_, err = s.Cleanup(ctx, project)
-	return err
+	cleanup, err := s.Cleanup(ctx, project)
+	if err != nil {
+		return out, err
+	}
+	out.Cleaned = append(out.Cleaned, cleanup.Cleaned...)
+	for _, skip := range cleanup.Skipped {
+		out.Blockers = append(out.Blockers, ProjectTeardownBlocker{
+			SessionID: skip.SessionID,
+			Phase:     "cleanup",
+			Reason:    skip.Reason,
+		})
+	}
+	return out, nil
 }
 
 // List returns sessions as enriched display models after applying API filters.
@@ -537,6 +600,14 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session
 		out = append(out, sess)
 	}
 	return out, nil
+}
+
+func (s *Service) sessionTerminated(ctx context.Context, id domain.SessionID) (bool, error) {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("teardown %s: reload session: %w", id, err)
+	}
+	return !ok || rec.IsTerminated, nil
 }
 
 func (s *Service) listRecords(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {

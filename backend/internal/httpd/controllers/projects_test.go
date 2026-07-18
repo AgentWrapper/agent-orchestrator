@@ -27,6 +27,8 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -46,6 +48,19 @@ func (emptyGetManager) Get(context.Context, domain.ProjectID) (projectsvc.GetRes
 
 	return projectsvc.GetResult{}, nil
 
+}
+
+type removeBlockedManager struct{ projectsvc.Manager }
+
+func (removeBlockedManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
+	return projectsvc.RemoveResult{}, apierr.Conflict("PROJECT_REMOVE_BLOCKED", "Project has session workspaces that could not be removed", map[string]any{
+		"projectId": "proj",
+		"blockers": []map[string]any{{
+			"sessionId": "proj-1",
+			"phase":     "kill",
+			"reason":    "workspace has uncommitted changes",
+		}},
+	})
 }
 
 // TestProjectsAPI_GetEmptyResultIs500 locks the fix for the discriminated-union
@@ -342,6 +357,32 @@ func TestProjectsAPI_Delete(t *testing.T) {
 
 	}
 
+}
+
+func TestProjectsAPI_DeleteBlockedReturnsConflictDetails(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Projects: removeBlockedManager{},
+	}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, headers := doRequest(t, srv, "DELETE", "/api/v1/projects/proj", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_REMOVE_BLOCKED")
+
+	var err errorBody
+	mustJSON(t, body, &err)
+	if err.Details["projectId"] != "proj" {
+		t.Fatalf("details projectId = %#v, want proj", err.Details["projectId"])
+	}
+	blockers, ok := err.Details["blockers"].([]any)
+	if !ok || len(blockers) != 1 {
+		t.Fatalf("details blockers = %#v, want one blocker", err.Details["blockers"])
+	}
+	blocker, ok := blockers[0].(map[string]any)
+	if !ok || blocker["sessionId"] != "proj-1" || blocker["reason"] != "workspace has uncommitted changes" {
+		t.Fatalf("blocker = %#v, want dirty session blocker", blockers[0])
+	}
 }
 
 // TestProjectsAPI_RejectsUnknownConfigKeys locks the strict-decoder gate on the

@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
@@ -46,7 +47,7 @@ type Manager interface {
 // SessionTeardowner is the narrow session-service surface project removal
 // needs: stop live project sessions and reclaim managed terminal workspaces.
 type SessionTeardowner interface {
-	TeardownProject(ctx context.Context, project domain.ProjectID) error
+	TeardownProject(ctx context.Context, project domain.ProjectID) (sessionsvc.ProjectTeardownOutcome, error)
 }
 
 // Service implements project registration and lookup use-cases for controllers.
@@ -586,8 +587,12 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	if m.sessions != nil {
-		if err := m.sessions.TeardownProject(ctx, id); err != nil {
+		teardown, err := m.sessions.TeardownProject(ctx, id)
+		if err != nil {
 			return RemoveResult{}, err
+		}
+		if len(teardown.Blockers) > 0 {
+			return RemoveResult{}, projectRemoveBlocked(id, teardown)
 		}
 	}
 	ok, err = m.store.ArchiveProject(ctx, string(id), time.Now())
@@ -598,6 +603,15 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	return RemoveResult{ProjectID: id, RemovedStorageDir: false}, nil
+}
+
+func projectRemoveBlocked(id domain.ProjectID, teardown sessionsvc.ProjectTeardownOutcome) error {
+	return apierr.Conflict("PROJECT_REMOVE_BLOCKED", "Project has session workspaces that could not be removed", map[string]any{
+		"projectId": string(id),
+		"blockers":  teardown.Blockers,
+		"killed":    teardown.Killed,
+		"cleaned":   teardown.Cleaned,
+	})
 }
 
 func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
