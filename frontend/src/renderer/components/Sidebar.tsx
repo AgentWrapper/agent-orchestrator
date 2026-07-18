@@ -62,6 +62,7 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
+import { AgentIcon } from "./AgentIcon";
 import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
@@ -780,6 +781,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 		return (
 			<SidebarMenuSubItem>
 				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-1.5">
+					<AgentIcon provider={session.provider} />
 					<SessionDot session={session} />
 					<input
 						aria-label={t("shell.sidebar.renameSession", { session: session.title })}
@@ -820,6 +822,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				onClick={onOpen}
 				type="button"
 			>
+				<AgentIcon provider={session.provider} />
 				<SessionDot session={session} />
 				<span className="min-w-0 flex-1">
 					<span className={cn("block truncate text-xs", active ? "text-foreground" : "text-muted-foreground")}>

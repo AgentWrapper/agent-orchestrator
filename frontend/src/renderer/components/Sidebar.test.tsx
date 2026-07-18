@@ -7,6 +7,7 @@ import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { initializeRendererI18n } from "../i18n";
+import { AGENT_OPTIONS } from "../lib/agent-options";
 
 const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -212,6 +213,23 @@ afterEach(async () => {
 });
 
 describe("Sidebar", () => {
+	it("starts expanded and identifies every active Worker by its Agent icon", () => {
+		const sessions = AGENT_OPTIONS.map((provider, index) => ({
+			...session,
+			id: `proj-1-${index + 1}`,
+			title: `worker-${provider}`,
+			provider,
+		}));
+		renderSidebar({ workspaces: [{ ...workspace, sessions }] });
+
+		const projectRow = screen.getByText("Project One").closest("button");
+		expect(projectRow).toHaveAttribute("aria-expanded", "true");
+		for (const provider of AGENT_OPTIONS) {
+			expect(screen.getByLabelText(`Open worker-${provider}`)).toBeInTheDocument();
+			expect(document.querySelector(`[data-agent-provider="${provider}"]`)).toBeInTheDocument();
+		}
+	});
+
 	it("localizes shell navigation while preserving project and session names", async () => {
 		await initializeRendererI18n("zh-CN");
 		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
@@ -883,6 +901,7 @@ describe("Sidebar", () => {
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
 		await user.click(screen.getByLabelText("Rename fix login"));
+		expect(document.querySelector('[data-agent-provider="claude-code"]')).toBeInTheDocument();
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "polish login{Enter}");
