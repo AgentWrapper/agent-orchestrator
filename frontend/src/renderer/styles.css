@@ -301,6 +301,90 @@ select {
 	font: inherit;
 }
 
+/* Every button should acknowledge hover, keyboard focus, and press. Component
+   colors still communicate hierarchy; these states add consistent interaction
+   feedback without changing button geometry. */
+:is(
+		button,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	) {
+	transition-property: color, background-color, border-color, opacity, filter, box-shadow, scale, translate;
+	transition-duration: var(--duration-fast);
+	transition-timing-function: ease-out;
+}
+
+:is(
+		button,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	):not(:disabled):not([aria-disabled="true"]):hover {
+	filter: brightness(1.08);
+}
+
+:is(
+		button,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	):not(:disabled):not([aria-disabled="true"]):active {
+	box-shadow: inset 0 2px 4px color-mix(in srgb, var(--color-scrim) 55%, transparent);
+	filter: brightness(0.86);
+	scale: 0.97;
+	translate: 0 2px;
+}
+
+:is(
+		button,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	):focus-visible {
+	outline: 2px solid color-mix(in srgb, var(--color-ring) 80%, transparent);
+	outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:is(
+			button,
+			[role="button"],
+			[data-slot="select-trigger"],
+			[data-slot="select-item"],
+			[data-slot="dropdown-menu-item"],
+			[data-sidebar="menu-button"],
+			[data-sidebar="menu-sub-button"]
+		) {
+		transition-duration: 0.01ms;
+	}
+
+	:is(
+			button,
+			[role="button"],
+			[data-slot="select-trigger"],
+			[data-slot="select-item"],
+			[data-slot="dropdown-menu-item"],
+			[data-sidebar="menu-button"],
+			[data-sidebar="menu-sub-button"]
+		):active {
+		scale: 1;
+		translate: 0;
+	}
+}
+
 :is(
 		button,
 		a[href],
