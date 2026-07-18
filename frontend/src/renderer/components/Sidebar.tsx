@@ -1,15 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import {
-	ChevronRight,
-	LayoutDashboard,
-	MoreVertical,
-	Pencil,
-	Plus,
-	RefreshCw,
-	Settings,
-	Trash2,
-} from "lucide-react";
+import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {

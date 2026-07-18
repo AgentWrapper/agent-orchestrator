@@ -341,7 +341,7 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-				{/* macOS TitlebarNav is fixed in the top 56px band on every route (including
+					{/* macOS TitlebarNav is fixed in the top 56px band on every route (including
             settings, where ShellTopbar is hidden), so the sidebar must always
             hang below that strip on Mac to keep the brand out of the cluster. */}
 					<Sidebar

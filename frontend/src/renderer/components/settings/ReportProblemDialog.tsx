@@ -140,9 +140,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(680px,calc(100svh-32px))] w-[min(var(--size-settings-dialog),calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-settings-dialog text-settings-label shadow-[var(--shadow-settings-dialog-ring)] data-[state=open]:animate-modal-in">
 					<div className="relative flex shrink-0 items-start justify-between gap-4 border-b border-[var(--color-border-settings-dialog-header)] px-6 py-6">
 						<div className="flex min-w-0 flex-col gap-1">
-							<Dialog.Title className="text-xl font-bold leading-7 text-settings-title">
-								Report a problem
-							</Dialog.Title>
+							<Dialog.Title className="text-xl font-bold leading-7 text-settings-title">Report a problem</Dialog.Title>
 							<Dialog.Description className="text-sm leading-5 text-settings-muted">
 								What problems did you encounter during the use?
 							</Dialog.Description>

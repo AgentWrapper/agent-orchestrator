@@ -98,9 +98,7 @@ export function UpdatesSection() {
 			)}
 
 			{save.isError && (
-				<p className="px-1 text-xs text-error">
-					{save.error instanceof Error ? save.error.message : "Save failed"}
-				</p>
+				<p className="px-1 text-xs text-error">{save.error instanceof Error ? save.error.message : "Save failed"}</p>
 			)}
 
 			<UpdateActions />

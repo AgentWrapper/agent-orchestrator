@@ -31,15 +31,7 @@ export function SettingsRow({
 	);
 }
 
-export function SettingsLinkRow({
-	icon,
-	label,
-	onClick,
-}: {
-	icon?: LucideIcon;
-	label: string;
-	onClick: () => void;
-}) {
+export function SettingsLinkRow({ icon, label, onClick }: { icon?: LucideIcon; label: string; onClick: () => void }) {
 	return (
 		<button
 			type="button"
