@@ -17,18 +17,16 @@
 // permission flag and defers to Pi's own behavior.
 //
 // Restore: Pi persists sessions to ~/.pi/agent/sessions/ and resumes
-// interactively by id with `--session <id>` (partial UUIDs accepted). The native
-// session id is emitted on the first line of `--mode json` output as
-// {"type":"session","id":"<uuid>",...} and is captured into session metadata
-// out-of-band; GetRestoreCommand reads it back from metadata. ok=false when no
-// native id is known (manager falls back to a fresh launch).
+// interactively by id with `--session <id>` (partial UUIDs accepted). AO installs
+// a project-local TypeScript extension that captures ctx.sessionManager's native
+// session UUID on session_start and reports it through `ao hooks pi
+// session-start`; GetRestoreCommand reads it back from metadata. ok=false when
+// no native id is known (manager falls back to a fresh launch).
 //
 // Hooks/activity: Pi exposes lifecycle hooks only through in-process TypeScript
-// extensions (pi.on("session_start", ...), etc.), not a config file AO can
-// install, and it has no Claude Code hook compatibility. There is therefore no
-// Tier A native hook installer nor a Tier B Claude-compat delegation; hook
-// installation and SessionInfo are intentionally no-ops until a Pi-specific
-// extension exists.
+// extensions (pi.on("session_start", ...), etc.), not a Claude/Codex-style
+// command-hook config. AO owns `.pi/extensions/ao-activity.ts` for metadata
+// capture and basic activity tracking.
 package pi
 
 import (

@@ -18,7 +18,7 @@ func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 }
 
 func TestSupportsHarness(t *testing.T) {
-	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessOpenCode, domain.HarnessKimi} {
+	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessPi} {
 		if !SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = false, want true", h)
 		}
@@ -28,6 +28,25 @@ func TestSupportsHarness(t *testing.T) {
 	for _, h := range []domain.AgentHarness{domain.HarnessAmp, domain.HarnessAider, domain.HarnessCrush, domain.AgentHarness("")} {
 		if SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = true, want false", h)
+		}
+	}
+}
+
+func TestDerivePi(t *testing.T) {
+	tests := []struct {
+		event  string
+		want   domain.ActivityState
+		wantOK bool
+	}{
+		{event: "session-start", want: "", wantOK: false},
+		{event: "user-prompt-submit", want: domain.ActivityActive, wantOK: true},
+		{event: "stop", want: domain.ActivityIdle, wantOK: true},
+		{event: "session-end", want: domain.ActivityExited, wantOK: true},
+	}
+	for _, tt := range tests {
+		got, ok := Derive("pi", tt.event, []byte(`{}`))
+		if got != tt.want || ok != tt.wantOK {
+			t.Fatalf("Derive(pi, %q) = (%q, %v), want (%q, %v)", tt.event, got, ok, tt.want, tt.wantOK)
 		}
 	}
 }

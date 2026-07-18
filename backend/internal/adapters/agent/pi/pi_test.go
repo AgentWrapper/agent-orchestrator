@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -220,9 +221,83 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksNoOp(t *testing.T) {
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err != nil {
-		t.Fatalf("GetAgentHooks err = %v, want nil", err)
+func TestGetAgentHooksInstallsActivityExtension(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "pi"}
+	workspace := t.TempDir()
+	ctx := context.Background()
+	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
+
+	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(piExtensionPath(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
+		t.Fatalf("second GetAgentHooks err = %v", err)
+	}
+	second, err := os.ReadFile(piExtensionPath(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("extension changed across idempotent install")
+	}
+
+	body := string(second)
+	if !strings.Contains(body, piExtensionSentinel) {
+		t.Fatalf("installed extension missing AO sentinel:\n%s", body)
+	}
+	for _, event := range piManagedEvents {
+		want := piHookCommandPrefix + event
+		if !strings.Contains(body, want) {
+			t.Fatalf("installed extension missing hook command %q:\n%s", want, body)
+		}
+	}
+	for _, marker := range []string{"session_start", "before_agent_start", "agent_settled", "session_shutdown", "getSessionId"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("installed extension missing Pi marker %q:\n%s", marker, body)
+		}
+	}
+	if strings.Contains(body, `pi.on("agent_end"`) {
+		t.Fatalf("extension must wait for agent_settled before reporting stop:\n%s", body)
+	}
+	if !strings.Contains(body, `event?.reason !== "quit"`) {
+		t.Fatalf("extension must not report session-end for non-terminal shutdown reasons:\n%s", body)
+	}
+
+	gitignore, err := os.ReadFile(filepath.Join(workspace, ".pi", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitignore), "/extensions/ao-activity.ts") {
+		t.Fatalf(".pi/.gitignore missing managed extension:\n%s", gitignore)
+	}
+}
+
+func TestGetAgentHooksRefusesToClobberForeignFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "pi"}
+	workspace := t.TempDir()
+	extensionPath := piExtensionPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(extensionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte("export default function notAO() {}\n")
+	if err := os.WriteFile(extensionPath, foreign, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace})
+	if err == nil {
+		t.Fatal("GetAgentHooks overwrote a non-AO file; want a loud error")
+	}
+	got, readErr := os.ReadFile(extensionPath)
+	if readErr != nil {
+		t.Fatalf("foreign file removed by refused install: %v", readErr)
+	}
+	if !reflect.DeepEqual(got, foreign) {
+		t.Fatalf("foreign file modified by refused install: %q", got)
 	}
 }
 
