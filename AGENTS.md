@@ -141,3 +141,4 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 - Implement coordinator self-wake by reusing existing event/session state; do not add a durable queue, leases, ACKs, retries, or dead letters unless crash-safe delivery is explicitly required.
 - In remote-client builds, project creation must accept a server-side absolute path and must never open the client's native folder picker.
 - Persisted credentials shown in editable settings must render masked with an explicit reveal control rather than as an empty field.
+- For Agent branding, use the product's declared application or extension icon; never reuse palette tiles, placeholders, or auxiliary artwork as the Agent icon.
