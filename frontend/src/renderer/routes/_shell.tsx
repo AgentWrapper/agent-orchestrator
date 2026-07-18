@@ -72,11 +72,11 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-  const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
-  const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
-  const requestNewTask = useUiStore((state) => state.requestNewTask);
-  const requestCreateProject = useUiStore((state) => state.requestCreateProject);
-  const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
+	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
