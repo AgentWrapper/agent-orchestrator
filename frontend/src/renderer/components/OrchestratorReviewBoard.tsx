@@ -25,9 +25,12 @@ import { XtermTerminal } from "./XtermTerminal";
 export { REVIEW_TRANSLATOR_ISSUE_PREFIX } from "../types/workspace";
 const MAX_REVIEW_CARDS = 8;
 const REVIEW_CONVERSATION_POLL_MS = 1_000;
-const REVIEW_START_GRACE_MS = 5_000;
-const REVIEW_SETTLE_GRACE_MS = 2_000;
-const REVIEW_RESPONSE_TIMEOUT_MS = 30_000;
+// Starting Codex can include model discovery, MCP startup, and hook setup before
+// the first activity signal. A five-second idle grace discarded healthy review
+// agents on ordinary cold starts (the live Windows path takes 10-20 seconds).
+const REVIEW_START_GRACE_MS = 30_000;
+const REVIEW_SETTLE_GRACE_MS = 3_000;
+const REVIEW_RESPONSE_TIMEOUT_MS = 90_000;
 const REVIEW_AGENT_MODEL = "gpt-5.6-sol";
 const reviewAgentLaunches = new Map<string, Promise<string | undefined>>();
 
@@ -704,6 +707,14 @@ export function OrchestratorReviewBoard({
 
 		const helperActivity = liveHelper?.activity?.state;
 		const helperIsIdle = helperActivity === "idle" || (!helperActivity && liveHelper?.status === "idle");
+		if (liveHelper && helperIsIdle) {
+			// A helper without this batch's durable request is from an older review.
+			// Reusing it can interleave prompts in the TUI and attribute an unrelated
+			// answer to this batch. Reject it and let the next render launch a clean
+			// one-shot reviewer instead.
+			rejectKnownReviewHelpers();
+			return;
+		}
 		if (liveHelper && !helperIsIdle) {
 			const helperIsActive =
 				helperActivity === "active" || (!helperActivity && liveHelper.status === "working");

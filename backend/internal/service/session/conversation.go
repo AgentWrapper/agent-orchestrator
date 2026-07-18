@@ -105,19 +105,19 @@ func (s *Service) conversationPath(rec domain.SessionRecord) (string, string) {
 		}
 		return newestFile(matches), conversationSourceClaude
 	case domain.HarnessCodex:
-		if strings.TrimSpace(s.dataDir) == "" {
-			return "", conversationSourceUnavailable
-		}
+		roots := s.codexConversationRoots()
 		if nativeID != "" && filepath.Base(nativeID) == nativeID {
-			matches, _ := filepath.Glob(filepath.Join(s.dataDir, "codex-home", "sessions", "*", "*", "*", "rollout-*"+nativeID+".jsonl"))
+			matches := codexRolloutMatches(roots, "rollout-*"+nativeID+".jsonl")
 			if path := newestFile(matches); path != "" {
 				return path, conversationSourceCodex
 			}
 		}
-		// Older AO sessions may predate native Codex id capture. Their isolated
-		// rollout still records the stable AO worktree as session_meta.cwd.
+		// Codex 0.144+ writes rollouts to the user's normal ~/.codex/sessions
+		// directory even when AO-owned caches and plugins live under codex-home.
+		// Older AO sessions may also predate native-id capture. In both cases the
+		// rollout records the stable AO worktree as session_meta.cwd.
 		if workspace := strings.TrimSpace(rec.Metadata.WorkspacePath); workspace != "" {
-			matches, _ := filepath.Glob(filepath.Join(s.dataDir, "codex-home", "sessions", "*", "*", "*", "rollout-*.jsonl"))
+			matches := codexRolloutMatches(roots, "rollout-*.jsonl")
 			if path := newestCodexRolloutForWorkspace(matches, workspace); path != "" {
 				return path, conversationSourceCodex
 			}
@@ -126,6 +126,33 @@ func (s *Service) conversationPath(rec domain.SessionRecord) (string, string) {
 	default:
 		return "", conversationSourceUnavailable
 	}
+}
+
+func (s *Service) codexConversationRoots() []string {
+	roots := make([]string, 0, 2)
+	if dataDir := strings.TrimSpace(s.dataDir); dataDir != "" {
+		roots = append(roots, filepath.Join(dataDir, "codex-home", "sessions"))
+	}
+	home := strings.TrimSpace(s.homeDir)
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home != "" {
+		providerRoot := filepath.Join(home, ".codex", "sessions")
+		if len(roots) == 0 || !sameWorkspacePath(roots[0], providerRoot) {
+			roots = append(roots, providerRoot)
+		}
+	}
+	return roots
+}
+
+func codexRolloutMatches(roots []string, pattern string) []string {
+	var matches []string
+	for _, root := range roots {
+		found, _ := filepath.Glob(filepath.Join(root, "*", "*", "*", pattern))
+		matches = append(matches, found...)
+	}
+	return matches
 }
 
 func claudeProjectDirectoryName(workspacePath string) string {

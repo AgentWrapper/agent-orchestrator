@@ -150,3 +150,38 @@ func TestConversationFindsLegacyCodexLogFromWorkspace(t *testing.T) {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
 }
+
+func TestConversationFindsCurrentCodexLogInProviderHome(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "worktree")
+	dir := filepath.Join(home, ".codex", "sessions", "2026", "07", "18")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := json.Marshal(map[string]any{
+		"timestamp": "2026-07-18T22:19:38Z",
+		"type":      "session_meta",
+		"payload":   map[string]string{"cwd": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(meta) + "\n" +
+		`{"timestamp":"2026-07-18T22:19:44Z","type":"event_msg","payload":{"type":"agent_message","message":"AO_REVIEW_BOARD_done_END","phase":"final_answer","turn_id":"t1"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "rollout-current.jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newFakeStore()
+	store.sessions["ao-current-codex"] = domain.SessionRecord{
+		ID: "ao-current-codex", Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{WorkspacePath: workspace},
+	}
+	snapshot, err := NewWithDeps(Deps{Store: store, DataDir: t.TempDir(), HomeDir: home}).Conversation(context.Background(), "ao-current-codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Source != conversationSourceCodex || len(snapshot.Entries) != 1 || snapshot.Entries[0].Text != "AO_REVIEW_BOARD_done_END" {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+}

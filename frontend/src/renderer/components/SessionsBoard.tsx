@@ -288,7 +288,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					</div>
 				) : null}
 				{projectId ? <RepositoryStewardCard projectId={projectId} /> : null}
-				{projectId && orchestrator && workspace && !reviewOpen ? (
+				{projectId && orchestrator && workspace ? (
 					<OrchestratorReviewBoard
 						backgroundOnly
 						daemonReady={daemonStatus.state === "ready"}
@@ -406,6 +406,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						</DialogDescription>
 						<OrchestratorReviewBoard
 							daemonReady={daemonStatus.state === "ready"}
+							manageAgent={false}
 							orchestrator={orchestrator}
 							sessions={workspace.sessions}
 							theme={theme}

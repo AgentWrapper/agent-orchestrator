@@ -148,6 +148,6 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 		const review = screen.getByRole("region", { name: "Review decisions panel" });
 		expect(review).toHaveAttribute("data-orchestrator", "p1-orchestrator");
-		expect(screen.queryByRole("region", { name: "Background reviewer" })).not.toBeInTheDocument();
+		expect(screen.getByRole("region", { name: "Background reviewer", hidden: true })).toBeInTheDocument();
 	});
 });
