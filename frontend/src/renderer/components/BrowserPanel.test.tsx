@@ -219,19 +219,40 @@ describe("BrowserPanel", () => {
 		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
 	});
 
-	it("keeps annotation mode available while the session is working", () => {
+	it("shows the working indicator only for active agent activity", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		render(
+		const first = render(
 			<BrowserPanel
 				active
 				onTogglePopOut={() => undefined}
 				poppedOut={false}
-				session={{ ...session, status: "working" }}
+				session={{
+					...session,
+					status: "idle",
+					activity: { state: "active", lastActivityAt: "2026-06-15T00:00:00Z" },
+				}}
 			/>,
 		);
 
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
 		expect(screen.getByText("Agent working")).toBeInTheDocument();
+
+		first.unmount();
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{
+					...session,
+					status: "working",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T00:00:00Z" },
+				}}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
+		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
 	});
 
 	it("disables annotation mode when no page is loaded", () => {

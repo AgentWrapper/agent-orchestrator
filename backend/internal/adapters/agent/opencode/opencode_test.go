@@ -605,6 +605,9 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
+	if contains(cmd, "--continue") || contains(cmd, "--fork") {
+		t.Fatalf("restore cmd must target the captured session directly, got %#v", cmd)
+	}
 }
 
 func TestGetRestoreCommandReappliesSystemPromptConfig(t *testing.T) {

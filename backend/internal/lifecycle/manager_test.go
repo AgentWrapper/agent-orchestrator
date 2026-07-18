@@ -170,6 +170,24 @@ func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	}
 }
 
+func TestActivity_BlankAgentSessionIDDoesNotOverwriteMetadata(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.AgentSessionID = "existing-native-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:          true,
+		State:          domain.ActivityActive,
+		AgentSessionID: "   ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "existing-native-1" {
+		t.Fatalf("AgentSessionID = %q, want existing-native-1", got)
+	}
+}
+
 func TestActivity_MissingSessionReturnsNotFound(t *testing.T) {
 	m, _, _ := newManager()
 	err := m.ApplyActivitySignal(ctx, "missing-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput})

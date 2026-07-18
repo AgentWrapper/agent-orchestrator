@@ -7,6 +7,7 @@ import {
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
+import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
@@ -16,6 +17,7 @@ type DisplayHandler = (request: unknown, callback: (streams: { video?: unknown }
 function setupHost() {
 	let currentURL = "";
 	let displayHandler: DisplayHandler | null = null;
+	const webContentsListeners = new Map<string, (...args: never[]) => void>();
 	const webContents = {
 		id: 99,
 		mainFrame: { frameToken: "preview-frame" },
@@ -34,7 +36,9 @@ function setupHost() {
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
-		on: () => undefined,
+		on: (event: string, listener: (...args: never[]) => void) => {
+			webContentsListeners.set(event, listener);
+		},
 		reload: () => undefined,
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
@@ -49,13 +53,16 @@ function setupHost() {
 	const handlers = new Map<string, InvokeHandler>();
 	const eventHandlers = new Map<string, EventHandler>();
 	const sent: Array<{ channel: string; payload: unknown }> = [];
+	const shellFocus = vi.fn();
+	const shellSend = vi.fn((channel: string, payload?: unknown) => sent.push({ channel, payload }));
 	const host = createBrowserViewHost({
 		mainWindow: {
 			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
 			webContents: {
 				id: 1,
-				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
+				focus: shellFocus,
+				send: shellSend,
 				session: {
 					setDisplayMediaRequestHandler: (handler: DisplayHandler | null) => {
 						displayHandler = handler;
@@ -83,8 +90,73 @@ function setupHost() {
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
-	return { emit, host, invoke, rendererFrame, send, sent, view, webContents, getDisplayHandler: () => displayHandler };
+	const emitBeforeInput = (input: {
+		key: string;
+		control?: boolean;
+		meta?: boolean;
+		shift?: boolean;
+		alt?: boolean;
+		type?: string;
+		isAutoRepeat?: boolean;
+	}) => {
+		const event = { preventDefault: vi.fn() };
+		webContentsListeners.get("before-input-event")?.(
+			event as never,
+			{
+				control: false,
+				meta: false,
+				shift: false,
+				alt: false,
+				type: "keyDown",
+				...input,
+			} as never,
+		);
+		return event;
+	};
+	return {
+		emit,
+		emitBeforeInput,
+		getDisplayHandler: () => displayHandler,
+		host,
+		invoke,
+		rendererFrame,
+		send,
+		sent,
+		shellFocus,
+		shellSend,
+		view,
+		webContents,
+	};
 }
+
+describe("new-session shortcut forwarding", () => {
+	it("focuses the shell before forwarding a matching preview chord", async () => {
+		const { emitBeforeInput, invoke, shellFocus, shellSend } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		shellFocus.mockClear();
+		shellSend.mockClear();
+
+		const event = emitBeforeInput({ key: "N", control: true, shift: true });
+
+		expect(event.preventDefault).toHaveBeenCalledTimes(1);
+		expect(shellFocus).toHaveBeenCalledTimes(1);
+		expect(shellSend).toHaveBeenCalledWith(NEW_SESSION_SHORTCUT_CHANNEL);
+		expect(shellFocus.mock.invocationCallOrder[0]).toBeLessThan(shellSend.mock.invocationCallOrder[0]);
+	});
+
+	it("does not focus or forward auto-repeat and non-matching preview input", async () => {
+		const { emitBeforeInput, invoke, shellFocus, shellSend } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		shellFocus.mockClear();
+		shellSend.mockClear();
+
+		emitBeforeInput({ key: "N", control: true, shift: true, isAutoRepeat: true });
+		emitBeforeInput({ key: "N", control: true });
+
+		expect(shellFocus).not.toHaveBeenCalled();
+		expect(shellSend).not.toHaveBeenCalledWith(NEW_SESSION_SHORTCUT_CHANNEL);
+	});
+});
 
 describe("normalizeBrowserURL", () => {
 	it("defaults localhost-style inputs to http", () => {

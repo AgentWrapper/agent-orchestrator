@@ -7,8 +7,9 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
-import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
+import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
+import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -331,11 +332,11 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		node: (
 			<span className="inline-flex flex-wrap items-center gap-1.5">
 				<span className="inline-flex align-middle">
-					<InspectorActivityPill state={session.activity?.state ?? "unknown"} />
+					<InspectorActivityPill activity={session.activity} />
 				</span>
 				{session.status === "no_signal" ? (
 					<span className="inline-flex align-middle">
-						<TimelinePill {...ACTIVITY_WARNING_PILL.no_signal} />
+						<TimelinePill {...getSessionTimelinePillView("no_signal")} />
 					</span>
 				) : null}
 				{scmTimelineStates(session).map((state) => (
@@ -390,33 +391,17 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-const ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string; breathe: boolean }> = {
-	active: { label: "Working", tone: "var(--color-working)", breathe: true },
-	idle: { label: "Idle", tone: "var(--color-text-muted)", breathe: false },
-	waiting_input: { label: "Input Needed", tone: "var(--color-warning)", breathe: false },
-	blocked: { label: "Awaiting Decision", tone: "var(--color-warning)", breathe: false },
-	exited: { label: "Exited", tone: "var(--color-text-muted)", breathe: false },
-	unknown: { label: "Activity Unavailable", tone: "var(--color-text-muted)", breathe: false },
-};
-
-const ACTIVITY_WARNING_PILL: Record<"no_signal", { label: string; tone: string; breathe: boolean }> = {
-	no_signal: { label: "No Signal", tone: "var(--color-text-muted)", breathe: false },
-};
-
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const SCM_PILL: Record<ScmTimelineState, { label: string; tone: string; breathe: boolean }> = {
-	ci_failed: { label: "CI Failed", tone: "var(--color-danger)", breathe: false },
-	changes_requested: { label: "Changes Requested", tone: "var(--color-warning)", breathe: false },
-	conflict: { label: "Conflict", tone: "var(--color-danger)", breathe: false },
-};
+const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
 
-function InspectorActivityPill({ state }: { state: SessionActivityState }) {
-	return <TimelinePill {...ACTIVITY_PILL[state]} />;
+function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
+	return <TimelinePill {...getAgentActivityView(activity)} />;
 }
 
 function InspectorScmPill({ state }: { state: ScmTimelineState }) {
-	return <TimelinePill {...SCM_PILL[state]} />;
+	if (state === "conflict") return <TimelinePill {...CONFLICT_PILL} />;
+	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
 function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {

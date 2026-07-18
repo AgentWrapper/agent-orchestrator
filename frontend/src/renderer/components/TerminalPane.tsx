@@ -1,12 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient } from "../lib/api-client";
 import { isLoopbackHostname } from "../lib/loopback";
+import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useRestoreSession } from "../hooks/useRestoreSession";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -150,6 +153,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [restoreError, setRestoreError] = useState<string | undefined>();
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const queryClient = useQueryClient();
+	const restoreSessionById = useRestoreSession();
 	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
@@ -195,24 +199,20 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		setIsRestoring(true);
 		setRestoreError(undefined);
 		try {
-			const { error: restoreError } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (restoreError) {
-				const code = (restoreError as { code?: string }).code;
-				if (code === "SESSION_NOT_RESUMABLE") {
-					setRestoreUnavailable(true);
-					return;
-				}
-				throw new Error(apiErrorMessage(restoreError, "Unable to restore session"));
+			const result = await restoreSessionById(session.id);
+			if (result.status === "not_resumable") {
+				setRestoreUnavailable(true);
+				return;
 			}
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (result.status === "error") {
+				setRestoreError(result.message);
+			}
 		} catch (err) {
 			setRestoreError(err instanceof Error ? err.message : "Unable to restore session");
 		} finally {
 			setIsRestoring(false);
 		}
-	}, [canRestoreSession, isRestoring, queryClient, session?.id]);
+	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id]);
 
 	useEffect(() => {
 		if (!terminal) return;
@@ -241,7 +241,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
-	const showExitedState = state === "exited";
+	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? session.kind === "orchestrator"
@@ -251,7 +251,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-terminal">
-			{showExitedState && (
+			{showEndedState && (
 				<TerminalEndedStrip
 					canRestore={canRestoreSession}
 					error={restoreError}
@@ -326,11 +326,13 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				{canRestore && (
 					<button
 						type="button"
-						className="h-control-form shrink-0 rounded-md border border-border bg-raised px-3 text-xs font-medium text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+						aria-label="Restore session"
+						title="Restore session"
+						className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={isRestoring}
 						onClick={onRestore}
 					>
-						{isRestoring ? "Restoring..." : "Restore session"}
+						<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
 					</button>
 				)}
 			</div>

@@ -15,6 +15,7 @@ import type {
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
+import { attachNewSessionShortcut } from "./new-session-shortcut";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -75,7 +76,7 @@ type BrowserWindowLike = {
 		removeChildView?: (view: BrowserViewLike) => void;
 	};
 	getContentBounds: () => BrowserRect;
-	webContents: Pick<WebContents, "id" | "send"> & {
+	webContents: Pick<WebContents, "focus" | "id" | "send"> & {
 		session?: Pick<Session, "setDisplayMediaRequestHandler">;
 	};
 	isDestroyed?: () => boolean;
@@ -94,6 +95,10 @@ export type BrowserViewHostOptions = {
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
+	// Platform flag for the app-level new-session shortcut, forwarded to each
+	// preview view so ⌘N / Ctrl+Shift+N still reaches the shell when the native
+	// Browser panel holds focus. Defaults to non-mac when omitted (tests).
+	isMac?: boolean;
 };
 
 export type BrowserViewHost = {
@@ -236,6 +241,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
+		// The preview is a separate WebContentsView, so a renderer-window keydown
+		// listener never sees keys typed here. Forward the app-level new-session
+		// shortcut to the shell renderer so it works with the panel focused.
+		attachNewSessionShortcut(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = viewId;
 		});
