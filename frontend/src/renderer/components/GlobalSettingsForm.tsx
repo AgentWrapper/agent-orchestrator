@@ -1,7 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useState, type SVGProps } from "react";
+import { useState, type ComponentType, type SVGProps } from "react";
 import { Mail } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
+import { SETTINGS_SOCIAL_LINKS } from "../lib/social-links";
 import { cn } from "../lib/utils";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
@@ -12,18 +13,10 @@ import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
 
-const SOCIAL_LINKS = [
-	{
-		label: "LinkedIn",
-		href: "https://www.linkedin.com/company/agent-orchestrator",
-		icon: LinkedInIcon,
-	},
-	{
-		label: "Twitter",
-		href: "https://x.com/aoagents",
-		icon: XSocialIcon,
-	},
-] as const;
+const SOCIAL_ICONS: Record<(typeof SETTINGS_SOCIAL_LINKS)[number]["id"], ComponentType<SVGProps<SVGSVGElement>>> = {
+	linkedin: LinkedInIcon,
+	twitter: XSocialIcon,
+};
 
 export function GlobalSettingsForm() {
 	const navigate = useNavigate();
@@ -41,24 +34,27 @@ export function GlobalSettingsForm() {
 					</SettingsSection>
 					<SettingsSection title="CONNECT WITH US">
 						<div className="flex flex-wrap items-center gap-x-(--size-settings-social-gap-x) gap-y-3 pl-4">
-							{SOCIAL_LINKS.map(({ label, href, icon: Icon }) => (
-								<a
-									key={href}
-									href={href}
-									target="_blank"
-									rel="noopener noreferrer"
-									onClick={(event) => {
-										event.preventDefault();
-										void aoBridge.app.openExternal(href);
-									}}
-									className="inline-flex items-center gap-2.5 text-settings-label"
-								>
-									<span className="inline-flex size-(--size-settings-social-icon) shrink-0 items-center justify-center">
-										<Icon className="block size-full" aria-hidden="true" />
-									</span>
-									<span className="text-sm leading-5">{label}</span>
-								</a>
-							))}
+							{SETTINGS_SOCIAL_LINKS.map(({ id, label, href }) => {
+								const Icon = SOCIAL_ICONS[id];
+								return (
+									<a
+										key={id}
+										href={href}
+										target="_blank"
+										rel="noopener noreferrer"
+										onClick={(event) => {
+											event.preventDefault();
+											void aoBridge.app.openExternal(href);
+										}}
+										className="inline-flex items-center gap-2.5 text-settings-label"
+									>
+										<span className="inline-flex size-(--size-settings-social-icon) shrink-0 items-center justify-center">
+											<Icon className="block size-full" aria-hidden="true" />
+										</span>
+										<span className="text-sm leading-5">{label}</span>
+									</a>
+								);
+							})}
 						</div>
 					</SettingsSection>
 				</SettingsPanel>

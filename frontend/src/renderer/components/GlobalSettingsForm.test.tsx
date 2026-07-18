@@ -92,8 +92,8 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByText("CONNECT WITH US")).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: /linkedin/i })).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: /twitter/i })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "LinkedIn" })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Twitter" })).toBeInTheDocument();
 		expect(screen.queryByText("More settings below...")).not.toBeInTheDocument();
 	});
 
