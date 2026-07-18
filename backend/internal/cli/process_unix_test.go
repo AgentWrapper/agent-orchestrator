@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -51,11 +53,11 @@ func TestStartProcessDetachedReleasedChildSurvivesLauncherExit(t *testing.T) {
 		t.Fatalf("detached child is not alive after launcher exit: %v", err)
 	}
 
-	parentSID, err := syscall.Getsid(os.Getpid())
+	parentSID, err := unix.Getsid(os.Getpid())
 	if err != nil {
 		t.Fatalf("get parent sid: %v", err)
 	}
-	childSID, err := syscall.Getsid(pid)
+	childSID, err := unix.Getsid(pid)
 	if err != nil {
 		t.Fatalf("get child sid: %v", err)
 	}
