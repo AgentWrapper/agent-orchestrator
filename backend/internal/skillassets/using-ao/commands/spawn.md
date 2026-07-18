@@ -39,4 +39,4 @@ ao spawn --project agent-orchestrator --name "review-pr-88" --claim-pr 88 --harn
 
 ## Reporting back to the user
 
-When telling the user a session was spawned, lead with the `--name` you gave it, not the generated session id (e.g. "spawned `review-pr-88`" rather than "spawned `agent-orchestrator-15`"). The id is only useful when it's needed for a command (`ao session get <id>`, `ao send --session <id>`) — it's not meaningful on its own to a human reading your summary. `ao spawn`'s confirmation output leads with the name for this reason; carry that through to your own prose instead of just repeating the raw output.
+When telling the user a session was spawned, lead with the `--name` you gave it, not the generated session id (e.g. "spawned `review-pr-88`" rather than "spawned `agent-orchestrator-15`"). The id is only useful when it's needed for a command (`ao session get <id>`, `ao send --session <id>`) — it's not meaningful on its own to a human reading your summary. `ao spawn`'s own confirmation output still leads with the id, not the name; don't just repeat it verbatim in your own prose.
