@@ -5,6 +5,7 @@ package devimport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -112,6 +113,10 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 		if idExists && pathExists {
 			if !opts.DryRun {
 				if err := target.ImportWorkspaceProject(ctx, src, repos); err != nil {
+					if c, ok := importConflict(err); ok {
+						rep.addConflict(c)
+						continue
+					}
 					return rep, fmt.Errorf("update target project %s: %w", src.ID, err)
 				}
 			}
@@ -121,6 +126,10 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 
 		if !opts.DryRun {
 			if err := target.ImportWorkspaceProject(ctx, src, repos); err != nil {
+				if c, ok := importConflict(err); ok {
+					rep.addConflict(c)
+					continue
+				}
 				return rep, fmt.Errorf("insert target project %s: %w", src.ID, err)
 			}
 		}
@@ -135,6 +144,20 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 func (r *Report) addConflict(c Conflict) {
 	r.Skipped++
 	r.Conflicts = append(r.Conflicts, c)
+}
+
+func importConflict(err error) (Conflict, bool) {
+	var conflict *domain.ProjectImportConflictError
+	if !errors.As(err, &conflict) {
+		return Conflict{}, false
+	}
+	return Conflict{
+		ProjectID:  conflict.Conflict.ProjectID,
+		Path:       conflict.Conflict.Path,
+		Reason:     conflict.Conflict.Reason,
+		TargetID:   conflict.Conflict.TargetID,
+		TargetPath: conflict.Conflict.TargetPath,
+	}, true
 }
 
 func cloneWorkspaceRepos(in []domain.WorkspaceRepoRecord) []domain.WorkspaceRepoRecord {

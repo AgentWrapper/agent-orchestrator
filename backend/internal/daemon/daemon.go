@@ -162,12 +162,18 @@ func Run() error {
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
-		DevImport:          devimportsvc.New(devimportsvc.Deps{Store: store, TargetDataDir: cfg.DataDir}),
-		CDC:                store,
-		Events:             cdcPipe.Broadcaster,
-		Activity:           lcStack.LCM,
-		Telemetry:          telemetrySink,
-		Mobile:             mc,
+		DevImport: devimportsvc.New(devimportsvc.Deps{
+			Store:         store,
+			TargetDataDir: cfg.DataDir,
+			OpenSource: func(ctx context.Context, dataDir string) (devimportsvc.SourceStore, error) {
+				return sqlite.OpenReadOnly(ctx, dataDir)
+			},
+		}),
+		CDC:       store,
+		Events:    cdcPipe.Broadcaster,
+		Activity:  lcStack.LCM,
+		Telemetry: telemetrySink,
+		Mobile:    mc,
 	})
 	if err != nil {
 		stop()

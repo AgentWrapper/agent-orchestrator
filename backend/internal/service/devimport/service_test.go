@@ -18,7 +18,7 @@ func TestRunProjectsDryRunWritesNothing(t *testing.T) {
 	targetDir := filepath.Join(t.TempDir(), "target")
 	writeProject(t, sourceDir, "alpha", "/repos/alpha", time.Unix(100, 0).UTC())
 	target := openStore(t, targetDir)
-	svc := New(Deps{Store: target, TargetDataDir: targetDir})
+	svc := New(Deps{Store: target, TargetDataDir: targetDir, OpenSource: openReadOnlySource})
 
 	rep, err := svc.RunProjects(ctx, RunInput{SourceDataDir: sourceDir, DryRun: true})
 	if err != nil {
@@ -41,7 +41,7 @@ func TestRunProjectsReadOnlySourceDoesNotCreateMissingSource(t *testing.T) {
 	sourceDir := filepath.Join(t.TempDir(), "missing-source")
 	targetDir := filepath.Join(t.TempDir(), "target")
 	target := openStore(t, targetDir)
-	svc := New(Deps{Store: target, TargetDataDir: targetDir})
+	svc := New(Deps{Store: target, TargetDataDir: targetDir, OpenSource: openReadOnlySource})
 
 	_, err := svc.RunProjects(ctx, RunInput{SourceDataDir: sourceDir, DryRun: true})
 	if err == nil {
@@ -59,7 +59,7 @@ func TestRunProjectsImportsIntoTarget(t *testing.T) {
 	registeredAt := time.Unix(200, 0).UTC()
 	writeProject(t, sourceDir, "alpha", "/repos/alpha", registeredAt)
 	target := openStore(t, targetDir)
-	svc := New(Deps{Store: target, TargetDataDir: targetDir})
+	svc := New(Deps{Store: target, TargetDataDir: targetDir, OpenSource: openReadOnlySource})
 
 	rep, err := svc.RunProjects(ctx, RunInput{SourceDataDir: sourceDir})
 	if err != nil {
@@ -85,7 +85,7 @@ func TestRunProjectsRejectsSameSourceAndTarget(t *testing.T) {
 	ctx := context.Background()
 	targetDir := filepath.Join(t.TempDir(), "target")
 	target := openStore(t, targetDir)
-	svc := New(Deps{Store: target, TargetDataDir: targetDir})
+	svc := New(Deps{Store: target, TargetDataDir: targetDir, OpenSource: openReadOnlySource})
 
 	_, err := svc.RunProjects(ctx, RunInput{SourceDataDir: targetDir, DryRun: true})
 	if err == nil || !strings.Contains(err.Error(), "sourceDataDir must be different") {
@@ -102,7 +102,7 @@ func TestRunProjectsRejectsSymlinkedSameSourceAndTarget(t *testing.T) {
 	if err := os.Symlink(targetDir, sourceLink); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	svc := New(Deps{Store: target, TargetDataDir: targetDir})
+	svc := New(Deps{Store: target, TargetDataDir: targetDir, OpenSource: openReadOnlySource})
 
 	_, err := svc.RunProjects(ctx, RunInput{SourceDataDir: sourceLink, DryRun: true})
 	if err == nil || !strings.Contains(err.Error(), "sourceDataDir must be different") {
@@ -118,6 +118,10 @@ func openStore(t *testing.T, dataDir string) *sqlite.Store {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+func openReadOnlySource(ctx context.Context, dataDir string) (SourceStore, error) {
+	return sqlite.OpenReadOnly(ctx, dataDir)
 }
 
 func writeProject(t *testing.T, dataDir string, id string, path string, registeredAt time.Time) {

@@ -130,6 +130,74 @@ func TestRunSamePathDifferentIDConflicts(t *testing.T) {
 	}
 }
 
+func TestRunReportsLiveIDConflictAtImportWrite(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	if err := source.UpsertWorkspaceProject(ctx, testProject("alpha", "/repos/source"), nil); err != nil {
+		t.Fatal(err)
+	}
+	concurrent := &concurrentConflictTarget{
+		Store: target,
+		beforeImport: func() {
+			if err := target.UpsertWorkspaceProject(ctx, testProject("alpha", "/repos/live"), nil); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+
+	rep, err := Run(ctx, source, concurrent, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Updated != 0 || rep.Skipped != 1 || len(rep.Conflicts) != 1 {
+		t.Fatalf("report = %#v, want one live conflict", rep)
+	}
+	if rep.Conflicts[0].Reason != "same id with different active path" || rep.Conflicts[0].TargetPath != "/repos/live" {
+		t.Fatalf("conflict = %#v", rep.Conflicts[0])
+	}
+	got, ok, err := target.GetProject(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.Path != "/repos/live" {
+		t.Fatalf("target project = %#v, want concurrent row preserved", got)
+	}
+}
+
+func TestRunReportsLivePathConflictAtImportWrite(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	if err := source.UpsertWorkspaceProject(ctx, testProject("alpha", "/repos/shared"), nil); err != nil {
+		t.Fatal(err)
+	}
+	concurrent := &concurrentConflictTarget{
+		Store: target,
+		beforeImport: func() {
+			if err := target.UpsertWorkspaceProject(ctx, testProject("beta", "/repos/shared"), nil); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+
+	rep, err := Run(ctx, source, concurrent, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Updated != 0 || rep.Skipped != 1 || len(rep.Conflicts) != 1 {
+		t.Fatalf("report = %#v, want one live conflict", rep)
+	}
+	if rep.Conflicts[0].Reason != "same path with different active id" || rep.Conflicts[0].TargetID != "beta" {
+		t.Fatalf("conflict = %#v", rep.Conflicts[0])
+	}
+	if _, ok, err := target.GetProject(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("conflicted source project was inserted")
+	}
+}
+
 func TestRunDryRunDetectsSourcePathConflictAgainstPlannedInsert(t *testing.T) {
 	ctx := context.Background()
 	source := newStore(t)
@@ -241,6 +309,20 @@ func newStore(t *testing.T) *sqlite.Store {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+type concurrentConflictTarget struct {
+	*sqlite.Store
+	beforeImport func()
+	called       bool
+}
+
+func (s *concurrentConflictTarget) ImportWorkspaceProject(ctx context.Context, row domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error {
+	if !s.called {
+		s.called = true
+		s.beforeImport()
+	}
+	return s.Store.ImportWorkspaceProject(ctx, row, repos)
 }
 
 func testProject(id string, path string) domain.ProjectRecord {
