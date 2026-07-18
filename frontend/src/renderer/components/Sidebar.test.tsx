@@ -853,14 +853,29 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
 	});
 
-	it("always shows action icons and reserves padding for them", () => {
+	it("hides project action icons by default and reveals them on row hover or focus", () => {
 		renderSidebar();
 
-		const projectRow = screen.getByText("Project One").closest("button");
+		const projectItem = screen.getByText("Project One").closest("li");
+		if (!projectItem) throw new Error("Project menu item not found");
 
+		const actions = projectItem.querySelector(".sidebar-project-actions");
+		expect(actions).toBeInTheDocument();
+		expect(actions).toHaveClass("sidebar-project-actions");
+
+		const projectRow = screen.getByText("Project One").closest("button");
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
+	});
+
+	it("keeps project action icons reachable by keyboard focus", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		const dashboard = screen.getByLabelText("Open Project One dashboard");
+		await user.click(dashboard);
+		expect(dashboard).toHaveFocus();
 	});
 
 	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {

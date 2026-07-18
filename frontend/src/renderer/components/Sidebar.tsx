@@ -607,12 +607,13 @@ function ProjectItem({
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
-			{/* Per-project actions: dashboard board, orchestrator, and a kebab
-			menu. Always visible (not hover-gated) to avoid CSS :hover group
-			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
+			{/* Per-project actions: dashboard, orchestrator, and a kebab menu.
+			Hidden by default on pointer-hover devices to reduce visual clutter;
+			revealed when the row is hovered, has focus within, or a dropdown
+			inside is open. Always visible on touch (hover:none) devices. */}
 			<div
 				className={cn(
-					"sidebar-expanded-chrome absolute top-0 right-1 z-chrome flex h-control-board items-center gap-px",
+					"sidebar-project-actions sidebar-expanded-chrome absolute top-0 right-1 z-chrome flex h-control-board items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
 			>
