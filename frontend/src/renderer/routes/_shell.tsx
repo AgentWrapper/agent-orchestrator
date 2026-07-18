@@ -17,7 +17,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
-import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
+import { applyDocumentTheme } from "../lib/theme";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -51,6 +51,7 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 	};
 }
 
+const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const isLinux =
 	typeof navigator !== "undefined" &&
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
@@ -69,10 +70,14 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
+	const isSettingsRoute =
+		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
+		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -238,8 +243,8 @@ function ShellLayout() {
 	);
 
 	useEffect(() => {
-		applyDocumentTheme(theme);
-	}, [theme]);
+		applyDocumentTheme(resolvedTheme);
+	}, [resolvedTheme]);
 
 	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
@@ -251,15 +256,16 @@ function ShellLayout() {
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
-	// Follow OS appearance only until the user picks a theme explicitly.
+	// Follow OS appearance while the user keeps Theme on System — updates
+	// resolvedTheme (and thus React consumers) without writing light/dark to storage.
 	useEffect(() => {
-		if (readStoredTheme()) return;
+		if (themePreference !== "system") return;
 
 		const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
-		const handleChange = () => setTheme(systemTheme());
+		const handleChange = () => syncSystemTheme();
 		mediaQuery.addEventListener("change", handleChange);
 		return () => mediaQuery.removeEventListener("change", handleChange);
-	}, [setTheme]);
+	}, [themePreference, syncSystemTheme]);
 
 	// ⌘B lives in SidebarProvider (shadcn's built-in shortcut), which routes
 	// through onOpenChange back into the ui-store.
@@ -290,7 +296,7 @@ function ShellLayout() {
 				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
             the chrome the frameless window drops. Renders null on macOS/Linux. */}
 				<WindowTitlebar />
-				<ShellTopbar />
+				{!isSettingsRoute ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -305,9 +311,11 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
+				{/* macOS TitlebarNav is fixed in the top 56px band on every route (including
+            settings, where ShellTopbar is hidden), so the sidebar must always
+            hang below that strip on Mac to keep the brand out of the cluster. */}
 					<Sidebar
-						daemonStatus={daemonStatus}
-						underTopbar={isLinux ? isSessionRoute : true}
+						underTopbar={isMac || (!isSettingsRoute && (isLinux ? isSessionRoute : true))}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}

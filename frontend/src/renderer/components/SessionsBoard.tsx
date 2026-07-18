@@ -282,9 +282,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			{done.length > 0 && (
 				<div className="shrink-0 border-t border-border px-4.5">
 					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
-					    a full-width chevron + label + count toggle row. min-h matches
-					    the sidebar footer (7px pad ×2 + 37px Settings button) so this
-					    border-t aligns with the sidebar's footer border. The button is
+					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
