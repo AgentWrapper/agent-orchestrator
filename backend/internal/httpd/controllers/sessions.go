@@ -26,6 +26,8 @@ const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
 	maxDisplayNameLen = 20
+
+	previewContentSecurityPolicy = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'none'; worker-src 'none'; connect-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; media-src 'self' data: blob: http: https:"
 )
 
 var errPreviewFileNotFound = errors.New("preview file not found")
@@ -189,6 +191,7 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
+	setPreviewIsolationHeaders(w.Header())
 	if previewutil.IsMarkdownPath(file) {
 		c.servePreviewMarkdown(w, r, file)
 		return
@@ -212,7 +215,18 @@ func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+	_, _ = w.Write(rendered) //nolint:gosec // G705: preview CSP blocks script execution and daemon fetches.
+}
+
+func setPreviewIsolationHeaders(h http.Header) {
+	h.Set("Content-Security-Policy", previewContentSecurityPolicy)
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	// COEP would block otherwise valid external images unless those hosts opt
+	// into CORS/CORP; CSP script-src/connect-src closes the preview RCE vector.
+	h.Set("Origin-Agent-Cluster", "?1")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-Content-Type-Options", "nosniff")
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a

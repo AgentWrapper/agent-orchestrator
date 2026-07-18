@@ -224,6 +224,39 @@ func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Serve
 	return srv
 }
 
+func assertPreviewIsolationHeaders(t *testing.T, headers http.Header) {
+	t.Helper()
+	csp := headers.Get("Content-Security-Policy")
+	for _, directive := range []string{
+		"default-src 'none'",
+		"script-src 'none'",
+		"connect-src 'none'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: blob: http: https:",
+		"object-src 'none'",
+		"frame-ancestors 'none'",
+		"form-action 'none'",
+	} {
+		if !strings.Contains(csp, directive) {
+			t.Fatalf("Content-Security-Policy = %q, want directive %q", csp, directive)
+		}
+	}
+	if strings.Contains(csp, "script-src 'unsafe-inline'") {
+		t.Fatalf("Content-Security-Policy allows inline scripts: %q", csp)
+	}
+	for name, want := range map[string]string{
+		"Cross-Origin-Opener-Policy":   "same-origin",
+		"Cross-Origin-Resource-Policy": "same-origin",
+		"Origin-Agent-Cluster":         "?1",
+		"Referrer-Policy":              "no-referrer",
+		"X-Content-Type-Options":       "nosniff",
+	} {
+		if got := headers.Get(name); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestSessionsRoutes_DefaultToStubsWithoutService(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
@@ -379,9 +412,53 @@ func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
 	if !strings.Contains(headers.Get("Content-Type"), "text/html") {
 		t.Fatalf("content type = %q, want text/html", headers.Get("Content-Type"))
 	}
+	assertPreviewIsolationHeaders(t, headers)
 	if !strings.Contains(string(body), "styles.css") {
 		t.Fatalf("preview body did not serve index: %s", body)
 	}
+}
+
+func TestSessionsAPI_PreviewMarkdownBlocksInjectedScriptVector(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	injected := `<script>
+fetch("/api/v1/projects/ao/config", { method: "PUT", body: JSON.stringify({ postCreate: ["touch /tmp/ao-rce"] }) });
+</script>`
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Report\n\n"+injected), 0o644); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/preview", "")
+	if status != http.StatusOK {
+		t.Fatalf("preview = %d, want 200; body=%s", status, body)
+	}
+	var preview struct {
+		PreviewURL string `json:"previewUrl"`
+		Entry      string `json:"entry"`
+	}
+	mustJSON(t, body, &preview)
+	if preview.Entry != "README.md" {
+		t.Fatalf("preview entry = %q, want README.md", preview.Entry)
+	}
+	parsed, err := url.Parse(preview.PreviewURL)
+	if err != nil {
+		t.Fatalf("parse preview URL: %v", err)
+	}
+	body, status, headers := doRequest(t, srv, "GET", parsed.RequestURI(), "")
+	if status != http.StatusOK {
+		t.Fatalf("preview markdown = %d, want 200; body=%s", status, body)
+	}
+	if !strings.Contains(headers.Get("Content-Type"), "text/html") {
+		t.Fatalf("content type = %q, want text/html", headers.Get("Content-Type"))
+	}
+	if !strings.Contains(string(body), `fetch("/api/v1/projects/ao/config"`) {
+		t.Fatalf("test fixture did not render injected script; body=%s", body)
+	}
+	assertPreviewIsolationHeaders(t, headers)
 }
 
 func TestSessionsAPI_SetPreviewExplicitURLPersists(t *testing.T) {
