@@ -712,6 +712,43 @@ func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	}
 }
 
+func TestRenameSessionFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	renamedAt := r.UpdatedAt.Add(time.Minute)
+	if ok, err := s.RenameSession(ctx, r.ID, "Fix flaky tests", renamedAt); err != nil || !ok {
+		t.Fatalf("rename: ok=%v err=%v", ok, err)
+	}
+
+	// A rename must reach the live SSE stream: display_name is in the
+	// sessions_cdc_update WHEN guard, so the rename writes exactly one
+	// session_updated row carrying the new displayName.
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []json.RawMessage
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			payloads = append(payloads, e.Payload)
+		}
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after rename", len(payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloads[0], &payload); err != nil {
+		t.Fatalf("session_updated payload JSON: %v", err)
+	}
+	if payload["displayName"] != "Fix flaky tests" {
+		t.Fatalf("payload displayName = %v, want %q", payload["displayName"], "Fix flaky tests")
+	}
+}
+
 func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
