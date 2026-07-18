@@ -3,8 +3,6 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
-import { useToastStore } from "../stores/toast-store";
-import { GlobalToastViewport } from "./GlobalToast";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
 const { postMock, terminalError, terminalState } = vi.hoisted(() => ({
@@ -60,7 +58,6 @@ beforeEach(() => {
 	terminalError.value = undefined;
 	terminalState.value = "idle";
 	terminalLinkHandler = undefined;
-	useToastStore.setState({ toast: null });
 });
 
 function renderPane(session?: WorkspaceSession) {
@@ -70,7 +67,6 @@ function renderPane(session?: WorkspaceSession) {
 	const result = render(
 		<QueryClientProvider client={queryClient}>
 			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
-			<GlobalToastViewport />
 		</QueryClientProvider>,
 	);
 	return {
@@ -118,23 +114,6 @@ describe("TerminalPane empty states", () => {
 				),
 			).toBeInTheDocument();
 			expect(screen.queryByText(/worker terminal/i)).not.toBeInTheDocument();
-		} finally {
-			view.restore();
-		}
-	});
-
-	it("shows a global toast when restore falls back to the saved prompt", async () => {
-		postMock.mockResolvedValueOnce({ data: { restoreMode: "prompt_replay" } });
-		terminalState.value = "exited";
-		const view = renderPane({ ...worker, status: "terminated", terminalHandleId: "term-1" });
-		vi.spyOn(view.queryClient, "invalidateQueries").mockResolvedValue(undefined);
-		try {
-			await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
-
-			expect(await screen.findByText("Started a new conversation")).toBeInTheDocument();
-			expect(
-				screen.getByText("AO could not find the native session to resume, so it restored from the saved prompt."),
-			).toBeInTheDocument();
 		} finally {
 			view.restore();
 		}

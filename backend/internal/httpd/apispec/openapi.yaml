@@ -2408,13 +2408,6 @@ components:
       properties:
         ok:
           type: boolean
-        restoreMode:
-          description: How the session was restored.
-          enum:
-          - native_resume
-          - prompt_replay
-          - fresh_launch
-          type: string
         session:
           $ref: '#/components/schemas/ControllersSessionView'
         sessionId:
@@ -2423,7 +2416,6 @@ components:
       - ok
       - sessionId
       - session
-      - restoreMode
       type: object
     ReviewRun:
       properties:

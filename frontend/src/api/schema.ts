@@ -913,11 +913,6 @@ export interface components {
         };
         RestoreSessionResponse: {
             ok: boolean;
-            /**
-             * @description How the session was restored.
-             * @enum {string}
-             */
-            restoreMode: "native_resume" | "prompt_replay" | "fresh_launch";
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
         };

@@ -1,6 +1,5 @@
 import { createRootRouteWithContext, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { GlobalToastViewport } from "../components/GlobalToast";
 import { TooltipProvider } from "../components/ui/tooltip";
 import type { QueryClient } from "@tanstack/react-query";
 import { captureRendererEvent, routeSurface } from "../lib/telemetry";
@@ -23,7 +22,6 @@ function RootComponent() {
 	return (
 		<TooltipProvider>
 			<Outlet />
-			<GlobalToastViewport />
 		</TooltipProvider>
 	);
 }

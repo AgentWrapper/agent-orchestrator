@@ -52,10 +52,6 @@ type commander interface {
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 }
 
-type restoreModeCommander interface {
-	RestoreWithMode(ctx context.Context, id domain.SessionID) (domain.SessionRecord, sessionmanager.RestoreMode, error)
-}
-
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -76,15 +72,6 @@ type CleanupSkipped struct {
 	SessionID domain.SessionID `json:"sessionId"`
 	Reason    string           `json:"reason"`
 }
-
-// RestoreResult reports a restored session and the restore mode that was used.
-type RestoreResult struct {
-	Session domain.Session
-	Mode    sessionmanager.RestoreMode
-}
-
-// RestoreMode is an alias for sessionmanager.RestoreMode.
-type RestoreMode = sessionmanager.RestoreMode
 
 type scmProvider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
@@ -397,32 +384,11 @@ func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
 
 // Restore relaunches a terminated session and returns the API-facing read model.
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
-	result, err := s.RestoreWithMode(ctx, id)
-	return result.Session, err
-}
-
-// RestoreWithMode relaunches a terminated session and returns the restored session
-// with the restore mode that was used.
-func (s *Service) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
-	var rec domain.SessionRecord
-	var mode sessionmanager.RestoreMode
-	var err error
-	if commander, ok := s.manager.(restoreModeCommander); ok {
-		rec, mode, err = commander.RestoreWithMode(ctx, id)
-	} else {
-		rec, err = s.manager.Restore(ctx, id)
-	}
-	if mode == "" {
-		mode = sessionmanager.RestoreModeNativeResume
-	}
+	rec, err := s.manager.Restore(ctx, id)
 	if err != nil {
-		return RestoreResult{}, toAPIError(err)
+		return domain.Session{}, toAPIError(err)
 	}
-	session, err := s.toSession(ctx, rec)
-	if err != nil {
-		return RestoreResult{}, err
-	}
-	return RestoreResult{Session: session, Mode: mode}, nil
+	return s.toSession(ctx, rec)
 }
 
 // Kill delegates terminal intent and teardown to the internal manager.

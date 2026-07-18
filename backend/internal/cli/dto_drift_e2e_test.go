@@ -75,10 +75,6 @@ func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (domain.
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) RestoreWithMode(context.Context, domain.SessionID) (sessionsvc.RestoreResult, error) {
-	return sessionsvc.RestoreResult{}, nil
-}
-
 func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
 	return false, nil
 }

@@ -2421,10 +2421,8 @@ func TestRestore_CodexWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.T) 
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, mode, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatalf("Restore err = %v, want fallback launch", err)
-	} else if mode != RestoreModePromptReplay {
-		t.Fatalf("restore mode = %q, want %q", mode, RestoreModePromptReplay)
 	}
 	if agent.restoreCalls != 1 {
 		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
@@ -2461,10 +2459,8 @@ func TestRestore_OpenCodeWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, mode, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatalf("Restore err = %v, want fallback launch", err)
-	} else if mode != RestoreModePromptReplay {
-		t.Fatalf("restore mode = %q, want %q", mode, RestoreModePromptReplay)
 	}
 	if agent.restoreCalls != 1 {
 		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
@@ -2480,86 +2476,6 @@ func TestRestore_OpenCodeWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.
 	}
 	if st.sessions["mer-1"].IsTerminated {
 		t.Fatal("session must be live after fallback launch")
-	}
-}
-
-func TestRestore_CursorWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCursor, IsTerminated: true,
-		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
-	}
-	rt := &fakeRuntime{}
-	agent := &recordingAgent{}
-	m := New(Deps{
-		Runtime:   rt,
-		Agents:    singleAgent{agent: agent},
-		Workspace: &fakeWorkspace{},
-		Store:     st,
-		Messenger: &fakeMessenger{},
-		Lifecycle: &fakeLCM{store: st},
-		LookPath:  func(string) (string, error) { return "/bin/true", nil },
-	})
-
-	if _, mode, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
-		t.Fatalf("Restore err = %v, want fallback launch", err)
-	} else if mode != RestoreModePromptReplay {
-		t.Fatalf("restore mode = %q, want %q", mode, RestoreModePromptReplay)
-	}
-	if agent.restoreCalls != 1 {
-		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
-	}
-	if agent.launchCalls != 1 {
-		t.Fatalf("GetLaunchCommand calls = %d, want 1", agent.launchCalls)
-	}
-	if agent.lastLaunch.Prompt != "continue the task" {
-		t.Fatalf("fallback launch prompt = %q, want saved prompt", agent.lastLaunch.Prompt)
-	}
-	if rt.created != 1 {
-		t.Fatalf("runtime.Create = %d, want 1", rt.created)
-	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session must be live after fallback launch")
-	}
-}
-
-func TestRestore_CursorWithAgentSessionIDUsesNativeResume(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCursor, IsTerminated: true,
-		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "cursor-native-1", Prompt: "continue the task"},
-	}
-	rt := &fakeRuntime{}
-	agent := &recordingAgent{}
-	m := New(Deps{
-		Runtime:   rt,
-		Agents:    singleAgent{agent: agent},
-		Workspace: &fakeWorkspace{},
-		Store:     st,
-		Messenger: &fakeMessenger{},
-		Lifecycle: &fakeLCM{store: st},
-		LookPath:  func(string) (string, error) { return "/bin/true", nil },
-	})
-
-	if _, mode, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
-		t.Fatalf("Restore err = %v, want native resume", err)
-	} else if mode != RestoreModeNativeResume {
-		t.Fatalf("restore mode = %q, want %q", mode, RestoreModeNativeResume)
-	}
-	if agent.restoreCalls != 1 {
-		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
-	}
-	if got := agent.lastRestore.Session.Metadata[ports.MetadataKeyAgentSessionID]; got != "cursor-native-1" {
-		t.Fatalf("restore agent session id = %q, want cursor-native-1", got)
-	}
-	if agent.launchCalls != 0 {
-		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
-	}
-	if rt.created != 1 {
-		t.Fatalf("runtime.Create = %d, want 1", rt.created)
-	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session must be live after cursor native resume")
 	}
 }
 

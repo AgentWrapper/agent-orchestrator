@@ -75,7 +75,7 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 }
 
 // hookAgentSessionID extracts the native resume handle shared by Agy, Copilot,
-// Cursor, Codex, Claude Code, and other hook payloads. It is independent of activity
+// Codex, Claude Code, and other hook payloads. It is independent of activity
 // derivation because SessionStart is intentionally metadata-only for harnesses
 // where process startup is not proof that a turn is active.
 func hookAgentSessionID(payload []byte) string {
