@@ -193,7 +193,35 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		c.servePreviewMarkdown(w, r, file)
 		return
 	}
+	if previewutil.IsHTMLPath(file) {
+		c.servePreviewHTML(w, r, file)
+		return
+	}
+	if strings.EqualFold(filepath.Ext(file), ".css") {
+		c.servePreviewCSS(w, r, file)
+		return
+	}
 	http.ServeFile(w, r, file)
+}
+
+func (c *SessionsController) servePreviewHTML(w http.ResponseWriter, r *http.Request, file string) {
+	source, err := os.ReadFile(file)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(previewutil.RewriteHTMLPreviewURLs(source, previewFileRootPath(r))) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+}
+
+func (c *SessionsController) servePreviewCSS(w http.ResponseWriter, r *http.Request, file string) {
+	source, err := os.ReadFile(file)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write(previewutil.RewriteCSSPreviewURLs(source, previewFileRootPath(r))) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
 }
 
 // servePreviewMarkdown renders a workspace Markdown file to a self-contained
@@ -212,7 +240,7 @@ func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+	_, _ = w.Write(previewutil.RewriteHTMLPreviewURLs(rendered, previewFileRootPath(r))) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a
@@ -714,6 +742,14 @@ func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
 
 func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
 	return previewutil.FileURL("http://"+r.Host, id, entry)
+}
+
+func previewFileRootPath(r *http.Request) string {
+	const marker = "/preview/files/"
+	if i := strings.Index(r.URL.Path, marker); i >= 0 {
+		return r.URL.Path[:i+len(marker)]
+	}
+	return "/api/v1/sessions/" + url.PathEscape(string(sessionID(r))) + "/preview/files/"
 }
 
 func sessionView(s domain.Session) SessionView {

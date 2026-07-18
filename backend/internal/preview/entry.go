@@ -132,6 +132,16 @@ func IsMarkdownPath(p string) bool {
 	return false
 }
 
+// IsHTMLPath reports whether p names an HTML file whose root-absolute asset
+// URLs should be rewritten for the preview/files route.
+func IsHTMLPath(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".html", ".htm":
+		return true
+	}
+	return false
+}
+
 // ConfinedPath maps an asset path into workspacePath and rejects paths that
 // escape the workspace root.
 func ConfinedPath(workspacePath, assetPath string) (string, bool) {

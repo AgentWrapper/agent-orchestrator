@@ -384,6 +384,95 @@ func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_PreviewFileRewritesRootAbsoluteHTMLAndCSSURLs(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	mustWritePreviewFile(t, workspace, "index.html", `<!doctype html>
+<html>
+<head>
+	<link rel="stylesheet" href="/style.css?v=55">
+	<link rel="stylesheet" href="relative.css">
+	<style>.hero { background-image: url("/img/hero.png"); }</style>
+</head>
+<body>
+	<img src="/img/avatar.jpg">
+	<img src="images/inline.png">
+	<img srcset="/img/avatar-small.jpg 1x, images/inline.png 2x">
+	<div style="background-image: url('/img/inline-bg.png')"></div>
+</body>
+</html>`)
+	mustWritePreviewFile(t, workspace, "style.css", `@import "/reset.css";
+body { background: url('/img/bg.png'); }
+.icon { background: url("icons/relative.svg"); }`)
+	mustWritePreviewFile(t, workspace, "relative.css", `body { color: red; }`)
+	mustWritePreviewFile(t, workspace, "reset.css", `* { box-sizing: border-box; }`)
+	mustWritePreviewFile(t, workspace, "img/avatar.jpg", "avatar")
+	mustWritePreviewFile(t, workspace, "img/avatar-small.jpg", "avatar-small")
+	mustWritePreviewFile(t, workspace, "img/hero.png", "hero")
+	mustWritePreviewFile(t, workspace, "img/inline-bg.png", "inline-bg")
+	mustWritePreviewFile(t, workspace, "img/bg.png", "bg")
+	mustWritePreviewFile(t, workspace, "images/inline.png", "inline")
+	mustWritePreviewFile(t, workspace, "icons/relative.svg", "<svg></svg>")
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	const root = "/api/v1/sessions/ao-1/preview/files/"
+	body, status, headers := doRequest(t, srv, "GET", root+"index.html", "")
+	if status != http.StatusOK {
+		t.Fatalf("preview html = %d, want 200; body=%s", status, body)
+	}
+	if !strings.Contains(headers.Get("Content-Type"), "text/html") {
+		t.Fatalf("html content type = %q, want text/html", headers.Get("Content-Type"))
+	}
+	html := string(body)
+	for _, want := range []string{
+		`href="` + root + `style.css?v=55"`,
+		`href="relative.css"`,
+		`src="` + root + `img/avatar.jpg"`,
+		`src="images/inline.png"`,
+		`srcset="` + root + `img/avatar-small.jpg 1x, images/inline.png 2x"`,
+		`url("` + root + `img/hero.png")`,
+		`url('` + root + `img/inline-bg.png')`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("preview html missing %q:\n%s", want, body)
+		}
+	}
+
+	cssBody, cssStatus, cssHeaders := doRequest(t, srv, "GET", root+"style.css?v=55", "")
+	if cssStatus != http.StatusOK {
+		t.Fatalf("preview css = %d, want 200; body=%s", cssStatus, cssBody)
+	}
+	if !strings.Contains(cssHeaders.Get("Content-Type"), "text/css") {
+		t.Fatalf("css content type = %q, want text/css", cssHeaders.Get("Content-Type"))
+	}
+	css := string(cssBody)
+	for _, want := range []string{
+		`@import "` + root + `reset.css"`,
+		`url('` + root + `img/bg.png')`,
+		`url("icons/relative.svg")`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("preview css missing %q:\n%s", want, cssBody)
+		}
+	}
+
+	for _, asset := range []string{
+		root + "style.css?v=55",
+		root + "img/avatar.jpg",
+		root + "images/inline.png",
+		root + "img/bg.png",
+		root + "icons/relative.svg",
+	} {
+		_, assetStatus, _ := doRequest(t, srv, "GET", asset, "")
+		if assetStatus != http.StatusOK {
+			t.Fatalf("asset %s = %d, want 200", asset, assetStatus)
+		}
+	}
+}
+
 func TestSessionsAPI_SetPreviewExplicitURLPersists(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
@@ -671,6 +760,17 @@ func TestSessionsAPI_SetPreviewNotFound(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing-1/preview", `{"url":"http://x"}`)
 	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
+func mustWritePreviewFile(t *testing.T, root, rel, body string) {
+	t.Helper()
+	file := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(file), err)
+	}
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
 }
 
 func TestSessionsAPI_SpawnBranchNotFetchedReturnsTypedError(t *testing.T) {
