@@ -92,6 +92,8 @@ const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
+	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
+	hideEdgeBorder?: boolean;
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
@@ -133,6 +135,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // via group-data-[collapsible=icon] into the 48px letter rail.
 export function Sidebar({
 	daemonStatus,
+	hideEdgeBorder = false,
 	underTopbar = true,
 	workspaceError,
 	workspaces,
@@ -216,7 +219,10 @@ export function Sidebar({
 		<SidebarRoot
 			collapsible="icon"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
-			className={cn("border-border", underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!")}
+			className={cn(
+				hideEdgeBorder ? "border-transparent" : "border-border",
+				underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!",
+			)}
 		>
 			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-3.5 group-data-[collapsible=icon]:px-1.5">
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
@@ -284,7 +290,10 @@ export function Sidebar({
 						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 							Projects
 						</SidebarGroupLabel>
-						<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
+						{/* Hide on the empty start page — import lives in the welcome board. */}
+						{workspaces.length > 0 ? (
+							<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
+						) : null}
 					</div>
 
 					{/* Tree (project-sidebar__tree) */}
@@ -294,14 +303,7 @@ export function Sidebar({
 								<p className="text-xs text-foreground">Could not load projects.</p>
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 							</div>
-						) : workspaces.length === 0 ? (
-							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
-								<p className="text-xs text-passive">No projects yet.</p>
-								<p className="mt-1 text-caption text-passive">
-									Click <span className="text-foreground">+</span> above to register a repo or workspace.
-								</p>
-							</div>
-						) : (
+						) : workspaces.length === 0 ? null : (
 							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
 								{workspaces.map((workspace) => (
 									<ProjectItem

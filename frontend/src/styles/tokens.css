@@ -29,7 +29,7 @@
 	--color-bg-secondary: #15171b;
 	--color-bg-tertiary: #1b1d22;
 	--color-bg-elevated: #212329;
-	--color-bg-sidebar: #08090b;
+	--color-bg-sidebar: #090909;
 	--color-bg-terminal: #15171b;
 
 	/* Text */
@@ -232,6 +232,35 @@
 	--size-textarea-min: 112px;
 	--size-sidebar-project-actions: 84px;
 
+	/* Welcome board inset panel */
+	--color-bg-welcome-panel: rgb(18 18 19);
+	--color-border-welcome-panel: #212121;
+	--radius-welcome-panel: 17px;
+	--size-welcome-panel-inset: 14px;
+
+	/* Import mode picker (Figma ModalContainer) — dark values must stay exact */
+	--color-bg-import-modal: #131313;
+	--color-border-import-modal: #2a2e33;
+	--color-text-import-title: #e6edf3;
+	--color-text-import-muted: #8b949e;
+	--color-bg-import-card: rgb(20 21 23 / 0.3);
+	--color-bg-import-card-hover: rgb(20 21 23 / 0.55);
+	--color-bg-import-illustration: #131313;
+	--color-bg-import-chip: #242424;
+	--color-import-dot: #3fb950;
+	--color-text-import-sep: #6b7280;
+	--color-import-shadow-fill: rgb(255 255 255 / 0.002);
+	--shadow-import-modal: 0 0 0 1px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.5);
+
+	/* Project / workspace agents sheet (Figma) — dark values must stay exact */
+	--color-bg-agents-sheet: #212121;
+	--color-border-agents-sheet: #424242;
+	--color-bg-agents-sheet-control: #2a2a2a;
+	--color-text-agents-sheet-title: #ffffff;
+	--color-text-agents-sheet-description: #9ca3af;
+	--color-text-agents-sheet-label: #d1d5db;
+	--radius-agents-sheet: var(--radius-welcome-panel); /* match Import modal (17px) */
+
 	--size-empty-offset-y: 5vh; /* board empty-state vertical nudge */
 
 	/* Browser static preview (light mock page inside dark app) */
@@ -362,4 +391,31 @@
 	--elevation-md: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
 	--elevation-lg: 0 16px 48px rgb(20 30 50 / 0.16);
 	--elevation-xl: 0 1px 0 rgb(0 0 0 / 0.03), 0 20px 50px rgb(20 30 50 / 0.14);
+
+	/* Welcome board inset panel */
+	--color-bg-welcome-panel: #ffffff;
+	--color-border-welcome-panel: #d4d4d6;
+
+	/* Import mode picker — light surfaces */
+	--color-bg-import-modal: #ffffff;
+	--color-border-import-modal: #d4d4d6;
+	--color-text-import-title: #1a1a1a;
+	--color-text-import-muted: #666666;
+	--color-bg-import-card: #f3f3f4;
+	--color-bg-import-card-hover: #e8e8ea;
+	--color-bg-import-illustration: #ffffff;
+	--color-bg-import-chip: #e8e8ea;
+	--color-import-dot: #1a7f37;
+	--color-text-import-sep: #9ca3af;
+	--color-import-shadow-fill: transparent;
+	--shadow-import-modal: 0 0 0 1px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.08);
+
+	/* Project / workspace agents sheet — light surfaces */
+	--color-bg-agents-sheet: #ffffff;
+	--color-border-agents-sheet: #d4d4d6;
+	--color-bg-agents-sheet-control: #f3f3f4;
+	--color-text-agents-sheet-title: #1a1a1a;
+	--color-text-agents-sheet-description: #666666;
+	--color-text-agents-sheet-label: #374151;
+	--radius-agents-sheet: var(--radius-welcome-panel);
 }

@@ -38,6 +38,8 @@
 	--radius-md: var(--radius-md);
 	--radius-lg: var(--radius-lg);
 	--radius-panel: var(--radius-panel);
+	--radius-welcome-panel: var(--radius-welcome-panel);
+	--radius-agents-sheet: var(--radius-agents-sheet);
 	--radius-full: var(--radius-full);
 
 	/* Breakpoints — for Tailwind max-* variants */
@@ -104,6 +106,7 @@
 	--color-terminal-foreground: var(--color-text-terminal);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
+	--color-welcome-panel: var(--color-bg-welcome-panel);
 
 	/* Browser static preview (light mock inside dark app) */
 	--color-preview: var(--color-preview-bg);

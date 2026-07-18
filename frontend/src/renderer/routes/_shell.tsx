@@ -53,6 +53,7 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 	};
 }
 
+const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const isLinux =
 	typeof navigator !== "undefined" &&
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
@@ -86,6 +87,8 @@ function ShellLayout() {
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
+	// First-launch root board only — not /prs or other shell routes with zero projects.
+	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -320,7 +323,7 @@ function ShellLayout() {
 				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
             the chrome the frameless window drops. Renders null on macOS/Linux. */}
 				<WindowTitlebar />
-				<ShellTopbar />
+				{!isWelcomeBoard ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -335,9 +338,13 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
+					{/* macOS TitlebarNav is fixed in the top 56px band on every route (including
+            welcome, where ShellTopbar is hidden), so the sidebar must always hang
+            below that strip on Mac to keep the brand out of the cluster. */}
 					<Sidebar
 						daemonStatus={daemonStatus}
-						underTopbar={isLinux ? isSessionRoute : true}
+						hideEdgeBorder={isWelcomeBoard}
+						underTopbar={isMac || (!isWelcomeBoard && (isLinux ? isSessionRoute : true))}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}

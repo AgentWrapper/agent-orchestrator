@@ -244,7 +244,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				/>
 			)}
 
-			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
+			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-4.5")}>
 				{projectId && health.state !== "ok" ? (
 					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
