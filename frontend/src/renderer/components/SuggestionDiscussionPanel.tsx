@@ -536,7 +536,7 @@ export function SuggestionDiscussionPanel({
 					<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
 						<RoleCard
 							name="Assistant"
-							description="Spark · listener, notes, wake-ups"
+							description="Sol · listener, notes, wake-ups"
 							color="border-emerald-500/30 bg-emerald-500/8 text-emerald-300"
 							onOpen={discussion ? () => onOpenSession(discussion.assistantId) : undefined}
 						/>
@@ -672,7 +672,7 @@ export function SuggestionDiscussionPanel({
 						<div className="flex flex-wrap items-center gap-2">
 							<h3 className="text-sm font-semibold text-foreground">Quick request</h3>
 							<span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-								Spark · low effort
+								Sol · low effort
 							</span>
 						</div>
 						<p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">

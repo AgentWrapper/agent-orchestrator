@@ -96,6 +96,7 @@ describe("SuggestionsPage", () => {
 		expect(screen.getByRole("button", { name: "Start worker" })).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "Discussion live session" })).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "Quick request session" })).toBeInTheDocument();
+		expect(screen.getByText("Sol · low effort")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Git push status" })).toBeInTheDocument();
 	});
 
