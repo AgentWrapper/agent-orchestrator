@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Check, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
 import { aoBridge } from "../../lib/bridge";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateStatus } from "../../../main/update-settings";
@@ -88,9 +88,12 @@ export function UpdatesSection() {
 			</SettingsRow>
 
 			{form.channel === "nightly" && form.enabled && (
-				<p className="px-1 text-xs leading-row text-warning">
-					Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable
-					with that.
+				<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
+					<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
+					<span>
+						Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable
+						with that.
+					</span>
 				</p>
 			)}
 
